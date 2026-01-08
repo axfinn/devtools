@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# Node
+frontend/node_modules
+frontend/.env.local
+frontend/.env.*.local
+
+# Go
+backend/server
+backend/data
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build
+*.log
+*.tmp
+
+# Docker
+docker-compose.override.yml
