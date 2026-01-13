@@ -1,0 +1,157 @@
+name: Code Quality
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+jobs:
+  # Frontend code quality
+  frontend-lint:
+    name: Frontend Linting
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint || echo "ESLint not configured yet"
+        continue-on-error: true
+
+      - name: Run Prettier check
+        run: npx prettier --check "src/**/*.{js,vue,ts,css,scss,json}" || echo "Prettier not configured yet"
+        continue-on-error: true
+
+      - name: Check for console.log statements
+        run: |
+          if grep -r "console\.log" src/ --exclude-dir=node_modules; then
+            echo "Warning: Found console.log statements in source code"
+            echo "Please remove debug console.log statements before merging"
+            exit 1
+          fi
+        continue-on-error: true
+
+  # Backend code quality
+  backend-lint:
+    name: Backend Linting
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Run golangci-lint
+        run: golangci-lint run --timeout=5m || echo "golangci-lint config not found, using defaults"
+        continue-on-error: true
+
+      - name: Check Go formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted"
+            echo ""
+            echo "Please run: gofmt -w ."
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Check for TODO/FIXME comments
+        run: |
+          todos=$(grep -r "TODO\|FIXME" . --exclude-dir=vendor --exclude-dir=.git || true)
+          if [ -n "$todos" ]; then
+            echo "Found TODO/FIXME comments:"
+            echo "$todos"
+            echo ""
+            echo "Please address or track these items before merging"
+          fi
+        continue-on-error: true
+
+  # Security checks
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run npm audit (frontend)
+        run: |
+          cd frontend
+          npm audit --audit-level=high || echo "Security vulnerabilities found in frontend dependencies"
+        continue-on-error: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run govulncheck (backend)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          cd backend
+          govulncheck ./... || echo "Security vulnerabilities found in backend dependencies"
+        continue-on-error: true
+
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+        continue-on-error: true
+
+  # Dependency review (for PRs only)
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          deny-licenses: GPL-3.0, AGPL-3.0
+        continue-on-error: true

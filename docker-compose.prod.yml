@@ -10,15 +10,15 @@ services:
     restart: unless-stopped
     # 不对外暴露端口，通过 nginx 代理
     expose:
-      - "8080"
+      - "8082"
     volumes:
       - devtools-data:/app/data
     environment:
-      - PORT=8080
+      - PORT=8082
       - DB_PATH=/app/data/paste.db
       - TZ=Asia/Shanghai
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/api/health"]
       interval: 30s
       timeout: 3s
       retries: 3

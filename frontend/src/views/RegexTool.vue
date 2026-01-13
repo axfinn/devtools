@@ -51,7 +51,13 @@
     </div>
 
     <div v-if="matches.length > 0" class="matches-detail">
-      <h4>匹配详情</h4>
+      <div class="detail-header">
+        <h4>匹配详情</h4>
+        <el-button type="primary" size="small" @click="copyAllMatches">
+          <el-icon><CopyDocument /></el-icon>
+          复制所有匹配
+        </el-button>
+      </div>
       <el-table :data="matches" border stripe max-height="300">
         <el-table-column prop="index" label="#" width="60" />
         <el-table-column prop="match" label="匹配内容" />
@@ -97,6 +103,8 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { CopyDocument } from '@element-plus/icons-vue'
 
 const pattern = ref('')
 const flags = ref('g')
@@ -205,6 +213,19 @@ const escapeHtml = (text) => {
 const usePattern = (item) => {
   pattern.value = item.pattern
   testRegex()
+}
+
+const copyAllMatches = async () => {
+  if (matches.value.length === 0) return
+
+  const allMatches = matches.value.map(m => m.match).join('\n')
+
+  try {
+    await navigator.clipboard.writeText(allMatches)
+    ElMessage.success(`已复制 ${matches.value.length} 个匹配结果`)
+  } catch (err) {
+    ElMessage.error('复制失败，请重试')
+  }
 }
 </script>
 
@@ -322,8 +343,15 @@ const usePattern = (item) => {
   border-radius: 8px;
 }
 
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
 .matches-detail h4 {
-  margin: 0 0 15px 0;
+  margin: 0;
   color: #e0e0e0;
 }
 

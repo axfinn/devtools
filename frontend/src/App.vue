@@ -128,7 +128,6 @@ onUnmounted(() => {
 .app-container {
   min-height: 100vh;
   background-color: #121212;
-  flex-direction: column;
 }
 
 /* 移动端头部 */

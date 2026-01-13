@@ -38,15 +38,15 @@ COPY --from=frontend-builder /app/frontend/dist ./dist
 RUN mkdir -p /app/data
 
 # 设置环境变量
-ENV PORT=8080
+ENV PORT=8082
 ENV DB_PATH=/app/data/paste.db
 ENV GIN_MODE=release
 ENV TZ=Asia/Shanghai
 
-EXPOSE 8080
+EXPOSE 8082
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8082/api/health || exit 1
 
 CMD ["./server"]

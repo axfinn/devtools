@@ -1,0 +1,112 @@
+name: Deploy to Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '20'
+  GO_VERSION: '1.21'
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+        if: secrets.SSH_PRIVATE_KEY != ''
+
+      - name: Deploy via Docker Compose
+        run: |
+          echo "Deploying to ${{ github.event.inputs.environment }}..."
+
+          # Example deployment commands (customize based on your server setup)
+          # ssh user@server "cd /path/to/devtools && git pull && docker-compose down && docker-compose up -d"
+
+          echo "Deployment commands would run here"
+          echo "Configure SSH_PRIVATE_KEY, SERVER_HOST, and SERVER_PATH in GitHub secrets"
+        if: secrets.SSH_PRIVATE_KEY != ''
+
+      - name: Deploy via SSH and Docker
+        if: secrets.SSH_PRIVATE_KEY != '' && secrets.SERVER_HOST != ''
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'EOF'
+            set -e
+            cd ${{ secrets.SERVER_PATH || '/opt/devtools' }}
+
+            echo "Pulling latest changes..."
+            git pull origin main
+
+            echo "Pulling latest Docker images..."
+            docker-compose pull
+
+            echo "Restarting services..."
+            docker-compose down
+            docker-compose up -d
+
+            echo "Waiting for health check..."
+            sleep 10
+            docker-compose ps
+
+            echo "Deployment completed successfully!"
+          EOF
+
+      - name: Deployment notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment to ${{ github.event.inputs.environment }} succeeded!"
+          else
+            echo "❌ Deployment to ${{ github.event.inputs.environment }} failed!"
+          fi
+
+      - name: Send notification to Slack
+        if: always() && secrets.SLACK_WEBHOOK_URL != ''
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": "Deployment to ${{ github.event.inputs.environment }}: ${{ job.status }}",
+              "attachments": [{
+                "color": "${{ job.status == '\''success'\'' && '\''good'\'' || '\''danger'\'' }}",
+                "fields": [
+                  {
+                    "title": "Repository",
+                    "value": "${{ github.repository }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Branch",
+                    "value": "${{ github.ref_name }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Commit",
+                    "value": "${{ github.sha }}",
+                    "short": true
+                  },
+                  {
+                    "title": "Author",
+                    "value": "${{ github.actor }}",
+                    "short": true
+                  }
+                ]
+              }]
+            }'
+        continue-on-error: true

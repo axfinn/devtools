@@ -1,0 +1,50 @@
+# Label PRs based on changed files
+
+frontend:
+  - changed-files:
+    - any-glob-to-any-file: 'frontend/**/*'
+
+backend:
+  - changed-files:
+    - any-glob-to-any-file: 'backend/**/*'
+
+docker:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - '.dockerignore'
+
+ci:
+  - changed-files:
+    - any-glob-to-any-file: '.github/**/*'
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**/*'
+
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+      - 'backend/go.mod'
+      - 'backend/go.sum'
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.test.js'
+      - '**/*.test.ts'
+      - '**/*.spec.js'
+      - '**/*.spec.ts'
+      - '**/*_test.go'
+
+security:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.env*'
+      - '**/middleware/**/*'
+      - 'SECURITY.md'
