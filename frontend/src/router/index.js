@@ -58,6 +58,12 @@ const routes = [
     name: 'Regex',
     component: () => import('../views/RegexTool.vue'),
     meta: { title: '正则测试', icon: 'Search' }
+  },
+  {
+    path: '/text',
+    name: 'Text',
+    component: () => import('../views/TextTool.vue'),
+    meta: { title: '文本转换', icon: 'ChatDotRound' }
   }
 ]
 
