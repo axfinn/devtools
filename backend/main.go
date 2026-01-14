@@ -60,15 +60,15 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// 全局限流（每 IP 每分钟 60 次请求）
-	rateLimiter := middleware.NewRateLimiter(60, time.Minute)
-	r.Use(rateLimiter.Middleware())
+	// 内容大小限制（35MB，留余量给 base64 编码）
+	r.Use(middleware.ContentSizeLimiter(35 * 1024 * 1024))
 
-	// 内容大小限制（1MB）
-	r.Use(middleware.ContentSizeLimiter(1024 * 1024))
+	// 创建限流（仅用于上传，每 IP 每分钟 10 次）
+	createRateLimiter := middleware.NewRateLimiter(10, time.Minute)
 
 	// 处理器
 	pasteHandler := handlers.NewPasteHandler(db)
+	dnsHandler := handlers.NewDNSHandler()
 
 	// API 路由
 	api := r.Group("/api")
@@ -76,10 +76,15 @@ func main() {
 		// 粘贴板 API
 		paste := api.Group("/paste")
 		{
-			paste.POST("", pasteHandler.Create)
+			// 只有创建操作需要限流
+			paste.POST("", createRateLimiter.Middleware(), pasteHandler.Create)
 			paste.GET("/:id", pasteHandler.Get)
 			paste.GET("/:id/info", pasteHandler.GetInfo)
 		}
+
+		// IP/DNS API
+		api.GET("/ip", dnsHandler.GetIP)
+		api.GET("/dns", dnsHandler.Lookup)
 
 		// 健康检查
 		api.GET("/health", func(c *gin.Context) {
@@ -90,6 +95,8 @@ func main() {
 	// 静态文件（生产环境）
 	r.Static("/assets", "./dist/assets")
 	r.StaticFile("/", "./dist/index.html")
+	r.StaticFile("/alipay.jpeg", "./dist/alipay.jpeg")
+	r.StaticFile("/wxpay.jpeg", "./dist/wxpay.jpeg")
 	r.NoRoute(func(c *gin.Context) {
 		c.File("./dist/index.html")
 	})

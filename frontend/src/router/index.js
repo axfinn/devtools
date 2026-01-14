@@ -64,6 +64,12 @@ const routes = [
     name: 'Text',
     component: () => import('../views/TextTool.vue'),
     meta: { title: '文本转换', icon: 'ChatDotRound' }
+  },
+  {
+    path: '/dns',
+    name: 'DNS',
+    component: () => import('../views/DnsTool.vue'),
+    meta: { title: 'IP/DNS', icon: 'Position' }
   }
 ]
 

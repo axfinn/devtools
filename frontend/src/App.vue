@@ -44,6 +44,16 @@
           <span>{{ route.meta.title }}</span>
         </el-menu-item>
       </el-menu>
+      <div class="drawer-footer">
+        <a class="github-link" href="https://github.com/axfinn/devtools" target="_blank" @click="showDrawer = false">
+          <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <div class="support-link" @click="showDonateDialog = true; showDrawer = false">
+          <el-icon><Coffee /></el-icon>
+          <span>支持项目</span>
+        </div>
+      </div>
     </el-drawer>
 
     <!-- PC端侧边栏 -->
@@ -70,6 +80,16 @@
           <template #title>{{ route.meta.title }}</template>
         </el-menu-item>
       </el-menu>
+      <div class="sidebar-footer">
+        <a class="github-link" href="https://github.com/axfinn/devtools" target="_blank" :title="isCollapse ? 'GitHub' : ''">
+          <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span v-show="!isCollapse">GitHub</span>
+        </a>
+        <div class="support-link" @click="showDonateDialog = true" :title="isCollapse ? '支持项目' : ''">
+          <el-icon><Coffee /></el-icon>
+          <span v-show="!isCollapse">支持项目</span>
+        </div>
+      </div>
     </el-aside>
 
     <!-- 主内容区 -->
@@ -80,19 +100,43 @@
         </keep-alive>
       </router-view>
     </el-main>
+
+    <!-- 捐赠对话框 -->
+    <el-dialog
+      v-model="showDonateDialog"
+      title="支持项目"
+      width="400px"
+      class="donate-dialog"
+      :append-to-body="true"
+    >
+      <div class="donate-content">
+        <p class="donate-text">如果这个项目对你有帮助，欢迎请作者喝杯咖啡</p>
+        <div class="qr-codes">
+          <div class="qr-item">
+            <img src="/alipay.jpeg" alt="支付宝" />
+            <span>支付宝</span>
+          </div>
+          <div class="qr-item">
+            <img src="/wxpay.jpeg" alt="微信支付" />
+            <span>微信支付</span>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
   </el-container>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Menu } from '@element-plus/icons-vue'
+import { Menu, Coffee } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
 const isCollapse = ref(false)
 const showDrawer = ref(false)
 const isMobile = ref(false)
+const showDonateDialog = ref(false)
 
 // 当前页面标题
 const currentTitle = computed(() => {
@@ -108,9 +152,14 @@ const menuRoutes = computed(() => {
 
 // 检测屏幕宽度
 const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768
+  const width = window.innerWidth
+  isMobile.value = width < 768
   if (!isMobile.value) {
     showDrawer.value = false
+  }
+  // 中等屏幕自动折叠侧边栏
+  if (width >= 768 && width < 1024) {
+    isCollapse.value = true
   }
 }
 
@@ -126,8 +175,9 @@ onUnmounted(() => {
 
 <style scoped>
 .app-container {
-  min-height: 100vh;
+  height: 100vh;
   background-color: #121212;
+  overflow: hidden;
 }
 
 /* 移动端头部 */
@@ -202,6 +252,8 @@ onUnmounted(() => {
   background-color: #1e1e1e;
   transition: width 0.3s;
   overflow: hidden;
+  flex-shrink: 0;
+  z-index: 10;
 }
 
 .logo {
@@ -222,11 +274,124 @@ onUnmounted(() => {
 
 .sidebar-menu {
   border-right: none;
-  height: calc(100vh - 60px);
+  height: calc(100vh - 160px);
 }
 
 .sidebar-menu:not(.el-menu--collapse) {
   width: 200px;
+}
+
+/* 侧边栏底部 */
+.sidebar-footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid #333;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar {
+  position: relative;
+}
+
+.support-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #a0a0a0;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.support-link:hover {
+  background-color: #333;
+  color: #f0a020;
+}
+
+.support-link .el-icon {
+  font-size: 18px;
+}
+
+.github-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #a0a0a0;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.github-link:hover {
+  background-color: #333;
+  color: #e0e0e0;
+}
+
+.github-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* 移动端抽屉底部 */
+.drawer-footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-top: 1px solid #333;
+  padding: 8px 12px;
+  background-color: #1e1e1e;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 捐赠对话框 */
+.donate-content {
+  text-align: center;
+}
+
+.donate-text {
+  color: #666;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.qr-codes {
+  display: flex;
+  justify-content: center;
+  gap: 30px;
+}
+
+.qr-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.qr-item img {
+  width: 150px;
+  height: 150px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.qr-item span {
+  color: #666;
+  font-size: 14px;
 }
 
 /* 主内容区 */
@@ -234,17 +399,30 @@ onUnmounted(() => {
   background-color: #121212;
   padding: 20px;
   color: #e0e0e0;
+  height: 100vh;
+  overflow-y: auto;
+  flex: 1;
+  min-width: 0;
 }
 
 .mobile-main {
   padding: 15px;
   padding-bottom: 80px; /* 为底部留出空间 */
+  height: calc(100vh - 56px); /* 减去移动端头部高度 */
+}
+
+/* 中等屏幕适配 */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .sidebar-menu {
+    height: calc(100vh - 140px);
+  }
 }
 
 /* 移动端全局样式调整 */
 @media (max-width: 768px) {
   .app-container {
     flex-direction: column;
+    overflow: hidden;
   }
 }
 </style>
@@ -261,11 +439,27 @@ onUnmounted(() => {
 
   .mobile-drawer .el-drawer__body {
     padding: 0;
+    padding-bottom: 100px;
     background-color: #1e1e1e;
   }
 
   .mobile-drawer .el-drawer {
     background-color: #1e1e1e;
+  }
+
+  /* 捐赠对话框移动端适配 */
+  .donate-dialog {
+    width: 90% !important;
+  }
+
+  .qr-codes {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .qr-item img {
+    width: 120px;
+    height: 120px;
   }
 
   /* 工具页面通用适配 */

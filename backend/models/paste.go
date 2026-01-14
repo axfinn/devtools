@@ -20,6 +20,7 @@ type Paste struct {
 	Views       int       `json:"views"`
 	CreatedAt   time.Time `json:"created_at"`
 	CreatorIP   string    `json:"-"`
+	Images      string    `json:"images"` // JSON array of base64 images
 }
 
 type DB struct {
@@ -52,13 +53,19 @@ func (db *DB) init() error {
 		max_views INTEGER DEFAULT 100,
 		views INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		creator_ip TEXT
+		creator_ip TEXT,
+		images TEXT DEFAULT ''
 	);
 	CREATE INDEX IF NOT EXISTS idx_expires_at ON pastes(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_creator_ip ON pastes(creator_ip);
 	`
 	_, err := db.conn.Exec(query)
-	return err
+	if err != nil {
+		return err
+	}
+	// 添加 images 列（如果不存在）
+	db.conn.Exec("ALTER TABLE pastes ADD COLUMN images TEXT DEFAULT ''")
+	return nil
 }
 
 func (db *DB) CreatePaste(paste *Paste) error {
@@ -66,26 +73,28 @@ func (db *DB) CreatePaste(paste *Paste) error {
 	paste.CreatedAt = time.Now()
 
 	_, err := db.conn.Exec(`
-		INSERT INTO pastes (id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO pastes (id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip, images)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, paste.ID, paste.Content, paste.Title, paste.Language, paste.Password,
-		paste.ExpiresAt, paste.MaxViews, paste.Views, paste.CreatedAt, paste.CreatorIP)
+		paste.ExpiresAt, paste.MaxViews, paste.Views, paste.CreatedAt, paste.CreatorIP, paste.Images)
 
 	return err
 }
 
 func (db *DB) GetPaste(id string) (*Paste, error) {
 	paste := &Paste{}
+	var images sql.NullString
 	err := db.conn.QueryRow(`
-		SELECT id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip
+		SELECT id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip, COALESCE(images, '')
 		FROM pastes WHERE id = ?
 	`, id).Scan(
 		&paste.ID, &paste.Content, &paste.Title, &paste.Language, &paste.Password,
-		&paste.ExpiresAt, &paste.MaxViews, &paste.Views, &paste.CreatedAt, &paste.CreatorIP)
+		&paste.ExpiresAt, &paste.MaxViews, &paste.Views, &paste.CreatedAt, &paste.CreatorIP, &images)
 
 	if err != nil {
 		return nil, err
 	}
+	paste.Images = images.String
 
 	return paste, nil
 }

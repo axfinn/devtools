@@ -3,6 +3,7 @@ package handlers
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -28,24 +29,26 @@ func NewPasteHandler(db *models.DB) *PasteHandler {
 }
 
 type CreatePasteRequest struct {
-	Content   string `json:"content" binding:"required"`
-	Title     string `json:"title"`
-	Language  string `json:"language"`
-	Password  string `json:"password"`
-	ExpiresIn int    `json:"expires_in"` // 过期时间（小时）
-	MaxViews  int    `json:"max_views"`
+	Content   string   `json:"content"`
+	Title     string   `json:"title"`
+	Language  string   `json:"language"`
+	Password  string   `json:"password"`
+	ExpiresIn int      `json:"expires_in"` // 过期时间（小时）
+	MaxViews  int      `json:"max_views"`
+	Images    []string `json:"images"` // base64 encoded images (max 15, total 30MB)
 }
 
 type PasteResponse struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Language  string    `json:"language"`
-	Content   string    `json:"content,omitempty"`
-	ExpiresAt time.Time `json:"expires_at"`
-	MaxViews  int       `json:"max_views"`
-	Views     int       `json:"views"`
-	CreatedAt time.Time `json:"created_at"`
-	HasPassword bool    `json:"has_password"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Language    string    `json:"language"`
+	Content     string    `json:"content,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	MaxViews    int       `json:"max_views"`
+	Views       int       `json:"views"`
+	CreatedAt   time.Time `json:"created_at"`
+	HasPassword bool      `json:"has_password"`
+	Images      []string  `json:"images,omitempty"`
 }
 
 func (h *PasteHandler) Create(c *gin.Context) {
@@ -55,17 +58,48 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// 检查内容大小（100KB 限制）
+	// 检查是否有内容或图片
+	if req.Content == "" && len(req.Images) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入内容或上传图片", "code": 400})
+		return
+	}
+
+	// 检查图片数量（最多15张）
+	if len(req.Images) > 15 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "图片数量超过15张限制", "code": 400})
+		return
+	}
+
+	// 计算总大小
+	totalSize := len(req.Content)
+	for _, img := range req.Images {
+		totalSize += len(img)
+	}
+
+	// 检查总大小（30MB 限制）
+	if totalSize > 30*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "内容总大小超过 30MB 限制", "code": 400})
+		return
+	}
+
+	// 纯文本内容限制（100KB）
 	if len(req.Content) > 100*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "内容大小超过 100KB 限制", "code": 400})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "文本内容超过 100KB 限制", "code": 400})
 		return
 	}
 
 	ip := c.ClientIP()
 
-	// 检查 IP 限流
+	// 检查 IP 限流（每分钟最多 10 次）
 	count, err := h.db.CountByIP(ip, time.Now().Add(-h.ipWindow))
 	if err == nil && count >= h.maxPerIP {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "创建过于频繁，请稍后再试", "code": 429})
+		return
+	}
+
+	// 检查 IP 限流（每小时最多 100 次）
+	hourlyCount, err := h.db.CountByIP(ip, time.Now().Add(-time.Hour))
+	if err == nil && hourlyCount >= 100 {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "创建过于频繁，请稍后再试", "code": 429})
 		return
 	}
@@ -100,6 +134,13 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		req.MaxViews = 1000
 	}
 
+	// 将图片数组转为 JSON 字符串
+	imagesJSON := ""
+	if len(req.Images) > 0 {
+		jsonBytes, _ := json.Marshal(req.Images)
+		imagesJSON = string(jsonBytes)
+	}
+
 	paste := &models.Paste{
 		Content:   req.Content,
 		Title:     req.Title,
@@ -107,6 +148,7 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		ExpiresAt: time.Now().Add(time.Duration(req.ExpiresIn) * time.Hour),
 		MaxViews:  req.MaxViews,
 		CreatorIP: ip,
+		Images:    imagesJSON,
 	}
 
 	// 密码加密存储
@@ -172,6 +214,12 @@ func (h *PasteHandler) Get(c *gin.Context) {
 	h.db.IncrementViews(id)
 	paste.Views++
 
+	// 解析图片 JSON
+	var images []string
+	if paste.Images != "" {
+		json.Unmarshal([]byte(paste.Images), &images)
+	}
+
 	c.JSON(http.StatusOK, PasteResponse{
 		ID:          paste.ID,
 		Title:       paste.Title,
@@ -182,6 +230,7 @@ func (h *PasteHandler) Get(c *gin.Context) {
 		Views:       paste.Views,
 		CreatedAt:   paste.CreatedAt,
 		HasPassword: paste.Password != "",
+		Images:      images,
 	})
 }
 

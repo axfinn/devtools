@@ -1,6 +1,13 @@
 # DevTools - 开发者工具网站
 
+[![GitHub](https://img.shields.io/github/stars/axfinn/devtools?style=social)](https://github.com/axfinn/devtools)
+[![GitHub forks](https://img.shields.io/github/forks/axfinn/devtools?style=social)](https://github.com/axfinn/devtools/fork)
+
 一个功能丰富的开发者工具网站，包含多种常用的开发辅助工具。
+
+**在线体验**: [https://t.jaxiu.cn](https://t.jaxiu.cn)
+
+**GitHub**: [https://github.com/axfinn/devtools](https://github.com/axfinn/devtools)
 
 ## 功能特点
 
@@ -16,6 +23,8 @@
 | **URL 编解码** | URL Encode/Decode、URL 解析、参数构建 |
 | **时间戳转换** | Unix 时间戳与日期时间互转、时间计算 |
 | **正则测试** | 正则表达式实时匹配测试、常用正则模板 |
+| **文本转换** | 八进制/Unicode/十六进制转义编解码 |
+| **IP/DNS** | 查看当前 IP、域名 DNS 解析（A/AAAA/CNAME/MX/NS/TXT） |
 
 ### 粘贴板安全措施
 
@@ -104,6 +113,21 @@ devtools/
 | GET | /api/paste/:id | 获取分享内容 |
 | GET | /api/paste/:id/info | 获取分享信息（不含内容） |
 | GET | /api/health | 健康检查 |
+
+## 支持项目
+
+如果这个项目对你有帮助，欢迎请作者喝杯咖啡 ☕
+
+<table>
+  <tr>
+    <td align="center"><b>支付宝</b></td>
+    <td align="center"><b>微信</b></td>
+  </tr>
+  <tr>
+    <td><img src="frontend/public/alipay.jpeg" width="200" alt="支付宝" /></td>
+    <td><img src="frontend/public/wxpay.jpeg" width="200" alt="微信支付" /></td>
+  </tr>
+</table>
 
 ## License
 

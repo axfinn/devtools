@@ -57,7 +57,7 @@
         </div>
       </div>
 
-      <div class="editor-panel">
+      <div class="editor-panel" v-if="paste.content">
         <div class="panel-header">
           <span>内容</span>
           <div class="actions">
@@ -74,6 +74,55 @@
         <pre class="code-content" v-html="highlightedContent"></pre>
       </div>
 
+      <!-- 图片画廊 -->
+      <div class="image-gallery" v-if="paste.images && paste.images.length > 0">
+        <div class="gallery-header">
+          <span class="gallery-title">
+            <el-icon><Picture /></el-icon>
+            图片 ({{ paste.images.length }})
+          </span>
+          <el-button size="small" @click="downloadAllImages" v-if="paste.images.length > 1">
+            <el-icon><Download /></el-icon>
+            下载全部
+          </el-button>
+        </div>
+        <div class="gallery-grid">
+          <div
+            class="gallery-item"
+            v-for="(img, index) in paste.images"
+            :key="index"
+            @click="openPreview(index)"
+          >
+            <img :src="img" alt="图片" />
+            <div class="gallery-overlay">
+              <el-icon :size="24"><ZoomIn /></el-icon>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 图片预览弹窗 -->
+      <div class="image-preview" v-if="previewImage" @click.self="closePreview">
+        <div class="preview-container">
+          <img :src="previewImage" alt="预览" />
+          <div class="preview-actions">
+            <el-button circle @click="prevImage" :disabled="previewIndex === 0">
+              <el-icon><Back /></el-icon>
+            </el-button>
+            <span class="preview-index">{{ previewIndex + 1 }} / {{ paste.images.length }}</span>
+            <el-button circle @click="nextImage" :disabled="previewIndex === paste.images.length - 1">
+              <el-icon style="transform: rotate(180deg)"><Back /></el-icon>
+            </el-button>
+            <el-button circle @click="downloadImage(previewImage, previewIndex)">
+              <el-icon><Download /></el-icon>
+            </el-button>
+            <el-button circle type="danger" @click="closePreview">
+              ✕
+            </el-button>
+          </div>
+        </div>
+      </div>
+
       <div class="back-section">
         <el-button @click="$router.push('/paste')">
           <el-icon><Back /></el-icon>
@@ -88,7 +137,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Loading, Lock, Back } from '@element-plus/icons-vue'
+import { Loading, Lock, Back, Picture, Download, ZoomIn } from '@element-plus/icons-vue'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 
@@ -102,6 +151,8 @@ const needPassword = ref(false)
 const password = ref('')
 const passwordError = ref('')
 const verifying = ref(false)
+const previewImage = ref(null)
+const previewIndex = ref(0)
 
 const fetchPaste = async (pwd = '') => {
   const id = route.params.id
@@ -192,6 +243,48 @@ const downloadContent = () => {
   a.download = `${paste.value.title || paste.value.id}.txt`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// 图片预览
+const openPreview = (index) => {
+  previewIndex.value = index
+  previewImage.value = paste.value.images[index]
+}
+
+const closePreview = () => {
+  previewImage.value = null
+}
+
+const prevImage = () => {
+  if (previewIndex.value > 0) {
+    previewIndex.value--
+    previewImage.value = paste.value.images[previewIndex.value]
+  }
+}
+
+const nextImage = () => {
+  if (previewIndex.value < paste.value.images.length - 1) {
+    previewIndex.value++
+    previewImage.value = paste.value.images[previewIndex.value]
+  }
+}
+
+// 下载图片
+const downloadImage = (base64, index) => {
+  const link = document.createElement('a')
+  link.href = base64
+  // 从 base64 中提取文件类型
+  const match = base64.match(/^data:image\/(\w+);/)
+  const ext = match ? match[1] : 'png'
+  link.download = `${paste.value.title || paste.value.id}_${index + 1}.${ext}`
+  link.click()
+}
+
+// 下载所有图片
+const downloadAllImages = () => {
+  paste.value.images.forEach((img, index) => {
+    setTimeout(() => downloadImage(img, index), index * 100)
+  })
 }
 
 onMounted(() => {
@@ -319,5 +412,121 @@ onMounted(() => {
 .back-section {
   display: flex;
   justify-content: center;
+}
+
+/* 图片画廊 */
+.image-gallery {
+  background-color: #1e1e1e;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.gallery-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.gallery-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #e0e0e0;
+  font-size: 16px;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 15px;
+}
+
+.gallery-item {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background-color: #2d2d2d;
+}
+
+.gallery-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s;
+}
+
+.gallery-item:hover img {
+  transform: scale(1.05);
+}
+
+.gallery-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.gallery-item:hover .gallery-overlay {
+  opacity: 1;
+}
+
+/* 图片预览弹窗 */
+.image-preview {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.preview-container {
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+.preview-container img {
+  max-width: 100%;
+  max-height: calc(90vh - 80px);
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.preview-index {
+  color: #e0e0e0;
+  font-size: 14px;
+  min-width: 60px;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .gallery-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .preview-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
 }
 </style>

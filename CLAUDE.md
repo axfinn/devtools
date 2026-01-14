@@ -9,7 +9,7 @@ DevTools is a web-based developer tools suite providing JSON formatting, text di
 **Tech Stack:**
 - Frontend: Vue 3 + Vite + Element Plus + TailwindCSS
 - Backend: Go (Gin framework) + SQLite
-- Deployment: Docker multi-stage build with Nginx proxy
+- Deployment: Docker multi-stage build
 
 ## Development Commands
 
@@ -31,16 +31,12 @@ go run main.go           # Start backend server (default: :8080 or :8082)
 
 ### Docker Deployment
 ```bash
-# Development (docker-compose.yml)
 docker-compose up -d                    # Start services
 docker-compose down                     # Stop services
 docker-compose logs -f devtools         # View logs
-
-# Production (docker-compose.prod.yml)
-docker-compose -f docker-compose.prod.yml up -d
 ```
 
-The production setup uses Nginx reverse proxy on port 80. Development mode exposes the backend directly on port 8082.
+Docker exposes the backend on port 8082.
 
 ## Architecture
 
