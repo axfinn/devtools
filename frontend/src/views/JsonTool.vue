@@ -23,19 +23,23 @@
       <div class="editor-panel">
         <div class="panel-header">输入 JSON</div>
         <textarea
+          ref="leftEditor"
           v-model="inputJson"
           class="code-editor"
           placeholder="请输入 JSON..."
           spellcheck="false"
+          @scroll="onScroll('left')"
         ></textarea>
       </div>
       <div class="editor-panel">
         <div class="panel-header">输出结果</div>
         <textarea
+          ref="rightEditor"
           v-model="outputJson"
           class="code-editor"
           readonly
           spellcheck="false"
+          @scroll="onScroll('right')"
         ></textarea>
       </div>
     </div>
@@ -74,6 +78,27 @@ const outputJson = ref('')
 const errorMsg = ref('')
 const jsonPath = ref('')
 const jsonPathResult = ref('')
+
+const leftEditor = ref(null)
+const rightEditor = ref(null)
+let isScrolling = false
+
+const onScroll = (source) => {
+  if (isScrolling) return
+  isScrolling = true
+
+  const sourceEl = source === 'left' ? leftEditor.value : rightEditor.value
+  const targetEl = source === 'left' ? rightEditor.value : leftEditor.value
+
+  if (sourceEl && targetEl) {
+    targetEl.scrollTop = sourceEl.scrollTop
+    targetEl.scrollLeft = sourceEl.scrollLeft
+  }
+
+  requestAnimationFrame(() => {
+    isScrolling = false
+  })
+}
 
 const formatJson = () => {
   try {

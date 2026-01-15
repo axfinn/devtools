@@ -70,6 +70,18 @@ const routes = [
     name: 'DNS',
     component: () => import('../views/DnsTool.vue'),
     meta: { title: 'IP/DNS', icon: 'Position' }
+  },
+  {
+    path: '/mermaid',
+    name: 'Mermaid',
+    component: () => import('../views/MermaidTool.vue'),
+    meta: { title: 'Mermaid 图表', icon: 'Share' }
+  },
+  {
+    path: '/chat',
+    name: 'Chat',
+    component: () => import('../views/ChatRoom.vue'),
+    meta: { title: '聊天室', icon: 'ChatLineSquare' }
   }
 ]
 

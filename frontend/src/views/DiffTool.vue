@@ -23,19 +23,23 @@
       <div class="editor-panel">
         <div class="panel-header">原始文本</div>
         <textarea
+          ref="leftEditor"
           v-model="leftText"
           class="code-editor"
           placeholder="输入原始文本..."
           spellcheck="false"
+          @scroll="onScroll('left')"
         ></textarea>
       </div>
       <div class="editor-panel">
         <div class="panel-header">对比文本</div>
         <textarea
+          ref="rightEditor"
           v-model="rightText"
           class="code-editor"
           placeholder="输入要对比的文本..."
           spellcheck="false"
+          @scroll="onScroll('right')"
         ></textarea>
       </div>
     </div>
@@ -70,6 +74,27 @@ const leftText = ref('')
 const rightText = ref('')
 const diffResult = ref([])
 const diffMode = ref('lines')
+
+const leftEditor = ref(null)
+const rightEditor = ref(null)
+let isScrolling = false
+
+const onScroll = (source) => {
+  if (isScrolling) return
+  isScrolling = true
+
+  const sourceEl = source === 'left' ? leftEditor.value : rightEditor.value
+  const targetEl = source === 'left' ? rightEditor.value : leftEditor.value
+
+  if (sourceEl && targetEl) {
+    targetEl.scrollTop = sourceEl.scrollTop
+    targetEl.scrollLeft = sourceEl.scrollLeft
+  }
+
+  requestAnimationFrame(() => {
+    isScrolling = false
+  })
+}
 
 const addedCount = computed(() => {
   return diffResult.value.filter(p => p.added).reduce((sum, p) => sum + p.value.length, 0)

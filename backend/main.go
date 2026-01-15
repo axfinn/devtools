@@ -35,13 +35,29 @@ func main() {
 	}
 	defer db.Close()
 
+	// 初始化聊天室数据库表
+	if err := db.InitChat(); err != nil {
+		log.Fatalf("聊天室数据库初始化失败: %v", err)
+	}
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
 		for range ticker.C {
+			// 清理过期粘贴板
 			count, err := db.CleanExpired()
 			if err == nil && count > 0 {
-				log.Printf("已清理 %d 条过期数据", count)
+				log.Printf("已清理 %d 条过期粘贴板", count)
+			}
+			// 清理过期聊天室（7天不活跃）
+			roomCount, err := db.CleanExpiredRooms(7)
+			if err == nil && roomCount > 0 {
+				log.Printf("已清理 %d 个过期聊天室", roomCount)
+			}
+			// 清理过期消息（7天）
+			msgCount, err := db.CleanExpiredMessages(7)
+			if err == nil && msgCount > 0 {
+				log.Printf("已清理 %d 条过期消息", msgCount)
 			}
 		}
 	}()
@@ -69,6 +85,7 @@ func main() {
 	// 处理器
 	pasteHandler := handlers.NewPasteHandler(db)
 	dnsHandler := handlers.NewDNSHandler()
+	chatHandler := handlers.NewChatHandler(db)
 
 	// API 路由
 	api := r.Group("/api")
@@ -85,6 +102,16 @@ func main() {
 		// IP/DNS API
 		api.GET("/ip", dnsHandler.GetIP)
 		api.GET("/dns", dnsHandler.Lookup)
+
+		// 聊天室 API
+		chat := api.Group("/chat")
+		{
+			chat.POST("/room", createRateLimiter.Middleware(), chatHandler.CreateRoom)
+			chat.GET("/rooms", chatHandler.GetRooms)
+			chat.GET("/room/:id", chatHandler.GetRoom)
+			chat.POST("/room/:id/join", chatHandler.JoinRoom)
+			chat.GET("/room/:id/ws", chatHandler.HandleWebSocket)
+		}
 
 		// 健康检查
 		api.GET("/health", func(c *gin.Context) {

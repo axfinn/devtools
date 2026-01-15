@@ -29,15 +29,17 @@
       <div class="editor-panel">
         <div class="panel-header">Markdown 输入</div>
         <textarea
+          ref="editorRef"
           v-model="markdownText"
           class="code-editor"
           placeholder="输入 Markdown 内容..."
           spellcheck="false"
+          @scroll="onScroll('editor')"
         ></textarea>
       </div>
       <div class="editor-panel preview-panel">
         <div class="panel-header">预览</div>
-        <div ref="previewRef" class="preview-content markdown-body" v-html="renderedHtml"></div>
+        <div ref="previewRef" class="preview-content markdown-body" v-html="renderedHtml" @scroll="onScroll('preview')"></div>
       </div>
     </div>
   </div>
@@ -96,6 +98,25 @@ md.use(texmath, {
 })
 
 const previewRef = ref(null)
+const editorRef = ref(null)
+let isScrolling = false
+
+const onScroll = (source) => {
+  if (isScrolling) return
+  isScrolling = true
+
+  const sourceEl = source === 'editor' ? editorRef.value : previewRef.value
+  const targetEl = source === 'editor' ? previewRef.value : editorRef.value
+
+  if (sourceEl && targetEl) {
+    const sourceScrollRatio = sourceEl.scrollTop / (sourceEl.scrollHeight - sourceEl.clientHeight || 1)
+    targetEl.scrollTop = sourceScrollRatio * (targetEl.scrollHeight - targetEl.clientHeight)
+  }
+
+  requestAnimationFrame(() => {
+    isScrolling = false
+  })
+}
 
 const markdownText = ref(`# 欢迎使用增强版 Markdown 编辑器
 
