@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"devtools/config"
 	"devtools/handlers"
 	"devtools/middleware"
 	"devtools/models"
@@ -14,6 +15,17 @@ import (
 )
 
 func main() {
+	// 加载配置文件
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = "./config.yaml"
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		log.Printf("加载配置文件失败，使用默认配置: %v", err)
+		cfg = config.Get()
+	}
+
 	// 配置
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -40,6 +52,11 @@ func main() {
 		log.Fatalf("聊天室数据库初始化失败: %v", err)
 	}
 
+	// 初始化短链数据库表
+	if err := db.InitShortURL(); err != nil {
+		log.Fatalf("短链数据库初始化失败: %v", err)
+	}
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -59,6 +76,11 @@ func main() {
 			if err == nil && msgCount > 0 {
 				log.Printf("已清理 %d 条过期消息", msgCount)
 			}
+			// 清理过期短链
+			err = db.CleanExpiredShortURLs()
+			if err == nil {
+				log.Printf("已清理过期短链")
+			}
 		}
 	}()
 
@@ -76,8 +98,8 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// 内容大小限制（35MB，留余量给 base64 编码）
-	r.Use(middleware.ContentSizeLimiter(35 * 1024 * 1024))
+	// 内容大小限制（55MB，支持50MB视频上传）
+	r.Use(middleware.ContentSizeLimiter(55 * 1024 * 1024))
 
 	// 创建限流（仅用于上传，每 IP 每分钟 10 次）
 	createRateLimiter := middleware.NewRateLimiter(10, time.Minute)
@@ -86,6 +108,7 @@ func main() {
 	pasteHandler := handlers.NewPasteHandler(db)
 	dnsHandler := handlers.NewDNSHandler()
 	chatHandler := handlers.NewChatHandler(db)
+	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
 
 	// API 路由
 	api := r.Group("/api")
@@ -111,6 +134,17 @@ func main() {
 			chat.GET("/room/:id", chatHandler.GetRoom)
 			chat.POST("/room/:id/join", chatHandler.JoinRoom)
 			chat.GET("/room/:id/ws", chatHandler.HandleWebSocket)
+			// 图片上传
+			chat.POST("/upload", createRateLimiter.Middleware(), chatHandler.UploadImage)
+			chat.Static("/uploads", "./data/uploads")
+		}
+
+		// 短链 API
+		shorturl := api.Group("/shorturl")
+		{
+			shorturl.POST("", createRateLimiter.Middleware(), shortURLHandler.Create)
+			shorturl.GET("/list", shortURLHandler.List)
+			shorturl.GET("/:id/stats", shortURLHandler.GetStats)
 		}
 
 		// 健康检查
@@ -118,6 +152,9 @@ func main() {
 			c.JSON(200, gin.H{"status": "ok"})
 		})
 	}
+
+	// 短链重定向（非 API 路径）
+	r.GET("/s/:id", shortURLHandler.Redirect)
 
 	// 静态文件（生产环境）
 	r.Static("/assets", "./dist/assets")

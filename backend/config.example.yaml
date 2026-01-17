@@ -1,0 +1,9 @@
+# DevTools 配置文件
+# 复制此文件为 config.yaml 并修改
+
+# 短链服务配置
+shorturl:
+  # 管理密码（用于自定义短链ID）
+  # 留空 = 普通模式，只能随机ID
+  # 设置密码 = 可使用自定义ID如 /s/1 /s/abc
+  password: "your_password_here"

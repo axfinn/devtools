@@ -27,3 +27,6 @@ Thumbs.db
 # Temp
 *.tmp
 *.bak
+
+# Config
+backend/config.yaml

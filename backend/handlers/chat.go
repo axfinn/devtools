@@ -1,11 +1,17 @@
 package handlers
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,12 +21,93 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	maxImageSize = 5 * 1024 * 1024  // 5MB
+	maxVideoSize = 50 * 1024 * 1024 // 50MB
+	maxAudioSize = 10 * 1024 * 1024 // 10MB
+	maxFileSize  = 20 * 1024 * 1024 // 20MB 通用文件
+	uploadDir    = "./data/uploads"
+)
+
+// 文件魔数签名
+var fileMagicNumbers = map[string][]byte{
+	"image/jpeg":      {0xFF, 0xD8, 0xFF},
+	"image/png":       {0x89, 0x50, 0x4E, 0x47},
+	"image/gif":       {0x47, 0x49, 0x46},
+	"image/webp":      {0x52, 0x49, 0x46, 0x46}, // RIFF
+	"video/mp4":       {0x00, 0x00, 0x00},        // ftyp
+	"video/webm":      {0x1A, 0x45, 0xDF, 0xA3},
+	"audio/mpeg":      {0xFF, 0xFB},              // MP3
+	"audio/wav":       {0x52, 0x49, 0x46, 0x46},  // RIFF
+	"audio/ogg":       {0x4F, 0x67, 0x67, 0x53},
+	"audio/webm":      {0x1A, 0x45, 0xDF, 0xA3},
+	"application/pdf": {0x25, 0x50, 0x44, 0x46},
+	"application/zip": {0x50, 0x4B, 0x03, 0x04},
+}
+
+// 检测文件真实类型
+func detectFileType(data []byte) string {
+	if len(data) < 4 {
+		return ""
+	}
+
+	// JPEG
+	if data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return "image/jpeg"
+	}
+	// PNG
+	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+		return "image/png"
+	}
+	// GIF
+	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
+		return "image/gif"
+	}
+	// WebP (RIFF....WEBP)
+	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+		data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
+		return "image/webp"
+	}
+	// MP4/MOV (ftyp)
+	if len(data) >= 8 && data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70 {
+		return "video/mp4"
+	}
+	// WebM/MKV
+	if data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3 {
+		return "video/webm"
+	}
+	// MP3 (ID3 or sync)
+	if (data[0] == 0x49 && data[1] == 0x44 && data[2] == 0x33) || // ID3
+		(data[0] == 0xFF && (data[1]&0xE0) == 0xE0) { // sync
+		return "audio/mpeg"
+	}
+	// WAV (RIFF....WAVE)
+	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+		data[8] == 0x57 && data[9] == 0x41 && data[10] == 0x56 && data[11] == 0x45 {
+		return "audio/wav"
+	}
+	// OGG
+	if data[0] == 0x4F && data[1] == 0x67 && data[2] == 0x67 && data[3] == 0x53 {
+		return "audio/ogg"
+	}
+	// PDF
+	if data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46 {
+		return "application/pdf"
+	}
+	// ZIP
+	if data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04 {
+		return "application/zip"
+	}
+
+	return ""
+}
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
 	},
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
 }
 
 type ChatHandler struct {
@@ -215,7 +302,7 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 		conn:     conn,
 		room:     room,
 		nickname: nickname,
-		send:     make(chan []byte, 256),
+		send:     make(chan []byte, 1024),
 	}
 
 	room.mu.Lock()
@@ -323,19 +410,37 @@ func (h *ChatHandler) writePump(client *Client) {
 }
 
 func (h *ChatHandler) broadcast(room *Room, msg WSMessage, exclude *Client) {
-	data, _ := json.Marshal(msg)
-	room.mu.RLock()
-	defer room.mu.RUnlock()
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("Failed to marshal message: %v", err)
+		return
+	}
 
+	// 收集发送失败的客户端（避免在持有读锁时修改 map）
+	var failedClients []*Client
+
+	room.mu.RLock()
 	for client := range room.clients {
 		if client != exclude {
 			select {
 			case client.send <- data:
 			default:
+				failedClients = append(failedClients, client)
+			}
+		}
+	}
+	room.mu.RUnlock()
+
+	// 使用写锁移除失败的客户端
+	if len(failedClients) > 0 {
+		room.mu.Lock()
+		for _, client := range failedClients {
+			if _, ok := room.clients[client]; ok {
 				close(client.send)
 				delete(room.clients, client)
 			}
 		}
+		room.mu.Unlock()
 	}
 }
 
@@ -361,4 +466,161 @@ func (h *ChatHandler) removeClient(client *Client) {
 		delete(h.rooms, room.ID)
 	}
 	h.mu.Unlock()
+}
+
+// UploadFile 上传文件（图片、视频、音频、文档）
+func (h *ChatHandler) UploadFile(c *gin.Context) {
+	// 获取上传的文件
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		// 兼容旧的 "image" 字段名
+		file, header, err = c.Request.FormFile("image")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请选择文件", "code": 400})
+			return
+		}
+	}
+	defer file.Close()
+
+	// 读取文件头用于魔数检测
+	magicBytes := make([]byte, 16)
+	n, _ := file.Read(magicBytes)
+	magicBytes = magicBytes[:n]
+
+	// 重置文件指针
+	file.Seek(0, 0)
+
+	// 检测真实文件类型
+	detectedType := detectFileType(magicBytes)
+	declaredType := header.Header.Get("Content-Type")
+
+	// 确定文件类别
+	var fileCategory string
+	var maxSize int64
+	var sizeLabel string
+
+	if strings.HasPrefix(detectedType, "image/") || strings.HasPrefix(declaredType, "image/") {
+		fileCategory = "image"
+		maxSize = maxImageSize
+		sizeLabel = "5MB"
+	} else if strings.HasPrefix(detectedType, "video/") || strings.HasPrefix(declaredType, "video/") {
+		fileCategory = "video"
+		maxSize = maxVideoSize
+		sizeLabel = "50MB"
+	} else if strings.HasPrefix(detectedType, "audio/") || strings.HasPrefix(declaredType, "audio/") {
+		fileCategory = "audio"
+		maxSize = maxAudioSize
+		sizeLabel = "10MB"
+	} else {
+		fileCategory = "file"
+		maxSize = maxFileSize
+		sizeLabel = "20MB"
+	}
+
+	// 对于图片、视频、音频，验证魔数匹配
+	if fileCategory == "image" || fileCategory == "video" || fileCategory == "audio" {
+		if detectedType == "" {
+			// 无法检测到有效魔数，但声明是媒体文件，允许但记录警告
+			log.Printf("Warning: Cannot detect magic number for file %s (declared: %s)", header.Filename, declaredType)
+		} else if fileCategory == "image" && !strings.HasPrefix(detectedType, "image/") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "文件类型与内容不匹配", "code": 400})
+			return
+		} else if fileCategory == "video" && !strings.HasPrefix(detectedType, "video/") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "文件类型与内容不匹配", "code": 400})
+			return
+		} else if fileCategory == "audio" && !strings.HasPrefix(detectedType, "audio/") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "文件类型与内容不匹配", "code": 400})
+			return
+		}
+	}
+
+	// 检查文件大小
+	if header.Size > maxSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("文件大小不能超过%s", sizeLabel),
+			"code":  400,
+		})
+		return
+	}
+
+	// 获取文件扩展名
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext == "" {
+		ext = getExtFromMimeType(detectedType)
+		if ext == "" {
+			ext = getExtFromMimeType(declaredType)
+		}
+	}
+
+	// 生成随机文件名
+	randomBytes := make([]byte, 16)
+	rand.Read(randomBytes)
+	filename := fmt.Sprintf("%s%s", hex.EncodeToString(randomBytes), ext)
+
+	// 确保上传目录存在
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
+
+	// 保存文件
+	filePath := filepath.Join(uploadDir, filename)
+	out, err := os.Create(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败", "code": 500})
+		return
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败", "code": 500})
+		return
+	}
+
+	// 返回文件URL和类型
+	fileURL := "/api/chat/uploads/" + filename
+	c.JSON(http.StatusOK, gin.H{
+		"url":           fileURL,
+		"filename":      filename,
+		"original_name": header.Filename,
+		"type":          fileCategory,
+		"size":          header.Size,
+	})
+}
+
+// getExtFromMimeType 根据 MIME 类型获取扩展名
+func getExtFromMimeType(mimeType string) string {
+	switch mimeType {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "video/mp4", "video/quicktime":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav":
+		return ".wav"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/webm":
+		return ".webm"
+	case "application/pdf":
+		return ".pdf"
+	case "application/zip":
+		return ".zip"
+	default:
+		return ""
+	}
+}
+
+// UploadImage 保持向后兼容
+func (h *ChatHandler) UploadImage(c *gin.Context) {
+	h.UploadFile(c)
 }

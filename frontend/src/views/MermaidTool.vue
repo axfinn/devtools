@@ -79,7 +79,7 @@
               <el-icon><Minus /></el-icon>
             </el-button>
             <span class="zoom-display">{{ Math.round(zoomLevel * 100) }}%</span>
-            <el-button size="small" @click="zoomIn" :disabled="zoomLevel >= 4">
+            <el-button size="small" @click="zoomIn" :disabled="zoomLevel >= 10">
               <el-icon><Plus /></el-icon>
             </el-button>
             <el-button size="small" @click="resetZoom" title="重置缩放和位置">
@@ -132,7 +132,7 @@
                 <el-icon><Minus /></el-icon>
               </el-button>
               <span class="zoom-display">{{ Math.round(fullscreenZoom * 100) }}%</span>
-              <el-button size="small" @click="fullscreenZoomIn" :disabled="fullscreenZoom >= 4">
+              <el-button size="small" @click="fullscreenZoomIn" :disabled="fullscreenZoom >= 10">
                 <el-icon><Plus /></el-icon>
               </el-button>
               <el-button size="small" @click="resetFullscreenZoom" title="重置缩放和位置">
@@ -311,7 +311,7 @@ const rerender = () => {
 
 // 设置缩放
 const setZoom = (level) => {
-  zoomLevel.value = Math.min(4, Math.max(0.25, level))
+  zoomLevel.value = Math.min(10, Math.max(0.25, level))
 }
 
 // 缩放控制
@@ -332,7 +332,7 @@ const resetZoom = () => {
 // 鼠标滚轮缩放
 const onWheel = (e) => {
   const delta = e.deltaY > 0 ? 0.9 : 1.1
-  const newZoom = Math.min(4, Math.max(0.25, zoomLevel.value * delta))
+  const newZoom = Math.min(10, Math.max(0.25, zoomLevel.value * delta))
   zoomLevel.value = newZoom
 }
 
@@ -360,7 +360,7 @@ const onMouseUp = () => {
 
 // 全屏模式缩放控制
 const fullscreenZoomIn = () => {
-  fullscreenZoom.value = Math.min(4, fullscreenZoom.value * 1.25)
+  fullscreenZoom.value = Math.min(10, fullscreenZoom.value * 1.25)
 }
 
 const fullscreenZoomOut = () => {
@@ -376,7 +376,7 @@ const resetFullscreenZoom = () => {
 // 全屏模式滚轮缩放
 const onFullscreenWheel = (e) => {
   const delta = e.deltaY > 0 ? 0.9 : 1.1
-  fullscreenZoom.value = Math.min(4, Math.max(0.25, fullscreenZoom.value * delta))
+  fullscreenZoom.value = Math.min(10, Math.max(0.25, fullscreenZoom.value * delta))
 }
 
 // 全屏模式拖拽平移
@@ -720,8 +720,8 @@ const exportPng = async () => {
       return
     }
 
-    // 克隆并内联样式
-    const clonedSvg = inlineSvgStyles(svgElement)
+    // 克隆 SVG（深拷贝）
+    const clonedSvg = svgElement.cloneNode(true)
 
     // 获取 SVG 实际渲染尺寸
     const svgRect = svgElement.getBoundingClientRect()
@@ -757,7 +757,7 @@ const exportPng = async () => {
     width = Math.max(width, 200) + padding
     height = Math.max(height, 100) + padding
 
-    // 设置克隆 SVG 的尺寸
+    // 设置克隆 SVG 的尺寸和命名空间
     clonedSvg.setAttribute('width', width)
     clonedSvg.setAttribute('height', height)
     clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
@@ -768,7 +768,7 @@ const exportPng = async () => {
       clonedSvg.setAttribute('viewBox', `0 0 ${width} ${height}`)
     }
 
-    // 添加白色背景（插入到最前面，在 style 标签之后）
+    // 添加白色背景
     const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
     bgRect.setAttribute('x', '0')
     bgRect.setAttribute('y', '0')
@@ -784,37 +784,89 @@ const exportPng = async () => {
       clonedSvg.appendChild(bgRect)
     }
 
+    // 内联所有计算后的样式
+    const allElements = clonedSvg.querySelectorAll('*')
+    const originalElements = svgElement.querySelectorAll('*')
+
+    allElements.forEach((el, index) => {
+      const origEl = originalElements[index]
+      if (!origEl) return
+
+      const computedStyle = window.getComputedStyle(origEl)
+
+      // 关键样式属性 - 特别注意文本相关的
+      const importantStyles = [
+        'fill', 'stroke', 'stroke-width', 'stroke-dasharray',
+        'font-family', 'font-size', 'font-weight', 'font-style',
+        'text-anchor', 'dominant-baseline', 'alignment-baseline',
+        'opacity', 'fill-opacity', 'stroke-opacity',
+        'transform', 'display', 'visibility',
+        'letter-spacing', 'word-spacing', 'line-height'
+      ]
+
+      importantStyles.forEach(prop => {
+        const value = computedStyle.getPropertyValue(prop)
+        if (value && value !== 'none' && value !== 'normal' && value !== '') {
+          // 直接设置属性而不是 style，对于 SVG 更可靠
+          if (['fill', 'stroke', 'stroke-width', 'opacity', 'text-anchor', 'dominant-baseline'].includes(prop)) {
+            el.setAttribute(prop, value)
+          }
+          el.style[prop] = value
+        }
+      })
+
+      // 特殊处理 text 元素
+      if (el.tagName === 'text' || el.tagName === 'tspan') {
+        // 确保 x, y 坐标被保留
+        const x = origEl.getAttribute('x')
+        const y = origEl.getAttribute('y')
+        const dx = origEl.getAttribute('dx')
+        const dy = origEl.getAttribute('dy')
+        if (x) el.setAttribute('x', x)
+        if (y) el.setAttribute('y', y)
+        if (dx) el.setAttribute('dx', dx)
+        if (dy) el.setAttribute('dy', dy)
+      }
+    })
+
     // 序列化 SVG
     const serializer = new XMLSerializer()
     let svgString = serializer.serializeToString(clonedSvg)
 
-    // 编码为 Base64 Data URL（避免 blob URL 跨域问题）
-    const base64 = btoa(unescape(encodeURIComponent(svgString)))
-    const dataUrl = `data:image/svg+xml;base64,${base64}`
+    // 创建 Blob URL（更可靠）
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(svgBlob)
 
-    // 创建 Image
+    // 创建 Image 并等待加载
     const img = new Image()
     img.crossOrigin = 'anonymous'
 
     img.onload = () => {
-      // 创建 Canvas - 使用高分辨率
-      const canvas = document.createElement('canvas')
-      const scale = 2 // 高清导出
-      canvas.width = width * scale
-      canvas.height = height * scale
-
-      const ctx = canvas.getContext('2d')
-      // 启用图像平滑
-      ctx.imageSmoothingEnabled = true
-      ctx.imageSmoothingQuality = 'high'
-
-      ctx.scale(scale, scale)
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, width, height)
-      ctx.drawImage(img, 0, 0, width, height)
-
-      // 导出 PNG
       try {
+        // 创建 Canvas - 使用高分辨率
+        const canvas = document.createElement('canvas')
+        const scale = 2 // 高清导出
+        canvas.width = width * scale
+        canvas.height = height * scale
+
+        const ctx = canvas.getContext('2d')
+
+        // 启用图像平滑
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+
+        // 缩放并绘制白色背景
+        ctx.scale(scale, scale)
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, width, height)
+
+        // 绘制图像
+        ctx.drawImage(img, 0, 0, width, height)
+
+        // 清理 URL
+        URL.revokeObjectURL(url)
+
+        // 导出 PNG
         canvas.toBlob((blob) => {
           if (blob) {
             const downloadUrl = URL.createObjectURL(blob)
@@ -829,17 +881,20 @@ const exportPng = async () => {
           }
         }, 'image/png', 1.0)
       } catch (err) {
-        console.error('Canvas toBlob 失败:', err)
+        console.error('Canvas 处理失败:', err)
+        URL.revokeObjectURL(url)
         ElMessage.error('PNG 导出失败: ' + err.message)
       }
     }
 
     img.onerror = (err) => {
       console.error('图片加载失败:', err)
+      URL.revokeObjectURL(url)
       ElMessage.error('PNG 导出失败')
     }
 
-    img.src = dataUrl
+    // 加载图片
+    img.src = url
   } catch (e) {
     console.error('导出 PNG 失败:', e)
     ElMessage.error('PNG 导出失败: ' + e.message)

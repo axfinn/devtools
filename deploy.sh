@@ -210,7 +210,7 @@ deploy() {
     log_success "部署完成！"
 }
 
-# Docker 部署
+# Docker 部署 (使用 docker-compose)
 docker_deploy() {
     log_info "Docker 部署..."
 
@@ -220,22 +220,61 @@ docker_deploy() {
     fi
 
     cd "$SCRIPT_DIR"
-    docker build -t devtools:latest .
 
-    # 停止旧容器
-    docker stop devtools 2>/dev/null || true
-    docker rm devtools 2>/dev/null || true
+    # 使用 docker-compose 构建和启动
+    log_info "构建 Docker 镜像..."
+    docker-compose build
 
-    # 启动新容器
-    docker run -d \
-        --name devtools \
-        -p $PORT:8080 \
-        -v devtools-data:/app/data \
-        --restart unless-stopped \
-        devtools:latest
+    log_info "启动容器..."
+    docker-compose up -d
 
-    log_success "Docker 部署完成！"
-    log_info "访问地址: http://localhost:$PORT"
+    # 等待健康检查
+    sleep 3
+
+    # 检查服务状态
+    if curl -s "http://localhost:${HOST_PORT:-8082}/api/health" > /dev/null 2>&1; then
+        log_success "Docker 部署完成！"
+        log_info "访问地址: http://localhost:${HOST_PORT:-8082}"
+        docker-compose ps
+    else
+        log_error "服务启动失败，请检查日志"
+        docker-compose logs --tail=50
+        exit 1
+    fi
+}
+
+# Docker 停止
+docker_stop() {
+    log_info "停止 Docker 容器..."
+    cd "$SCRIPT_DIR"
+    docker-compose down
+    log_success "Docker 容器已停止"
+}
+
+# Docker 重启
+docker_restart() {
+    log_info "重启 Docker 容器..."
+    cd "$SCRIPT_DIR"
+    docker-compose restart
+    log_success "Docker 容器已重启"
+}
+
+# Docker 日志
+docker_logs() {
+    cd "$SCRIPT_DIR"
+    docker-compose logs -f
+}
+
+# Docker 状态
+docker_status() {
+    cd "$SCRIPT_DIR"
+    docker-compose ps
+    echo ""
+    if curl -s "http://localhost:${HOST_PORT:-8082}/api/health" > /dev/null 2>&1; then
+        log_success "健康检查通过"
+    else
+        log_warn "健康检查失败"
+    fi
 }
 
 # 显示帮助
@@ -244,7 +283,7 @@ help() {
     echo ""
     echo "用法: ./deploy.sh [命令]"
     echo ""
-    echo "命令:"
+    echo "本地部署命令:"
     echo "  build       构建前端和后端"
     echo "  start       启动服务"
     echo "  stop        停止服务"
@@ -252,16 +291,25 @@ help() {
     echo "  status      查看服务状态"
     echo "  logs        查看日志 (tail -f)"
     echo "  deploy      完整部署 (构建 + 启动)"
-    echo "  docker      Docker 部署"
+    echo ""
+    echo "Docker 命令:"
+    echo "  docker            Docker 构建并部署"
+    echo "  docker-stop       停止 Docker 容器"
+    echo "  docker-restart    重启 Docker 容器"
+    echo "  docker-logs       查看 Docker 日志"
+    echo "  docker-status     查看 Docker 状态"
+    echo ""
     echo "  help        显示帮助"
     echo ""
     echo "环境变量:"
-    echo "  PORT        服务端口 (默认: 8080)"
+    echo "  PORT        本地服务端口 (默认: 8080)"
+    echo "  HOST_PORT   Docker 映射端口 (默认: 8082)"
     echo ""
     echo "示例:"
-    echo "  ./deploy.sh deploy              # 完整部署"
-    echo "  PORT=8081 ./deploy.sh start     # 指定端口启动"
-    echo "  ./deploy.sh logs                # 查看日志"
+    echo "  ./deploy.sh deploy              # 本地完整部署"
+    echo "  ./deploy.sh docker              # Docker 部署"
+    echo "  ./deploy.sh docker-logs         # 查看 Docker 日志"
+    echo "  PORT=8081 ./deploy.sh start     # 指定端口启动本地服务"
 }
 
 # 主入口
@@ -289,6 +337,18 @@ case "${1:-help}" in
         ;;
     docker)
         docker_deploy
+        ;;
+    docker-stop)
+        docker_stop
+        ;;
+    docker-restart)
+        docker_restart
+        ;;
+    docker-logs)
+        docker_logs
+        ;;
+    docker-status)
+        docker_status
         ;;
     help|--help|-h)
         help

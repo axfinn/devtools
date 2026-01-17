@@ -82,6 +82,12 @@ const routes = [
     name: 'Chat',
     component: () => import('../views/ChatRoom.vue'),
     meta: { title: '聊天室', icon: 'ChatLineSquare' }
+  },
+  {
+    path: '/shorturl',
+    name: 'ShortUrl',
+    component: () => import('../views/ShortUrl.vue'),
+    meta: { title: '短链生成', icon: 'Link' }
   }
 ]
 
