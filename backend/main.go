@@ -9,6 +9,7 @@ import (
 	"devtools/handlers"
 	"devtools/middleware"
 	"devtools/models"
+	"devtools/utils"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -80,6 +81,11 @@ func main() {
 			err = db.CleanExpiredShortURLs()
 			if err == nil {
 				log.Printf("已清理过期短链")
+			}
+			// 清理过期上传文件（7天）
+			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
+			if err == nil && uploadCount > 0 {
+				log.Printf("已清理 %d 个过期上传文件", uploadCount)
 			}
 		}
 	}()
