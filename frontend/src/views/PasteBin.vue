@@ -268,8 +268,7 @@ import { ref, nextTick, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Share, CircleCheck, CopyDocument, Link, Plus, Picture, Delete, Upload } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
-
-const API_BASE = import.meta.env.VITE_API_BASE || ''
+import { API_BASE } from '../api'
 
 const content = ref('')
 const title = ref('')

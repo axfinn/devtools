@@ -140,8 +140,7 @@ import { ElMessage } from 'element-plus'
 import { Loading, Lock, Back, Picture, Download, ZoomIn } from '@element-plus/icons-vue'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
-
-const API_BASE = import.meta.env.VITE_API_BASE || ''
+import { API_BASE } from '../api'
 
 const route = useRoute()
 const loading = ref(true)

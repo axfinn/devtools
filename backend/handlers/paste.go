@@ -1,13 +1,12 @@
 package handlers
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"devtools/models"
+	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,8 +21,8 @@ type PasteHandler struct {
 func NewPasteHandler(db *models.DB) *PasteHandler {
 	return &PasteHandler{
 		db:       db,
-		maxTotal: 10000,       // 最多存储 10000 条
-		maxPerIP: 5,           // 每 IP 每分钟最多 5 条
+		maxTotal: 10000,        // 最多存储 10000 条
+		maxPerIP: 10,           // 每 IP 每分钟最多 10 条（与中间件限流一致）
 		ipWindow: time.Minute,
 	}
 }
@@ -153,8 +152,7 @@ func (h *PasteHandler) Create(c *gin.Context) {
 
 	// 密码加密存储
 	if req.Password != "" {
-		hash := sha256.Sum256([]byte(req.Password))
-		paste.Password = hex.EncodeToString(hash[:])
+		paste.Password = utils.HashPassword(req.Password)
 	}
 
 	if err := h.db.CreatePaste(paste); err != nil {
@@ -203,8 +201,7 @@ func (h *PasteHandler) Get(c *gin.Context) {
 			})
 			return
 		}
-		hash := sha256.Sum256([]byte(password))
-		if hex.EncodeToString(hash[:]) != paste.Password {
+		if !utils.VerifyPassword(password, paste.Password) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误", "code": 401})
 			return
 		}

@@ -89,13 +89,14 @@ func main() {
 	r := gin.Default()
 
 	// CORS 配置
+	// 注意: AllowOrigins: "*" 与 AllowCredentials: true 不兼容
+	// 如需凭证支持，请设置具体的 AllowOrigins
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
+		AllowOrigins:  []string{"*"},
+		AllowMethods:  []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:  []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders: []string{"Content-Length"},
+		MaxAge:        12 * time.Hour,
 	}))
 
 	// 内容大小限制（55MB，支持50MB视频上传）

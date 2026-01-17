@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"devtools/models"
+	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -29,20 +29,12 @@ const (
 	uploadDir    = "./data/uploads"
 )
 
-// 文件魔数签名
-var fileMagicNumbers = map[string][]byte{
-	"image/jpeg":      {0xFF, 0xD8, 0xFF},
-	"image/png":       {0x89, 0x50, 0x4E, 0x47},
-	"image/gif":       {0x47, 0x49, 0x46},
-	"image/webp":      {0x52, 0x49, 0x46, 0x46}, // RIFF
-	"video/mp4":       {0x00, 0x00, 0x00},        // ftyp
-	"video/webm":      {0x1A, 0x45, 0xDF, 0xA3},
-	"audio/mpeg":      {0xFF, 0xFB},              // MP3
-	"audio/wav":       {0x52, 0x49, 0x46, 0x46},  // RIFF
-	"audio/ogg":       {0x4F, 0x67, 0x67, 0x53},
-	"audio/webm":      {0x1A, 0x45, 0xDF, 0xA3},
-	"application/pdf": {0x25, 0x50, 0x44, 0x46},
-	"application/zip": {0x50, 0x4B, 0x03, 0x04},
+// 允许的文件扩展名白名单
+var allowedExtensions = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
+	".mp4": true, ".webm": true, ".mov": true,
+	".mp3": true, ".wav": true, ".ogg": true,
+	".pdf": true, ".zip": true,
 }
 
 // 检测文件真实类型
@@ -174,8 +166,7 @@ func (h *ChatHandler) CreateRoom(c *gin.Context) {
 	}
 
 	if req.Password != "" {
-		hash := sha256.Sum256([]byte(req.Password))
-		room.Password = hex.EncodeToString(hash[:])
+		room.Password = utils.HashPassword(req.Password)
 	}
 
 	if err := h.db.CreateRoom(room); err != nil {
@@ -247,8 +238,7 @@ func (h *ChatHandler) JoinRoom(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "需要密码", "code": 401, "has_password": true})
 			return
 		}
-		hash := sha256.Sum256([]byte(req.Password))
-		if hex.EncodeToString(hash[:]) != room.Password {
+		if !utils.VerifyPassword(req.Password, room.Password) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误", "code": 401})
 			return
 		}
@@ -552,9 +542,17 @@ func (h *ChatHandler) UploadFile(c *gin.Context) {
 		}
 	}
 
+	// 扩展名白名单验证
+	if ext != "" && !allowedExtensions[ext] {
+		ext = "" // 移除不安全的扩展名
+	}
+
 	// 生成随机文件名
 	randomBytes := make([]byte, 16)
-	rand.Read(randomBytes)
+	if _, err := rand.Read(randomBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
 	filename := fmt.Sprintf("%s%s", hex.EncodeToString(randomBytes), ext)
 
 	// 确保上传目录存在

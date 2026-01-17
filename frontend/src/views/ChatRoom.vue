@@ -262,8 +262,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElImageViewer } from 'element-plus'
+import { API_BASE, WS_BASE } from '../api'
 
-const API_BASE = ''
 const MAX_RECONNECT_ATTEMPTS = 5
 
 const rooms = ref([])
@@ -460,9 +460,7 @@ const connectWebSocket = () => {
   }
 
   connectionStatus.value = 'connecting'
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const host = window.location.host
-  const wsUrl = `${protocol}//${host}/api/chat/room/${currentRoom.value.id}/ws?nickname=${encodeURIComponent(nickname.value)}`
+  const wsUrl = `${WS_BASE}/api/chat/room/${currentRoom.value.id}/ws?nickname=${encodeURIComponent(nickname.value)}`
 
   ws = new WebSocket(wsUrl)
 
