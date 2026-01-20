@@ -88,6 +88,12 @@ const routes = [
     name: 'ShortUrl',
     component: () => import('../views/ShortUrl.vue'),
     meta: { title: '短链生成', icon: 'Link' }
+  },
+  {
+    path: '/mockapi',
+    name: 'MockApi',
+    component: () => import('../views/MockApi.vue'),
+    meta: { title: 'Mock API', icon: 'Connection' }
   }
 ]
 

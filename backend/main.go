@@ -58,6 +58,11 @@ func main() {
 		log.Fatalf("短链数据库初始化失败: %v", err)
 	}
 
+	// 初始化 Mock API 数据库表
+	if err := db.InitMockAPI(); err != nil {
+		log.Fatalf("Mock API 数据库初始化失败: %v", err)
+	}
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -81,6 +86,11 @@ func main() {
 			err = db.CleanExpiredShortURLs()
 			if err == nil {
 				log.Printf("已清理过期短链")
+			}
+			// 清理过期 Mock APIs
+			err = db.CleanExpiredMockAPIs()
+			if err == nil {
+				log.Printf("已清理过期 Mock APIs")
 			}
 			// 清理过期上传文件（7天）
 			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
@@ -116,6 +126,7 @@ func main() {
 	dnsHandler := handlers.NewDNSHandler()
 	chatHandler := handlers.NewChatHandler(db)
 	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
+	mockAPIHandler := handlers.NewMockAPIHandler(db)
 
 	// API 路由
 	api := r.Group("/api")
@@ -154,6 +165,16 @@ func main() {
 			shorturl.GET("/:id/stats", shortURLHandler.GetStats)
 		}
 
+		// Mock API
+		mockapi := api.Group("/mockapi")
+		{
+			mockapi.POST("", createRateLimiter.Middleware(), mockAPIHandler.Create)
+			mockapi.GET("/:id", mockAPIHandler.Get)
+			mockapi.GET("/:id/logs", mockAPIHandler.GetLogs)
+			mockapi.PUT("/:id", mockAPIHandler.Update)
+			mockapi.DELETE("/:id", mockAPIHandler.Delete)
+		}
+
 		// 健康检查
 		api.GET("/health", func(c *gin.Context) {
 			c.JSON(200, gin.H{"status": "ok"})
@@ -162,6 +183,9 @@ func main() {
 
 	// 短链重定向（非 API 路径）
 	r.GET("/s/:id", shortURLHandler.Redirect)
+
+	// Mock API 执行（非 API 路径，支持所有 HTTP 方法）
+	r.Any("/mock/:id", mockAPIHandler.Execute)
 
 	// 静态文件（生产环境）
 	r.Static("/assets", "./dist/assets")
