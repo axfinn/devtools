@@ -24,6 +24,12 @@ const routes = [
     meta: { title: 'Markdown', icon: 'EditPen' }
   },
   {
+    path: '/md/:id',
+    name: 'MarkdownShare',
+    component: () => import('../views/MarkdownShareView.vue'),
+    meta: { title: 'Markdown 分享', icon: 'EditPen', hideSidebar: true }
+  },
+  {
     path: '/paste',
     name: 'PasteBin',
     component: () => import('../views/PasteBin.vue'),

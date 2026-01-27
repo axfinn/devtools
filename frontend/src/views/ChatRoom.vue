@@ -119,9 +119,9 @@
         <div class="input-tools">
           <el-popover
             placement="top-start"
-            :width="320"
             trigger="click"
             v-model:visible="showEmoji"
+            popper-class="emoji-popover"
           >
             <template #reference>
               <el-button class="tool-btn" title="表情">
@@ -146,8 +146,11 @@
           <el-button class="tool-btn" @click="openCamera" :loading="uploading" title="拍照">
             <el-icon><Camera /></el-icon>
           </el-button>
-          <el-button class="tool-btn" @click="startVideoRecording" :loading="isRecordingVideo" title="录视频">
+          <el-button class="tool-btn" :class="{ recording: isRecordingVideo }" @click="startVideoRecording" title="录视频">
             <el-icon><VideoCamera /></el-icon>
+          </el-button>
+          <el-button class="tool-btn" :class="{ recording: isRecordingScreen }" @click="toggleScreenRecording" title="录屏">
+            <el-icon><Monitor /></el-icon>
           </el-button>
           <el-button
             class="tool-btn"
@@ -300,6 +303,12 @@ const isRecordingCamera = ref(false)
 let cameraStream = null
 let cameraRecorder = null
 let cameraChunks = []
+
+// 录屏相关
+const isRecordingScreen = ref(false)
+let screenStream = null
+let screenRecorder = null
+let screenChunks = []
 
 const createForm = ref({ name: '', password: '' })
 const joinForm = ref({ nickname: '', password: '', needPassword: false, roomId: '' })
@@ -700,7 +709,13 @@ const stopCameraRecording = () => {
 
 // ========== 录视频功能（直接开始录制） ==========
 const startVideoRecording = async () => {
-  if (isRecordingVideo.value) return
+  // 如果正在录制，停止录制
+  if (isRecordingVideo.value) {
+    if (cameraRecorder && cameraRecorder.state !== 'inactive') {
+      cameraRecorder.stop()
+    }
+    return
+  }
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -734,6 +749,62 @@ const startVideoRecording = async () => {
     ElMessage.info('录制中，再次点击停止')
   } catch (error) {
     ElMessage.error('无法访问摄像头: ' + error.message)
+  }
+}
+
+// ========== 录屏功能 ==========
+const toggleScreenRecording = async () => {
+  // 如果正在录制，停止录制
+  if (isRecordingScreen.value) {
+    if (screenRecorder && screenRecorder.state !== 'inactive') {
+      screenRecorder.stop()
+    }
+    return
+  }
+
+  try {
+    // 请求屏幕共享权限
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: 'always' },
+      audio: true
+    })
+
+    screenChunks = []
+    screenRecorder = new MediaRecorder(screenStream, {
+      mimeType: MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4'
+    })
+
+    screenRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        screenChunks.push(e.data)
+      }
+    }
+
+    screenRecorder.onstop = async () => {
+      screenStream.getTracks().forEach(track => track.stop())
+      const blob = new Blob(screenChunks, { type: screenRecorder.mimeType })
+      const ext = screenRecorder.mimeType.includes('webm') ? 'webm' : 'mp4'
+      const file = new File([blob], `screen_${Date.now()}.${ext}`, { type: screenRecorder.mimeType })
+      isRecordingScreen.value = false
+      await uploadFile(file)
+    }
+
+    // 当用户通过浏览器UI停止共享时
+    screenStream.getVideoTracks()[0].onended = () => {
+      if (screenRecorder && screenRecorder.state !== 'inactive') {
+        screenRecorder.stop()
+      }
+    }
+
+    screenRecorder.start()
+    isRecordingScreen.value = true
+    ElMessage.info('录屏中，再次点击或停止共享结束')
+  } catch (error) {
+    if (error.name === 'NotAllowedError') {
+      ElMessage.warning('用户取消了屏幕共享')
+    } else {
+      ElMessage.error('无法启动录屏: ' + error.message)
+    }
   }
 }
 
@@ -816,10 +887,24 @@ const previewImage = (url) => {
   previewVisible.value = true
 }
 
+// 停止录屏
+const stopScreenRecording = () => {
+  if (screenRecorder && screenRecorder.state !== 'inactive') {
+    screenRecorder.stop()
+  }
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop())
+    screenStream = null
+  }
+  isRecordingScreen.value = false
+  screenChunks = []
+}
+
 const leaveRoom = () => {
   // 停止所有录制
   cancelAudioRecording()
   closeCamera()
+  stopScreenRecording()
 
   if (ws) {
     ws.close()
@@ -851,6 +936,7 @@ onMounted(() => {
 onUnmounted(() => {
   cancelAudioRecording()
   closeCamera()
+  stopScreenRecording()
   if (ws) {
     ws.close()
     ws = null
@@ -1143,6 +1229,9 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
   gap: 4px;
+  max-width: calc(100vw - 40px);
+  width: 320px;
+  box-sizing: border-box;
 }
 
 .emoji-item {
@@ -1156,6 +1245,18 @@ onUnmounted(() => {
 
 .emoji-item:hover {
   background: #f0f0f0;
+}
+
+@media (max-width: 400px) {
+  .emoji-panel {
+    width: calc(100vw - 40px);
+    grid-template-columns: repeat(8, 1fr);
+  }
+
+  .emoji-item {
+    font-size: 18px;
+    padding: 3px;
+  }
 }
 
 /* 录音状态显示 */
@@ -1201,7 +1302,13 @@ onUnmounted(() => {
   }
 
   .emoji-panel {
+    width: min(320px, calc(100vw - 40px));
     grid-template-columns: repeat(8, 1fr);
+  }
+
+  .emoji-item {
+    font-size: 18px;
+    padding: 3px;
   }
 
   .input-area {
@@ -1230,6 +1337,23 @@ onUnmounted(() => {
 
   .connection-status {
     font-size: 11px;
+  }
+}
+</style>
+
+<style>
+/* 全局样式 - 表情弹窗自适应 */
+.emoji-popover.el-popover {
+  width: auto !important;
+  min-width: auto !important;
+  max-width: calc(100vw - 24px) !important;
+  padding: 8px !important;
+}
+
+@media (max-width: 768px) {
+  .emoji-popover.el-popover {
+    max-width: calc(100vw - 16px) !important;
+    padding: 6px !important;
   }
 }
 </style>

@@ -30,19 +30,19 @@ type CreateShortURLRequest struct {
 }
 
 type CreateShortURLResponse struct {
-	ID        string    `json:"id"`
-	ShortURL  string    `json:"short_url"`
-	ExpiresAt time.Time `json:"expires_at"`
-	MaxClicks int       `json:"max_clicks"`
+	ID        string     `json:"id"`
+	ShortURL  string     `json:"short_url"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	MaxClicks int        `json:"max_clicks"`
 }
 
 type ShortURLStatsResponse struct {
-	ID          string    `json:"id"`
-	OriginalURL string    `json:"original_url"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	MaxClicks   int       `json:"max_clicks"`
-	Clicks      int       `json:"clicks"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	OriginalURL string     `json:"original_url"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	MaxClicks   int        `json:"max_clicks"`
+	Clicks      int        `json:"clicks"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // validateURL validates the URL format and protocol
@@ -199,7 +199,7 @@ func (h *ShortURLHandler) Redirect(c *gin.Context) {
 	}
 
 	// Check if expired
-	if time.Now().After(shortURL.ExpiresAt) {
+	if shortURL.ExpiresAt != nil && time.Now().After(*shortURL.ExpiresAt) {
 		// Delete expired short URL
 		h.db.DeleteShortURL(id)
 		c.JSON(http.StatusGone, gin.H{"error": "Short URL has expired"})

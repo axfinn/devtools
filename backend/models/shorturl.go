@@ -9,13 +9,14 @@ import (
 )
 
 type ShortURL struct {
-	ID          string    `json:"id"`
-	OriginalURL string    `json:"original_url"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	MaxClicks   int       `json:"max_clicks"`
-	Clicks      int       `json:"clicks"`
-	CreatedAt   time.Time `json:"created_at"`
-	CreatorIP   string    `json:"creator_ip"`
+	ID          string     `json:"id"`
+	OriginalURL string     `json:"original_url"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	MaxClicks   int        `json:"max_clicks"`
+	Clicks      int        `json:"clicks"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CreatorIP   string     `json:"creator_ip"`
+	MDShareID   string     `json:"mdshare_id,omitempty"` // Link to markdown share
 }
 
 // InitShortURL creates the short_urls table if it doesn't exist
@@ -144,7 +145,7 @@ func (db *DB) CreateShortURLWithCustomID(originalURL string, customID string, ex
 	return &ShortURL{
 		ID:          id,
 		OriginalURL: originalURL,
-		ExpiresAt:   expiresAt,
+		ExpiresAt:   &expiresAt,
 		MaxClicks:   maxClicks,
 		Clicks:      0,
 		CreatedAt:   time.Now(),
@@ -240,4 +241,38 @@ func (db *DB) CountShortURLsByIP(ip string, duration time.Duration) (int, error)
 		"SELECT COUNT(*) FROM short_urls WHERE creator_ip = ? AND created_at > ?",
 		ip, since).Scan(&count)
 	return count, err
+}
+
+// CreateShortURLFromStruct creates a new short URL from struct (for MDShare integration)
+func (db *DB) CreateShortURLFromStruct(shortURL *ShortURL) error {
+	// Generate ID if not provided
+	if shortURL.ID == "" {
+		var err error
+		for i := 0; i < 10; i++ {
+			shortURL.ID, err = generateShortURLID()
+			if err != nil {
+				return err
+			}
+			var exists bool
+			db.conn.QueryRow("SELECT EXISTS(SELECT 1 FROM short_urls WHERE id = ?)", shortURL.ID).Scan(&exists)
+			if !exists {
+				break
+			}
+		}
+	}
+
+	shortURL.CreatedAt = time.Now()
+
+	_, err := db.conn.Exec(`
+		INSERT INTO short_urls (id, original_url, expires_at, max_clicks, clicks, created_at, creator_ip)
+		VALUES (?, ?, ?, ?, 0, ?, ?)`,
+		shortURL.ID, shortURL.OriginalURL, shortURL.ExpiresAt, shortURL.MaxClicks, shortURL.CreatedAt, shortURL.CreatorIP)
+
+	return err
+}
+
+// UpdateShortURLExpires updates the expiration time of a short URL
+func (db *DB) UpdateShortURLExpires(id string, expiresAt *time.Time) error {
+	_, err := db.conn.Exec("UPDATE short_urls SET expires_at = ? WHERE id = ?", expiresAt, id)
+	return err
 }

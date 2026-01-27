@@ -7,3 +7,13 @@ shorturl:
   # 留空 = 普通模式，只能随机ID
   # 设置密码 = 可使用自定义ID如 /s/1 /s/abc
   password: "your_password_here"
+
+# Markdown 分享配置
+mdshare:
+  # 管理员密码（可管理所有分享、设置永久）
+  # 留空 = 无管理员功能
+  admin_password: ""
+  # 默认最大查看次数（2-10）
+  default_max_views: 5
+  # 默认过期天数
+  default_expires_days: 30

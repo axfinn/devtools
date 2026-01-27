@@ -1,7 +1,7 @@
 <template>
-  <el-container class="app-container">
+  <el-container class="app-container" :class="{ 'fullscreen-mode': hideSidebar }">
     <!-- 移动端头部 -->
-    <el-header v-if="isMobile" class="mobile-header">
+    <el-header v-if="isMobile && !hideSidebar" class="mobile-header">
       <div class="mobile-header-left">
         <el-icon :size="24" class="menu-trigger" @click="showDrawer = true"><Menu /></el-icon>
         <span class="mobile-title">DevTools</span>
@@ -13,7 +13,7 @@
 
     <!-- 移动端抽屉菜单 -->
     <el-drawer
-      v-if="isMobile"
+      v-if="isMobile && !hideSidebar"
       v-model="showDrawer"
       direction="ltr"
       size="70%"
@@ -47,7 +47,7 @@
     </el-drawer>
 
     <!-- PC端侧边栏 -->
-    <el-aside v-if="!isMobile" :width="isCollapse ? '64px' : '200px'" class="sidebar">
+    <el-aside v-if="!isMobile && !hideSidebar" :width="isCollapse ? '64px' : '200px'" class="sidebar">
       <div class="logo" @click="isCollapse = !isCollapse">
         <el-icon :size="24"><Tools /></el-icon>
         <span v-show="!isCollapse" class="logo-text">DevTools</span>
@@ -81,7 +81,7 @@
       </router-view>
 
       <!-- 页面底部 Footer -->
-      <div class="page-footer">
+      <div v-if="!hideSidebar" class="page-footer">
         <div class="footer-content">
           <a class="footer-link" href="https://github.com/axfinn/devtools" target="_blank">
             <svg class="github-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -135,6 +135,9 @@ const showDrawer = ref(false)
 const isMobile = ref(false)
 const showDonateDialog = ref(false)
 
+// 是否隐藏侧边栏（全屏模式）
+const hideSidebar = computed(() => route.meta?.hideSidebar === true)
+
 // 当前页面标题
 const currentTitle = computed(() => {
   const currentRoute = menuRoutes.value.find(r => r.path === route.path)
@@ -175,6 +178,15 @@ onUnmounted(() => {
   height: 100vh;
   background-color: #121212;
   overflow: hidden;
+}
+
+.app-container.fullscreen-mode {
+  display: block;
+}
+
+.app-container.fullscreen-mode .main-content {
+  height: 100vh;
+  padding: 0;
 }
 
 /* 移动端头部 */

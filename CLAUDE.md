@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, and URL shortening.
+DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, URL shortening, and Mock API testing.
 
 **Tech Stack:**
 - Frontend: Vue 3 + Vite + Element Plus + TailwindCSS
@@ -73,11 +73,28 @@ Docker exposes the backend on port 8082.
   - Default 30-day expiration, 1000 max clicks
   - Auto-delete on expiration or max clicks
 - **handlers/dns.go**: IP/DNS lookup handlers
+- **handlers/mockapi.go**: Mock API endpoint handlers
+  - Rate limiting: 10 creates per IP per minute
+  - Supports all HTTP methods (GET, POST, PUT, DELETE, etc.)
+  - Custom response status codes and bodies
+  - Request logging with optional expiration
+- **handlers/mdshare.go**: Markdown share handlers
+  - Shareable Markdown with 2-10 view limit, shows remaining views
+  - Auto-generates short URL (`/s/xxx`) for easy sharing
+  - Creator key for management (stored in localStorage)
+  - Admin password for global management (list, view, delete all)
+  - Reshare generates new access key and short URL
+  - Supports image paste/drag (Base64 embedded, max 1MB per image)
+- **config/config.go**: Configuration file loader for YAML config
 - **models/paste.go**: SQLite operations for pastes
   - Generates 8-character random hex IDs
 - **models/chat.go**: SQLite operations for chat rooms and messages
 - **models/shorturl.go**: SQLite operations for short URLs
+- **models/mockapi.go**: SQLite operations for Mock APIs and request logs
+- **models/mdshare.go**: SQLite operations for Markdown shares
 - **middleware/ratelimit.go**: IP-based rate limiting middleware
+- **utils/crypto.go**: Password hashing utilities (SHA256)
+- **utils/cleanup.go**: File cleanup utilities for expired uploads
 
 ### API Endpoints
 
@@ -100,8 +117,29 @@ Docker exposes the backend on port 8082.
 
 **Short URL:**
 - `POST /api/shorturl`: Create short URL (requires `original_url`, optional `expires_in`, `max_clicks`, `custom_id`, `password`)
+- `GET /api/shorturl/list`: List short URLs
 - `GET /api/shorturl/:id/stats`: Get click stats
 - `GET /s/:id`: Redirect to original URL (non-API route)
+
+**Mock API:**
+- `POST /api/mockapi`: Create Mock API endpoint (requires `method`, `response_status`, `response_body`, optional `name`, `description`, `expires_in`)
+- `GET /api/mockapi/:id`: Get Mock API details
+- `GET /api/mockapi/:id/logs`: Get request logs for Mock API
+- `PUT /api/mockapi/:id`: Update Mock API endpoint
+- `DELETE /api/mockapi/:id`: Delete Mock API endpoint
+- `ANY /mock/:id`: Execute Mock API endpoint (logs request and returns configured response)
+
+**Markdown Share:**
+- `POST /api/mdshare`: Create Markdown share (requires `content`, optional `title`, `max_views` 2-10, `expires_in` days)
+  - Returns `id`, `creator_key`, `access_key`, `short_code`, `share_url`
+- `GET /api/mdshare/:id?key=xxx`: Get content (increments view count, returns `remaining_views`)
+- `GET /api/mdshare/:id/creator?creator_key=xxx`: Get content for creator (no view increment)
+- `PUT /api/mdshare/:id`: Manage share (actions: `extend`, `reshare`, `edit`)
+- `DELETE /api/mdshare/:id?creator_key=xxx`: Delete share
+- `GET /api/mdshare/admin/list?admin_password=xxx`: Admin list all shares
+- `GET /api/mdshare/admin/:id?admin_password=xxx`: Admin view any share
+- `DELETE /api/mdshare/admin/:id?admin_password=xxx`: Admin delete any share
+- `GET /md/:id?key=xxx`: Frontend view route (auto-generates short URL `/s/xxx`)
 
 **Health:**
 - `GET /api/health`: Health check endpoint
@@ -125,11 +163,21 @@ Copy `backend/config.example.yaml` to `backend/config.yaml`:
 ```yaml
 shorturl:
   password: "your_password"  # 设置后可使用自定义短链ID
+
+mdshare:
+  admin_password: ""         # 管理员密码
+  default_max_views: 5       # 默认最大查看次数 (2-10)
+  default_expires_days: 30   # 默认过期天数
 ```
 
 **Short URL modes:**
 - 无密码：随机ID，有限流（10/小时/IP）
 - 有密码：可自定义ID如 `/s/1` `/s/abc`，无限流
+
+**Markdown Share:**
+- 创建者密钥自动存储在浏览器 localStorage
+- 访问密钥用于分享给他人查看
+- 管理员密码可设置永久分享
 
 ## Key Design Patterns
 
@@ -140,14 +188,15 @@ shorturl:
 - **Code Splitting**: Lazy-loaded routes reduce initial bundle size
 
 ### Backend
-- **Security**: Rate limiting per IP, content size limits, password hashing, input validation
-- **Auto-cleanup**: Background goroutine removes expired data every hour (pastes, chat rooms inactive >7 days, messages >7 days old, expired short URLs)
+- **Security**: Rate limiting per IP, content size limits, password hashing (SHA256), input validation
+- **Auto-cleanup**: Background goroutine removes expired data every hour (pastes, chat rooms inactive >7 days, messages >7 days old, expired short URLs, expired Mock APIs, expired Markdown shares, uploaded files >7 days old)
 - **Graceful Degradation**: Attempts cleanup when storage limit reached before rejecting
 - **Static-first**: SPA routing handled by serving index.html for unmatched routes
+- **Config System**: YAML-based configuration loaded from `./config.yaml` or `CONFIG_PATH` env var
 
 ## Database Schema
 
-The SQLite database contains four main tables: `pastes`, `chat_rooms`, `chat_messages`, and `short_urls`. Each table uses 8-character hex IDs and includes cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
+The SQLite database contains six main tables: `pastes`, `chat_rooms`, `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), and `markdown_shares`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
 
 ## Common Tasks
 
@@ -158,9 +207,10 @@ The SQLite database contains four main tables: `pastes`, `chat_rooms`, `chat_mes
 
 ### Modifying Rate Limits
 - Global create rate limit: `middleware.NewRateLimiter()` in main.go (10 per IP per minute)
-- Paste creation limit: `maxPerIP` and `ipWindow` in handlers/paste.go
+- Paste creation limit: `maxPerIP` and `ipWindow` in handlers/paste.go (5 per minute)
 - Short URL limit: `CountShortURLsByIP()` check in handlers/shorturl.go (10 per IP per hour)
-- Content size limit: `middleware.ContentSizeLimiter()` in main.go (55MB for video support)
+- Mock API limit: Same as global create rate limit (10 per IP per minute)
+- Content size limit: `middleware.ContentSizeLimiter()` in main.go (55MB for video upload support)
 
 ### Testing PasteBin
 Use curl or API clients:
@@ -173,6 +223,14 @@ curl -X POST http://localhost:8082/api/paste \
 # Get paste (returns id in response)
 curl http://localhost:8082/api/paste/{id}
 ```
+
+### WebSocket Chat Architecture
+The chat system uses in-memory state management with gorilla/websocket:
+- **Room/Client Management**: `sync.RWMutex` protects shared state for concurrent access
+- **Message Broadcasting**: Messages are broadcast to all clients in a room via goroutines
+- **File Uploads**: Images/videos are stored in `./data/uploads` with 7-day auto-cleanup
+- **Connection Handling**: Each WebSocket connection runs in its own goroutine with read/write loops
+- **Cleanup**: Rooms inactive for 7+ days and messages older than 7 days are auto-deleted
 
 ## Module Path
 

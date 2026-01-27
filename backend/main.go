@@ -63,6 +63,11 @@ func main() {
 		log.Fatalf("Mock API 数据库初始化失败: %v", err)
 	}
 
+	// 初始化 Markdown 分享数据库表
+	if err := db.InitMDShare(); err != nil {
+		log.Fatalf("Markdown 分享数据库初始化失败: %v", err)
+	}
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -91,6 +96,11 @@ func main() {
 			err = db.CleanExpiredMockAPIs()
 			if err == nil {
 				log.Printf("已清理过期 Mock APIs")
+			}
+			// 清理过期 Markdown 分享
+			mdCount, err := db.CleanExpiredMDShares()
+			if err == nil && mdCount > 0 {
+				log.Printf("已清理 %d 个过期 Markdown 分享", mdCount)
 			}
 			// 清理过期上传文件（7天）
 			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
@@ -127,6 +137,7 @@ func main() {
 	chatHandler := handlers.NewChatHandler(db)
 	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
 	mockAPIHandler := handlers.NewMockAPIHandler(db)
+	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)
 
 	// API 路由
 	api := r.Group("/api")
@@ -173,6 +184,20 @@ func main() {
 			mockapi.GET("/:id/logs", mockAPIHandler.GetLogs)
 			mockapi.PUT("/:id", mockAPIHandler.Update)
 			mockapi.DELETE("/:id", mockAPIHandler.Delete)
+		}
+
+		// Markdown 分享 API
+		mdshare := api.Group("/mdshare")
+		{
+			mdshare.POST("", createRateLimiter.Middleware(), mdShareHandler.Create)
+			mdshare.GET("/:id", mdShareHandler.Get)
+			mdshare.GET("/:id/creator", mdShareHandler.GetByCreator)
+			mdshare.PUT("/:id", mdShareHandler.Update)
+			mdshare.DELETE("/:id", mdShareHandler.Delete)
+			// Admin routes
+			mdshare.GET("/admin/list", mdShareHandler.List)
+			mdshare.GET("/admin/:id", mdShareHandler.AdminGet)
+			mdshare.DELETE("/admin/:id", mdShareHandler.AdminDelete)
 		}
 
 		// 健康检查

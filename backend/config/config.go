@@ -7,11 +7,18 @@ import (
 )
 
 type Config struct {
-	ShortURL ShortURLConfig `yaml:"shorturl"`
+	ShortURL ShortURLConfig  `yaml:"shorturl"`
+	MDShare  MDShareConfig   `yaml:"mdshare"`
 }
 
 type ShortURLConfig struct {
 	Password string `yaml:"password"` // 管理密码，为空则不需要密码
+}
+
+type MDShareConfig struct {
+	AdminPassword     string `yaml:"admin_password"`      // 管理员密码，可管理所有分享
+	DefaultMaxViews   int    `yaml:"default_max_views"`   // 默认最大查看次数，默认5
+	DefaultExpiresDays int   `yaml:"default_expires_days"` // 默认过期天数，默认30
 }
 
 var globalConfig *Config
