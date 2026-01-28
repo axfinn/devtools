@@ -73,7 +73,7 @@
         ref="excalidrawRef"
         :initial-data="sceneData"
         :view-mode-enabled="true"
-        :theme="theme"
+        :theme="currentTheme"
       />
     </div>
 
@@ -97,12 +97,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import ExcalidrawWrapper from '../components/ExcalidrawWrapper.vue'
+import { useTheme } from '../composables/useTheme'
 
 const route = useRoute()
 const router = useRouter()
 
 const excalidrawRef = ref(null)
-const theme = ref('dark')
+const { currentTheme } = useTheme()
 const loading = ref(false)
 const verifying = ref(false)
 const errorMsg = ref('')

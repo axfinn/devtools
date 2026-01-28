@@ -62,7 +62,7 @@
       <ExcalidrawWrapper
         ref="excalidrawRef"
         :initial-data="initialData"
-        :theme="theme"
+        :theme="currentTheme"
         @change="onSceneChange"
         @ready="onExcalidrawReady"
       />
@@ -346,9 +346,10 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ExcalidrawWrapper from '../components/ExcalidrawWrapper.vue'
+import { useTheme } from '../composables/useTheme'
 
 const excalidrawRef = ref(null)
-const theme = ref('dark')
+const { currentTheme } = useTheme()
 const initialData = ref(null)
 
 const onExcalidrawReady = (api) => {
