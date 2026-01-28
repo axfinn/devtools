@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DevTools 主题测试清单</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 32px;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .progress-bar {
+      background: #e0e0e0;
+      border-radius: 10px;
+      height: 30px;
+      margin-bottom: 30px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-fill {
+      background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    .section {
+      margin-bottom: 30px;
+    }
+
+    .section h2 {
+      color: #667eea;
+      font-size: 20px;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .section h2::before {
+      content: '';
+      width: 4px;
+      height: 20px;
+      background: #667eea;
+      border-radius: 2px;
+    }
+
+    .checklist-item {
+      display: flex;
+      align-items: center;
+      padding: 12px;
+      margin-bottom: 8px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      transition: all 0.2s;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .checklist-item:hover {
+      background: #e9ecef;
+      transform: translateX(5px);
+    }
+
+    .checklist-item.checked {
+      background: #d4edda;
+      border-left: 4px solid #28a745;
+    }
+
+    .checklist-item input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      margin-right: 12px;
+      cursor: pointer;
+      accent-color: #667eea;
+    }
+
+    .checklist-item label {
+      flex: 1;
+      cursor: pointer;
+      font-size: 15px;
+      color: #333;
+    }
+
+    .checklist-item.checked label {
+      color: #155724;
+      text-decoration: line-through;
+    }
+
+    .tier-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-right: 8px;
+    }
+
+    .tier-1 { background: #d4edda; color: #155724; }
+    .tier-2 { background: #fff3cd; color: #856404; }
+    .tier-3 { background: #f8d7da; color: #721c24; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .stat-card {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 12px;
+      text-align: center;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    }
+
+    .stat-card h3 {
+      font-size: 14px;
+      opacity: 0.9;
+      margin-bottom: 8px;
+    }
+
+    .stat-card .number {
+      font-size: 36px;
+      font-weight: bold;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+      margin-top: 30px;
+    }
+
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-secondary {
+      background: white;
+      color: #667eea;
+      border: 2px solid #667eea;
+    }
+
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+    }
+
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+
+      .container {
+        box-shadow: none;
+        padding: 20px;
+      }
+
+      .buttons {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎨 DevTools 主题测试清单</h1>
+    <p class="subtitle">CSS 变量重构 - 手动测试验证</p>
+
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress">0% (0/58)</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <h3>总测试项</h3>
+        <div class="number" id="totalCount">58</div>
+      </div>
+      <div class="stat-card">
+        <h3>已完成</h3>
+        <div class="number" id="completedCount">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>未完成</h3>
+        <div class="number" id="remainingCount">58</div>
+      </div>
+      <div class="stat-card">
+        <h3>完成度</h3>
+        <div class="number" id="percentage">0%</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🔄 基础功能测试</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>主题切换按钮正常工作</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>切换主题后页面立即更新（无闪烁）</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>localStorage 正确保存主题设置</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>刷新页面主题保持</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>📄 Tier 1 页面测试（简单页面）</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>JsonTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>JsonTool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>DiffTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>DiffTool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>UrlTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>UrlTool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>TextTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>TextTool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>RegexTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>RegexTool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>DnsTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-1">Tier 1</span>DnsTool - 深色模式无白色区域</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>📋 Tier 2 页面测试（中等页面）</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>Base64Tool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>Base64Tool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>TimestampTool - 浅色渐变卡片正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>TimestampTool - 深色渐变卡片正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>MarkdownTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>MarkdownTool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>MermaidTool - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>MermaidTool - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>PasteBin - QR码白色背景正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>PasteBin - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>PasteView - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>PasteView - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>MockApi - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-2">Tier 2</span>MockApi - 深色模式无白色区域</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🎯 Tier 3 页面测试（复杂页面）</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ChatRoom - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ChatRoom - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ShortUrl - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ShortUrl - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ExcalidrawTool - 主题跟随正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ExcalidrawTool - 工具栏颜色正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ExcalidrawShareView - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>ExcalidrawShareView - 深色模式无白色区域</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>MarkdownShareView - 浅色模式正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label><span class="tier-badge tier-3">Tier 3</span>MarkdownShareView - 深色模式无白色区域</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🧩 Element Plus 组件测试</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Input 输入框 - 边框、背景、文字颜色正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Button 按钮 - 主按钮、次要按钮样式正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Select 选择器 - 下拉框样式正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Table 表格 - 表头、行背景正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Dialog 对话框 - 背景、边框正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Alert 提示 - 各种类型样式正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Card 卡片 - 背景、阴影正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Tabs 标签页 - 激活状态正确</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🎨 特殊功能测试</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Markdown 预览 - 标题、代码块高亮正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Markdown 预览 - 表格边框正确</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Diff 对比 - 新增/删除行颜色对比度良好</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>QR 码 - 在任何主题下都保持白色背景</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>时间戳渐变卡片 - 两种主题下渐变正确</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>📱 响应式测试</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>桌面端 (>768px) - 布局正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>移动端 (<768px) - 布局正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>侧边栏折叠/展开正常</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🌐 浏览器兼容性</h2>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Chrome/Edge - 正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Firefox - 正常</label>
+      </div>
+      <div class="checklist-item" onclick="toggleCheck(this)">
+        <input type="checkbox" onchange="updateProgress()">
+        <label>Safari - 正常（如果可用）</label>
+      </div>
+    </div>
+
+    <div class="buttons">
+      <button class="btn-primary" onclick="saveProgress()">💾 保存进度</button>
+      <button class="btn-secondary" onclick="loadProgress()">📥 加载进度</button>
+      <button class="btn-danger" onclick="resetProgress()">🔄 重置所有</button>
+      <button class="btn-secondary" onclick="window.print()">🖨️ 打印清单</button>
+    </div>
+  </div>
+
+  <script>
+    function toggleCheck(element) {
+      const checkbox = element.querySelector('input[type="checkbox"]');
+      if (event.target !== checkbox) {
+        checkbox.checked = !checkbox.checked;
+        updateProgress();
+      }
+    }
+
+    function updateProgress() {
+      const checkboxes = document.querySelectorAll('.checklist-item input[type="checkbox"]');
+      const items = document.querySelectorAll('.checklist-item');
+      const total = checkboxes.length;
+      const checked = Array.from(checkboxes).filter(cb => cb.checked).length;
+      const percentage = Math.round((checked / total) * 100);
+
+      // Update stats
+      document.getElementById('totalCount').textContent = total;
+      document.getElementById('completedCount').textContent = checked;
+      document.getElementById('remainingCount').textContent = total - checked;
+      document.getElementById('percentage').textContent = percentage + '%';
+
+      // Update progress bar
+      const progressBar = document.getElementById('progress');
+      progressBar.style.width = percentage + '%';
+      progressBar.textContent = `${percentage}% (${checked}/${total})`;
+
+      // Update item styles
+      items.forEach((item, index) => {
+        if (checkboxes[index].checked) {
+          item.classList.add('checked');
+        } else {
+          item.classList.remove('checked');
+        }
+      });
+
+      // Auto-save
+      saveProgress();
+    }
+
+    function saveProgress() {
+      const checkboxes = document.querySelectorAll('.checklist-item input[type="checkbox"]');
+      const states = Array.from(checkboxes).map(cb => cb.checked);
+      localStorage.setItem('devtools_test_progress', JSON.stringify(states));
+
+      // Show feedback
+      const btn = event?.target;
+      if (btn) {
+        const originalText = btn.textContent;
+        btn.textContent = '✅ 已保存';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 1000);
+      }
+    }
+
+    function loadProgress() {
+      const saved = localStorage.getItem('devtools_test_progress');
+      if (saved) {
+        const states = JSON.parse(saved);
+        const checkboxes = document.querySelectorAll('.checklist-item input[type="checkbox"]');
+        checkboxes.forEach((cb, index) => {
+          if (states[index] !== undefined) {
+            cb.checked = states[index];
+          }
+        });
+        updateProgress();
+
+        // Show feedback
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = '✅ 已加载';
+        setTimeout(() => {
+          btn.textContent = originalText;
+        }, 1000);
+      } else {
+        alert('没有找到保存的进度');
+      }
+    }
+
+    function resetProgress() {
+      if (confirm('确定要重置所有测试进度吗？此操作不可撤销。')) {
+        const checkboxes = document.querySelectorAll('.checklist-item input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = false);
+        updateProgress();
+        localStorage.removeItem('devtools_test_progress');
+      }
+    }
+
+    // Auto-load on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      loadProgress();
+    });
+  </script>
+</body>
+</html>

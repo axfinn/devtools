@@ -160,8 +160,8 @@
       <div v-if="shortUrl" class="mt-6 space-y-4">
         <el-divider />
 
-        <div class="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
-          <div class="mb-2 text-sm text-gray-600 dark:text-gray-400">生成的短链：</div>
+        <div class="url-display-box">
+          <div class="url-label">生成的短链：</div>
           <div class="flex items-center gap-2">
             <el-input
               v-model="shortUrl"
@@ -201,8 +201,8 @@
 
         <!-- QR 码 -->
         <div class="text-center">
-          <div class="mb-2 text-sm text-gray-600 dark:text-gray-400">扫码访问</div>
-          <div class="inline-block p-4 bg-white rounded-lg">
+          <div class="qr-label">扫码访问</div>
+          <div class="qr-container">
             <canvas ref="qrcodeCanvas"></canvas>
           </div>
         </div>
@@ -559,5 +559,32 @@ const copyLink = async (id) => {
 
 :deep(.el-input-number .el-input__inner) {
   text-align: left;
+}
+
+/* URL 显示区域 */
+.url-display-box {
+  background: var(--bg-secondary);
+  padding: 16px;
+  border-radius: var(--radius-md);
+}
+
+.url-label {
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--text-tertiary);
+}
+
+/* QR 码样式 */
+.qr-label {
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--text-tertiary);
+}
+
+.qr-container {
+  display: inline-block;
+  padding: 16px;
+  background: var(--qr-bg);
+  border-radius: var(--radius-md);
 }
 </style>

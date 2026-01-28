@@ -232,8 +232,8 @@
         />
 
         <!-- Mock URL -->
-        <div class="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
-          <div class="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Mock URL：</div>
+        <div class="url-display-box">
+          <div class="url-label">Mock URL：</div>
           <div class="flex items-center gap-2">
             <el-input
               v-model="createdMock.mock_url"
@@ -264,9 +264,9 @@
 
         <!-- cURL 示例 -->
         <div>
-          <div class="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">cURL 命令：</div>
+          <div class="curl-label">cURL 命令：</div>
           <div class="relative">
-            <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">{{ curlCommand }}</pre>
+            <pre class="curl-command">{{ curlCommand }}</pre>
             <el-button
               class="absolute top-2 right-2"
               size="small"
@@ -305,8 +305,8 @@
 
         <!-- QR 码 -->
         <div class="text-center">
-          <div class="mb-2 text-sm text-gray-600 dark:text-gray-400">扫码访问</div>
-          <div class="inline-block p-4 bg-white rounded-lg">
+          <div class="qr-label">扫码访问</div>
+          <div class="qr-container">
             <canvas ref="qrcodeCanvas"></canvas>
           </div>
         </div>
@@ -513,12 +513,12 @@
 
           <div class="mt-4">
             <div class="text-sm font-medium mb-2">响应头：</div>
-            <pre class="bg-gray-100 dark:bg-gray-800 p-3 rounded text-xs overflow-x-auto">{{ testResponse.headers }}</pre>
+            <pre class="response-content">{{ testResponse.headers }}</pre>
           </div>
 
           <div class="mt-4">
             <div class="text-sm font-medium mb-2">响应内容：</div>
-            <pre class="bg-gray-100 dark:bg-gray-800 p-3 rounded text-xs overflow-x-auto">{{ testResponse.body }}</pre>
+            <pre class="response-content">{{ testResponse.body }}</pre>
           </div>
         </div>
       </div>
@@ -566,7 +566,7 @@
     <el-dialog v-model="logDetailDialog" title="日志详情" width="700px">
       <div v-if="currentLogDetail">
         <div class="text-sm font-medium mb-2">{{ currentLogDetailType }}：</div>
-        <pre class="bg-gray-100 dark:bg-gray-800 p-4 rounded text-xs overflow-x-auto max-h-96">{{ currentLogDetail }}</pre>
+        <pre class="log-detail">{{ currentLogDetail }}</pre>
       </div>
     </el-dialog>
   </div>
@@ -1090,5 +1090,71 @@ watch(updateMockDialog, (newVal) => {
 pre {
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+/* URL 显示区域 */
+.url-display-box {
+  background: var(--bg-secondary);
+  padding: 16px;
+  border-radius: var(--radius-md);
+}
+
+.url-label {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* cURL 命令样式 */
+.curl-label {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.curl-command {
+  background: var(--code-bg);
+  color: var(--color-success);
+  padding: 16px;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  overflow-x: auto;
+}
+
+/* QR 码样式 */
+.qr-label {
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--text-tertiary);
+}
+
+.qr-container {
+  display: inline-block;
+  padding: 16px;
+  background: var(--qr-bg);
+  border-radius: var(--radius-md);
+}
+
+/* 响应内容样式 */
+.response-content {
+  background: var(--bg-secondary);
+  padding: 12px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  overflow-x: auto;
+  color: var(--text-primary);
+}
+
+/* 日志详情样式 */
+.log-detail {
+  background: var(--bg-secondary);
+  padding: 16px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  overflow-x: auto;
+  max-height: 384px;
+  color: var(--text-primary);
 }
 </style>

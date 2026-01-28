@@ -965,7 +965,6 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
-
 .join-section {
   margin-bottom: 20px;
 }
@@ -980,7 +979,6 @@ onUnmounted(() => {
   margin-bottom: 12px;
 }
 
-
 .room-list {
   flex: 1;
   overflow-y: auto;
@@ -992,13 +990,12 @@ onUnmounted(() => {
   padding: 40px;
 }
 
-
 .room-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: #ffffff;
+  background: var(--card-bg);
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
   margin-bottom: 8px;
@@ -1006,11 +1003,9 @@ onUnmounted(() => {
   transition: background 0.2s;
 }
 
-
 .room-item:hover {
-  background: #f5f5f5;
+  background: var(--bg-hover);
 }
-
 
 .room-info {
   display: flex;
@@ -1026,12 +1021,10 @@ onUnmounted(() => {
   font-size: 16px;
 }
 
-
 .room-id {
   color: var(--text-tertiary);
   font-size: 12px;
 }
-
 
 /* 聊天界面 */
 .chat-view {
@@ -1045,10 +1038,9 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding-bottom: 16px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-base);
   margin-bottom: 16px;
 }
-
 
 .room-title {
   display: flex;
@@ -1059,16 +1051,14 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-
 .room-id-tag {
   font-size: 12px;
   color: var(--text-tertiary);
-  background: #f5f5f5;
+  background: var(--bg-secondary);
   border: 1px solid var(--border-base);
   padding: 2px 8px;
   border-radius: var(--radius-sm);
 }
-
 
 /* 连接状态指示器 */
 .connection-status {
@@ -1083,17 +1073,17 @@ onUnmounted(() => {
 
 .connection-status.connected {
   color: var(--color-success);
-  background: rgba(103, 194, 58, 0.1);
+  background: var(--success-light);
 }
 
 .connection-status.connecting {
-  color: #e6a23c;
-  background: rgba(230, 162, 60, 0.1);
+  color: var(--color-warning);
+  background: var(--warning-light);
 }
 
 .connection-status.disconnected {
-  color: #f56c6c;
-  background: rgba(245, 108, 108, 0.1);
+  color: var(--color-danger);
+  background: var(--danger-light);
 }
 
 .status-dot {
@@ -1116,12 +1106,11 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-  background: #f8f8f8;
+  background: var(--bg-secondary);
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
   margin-bottom: 16px;
 }
-
 
 .message-item {
   margin-bottom: 16px;
@@ -1134,12 +1123,11 @@ onUnmounted(() => {
 .system-text {
   color: var(--text-tertiary);
   font-size: 12px;
-  background: #e8e8e8;
-  border: 1px solid #d0d0d0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-light);
   padding: 4px 12px;
   border-radius: var(--radius-lg);
 }
-
 
 .message-header {
   display: flex;
@@ -1162,13 +1150,11 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-
 .message-content {
   color: var(--text-primary);
   line-height: 1.5;
   word-break: break-word;
 }
-
 
 .message-image {
   max-width: 300px;
@@ -1200,7 +1186,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #f0f0f0;
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
   color: var(--color-primary);
@@ -1208,11 +1194,9 @@ onUnmounted(() => {
   transition: background 0.2s;
 }
 
-
 .message-file:hover {
-  background: #e0e0e0;
+  background: var(--bg-hover);
 }
-
 
 .input-area {
   display: flex;
@@ -1231,8 +1215,8 @@ onUnmounted(() => {
 }
 
 .tool-btn.recording {
-  color: #f56c6c;
-  border-color: #f56c6c;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
   animation: recording-pulse 1s infinite;
 }
 
@@ -1265,7 +1249,7 @@ onUnmounted(() => {
 }
 
 .emoji-item:hover {
-  background: #f0f0f0;
+  background: var(--bg-hover);
 }
 
 @media (max-width: 400px) {
@@ -1286,9 +1270,9 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: rgba(245, 108, 108, 0.1);
+  background: var(--danger-light);
   border-radius: var(--radius-md);
-  color: #f56c6c;
+  color: var(--color-danger);
   font-size: 14px;
   margin-top: 8px;
 }
@@ -1297,7 +1281,7 @@ onUnmounted(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #f56c6c;
+  background: var(--color-danger);
   animation: recording-pulse 1s infinite;
 }
 
