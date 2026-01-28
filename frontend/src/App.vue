@@ -7,29 +7,11 @@
         <span class="mobile-title">DevTools</span>
       </div>
       <div class="mobile-header-right">
-        <div class="theme-switcher">
-          <el-icon
-            :size="18"
-            :class="['theme-icon', { 'active': themeMode === 'auto' }]"
-            @click="setThemeMode('auto')"
-          >
-            <Monitor />
+        <el-tooltip :content="themeModeName" placement="bottom">
+          <el-icon :size="20" class="theme-toggle" @click="toggleTheme">
+            <component :is="themeIcon" />
           </el-icon>
-          <el-icon
-            :size="18"
-            :class="['theme-icon', { 'active': themeMode === 'light' }]"
-            @click="setThemeMode('light')"
-          >
-            <Sunny />
-          </el-icon>
-          <el-icon
-            :size="18"
-            :class="['theme-icon', { 'active': themeMode === 'dark' }]"
-            @click="setThemeMode('dark')"
-          >
-            <Moon />
-          </el-icon>
-        </div>
+        </el-tooltip>
         <span class="current-tool">{{ currentTitle }}</span>
       </div>
     </el-header>
@@ -76,41 +58,11 @@
           <el-icon :size="24"><Tools /></el-icon>
           <span v-show="!isCollapse" class="logo-text">DevTools</span>
         </div>
-        <div class="theme-switcher-pc" v-show="!isCollapse">
-          <el-icon
-            :size="18"
-            :class="['theme-icon', { 'active': themeMode === 'auto' }]"
-            @click="setThemeMode('auto')"
-            title="自动"
-          >
-            <Monitor />
+        <el-tooltip :content="themeModeName" placement="right">
+          <el-icon :size="20" class="theme-toggle-pc" @click="toggleTheme">
+            <component :is="themeIcon" />
           </el-icon>
-          <el-icon
-            :size="18"
-            :class="['theme-icon', { 'active': themeMode === 'light' }]"
-            @click="setThemeMode('light')"
-            title="浅色"
-          >
-            <Sunny />
-          </el-icon>
-          <el-icon
-            :size="18"
-            :class="['theme-icon', { 'active': themeMode === 'dark' }]"
-            @click="setThemeMode('dark')"
-            title="深色"
-          >
-            <Moon />
-          </el-icon>
-        </div>
-        <el-icon
-          v-show="isCollapse"
-          :size="20"
-          :class="['theme-icon-collapsed', { 'active': true }]"
-          @click="toggleThemeCollapsed"
-          :title="themeModeName"
-        >
-          <component :is="themeIcon" />
-        </el-icon>
+        </el-tooltip>
       </div>
       <el-menu
         :default-active="$route.path"
@@ -197,7 +149,7 @@ const isMobile = ref(false)
 const showDonateDialog = ref(false)
 
 // 主题管理
-const { themeMode, currentTheme, setThemeMode } = useTheme()
+const { themeMode, currentTheme, setThemeMode, toggleTheme } = useTheme()
 
 // 是否隐藏侧边栏（全屏模式）
 const hideSidebar = computed(() => route.meta?.hideSidebar === true)
@@ -253,20 +205,12 @@ const themeIcon = computed(() => {
 // 获取主题模式名称
 const themeModeName = computed(() => {
   const modeText = {
-    auto: '自动',
-    light: '浅色',
-    dark: '深色'
+    auto: '自动 (跟随系统)',
+    light: '浅色模式',
+    dark: '深色模式'
   }
   return modeText[themeMode.value]
 })
-
-// 折叠时切换主题（循环）
-const toggleThemeCollapsed = () => {
-  const modes = ['auto', 'light', 'dark']
-  const currentIndex = modes.indexOf(themeMode.value)
-  const nextIndex = (currentIndex + 1) % modes.length
-  setThemeMode(modes[nextIndex])
-}
 </script>
 
 <style scoped>
@@ -332,7 +276,7 @@ const toggleThemeCollapsed = () => {
 .mobile-header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   color: #666;
   font-size: 14px;
 }
@@ -341,40 +285,28 @@ const toggleThemeCollapsed = () => {
   color: #a0a0a0;
 }
 
-.theme-switcher {
-  display: flex;
-  gap: 4px;
-  background: #f0f0f0;
-  padding: 4px;
-  border-radius: 6px;
-}
-
-:global(.dark) .theme-switcher {
-  background: #2a2a2a;
-}
-
-.theme-icon {
-  color: #999;
+.theme-toggle {
+  color: #666;
   cursor: pointer;
-  padding: 4px;
-  border-radius: 4px;
+  padding: 6px;
+  border-radius: 6px;
   transition: all 0.3s;
   display: flex;
   align-items: center;
 }
 
-.theme-icon:hover {
+.theme-toggle:hover {
   color: #409eff;
   background: rgba(64, 158, 255, 0.1);
 }
 
-.theme-icon.active {
-  color: #409eff;
-  background: #fff;
+:global(.dark) .theme-toggle {
+  color: #a0a0a0;
 }
 
-:global(.dark) .theme-icon.active {
-  background: #1e1e1e;
+:global(.dark) .theme-toggle:hover {
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.15);
 }
 
 .current-tool {
@@ -455,39 +387,29 @@ const toggleThemeCollapsed = () => {
   font-weight: bold;
 }
 
-.theme-switcher-pc {
-  display: flex;
-  gap: 4px;
-  background: #f0f0f0;
-  padding: 4px;
-  border-radius: 6px;
-}
-
-:global(.dark) .theme-switcher-pc {
-  background: #2a2a2a;
-}
-
-.theme-icon-collapsed {
+.theme-toggle-pc {
   color: #666;
   cursor: pointer;
   padding: 8px;
   border-radius: 6px;
   transition: all 0.3s;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
 }
 
-.theme-icon-collapsed:hover {
+.theme-toggle-pc:hover {
   color: #409eff;
   background: rgba(64, 158, 255, 0.1);
 }
 
-:global(.dark) .theme-icon-collapsed {
+:global(.dark) .theme-toggle-pc {
   color: #a0a0a0;
 }
 
-:global(.dark) .theme-icon-collapsed:hover {
+:global(.dark) .theme-toggle-pc:hover {
   color: #409eff;
+  background: rgba(64, 158, 255, 0.15);
 }
 
 .sidebar-menu {
