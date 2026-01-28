@@ -1,0 +1,762 @@
+/* ========================================
+   深色主题 - 完全独立的深色模式样式
+   优先级最高，覆盖所有其他样式
+   ======================================== */
+
+/* ===== 基础样式 ===== */
+.dark body {
+  background-color: #121212 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark #app {
+  background-color: transparent !important;
+}
+
+/* ===== 工具容器 ===== */
+.dark .tool-container {
+  background-color: transparent !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .tool-content {
+  background-color: transparent !important;
+  color: #e0e0e0 !important;
+}
+
+/* ===== 标题 ===== */
+.dark .tool-header h1,
+.dark .tool-header h2,
+.dark .tool-header h3,
+.dark .tool-header h4,
+.dark h1,
+.dark h2,
+.dark h3,
+.dark h4 {
+  color: #e0e0e0 !important;
+}
+
+/* ===== 面板和卡片 ===== */
+.dark .editor-panel,
+.dark .panel,
+.dark .code-panel,
+.dark .result-card,
+.dark .result-panel,
+.dark .output-panel,
+.dark .card,
+.dark .info-card,
+.dark .stats-card {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+  color: #e0e0e0 !important;
+}
+
+/* ===== 面板标题 ===== */
+.dark .panel-header,
+.dark .editor-header {
+  background-color: #2d2d2d !important;
+  color: #e0e0e0 !important;
+  border-bottom-color: #404040 !important;
+}
+
+/* ===== 代码编辑器和文本区域 ===== */
+.dark .code-editor,
+.dark textarea.code-editor,
+.dark .code-area,
+.dark textarea.code-input,
+.dark .text-area,
+.dark textarea {
+  background-color: #1e1e1e !important;
+  color: #d4d4d4 !important;
+  border-color: #333 !important;
+}
+
+.dark .code-editor::placeholder,
+.dark textarea::placeholder {
+  color: #909399 !important;
+}
+
+/* ===== 代码高亮 ===== */
+.dark .hljs,
+.dark pre code,
+.dark code {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+}
+
+.dark code {
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* ===== Element Plus 组件 ===== */
+
+/* Card 卡片 */
+.dark .el-card {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-card__header {
+  background-color: #252525 !important;
+  border-color: #333 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-card__body {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+
+/* Input 输入框 */
+.dark .el-input__wrapper {
+  background-color: #2a2a2a !important;
+  box-shadow: 0 0 0 1px #404040 inset !important;
+}
+
+.dark .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px #606060 inset !important;
+}
+
+.dark .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px #409eff inset !important;
+}
+
+.dark .el-input__inner {
+  color: #e0e0e0 !important;
+  background-color: transparent !important;
+}
+
+.dark .el-input__inner::placeholder {
+  color: #909399 !important;
+}
+
+/* Textarea 文本域 */
+.dark .el-textarea__inner {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-textarea__inner:hover {
+  border-color: #606060 !important;
+}
+
+.dark .el-textarea__inner:focus {
+  border-color: #409eff !important;
+}
+
+.dark .el-textarea__inner::placeholder {
+  color: #909399 !important;
+}
+
+/* Select 选择器 */
+.dark .el-select .el-input__wrapper {
+  background-color: #2a2a2a !important;
+}
+
+.dark .el-select-dropdown {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-select-dropdown__item {
+  color: #e0e0e0 !important;
+  background-color: transparent !important;
+}
+
+.dark .el-select-dropdown__item:hover {
+  background-color: #333 !important;
+}
+
+.dark .el-select-dropdown__item.selected {
+  color: #409eff !important;
+  font-weight: 600;
+}
+
+/* Button 按钮 */
+.dark .el-button {
+  border-color: #404040 !important;
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-button:hover {
+  border-color: #606060 !important;
+  background-color: #333 !important;
+}
+
+.dark .el-button--primary {
+  background-color: #409eff !important;
+  border-color: #409eff !important;
+  color: #fff !important;
+}
+
+.dark .el-button--primary:hover {
+  background-color: #66b1ff !important;
+  border-color: #66b1ff !important;
+}
+
+.dark .el-button--success {
+  background-color: #67c23a !important;
+  border-color: #67c23a !important;
+  color: #fff !important;
+}
+
+.dark .el-button--warning {
+  background-color: #e6a23c !important;
+  border-color: #e6a23c !important;
+  color: #fff !important;
+}
+
+.dark .el-button--danger {
+  background-color: #f56c6c !important;
+  border-color: #f56c6c !important;
+  color: #fff !important;
+}
+
+/* Table 表格 */
+.dark .el-table {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-table th,
+.dark .el-table tr {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-table th.el-table__cell {
+  background-color: #252525 !important;
+}
+
+.dark .el-table td,
+.dark .el-table th.is-leaf {
+  border-color: #333 !important;
+}
+
+.dark .el-table--border::after,
+.dark .el-table--group::after,
+.dark .el-table::before {
+  background-color: #333 !important;
+}
+
+.dark .el-table tbody tr:hover > td {
+  background-color: #252525 !important;
+}
+
+.dark .el-table--striped .el-table__body tr.el-table__row--striped td {
+  background-color: #1a1a1a !important;
+}
+
+/* Tabs 标签页 */
+.dark .el-tabs {
+  background-color: transparent !important;
+}
+
+.dark .el-tabs__header {
+  background-color: transparent !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-tabs__nav-wrap {
+  background-color: transparent !important;
+}
+
+.dark .el-tabs__nav {
+  background-color: transparent !important;
+}
+
+.dark .el-tabs__item {
+  color: #909399 !important;
+  background-color: transparent !important;
+}
+
+.dark .el-tabs__item.is-active {
+  color: #409eff !important;
+}
+
+.dark .el-tabs__item:hover {
+  color: #409eff !important;
+}
+
+.dark .el-tabs__content {
+  background-color: transparent !important;
+}
+
+.dark .el-tab-pane {
+  background-color: transparent !important;
+}
+
+/* Dialog 对话框 */
+.dark .el-dialog {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .el-dialog__header {
+  border-color: #333 !important;
+}
+
+.dark .el-dialog__title {
+  color: #e0e0e0 !important;
+}
+
+.dark .el-dialog__body {
+  color: #e0e0e0 !important;
+}
+
+/* Alert 提示 */
+.dark .el-alert {
+  background-color: #252525 !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-alert--info {
+  background-color: #252932 !important;
+}
+
+.dark .el-alert--warning {
+  background-color: #332b1f !important;
+}
+
+.dark .el-alert--error {
+  background-color: #342020 !important;
+}
+
+.dark .el-alert--success {
+  background-color: #1f2d1f !important;
+}
+
+.dark .el-alert__title {
+  color: #e0e0e0 !important;
+}
+
+.dark .el-alert__description {
+  color: #a0a0a0 !important;
+}
+
+/* Tag 标签 */
+.dark .el-tag {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+/* Form 表单 */
+.dark .el-form-item__label {
+  color: #e0e0e0 !important;
+}
+
+/* Checkbox & Radio */
+.dark .el-checkbox__label,
+.dark .el-radio__label {
+  color: #e0e0e0 !important;
+}
+
+/* Radio Group & Radio Button */
+.dark .el-radio-group {
+  background-color: transparent !important;
+}
+
+.dark .el-radio-button__inner {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-radio-button__inner:hover {
+  background-color: #333 !important;
+}
+
+.dark .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background-color: #409eff !important;
+  border-color: #409eff !important;
+  color: #fff !important;
+}
+
+/* Date Picker */
+.dark .el-picker-panel {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-date-picker__header {
+  border-color: #404040 !important;
+}
+
+.dark .el-date-picker__header-label {
+  color: #e0e0e0 !important;
+}
+
+.dark .el-date-table th {
+  color: #909399 !important;
+}
+
+.dark .el-date-table td {
+  color: #e0e0e0 !important;
+}
+
+.dark .el-date-table td.available:hover {
+  background-color: #333 !important;
+}
+
+.dark .el-date-table td.today span {
+  color: #409eff !important;
+}
+
+.dark .el-date-table td.current:not(.disabled) span {
+  background-color: #409eff !important;
+  color: #fff !important;
+}
+
+/* Input Number */
+.dark .el-input-number {
+  background-color: transparent !important;
+}
+
+.dark .el-input-number .el-input__wrapper {
+  background-color: #2a2a2a !important;
+}
+
+.dark .el-input-number__decrease,
+.dark .el-input-number__increase {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-input-number__decrease:hover,
+.dark .el-input-number__increase:hover {
+  background-color: #333 !important;
+  color: #409eff !important;
+}
+
+/* Upload */
+.dark .el-upload {
+  border-color: #404040 !important;
+}
+
+.dark .el-upload-dragger {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-upload-dragger:hover {
+  border-color: #409eff !important;
+}
+
+.dark .el-upload-list__item {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-upload-list__item:hover {
+  background-color: #333 !important;
+}
+
+/* Popover & Tooltip */
+.dark .el-popover {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .el-popper.is-dark {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+}
+
+/* Message Box */
+.dark .el-message-box {
+  background-color: #1e1e1e !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-message-box__header {
+  color: #e0e0e0 !important;
+}
+
+.dark .el-message-box__content {
+  color: #e0e0e0 !important;
+}
+
+/* Drawer */
+.dark .el-drawer {
+  background-color: #1e1e1e !important;
+}
+
+.dark .el-drawer__header {
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-drawer__body {
+  color: #e0e0e0 !important;
+}
+
+/* Pagination */
+.dark .el-pagination {
+  color: #e0e0e0 !important;
+}
+
+.dark .el-pagination button {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-pagination button:hover {
+  color: #409eff !important;
+}
+
+.dark .el-pager li {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .el-pager li:hover {
+  color: #409eff !important;
+}
+
+.dark .el-pager li.active {
+  background-color: #409eff !important;
+  color: #fff !important;
+}
+
+/* Divider */
+.dark .el-divider {
+  border-color: #404040 !important;
+}
+
+.dark .el-divider__text {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+
+/* Result */
+.dark .el-result__title {
+  color: #e0e0e0 !important;
+}
+
+.dark .el-result__subtitle {
+  color: #909399 !important;
+}
+
+/* Row & Col */
+.dark .el-row,
+.dark .el-col {
+  background-color: transparent !important;
+}
+
+/* ===== 工具页面特定样式 ===== */
+
+/* Markdown 预览 */
+.dark .markdown-body,
+.dark .markdown-preview {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .markdown-body h1,
+.dark .markdown-body h2,
+.dark .markdown-body h3,
+.dark .markdown-body h4,
+.dark .markdown-body h5,
+.dark .markdown-body h6 {
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .markdown-body pre,
+.dark .markdown-body code {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .markdown-body blockquote {
+  border-left-color: #404040 !important;
+  color: #a0a0a0 !important;
+}
+
+.dark .markdown-body table {
+  border-color: #404040 !important;
+}
+
+.dark .markdown-body th,
+.dark .markdown-body td {
+  border-color: #404040 !important;
+}
+
+.dark .markdown-body hr {
+  background-color: #404040 !important;
+}
+
+/* Monaco Editor */
+.dark .monaco-editor {
+  background-color: #1e1e1e !important;
+}
+
+.dark .monaco-editor .margin {
+  background-color: #1e1e1e !important;
+}
+
+/* 聊天室 */
+.dark .chat-messages {
+  background-color: #1e1e1e !important;
+}
+
+.dark .message-item {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .message-input {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+/* Diff 工具 */
+.dark .diff-result {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .diff-content {
+  background-color: #1e1e1e !important;
+  color: #d4d4d4 !important;
+}
+
+.dark .diff-added {
+  background-color: rgba(76, 175, 80, 0.3) !important;
+  color: #81c784 !important;
+}
+
+.dark .diff-removed {
+  background-color: rgba(244, 67, 54, 0.3) !important;
+  color: #e57373 !important;
+}
+
+/* 时间戳工具 */
+.dark .current-time-card {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%) !important;
+}
+
+.dark .time-item .label {
+  color: #a0c4e8 !important;
+}
+
+.dark .time-item .value {
+  color: #fff !important;
+}
+
+.dark .converter-card,
+.dark .time-calc-section,
+.dark .quick-times {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .result {
+  background-color: #2d2d2d !important;
+}
+
+.dark .result-item {
+  border-bottom-color: #3d3d3d !important;
+}
+
+.dark .result-item .label {
+  color: #a0a0a0 !important;
+}
+
+.dark .calc-result {
+  background-color: #2d2d2d !important;
+}
+
+/* Base64 工具 */
+.dark .image-uploader :deep(.el-upload-dragger) {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+}
+
+.dark .image-preview {
+  background-color: #1e1e1e !important;
+}
+
+.dark .decode-section {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+/* URL 工具 */
+.dark .parsed-result,
+.dark .params-builder,
+.dark .built-url {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .query-params h4,
+.dark .params-builder h4 {
+  color: #e0e0e0 !important;
+}
+
+.dark .param-row span {
+  color: #a0a0a0 !important;
+}
+
+/* 文本转义工具 */
+.dark .tool-tabs {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .editor-panel {
+  background-color: #252525 !important;
+  border-color: #333 !important;
+}
+
+.dark .panel-header {
+  color: #909399 !important;
+}
+
+.dark .tips-section {
+  background-color: #1e1e1e !important;
+}
+
+.dark .tips-list li {
+  color: #909399 !important;
+}
+
+.dark .tips-list code {
+  background-color: #252525 !important;
+}
+
+/* ===== 通用辅助类 ===== */
+.dark .hover\:bg-gray:hover {
+  background-color: #2a2a2a !important;
+}
+
+.dark .border-gray {
+  border-color: #404040 !important;
+}
+
+.dark .text-gray {
+  color: #909399 !important;
+}
+
+.dark .bg-dark {
+  background-color: #1e1e1e !important;
+}
+
+.dark .bg-darker {
+  background-color: #121212 !important;
+}
