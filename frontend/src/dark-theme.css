@@ -689,6 +689,13 @@ body.dark {
 .dark .quick-times {
   background-color: #1e1e1e !important;
   border-color: #333 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .converter-card h3,
+.dark .time-calc-section h3,
+.dark .quick-times h3 {
+  color: #e0e0e0 !important;
 }
 
 .dark .result {
@@ -703,8 +710,104 @@ body.dark {
   color: #a0a0a0 !important;
 }
 
+.dark .result-item .value {
+  color: #4caf50 !important;
+}
+
 .dark .calc-result {
   background-color: #2d2d2d !important;
+  color: #4caf50 !important;
+}
+
+/* 粘贴板工具 */
+.dark .paste-container,
+.dark .editor-section {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .image-section {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .image-header {
+  color: #e0e0e0 !important;
+}
+
+.dark .image-title {
+  color: #e0e0e0 !important;
+}
+
+.dark .image-item {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+}
+
+.dark .image-add {
+  border-color: #404040 !important;
+  color: #808080 !important;
+  background-color: transparent !important;
+}
+
+.dark .image-upload {
+  border-color: #404040 !important;
+  color: #808080 !important;
+  background-color: transparent !important;
+}
+
+.dark .result-section {
+  background-color: transparent !important;
+}
+
+.dark .result-card {
+  background: linear-gradient(135deg, #1e3a2f 0%, #1e1e1e 100%) !important;
+  border-color: #67c23a !important;
+}
+
+.dark .share-url-box {
+  background-color: #252525 !important;
+}
+
+.dark .url-display {
+  background-color: #1a1a1a !important;
+  color: #67c23a !important;
+}
+
+.dark .qr-section {
+  background-color: transparent !important;
+}
+
+.dark .qr-code {
+  background-color: #fff !important;
+  padding: 10px !important;
+  border-radius: 8px !important;
+}
+
+.dark .qr-title {
+  color: #a0a0a0 !important;
+}
+
+.dark .result-info {
+  color: #808080 !important;
+}
+
+.dark .tips-section {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .tips-list {
+  color: #a0a0a0 !important;
+}
+
+.dark .options-row {
+  background-color: transparent !important;
+}
+
+.dark .option-label {
+  color: #e0e0e0 !important;
 }
 
 /* Base64 工具 */
@@ -786,3 +889,250 @@ body.dark {
 .dark .bg-darker {
   background-color: #121212 !important;
 }
+
+/* IP/DNS 工具 */
+.dark .dns-result,
+.dark .ip-card,
+.dark .dns-card {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .dns-result h3,
+.dark .ip-card h3,
+.dark .dns-card h3 {
+  color: #e0e0e0 !important;
+}
+
+.dark .dns-record {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .ip-info-item {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .ip-info-label {
+  color: #a0a0a0 !important;
+}
+
+.dark .ip-info-value {
+  color: #e0e0e0 !important;
+}
+
+/* 聊天室 */
+.dark .chat-container {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .chat-header {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .chat-messages {
+  background-color: #1e1e1e !important;
+}
+
+.dark .message-item {
+  background-color: #2a2a2a !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .message-content {
+  color: #e0e0e0 !important;
+}
+
+.dark .message-time {
+  color: #909399 !important;
+}
+
+.dark .message-sender {
+  color: #409eff !important;
+}
+
+.dark .chat-input-area {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+}
+
+.dark .chat-input {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .online-users {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .user-item {
+  color: #e0e0e0 !important;
+}
+
+.dark .room-info {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+/* Mock API 工具 */
+.dark .mock-api-container {
+  background-color: transparent !important;
+}
+
+.dark .api-list {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .api-item {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .api-item:hover {
+  background-color: #333 !important;
+}
+
+.dark .api-method {
+  background-color: #409eff !important;
+  color: #fff !important;
+}
+
+.dark .api-url {
+  color: #e0e0e0 !important;
+  background-color: #1a1a1a !important;
+}
+
+.dark .api-detail {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .api-response {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark .api-logs {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .log-item {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .status-code {
+  background-color: #2a2a2a !important;
+  color: #4caf50 !important;
+}
+
+.dark .request-info {
+  background-color: #2d2d2d !important;
+  color: #e0e0e0 !important;
+}
+
+/* 短链工具 */
+.dark .short-url-list {
+  background-color: #1e1e1e !important;
+  border-color: #333 !important;
+}
+
+.dark .url-item {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .short-link {
+  color: #409eff !important;
+  background-color: #1a1a1a !important;
+}
+
+.dark .original-link {
+  color: #a0a0a0 !important;
+}
+
+.dark .url-stats {
+  background-color: #2d2d2d !important;
+  border-color: #404040 !important;
+  color: #e0e0e0 !important;
+}
+
+/* ===== 强制覆盖所有可能的白色背景 ===== */
+.dark div[style*="background-color: rgb(255, 255, 255)"],
+.dark div[style*="background-color:#ffffff"],
+.dark div[style*="background-color:#fff"],
+.dark div[style*="background: rgb(255, 255, 255)"],
+.dark div[style*="background:#ffffff"],
+.dark div[style*="background:#fff"] {
+  background-color: #1e1e1e !important;
+}
+
+/* 强制所有未定义背景的容器为透明 */
+.dark .container,
+.dark .wrapper,
+.dark .content,
+.dark .section {
+  background-color: transparent !important;
+}
+
+/* Element Plus 的各种容器 */
+.dark .el-scrollbar {
+  background-color: transparent !important;
+}
+
+.dark .el-scrollbar__view {
+  background-color: transparent !important;
+}
+
+.dark .el-scrollbar__wrap {
+  background-color: transparent !important;
+}
+
+/* 确保所有表单元素都是深色 */
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark select,
+.dark textarea {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+  border-color: #404040 !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #909399 !important;
+}
+
+/* 移除可能的白色边框 */
+.dark * {
+  border-color: inherit;
+}
+
+/* 确保所有带 class 的 div 默认透明背景 */
+.dark div[class] {
+  background-color: transparent;
+}
+
+.dark div[class].panel,
+.dark div[class].card,
+.dark div[class].editor {
+  background-color: #1e1e1e !important;
+}
+
