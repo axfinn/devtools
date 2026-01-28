@@ -219,8 +219,26 @@ body.dark {
   color: #e0e0e0;
 }
 
+.dark .el-tabs {
+  background-color: transparent;
+}
+
+.dark .el-tabs__header {
+  background-color: transparent;
+  border-color: #404040;
+}
+
+.dark .el-tabs__nav-wrap {
+  background-color: transparent;
+}
+
+.dark .el-tabs__nav {
+  background-color: transparent;
+}
+
 .dark .el-tabs__item {
   color: #909399;
+  background-color: transparent;
 }
 
 .dark .el-tabs__item.is-active {
@@ -231,12 +249,294 @@ body.dark {
   color: #409eff;
 }
 
+.dark .el-tabs__content {
+  background-color: transparent;
+}
+
+.dark .el-tab-pane {
+  background-color: transparent;
+}
+
 .dark .el-result__title {
   color: #e0e0e0;
 }
 
 .dark .el-result__subtitle {
   color: #909399;
+}
+
+/* Date Picker / Time Picker */
+.dark .el-picker-panel {
+  background-color: #2a2a2a;
+  border-color: #404040;
+  color: #e0e0e0;
+}
+
+.dark .el-date-picker__header {
+  border-color: #404040;
+}
+
+.dark .el-date-picker__header-label {
+  color: #e0e0e0;
+}
+
+.dark .el-date-table th {
+  color: #909399;
+}
+
+.dark .el-date-table td {
+  color: #e0e0e0;
+}
+
+.dark .el-date-table td.available:hover {
+  background-color: #333;
+}
+
+.dark .el-date-table td.today span {
+  color: #409eff;
+}
+
+.dark .el-date-table td.current:not(.disabled) span {
+  background-color: #409eff;
+}
+
+/* Upload 上传组件 */
+.dark .el-upload {
+  border-color: #404040;
+}
+
+.dark .el-upload-dragger {
+  background-color: #2a2a2a;
+  border-color: #404040;
+}
+
+.dark .el-upload-dragger:hover {
+  border-color: #409eff;
+}
+
+.dark .el-upload-list {
+  background-color: transparent;
+}
+
+.dark .el-upload-list__item {
+  background-color: #2a2a2a;
+  border-color: #404040;
+  color: #e0e0e0;
+}
+
+.dark .el-upload-list__item:hover {
+  background-color: #333;
+}
+
+/* Popover & Tooltip */
+.dark .el-popover {
+  background-color: #2a2a2a;
+  border-color: #404040;
+  color: #e0e0e0;
+}
+
+.dark .el-popper.is-dark {
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+}
+
+/* Message Box */
+.dark .el-message-box {
+  background-color: #1e1e1e;
+  border-color: #404040;
+}
+
+.dark .el-message-box__header {
+  color: #e0e0e0;
+}
+
+.dark .el-message-box__content {
+  color: #e0e0e0;
+}
+
+/* Drawer */
+.dark .el-drawer {
+  background-color: #1e1e1e;
+}
+
+.dark .el-drawer__header {
+  color: #e0e0e0;
+  border-color: #404040;
+}
+
+.dark .el-drawer__body {
+  color: #e0e0e0;
+}
+
+/* Radio Group & Radio Button */
+.dark .el-radio-group {
+  background-color: transparent;
+}
+
+.dark .el-radio-button__inner {
+  background-color: #2a2a2a;
+  border-color: #404040;
+  color: #e0e0e0;
+}
+
+.dark .el-radio-button__inner:hover {
+  background-color: #333;
+}
+
+.dark .el-radio-button__original-radio:checked + .el-radio-button__inner {
+  background-color: #409eff;
+  border-color: #409eff;
+  color: #fff;
+}
+
+/* Input Number */
+.dark .el-input-number {
+  background-color: transparent;
+}
+
+.dark .el-input-number .el-input__wrapper {
+  background-color: #2a2a2a;
+}
+
+.dark .el-input-number__decrease,
+.dark .el-input-number__increase {
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+  border-color: #404040;
+}
+
+.dark .el-input-number__decrease:hover,
+.dark .el-input-number__increase:hover {
+  background-color: #333;
+  color: #409eff;
+}
+
+/* Pagination */
+.dark .el-pagination {
+  color: #e0e0e0;
+}
+
+.dark .el-pagination button {
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+  border-color: #404040;
+}
+
+.dark .el-pagination button:hover {
+  color: #409eff;
+}
+
+.dark .el-pager li {
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+  border-color: #404040;
+}
+
+.dark .el-pager li:hover {
+  color: #409eff;
+}
+
+.dark .el-pager li.active {
+  background-color: #409eff;
+  color: #fff;
+}
+
+/* Loading */
+.dark .el-loading-mask {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.dark .el-loading-spinner {
+  color: #409eff;
+}
+
+.dark .el-loading-text {
+  color: #e0e0e0;
+}
+
+/* Divider */
+.dark .el-divider {
+  border-color: #404040;
+}
+
+.dark .el-divider__text {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+}
+
+/* Switch */
+.dark .el-switch__label {
+  color: #e0e0e0;
+}
+
+.dark .el-switch__label.is-active {
+  color: #409eff;
+}
+
+/* Row & Col 布局 */
+.dark .el-row {
+  background-color: transparent;
+}
+
+.dark .el-col {
+  background-color: transparent;
+}
+
+/* Collapse 折叠面板 */
+.dark .el-collapse {
+  background-color: transparent;
+  border-color: #404040;
+}
+
+.dark .el-collapse-item__header {
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+  border-color: #404040;
+}
+
+.dark .el-collapse-item__wrap {
+  background-color: transparent;
+  border-color: #404040;
+}
+
+.dark .el-collapse-item__content {
+  color: #e0e0e0;
+}
+
+/* Steps 步骤条 */
+.dark .el-step__title {
+  color: #e0e0e0;
+}
+
+.dark .el-step__description {
+  color: #909399;
+}
+
+.dark .el-step__line {
+  background-color: #404040;
+}
+
+/* Badge 徽章 */
+.dark .el-badge__content {
+  background-color: #f56c6c;
+  border-color: #1e1e1e;
+}
+
+/* Image 图片 */
+.dark .el-image__error,
+.dark .el-image__placeholder {
+  background-color: #2a2a2a;
+  color: #909399;
+}
+
+/* Empty 空状态 */
+.dark .el-empty__description {
+  color: #909399;
+}
+
+/* Skeleton 骨架屏 */
+.dark .el-skeleton__item {
+  background: linear-gradient(90deg, #2a2a2a 25%, #333 37%, #2a2a2a 63%);
 }
 
 /* Monaco Editor 暗色主题 */
@@ -246,4 +546,45 @@ body.dark {
 
 .dark .monaco-editor .margin {
   background-color: #1e1e1e !important;
+}
+
+/* 确保代码编辑器在深色模式下正确显示 */
+.dark .code-editor,
+.dark textarea.code-editor {
+  background-color: #1e1e1e !important;
+  color: #d4d4d4 !important;
+  border-color: #333 !important;
+}
+
+/* Markdown 预览区域 */
+.dark .markdown-body,
+.dark .markdown-preview {
+  background-color: #1e1e1e !important;
+  color: #e0e0e0 !important;
+}
+
+.dark .markdown-body pre,
+.dark .markdown-body code {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+}
+
+/* 聊天室相关 */
+.dark .chat-messages {
+  background-color: #1e1e1e !important;
+}
+
+.dark .message-item {
+  background-color: #2a2a2a !important;
+  color: #e0e0e0 !important;
+}
+
+/* 确保所有工具容器在深色模式下正确显示 */
+.dark .tool-container {
+  background-color: transparent;
+  color: #e0e0e0;
+}
+
+.dark .tool-content {
+  background-color: transparent;
 }
