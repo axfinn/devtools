@@ -184,6 +184,13 @@ const verifyPassword = async (silent = false) => {
       sceneData.value = JSON.parse(data.content)
     }
     isVerified.value = true
+
+    // Auto scroll to content after scene is loaded
+    setTimeout(() => {
+      if (excalidrawRef.value) {
+        excalidrawRef.value.scrollToContent({ delay: 500 })
+      }
+    }, 100)
   } catch (err) {
     if (!silent) {
       ElMessage.error('网络错误')

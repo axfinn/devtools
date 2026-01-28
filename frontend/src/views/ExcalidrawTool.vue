@@ -586,6 +586,13 @@ const handleFileImport = (file) => {
         excalidrawRef.value.loadScene(data)
         showImportDialog.value = false
         ElMessage.success('导入成功')
+
+        // Auto scroll to content after loading
+        setTimeout(() => {
+          if (excalidrawRef.value) {
+            excalidrawRef.value.scrollToContent({ delay: 300 })
+          }
+        }, 100)
       }
     } catch (err) {
       ElMessage.error('文件格式错误')
@@ -617,6 +624,13 @@ const importFromCloud = async () => {
       showImportDialog.value = false
       importCloudForm.value = { id: '', password: '' }
       ElMessage.success('导入成功')
+
+      // Auto scroll to content after loading
+      setTimeout(() => {
+        if (excalidrawRef.value) {
+          excalidrawRef.value.scrollToContent({ delay: 300 })
+        }
+      }, 100)
     }
   } catch {
     ElMessage.error('网络错误')
@@ -683,6 +697,13 @@ const loadLocalDrawing = (drawing) => {
       excalidrawRef.value.loadScene(data)
       showMyDrawings.value = false
       ElMessage.success('已加载')
+
+      // Auto scroll to content after loading
+      setTimeout(() => {
+        if (excalidrawRef.value) {
+          excalidrawRef.value.scrollToContent({ delay: 300 })
+        }
+      }, 100)
     }
   } catch {
     ElMessage.error('加载失败')
@@ -717,6 +738,13 @@ const loadCloudDrawing = async (drawing) => {
         excalidrawRef.value.loadScene(sceneData)
         showMyDrawings.value = false
         ElMessage.success('已加载')
+
+        // Auto scroll to content after loading
+        setTimeout(() => {
+          if (excalidrawRef.value) {
+            excalidrawRef.value.scrollToContent({ delay: 300 })
+          }
+        }, 100)
       }
     } else {
       ElMessage.error('加载失败')
@@ -910,6 +938,13 @@ const loadAdminDrawing = async (drawing) => {
         excalidrawRef.value.loadScene(sceneData)
         showAdminPanel.value = false
         ElMessage.success('已加载')
+
+        // Auto scroll to content after loading
+        setTimeout(() => {
+          if (excalidrawRef.value) {
+            excalidrawRef.value.scrollToContent({ delay: 300 })
+          }
+        }, 100)
       }
     } else {
       ElMessage.error('加载失败')

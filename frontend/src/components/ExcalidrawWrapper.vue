@@ -172,6 +172,28 @@ const exportToSvgString = async (options = {}) => {
 
 const getAPI = () => excalidrawAPI
 
+const scrollToContent = (opts = {}) => {
+  if (!excalidrawAPI) return
+
+  // Wait for next tick to ensure content is rendered
+  setTimeout(() => {
+    try {
+      const elements = excalidrawAPI.getSceneElements()
+      if (!elements || elements.length === 0) return
+
+      // Use scrollToContent if available, otherwise use refresh
+      if (excalidrawAPI.scrollToContent) {
+        excalidrawAPI.scrollToContent(elements, opts)
+      } else {
+        // Fallback: just refresh the scene
+        excalidrawAPI.refresh()
+      }
+    } catch (err) {
+      console.warn('Failed to scroll to content:', err)
+    }
+  }, opts.delay || 300)
+}
+
 defineExpose({
   getSceneData,
   getSceneJSON,
@@ -179,7 +201,8 @@ defineExpose({
   resetScene,
   exportToPng,
   exportToSvgString,
-  getAPI
+  getAPI,
+  scrollToContent
 })
 </script>
 

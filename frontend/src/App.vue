@@ -7,6 +7,11 @@
         <span class="mobile-title">DevTools</span>
       </div>
       <div class="mobile-header-right">
+        <el-tooltip :content="themeTooltip" placement="bottom">
+          <el-icon :size="20" class="theme-toggle" @click="toggleTheme">
+            <component :is="themeIcon" />
+          </el-icon>
+        </el-tooltip>
         <span class="current-tool">{{ currentTitle }}</span>
       </div>
     </el-header>
@@ -30,8 +35,8 @@
         :default-active="$route.path"
         router
         class="drawer-menu"
-        background-color="#1e1e1e"
-        text-color="#a0a0a0"
+        :background-color="currentTheme === 'dark' ? '#1e1e1e' : '#ffffff'"
+        :text-color="currentTheme === 'dark' ? '#a0a0a0' : '#666'"
         active-text-color="#409eff"
         @select="showDrawer = false"
       >
@@ -48,17 +53,24 @@
 
     <!-- PC端侧边栏 -->
     <el-aside v-if="!isMobile && !hideSidebar" :width="isCollapse ? '64px' : '200px'" class="sidebar">
-      <div class="logo" @click="isCollapse = !isCollapse">
-        <el-icon :size="24"><Tools /></el-icon>
-        <span v-show="!isCollapse" class="logo-text">DevTools</span>
+      <div class="sidebar-header">
+        <div class="logo" @click="isCollapse = !isCollapse">
+          <el-icon :size="24"><Tools /></el-icon>
+          <span v-show="!isCollapse" class="logo-text">DevTools</span>
+        </div>
+        <el-tooltip :content="themeTooltip" placement="right">
+          <el-icon :size="20" class="theme-toggle-pc" @click="toggleTheme">
+            <component :is="themeIcon" />
+          </el-icon>
+        </el-tooltip>
       </div>
       <el-menu
         :default-active="$route.path"
         :collapse="isCollapse"
         router
         class="sidebar-menu"
-        background-color="#1e1e1e"
-        text-color="#a0a0a0"
+        :background-color="currentTheme === 'dark' ? '#1e1e1e' : '#ffffff'"
+        :text-color="currentTheme === 'dark' ? '#a0a0a0' : '#666'"
         active-text-color="#409eff"
       >
         <el-menu-item
@@ -126,7 +138,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Menu, Coffee } from '@element-plus/icons-vue'
+import { Menu, Coffee, Sunny, Moon } from '@element-plus/icons-vue'
+import { useTheme } from './composables/useTheme'
 
 const router = useRouter()
 const route = useRoute()
@@ -134,6 +147,9 @@ const isCollapse = ref(false)
 const showDrawer = ref(false)
 const isMobile = ref(false)
 const showDonateDialog = ref(false)
+
+// 主题管理
+const { themeMode, currentTheme, toggleTheme } = useTheme()
 
 // 是否隐藏侧边栏（全屏模式）
 const hideSidebar = computed(() => route.meta?.hideSidebar === true)
@@ -166,18 +182,43 @@ const checkMobile = () => {
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
+
+  // 初始化主题
+  const { init } = useTheme()
+  const cleanup = init()
+
+  // 组件卸载时清理监听器
+  onUnmounted(() => {
+    window.removeEventListener('resize', checkMobile)
+    if (cleanup) cleanup()
+  })
 })
 
-onUnmounted(() => {
-  window.removeEventListener('resize', checkMobile)
+// 获取主题图标
+const themeIcon = computed(() => {
+  if (themeMode.value === 'auto') {
+    return currentTheme.value === 'dark' ? Moon : Sunny
+  }
+  return themeMode.value === 'dark' ? Moon : Sunny
+})
+
+// 获取主题提示文本
+const themeTooltip = computed(() => {
+  const modeText = {
+    auto: '自动',
+    light: '浅色',
+    dark: '深色'
+  }
+  return `当前: ${modeText[themeMode.value]}`
 })
 </script>
 
 <style scoped>
 .app-container {
   height: 100vh;
-  background-color: #121212;
+  background-color: #f5f5f5;
   overflow: hidden;
+  transition: background-color 0.3s;
 }
 
 .app-container.fullscreen-mode {
@@ -189,18 +230,29 @@ onUnmounted(() => {
   padding: 0;
 }
 
+/* 暗色主题 */
+:global(.dark) .app-container {
+  background-color: #121212;
+}
+
 /* 移动端头部 */
 .mobile-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #1e1e1e;
-  border-bottom: 1px solid #333;
+  background-color: #ffffff;
+  border-bottom: 1px solid #e0e0e0;
   padding: 0 15px;
   height: 56px;
   position: sticky;
   top: 0;
   z-index: 100;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+:global(.dark) .mobile-header {
+  background-color: #1e1e1e;
+  border-bottom-color: #333;
 }
 
 .mobile-header-left {
@@ -222,14 +274,41 @@ onUnmounted(() => {
 }
 
 .mobile-header-right {
-  color: #a0a0a0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #666;
   font-size: 14px;
 }
 
+:global(.dark) .mobile-header-right {
+  color: #a0a0a0;
+}
+
+.theme-toggle {
+  color: #666;
+  cursor: pointer;
+  padding: 6px;
+  transition: color 0.3s;
+}
+
+.theme-toggle:hover {
+  color: #409eff;
+}
+
+:global(.dark) .theme-toggle {
+  color: #a0a0a0;
+}
+
 .current-tool {
-  background: #333;
+  background: #f0f0f0;
   padding: 4px 12px;
   border-radius: 12px;
+  transition: background-color 0.3s;
+}
+
+:global(.dark) .current-tool {
+  background: #333;
 }
 
 /* 移动端抽屉 */
@@ -258,27 +337,60 @@ onUnmounted(() => {
 
 /* PC端侧边栏 */
 .sidebar {
-  background-color: #1e1e1e;
-  transition: width 0.3s;
+  background-color: #ffffff;
+  transition: width 0.3s, background-color 0.3s;
   overflow: hidden;
   flex-shrink: 0;
   z-index: 10;
 }
 
-.logo {
+:global(.dark) .sidebar {
+  background-color: #1e1e1e;
+}
+
+.sidebar-header {
   height: 60px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border-bottom: 1px solid #e0e0e0;
+  transition: border-color 0.3s;
+}
+
+:global(.dark) .sidebar-header {
+  border-bottom-color: #333;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
   gap: 10px;
   color: #409eff;
   cursor: pointer;
-  border-bottom: 1px solid #333;
+  flex: 1;
+  justify-content: center;
 }
 
 .logo-text {
   font-size: 18px;
   font-weight: bold;
+}
+
+.theme-toggle-pc {
+  color: #666;
+  cursor: pointer;
+  padding: 8px;
+  transition: color 0.3s;
+  flex-shrink: 0;
+}
+
+.theme-toggle-pc:hover {
+  color: #409eff;
+}
+
+:global(.dark) .theme-toggle-pc {
+  color: #a0a0a0;
 }
 
 .sidebar-menu {
@@ -292,6 +404,31 @@ onUnmounted(() => {
 
 .sidebar {
   position: relative;
+}
+
+/* Element Plus Menu 主题覆盖 */
+:global(.sidebar-menu.el-menu) {
+  background-color: #ffffff;
+}
+
+:global(.dark .sidebar-menu.el-menu) {
+  background-color: #1e1e1e;
+}
+
+:global(.sidebar-menu .el-menu-item) {
+  color: #666;
+}
+
+:global(.dark .sidebar-menu .el-menu-item) {
+  color: #a0a0a0;
+}
+
+:global(.sidebar-menu .el-menu-item.is-active) {
+  color: #409eff;
+}
+
+:global(.dark .sidebar-menu .el-menu-item.is-active) {
+  color: #409eff;
 }
 
 /* 捐赠对话框 */
@@ -332,13 +469,19 @@ onUnmounted(() => {
 
 /* 主内容区 */
 .main-content {
-  background-color: #121212;
+  background-color: #f5f5f5;
   padding: 20px;
-  color: #e0e0e0;
+  color: #333;
   height: 100vh;
   overflow-y: auto;
   flex: 1;
   min-width: 0;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+:global(.dark) .main-content {
+  background-color: #121212;
+  color: #e0e0e0;
 }
 
 .mobile-main {
@@ -351,7 +494,12 @@ onUnmounted(() => {
 .page-footer {
   margin-top: 40px;
   padding: 20px 0;
-  border-top: 1px solid #333;
+  border-top: 1px solid #e0e0e0;
+  transition: border-color 0.3s;
+}
+
+:global(.dark) .page-footer {
+  border-top-color: #333;
 }
 
 .footer-content {
@@ -359,18 +507,27 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 15px;
-  color: #808080;
+  color: #999;
   font-size: 14px;
+  transition: color 0.3s;
+}
+
+:global(.dark) .footer-content {
+  color: #808080;
 }
 
 .footer-link {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #808080;
+  color: #999;
   text-decoration: none;
   cursor: pointer;
   transition: color 0.2s;
+}
+
+:global(.dark) .footer-link {
+  color: #808080;
 }
 
 .footer-link:hover {
@@ -387,6 +544,11 @@ onUnmounted(() => {
 }
 
 .footer-divider {
+  color: #ccc;
+  transition: color 0.3s;
+}
+
+:global(.dark) .footer-divider {
   color: #404040;
 }
 
@@ -413,15 +575,27 @@ onUnmounted(() => {
   .mobile-drawer .el-drawer__header {
     margin-bottom: 0;
     padding: 16px 20px;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid #e0e0e0;
+  }
+
+  .dark .mobile-drawer .el-drawer__header {
+    border-bottom-color: #333;
   }
 
   .mobile-drawer .el-drawer__body {
     padding: 0;
+    background-color: #ffffff;
+  }
+
+  .dark .mobile-drawer .el-drawer__body {
     background-color: #1e1e1e;
   }
 
   .mobile-drawer .el-drawer {
+    background-color: #ffffff;
+  }
+
+  .dark .mobile-drawer .el-drawer {
     background-color: #1e1e1e;
   }
 
