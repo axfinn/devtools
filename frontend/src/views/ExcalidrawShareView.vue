@@ -125,11 +125,32 @@ onMounted(async () => {
     errorMsg.value = '无效的画图链接'
     return
   }
+
+  // Try to auto-load with saved password if user is the creator
+  const savedPassword = getSavedPassword(id)
+  if (savedPassword) {
+    password.value = savedPassword
+    await verifyPassword(true) // silent mode for auto-login
+  }
 })
 
-const verifyPassword = async () => {
+const getSavedPassword = (id) => {
+  try {
+    const creatorKeys = JSON.parse(localStorage.getItem('excalidraw_creator_keys') || '{}')
+    if (creatorKeys[id] && creatorKeys[id].password) {
+      return creatorKeys[id].password
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+const verifyPassword = async (silent = false) => {
   if (!password.value) {
-    ElMessage.warning('请输入密码')
+    if (!silent) {
+      ElMessage.warning('请输入密码')
+    }
     return
   }
 
@@ -143,13 +164,17 @@ const verifyPassword = async () => {
 
     if (!res.ok) {
       if (res.status === 401) {
-        ElMessage.error('密码错误')
+        if (!silent) {
+          ElMessage.error('密码错误')
+        }
       } else if (res.status === 410) {
         errorMsg.value = '此画图已过期'
       } else if (res.status === 404) {
         errorMsg.value = '画图不存在'
       } else {
-        ElMessage.error(data.error || '获取失败')
+        if (!silent) {
+          ElMessage.error(data.error || '获取失败')
+        }
       }
       return
     }
@@ -160,7 +185,9 @@ const verifyPassword = async () => {
     }
     isVerified.value = true
   } catch (err) {
-    ElMessage.error('网络错误')
+    if (!silent) {
+      ElMessage.error('网络错误')
+    }
   } finally {
     verifying.value = false
   }

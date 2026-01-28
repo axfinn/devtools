@@ -515,11 +515,12 @@ const saveToCloud = async () => {
       return
     }
 
-    // Save creator key
+    // Save creator key and password
     saveCreatorKey(data.id, data.creator_key, {
       title: cloudSaveForm.value.title,
       expires_at: data.expires_at,
-      is_permanent: data.is_permanent
+      is_permanent: data.is_permanent,
+      password: cloudSaveForm.value.password // Save password for easier management
     })
 
     // Show result

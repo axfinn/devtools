@@ -148,11 +148,11 @@ func (h *ExcalidrawHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Create short URL for the share
+	// Create short URL for the share (default 10 clicks)
 	shortURL := &models.ShortURL{
 		OriginalURL: "/draw/" + share.ID,
 		ExpiresAt:   expiresAt,
-		MaxClicks:   0, // unlimited
+		MaxClicks:   10, // default 10 clicks
 		CreatorIP:   ip,
 	}
 	if err := h.db.CreateShortURLFromStruct(shortURL); err != nil {
