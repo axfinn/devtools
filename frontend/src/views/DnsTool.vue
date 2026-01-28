@@ -268,15 +268,27 @@ onMounted(() => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 
 .ip-section,
 .dns-section,
 .common-domains {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
+}
+
+:global(.dark) .ip-section,
+:global(.dark) .dns-section,
+:global(.dark) .common-domains {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .section-header {
@@ -288,8 +300,12 @@ onMounted(() => {
 
 .section-header h3 {
   margin: 0;
-  color: #e0e0e0;
+  color: #333;
   font-size: 16px;
+}
+
+:global(.dark) .section-header h3 {
+  color: #e0e0e0;
 }
 
 .ip-display {
@@ -306,10 +322,14 @@ onMounted(() => {
 }
 
 .ip-loading {
-  color: #a0a0a0;
+  color: #666;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+:global(.dark) .ip-loading {
+  color: #a0a0a0;
 }
 
 .dns-input-row {
@@ -330,9 +350,15 @@ onMounted(() => {
 }
 
 .record-group {
-  background-color: #2d2d2d;
+  background-color: #f5f5f5;
+  border: 1px solid #e0e0e0;
   padding: 15px;
   border-radius: 6px;
+}
+
+:global(.dark) .record-group {
+  background-color: #2d2d2d;
+  border-color: #404040;
 }
 
 .record-type {
@@ -353,8 +379,14 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 4px;
+}
+
+:global(.dark) .record-item {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .record-item.txt-item {
@@ -367,8 +399,12 @@ onMounted(() => {
 
 .record-value {
   font-family: 'Consolas', 'Monaco', monospace;
-  color: #d4d4d4;
+  color: #333;
   flex: 1;
+}
+
+:global(.dark) .record-value {
+  color: #d4d4d4;
 }
 
 .record-priority {
@@ -381,6 +417,10 @@ onMounted(() => {
 
 .common-domains h4 {
   margin: 0 0 15px 0;
+  color: #333;
+}
+
+:global(.dark) .common-domains h4 {
   color: #e0e0e0;
 }
 

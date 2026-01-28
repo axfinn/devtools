@@ -306,6 +306,10 @@ onMounted(() => {
   justify-content: center;
   gap: 15px;
   min-height: 300px;
+  color: #666;
+}
+
+:global(.dark) .loading {
   color: #a0a0a0;
 }
 
@@ -317,13 +321,23 @@ onMounted(() => {
 
 .password-card {
   width: 400px;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+}
+
+:global(.dark) .password-card {
   background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .card-header {
   display: flex;
   align-items: center;
   gap: 10px;
+  color: #333;
+}
+
+:global(.dark) .card-header {
   color: #e0e0e0;
 }
 
@@ -345,9 +359,15 @@ onMounted(() => {
 }
 
 .paste-header {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
+}
+
+:global(.dark) .paste-header {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .paste-title {
@@ -359,32 +379,53 @@ onMounted(() => {
 
 .paste-title h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .paste-title h2 {
   color: #e0e0e0;
 }
 
 .paste-meta {
   display: flex;
   gap: 10px;
-  color: #a0a0a0;
+  color: #666;
   font-size: 14px;
+}
+
+:global(.dark) .paste-meta {
+  color: #a0a0a0;
 }
 
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
 }
 
+:global(.dark) .editor-panel {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .panel-header {
   padding: 10px 15px;
-  background-color: #2d2d2d;
-  color: #a0a0a0;
+  background-color: #f5f5f5;
+  color: #333;
   font-size: 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+:global(.dark) .panel-header {
+  background-color: #2d2d2d;
+  color: #a0a0a0;
+  border-bottom-color: #404040;
 }
 
 .actions {
@@ -395,8 +436,8 @@ onMounted(() => {
 .code-content {
   margin: 0;
   padding: 20px;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  background-color: #ffffff;
+  color: #333;
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 14px;
   line-height: 1.6;
@@ -408,6 +449,11 @@ onMounted(() => {
   overflow-y: auto;
 }
 
+:global(.dark) .code-content {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+}
+
 .back-section {
   display: flex;
   justify-content: center;
@@ -415,9 +461,15 @@ onMounted(() => {
 
 /* 图片画廊 */
 .image-gallery {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   padding: 20px;
+}
+
+:global(.dark) .image-gallery {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .gallery-header {
@@ -431,8 +483,12 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #e0e0e0;
+  color: #333;
   font-size: 16px;
+}
+
+:global(.dark) .gallery-title {
+  color: #e0e0e0;
 }
 
 .gallery-grid {
@@ -447,7 +503,13 @@ onMounted(() => {
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
+  background-color: #f5f5f5;
+  border: 1px solid #e0e0e0;
+}
+
+:global(.dark) .gallery-item {
   background-color: #2d2d2d;
+  border-color: #404040;
 }
 
 .gallery-item img {

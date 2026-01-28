@@ -204,6 +204,10 @@ onMounted(() => {
   overflow: hidden;
   padding: 20px;
   gap: 15px;
+  background-color: #f5f5f5;
+}
+
+:global(.dark) .share-view-container {
   background-color: #121212;
 }
 
@@ -244,6 +248,10 @@ onMounted(() => {
 
 .title-section h2 {
   margin: 0 0 8px 0;
+  color: #333;
+}
+
+:global(.dark) .title-section h2 {
   color: #e0e0e0;
 }
 
@@ -261,9 +269,15 @@ onMounted(() => {
 .content-container {
   flex: 1;
   background-color: #fff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
   min-height: 0;
+}
+
+:global(.dark) .content-container {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .preview-content {
@@ -272,6 +286,10 @@ onMounted(() => {
   overflow-y: auto;
   color: #333;
   line-height: 1.8;
+}
+
+:global(.dark) .preview-content {
+  color: #e0e0e0;
 }
 
 .footer-notice {

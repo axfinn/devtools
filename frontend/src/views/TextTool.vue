@@ -426,9 +426,15 @@ function encodeUTF8Bytes(str) {
 }
 
 .tool-tabs {
-  background: #1e1e1e;
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   padding: 20px;
+}
+
+:global(.dark) .tool-tabs {
+  background: #1e1e1e;
+  border-color: #333;
 }
 
 .tab-content {
@@ -439,10 +445,15 @@ function encodeUTF8Bytes(str) {
 }
 
 .editor-panel {
-  background: #252525;
+  background: #f5f5f5;
   border-radius: 8px;
   padding: 15px;
-  border: 1px solid #333;
+  border: 1px solid #e0e0e0;
+}
+
+:global(.dark) .editor-panel {
+  background: #252525;
+  border-color: #333;
 }
 
 .panel-header {
@@ -450,9 +461,13 @@ function encodeUTF8Bytes(str) {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
-  color: #909399;
+  color: #606266;
   font-size: 14px;
   font-weight: 500;
+}
+
+:global(.dark) .panel-header {
+  color: #909399;
 }
 
 .feature-hints {
@@ -463,9 +478,9 @@ function encodeUTF8Bytes(str) {
 
 .code-editor {
   width: 100%;
-  background: #1a1a1a;
-  color: #e0e0e0;
-  border: 1px solid #333;
+  background: #ffffff;
+  color: #333;
+  border: 1px solid #dcdfe6;
   border-radius: 4px;
   padding: 12px;
   font-family: 'Courier New', Consolas, Monaco, monospace;
@@ -473,6 +488,12 @@ function encodeUTF8Bytes(str) {
   line-height: 1.6;
   resize: vertical;
   min-height: 120px;
+}
+
+:global(.dark) .code-editor {
+  background: #1a1a1a;
+  color: #e0e0e0;
+  border-color: #333;
 }
 
 .code-editor:focus {
@@ -489,9 +510,13 @@ function encodeUTF8Bytes(str) {
 
 .tips-section {
   margin-top: 20px;
-  background: #1e1e1e;
+  background: #f5f5f5;
   border-radius: 8px;
   padding: 15px;
+}
+
+:global(.dark) .tips-section {
+  background: #1e1e1e;
 }
 
 .tips-title {
@@ -508,15 +533,23 @@ function encodeUTF8Bytes(str) {
 
 .tips-list li {
   margin: 6px 0;
+  color: #606266;
+}
+
+:global(.dark) .tips-list li {
   color: #909399;
 }
 
 .tips-list code {
-  background: #252525;
+  background: #e4e7ed;
   padding: 2px 6px;
   border-radius: 3px;
   font-family: 'Courier New', Consolas, Monaco, monospace;
   color: #409eff;
+}
+
+:global(.dark) .tips-list code {
+  background: #252525;
 }
 
 .error-msg {

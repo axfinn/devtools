@@ -1078,6 +1078,10 @@ const copyToClipboard = async (text, name) => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 

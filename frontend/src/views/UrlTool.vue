@@ -257,6 +257,10 @@ const copyBuiltUrl = async () => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 
@@ -274,33 +278,51 @@ const copyBuiltUrl = async () => {
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
 }
 
+:global(.dark) .editor-panel {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .panel-header {
   padding: 10px 15px;
-  background-color: #2d2d2d;
-  color: #a0a0a0;
+  background-color: #f5f5f5;
+  color: #333;
   font-size: 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+:global(.dark) .panel-header {
+  background-color: #2d2d2d;
+  color: #e0e0e0;
+  border-bottom-color: #404040;
 }
 
 .code-editor {
   flex: 1;
   width: 100%;
   padding: 15px;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  background-color: #ffffff;
+  color: #333;
   border: none;
   resize: none;
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 14px;
   line-height: 1.5;
   outline: none;
+}
+
+:global(.dark) .code-editor {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
 }
 
 .button-group {
@@ -317,9 +339,15 @@ const copyBuiltUrl = async () => {
 }
 
 .parsed-result {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
+}
+
+:global(.dark) .parsed-result {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .query-params {
@@ -328,6 +356,10 @@ const copyBuiltUrl = async () => {
 
 .query-params h4 {
   margin-bottom: 10px;
+  color: #333;
+}
+
+:global(.dark) .query-params h4 {
   color: #e0e0e0;
 }
 
@@ -338,13 +370,23 @@ const copyBuiltUrl = async () => {
 }
 
 .params-builder {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
 }
 
+:global(.dark) .params-builder {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .params-builder h4 {
   margin-bottom: 15px;
+  color: #333;
+}
+
+:global(.dark) .params-builder h4 {
   color: #e0e0e0;
 }
 
@@ -356,13 +398,23 @@ const copyBuiltUrl = async () => {
 }
 
 .param-row span {
+  color: #666;
+}
+
+:global(.dark) .param-row span {
   color: #a0a0a0;
 }
 
 .built-url {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
+}
+
+:global(.dark) .built-url {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .url-preview {

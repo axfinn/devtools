@@ -1107,6 +1107,10 @@ const isExpiringSoon = (dateStr) => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 
@@ -1129,10 +1133,16 @@ const isExpiringSoon = (dateStr) => {
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
   height: 100%;
+}
+
+:global(.dark) .editor-panel {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .panel-header {
@@ -1140,10 +1150,17 @@ const isExpiringSoon = (dateStr) => {
   justify-content: space-between;
   align-items: center;
   padding: 10px 15px;
-  background-color: #2d2d2d;
-  color: #a0a0a0;
+  background-color: #f5f5f5;
+  color: #333;
   font-size: 14px;
   flex-shrink: 0;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+:global(.dark) .panel-header {
+  background-color: #2d2d2d;
+  color: #a0a0a0;
+  border-bottom-color: #404040;
 }
 
 .char-count {
@@ -1151,12 +1168,16 @@ const isExpiringSoon = (dateStr) => {
   color: #666;
 }
 
+:global(.dark) .char-count {
+  color: #666;
+}
+
 .code-editor {
   flex: 1;
   width: 100%;
   padding: 15px;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  background-color: #ffffff;
+  color: #333;
   border: none;
   resize: none;
   font-family: 'Consolas', 'Monaco', monospace;
@@ -1165,6 +1186,11 @@ const isExpiringSoon = (dateStr) => {
   outline: none;
   overflow-y: auto;
   min-height: 0;
+}
+
+:global(.dark) .code-editor {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
 }
 
 .preview-panel {

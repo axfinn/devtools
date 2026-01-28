@@ -530,6 +530,10 @@ const resetForm = () => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 
@@ -546,24 +550,35 @@ const resetForm = () => {
 }
 
 .quick-editor {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
   min-height: 300px;
   display: flex;
 }
 
+:global(.dark) .quick-editor {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .quick-editor .code-editor {
   flex: 1;
   padding: 20px;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  background-color: #ffffff;
+  color: #333;
   border: none;
   resize: none;
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 15px;
   line-height: 1.6;
   outline: none;
+}
+
+:global(.dark) .quick-editor .code-editor {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
 }
 
 .quick-actions {
@@ -587,26 +602,38 @@ const resetForm = () => {
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
   min-height: 300px;
 }
 
+:global(.dark) .editor-panel {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .panel-header {
   padding: 10px 15px;
-  background-color: #2d2d2d;
+  background-color: #f5f5f5;
   display: flex;
   gap: 10px;
   align-items: center;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+:global(.dark) .panel-header {
+  background-color: #2d2d2d;
+  border-bottom-color: #404040;
 }
 
 .code-editor {
   flex: 1;
   width: 100%;
   padding: 15px;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  background-color: #ffffff;
+  color: #333;
   border: none;
   resize: none;
   font-family: 'Consolas', 'Monaco', monospace;
@@ -615,14 +642,25 @@ const resetForm = () => {
   outline: none;
 }
 
+:global(.dark) .code-editor {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+}
+
 .options-row {
   display: flex;
   gap: 20px;
   align-items: center;
   flex-wrap: wrap;
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 15px;
   border-radius: 8px;
+}
+
+:global(.dark) .options-row {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .option-item {
@@ -632,8 +670,12 @@ const resetForm = () => {
 }
 
 .option-label {
-  color: #a0a0a0;
+  color: #666;
   font-size: 14px;
+}
+
+:global(.dark) .option-label {
+  color: #a0a0a0;
 }
 
 /* 结果展示 */
@@ -727,21 +769,35 @@ const resetForm = () => {
 }
 
 .tips-section {
-  background-color: #1e1e1e;
+  background-color: #f5f5f5;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
 }
 
+:global(.dark) .tips-section {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .tips-section h4 {
   margin: 0 0 10px 0;
+  color: #333;
+}
+
+:global(.dark) .tips-section h4 {
   color: #e0e0e0;
 }
 
 .tips-section ul {
   margin: 0;
   padding-left: 20px;
-  color: #a0a0a0;
+  color: #666;
   line-height: 1.8;
+}
+
+:global(.dark) .tips-section ul {
+  color: #a0a0a0;
 }
 
 .error-msg {
@@ -750,9 +806,15 @@ const resetForm = () => {
 
 /* 图片上传区域 */
 .image-section {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   padding: 15px;
+}
+
+:global(.dark) .image-section {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .image-header {
@@ -766,8 +828,12 @@ const resetForm = () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #e0e0e0;
+  color: #333;
   font-size: 14px;
+}
+
+:global(.dark) .image-title {
+  color: #e0e0e0;
 }
 
 .size-info {
@@ -786,7 +852,13 @@ const resetForm = () => {
   aspect-ratio: 1;
   border-radius: 8px;
   overflow: hidden;
+  background-color: #f5f5f5;
+  border: 1px solid #e0e0e0;
+}
+
+:global(.dark) .image-item {
   background-color: #2d2d2d;
+  border-color: #404040;
 }
 
 .image-item img {
@@ -812,16 +884,21 @@ const resetForm = () => {
 
 .image-add {
   aspect-ratio: 1;
-  border: 2px dashed #404040;
+  border: 2px dashed #d0d0d0;
   border-radius: 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #808080;
+  color: #999;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+:global(.dark) .image-add {
+  border-color: #404040;
+  color: #808080;
 }
 
 .image-add:hover {
@@ -834,7 +911,7 @@ const resetForm = () => {
 }
 
 .image-upload {
-  border: 2px dashed #404040;
+  border: 2px dashed #d0d0d0;
   border-radius: 8px;
   padding: 30px;
   display: flex;
@@ -842,9 +919,14 @@ const resetForm = () => {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #808080;
+  color: #999;
   cursor: pointer;
   transition: all 0.2s;
+}
+
+:global(.dark) .image-upload {
+  border-color: #404040;
+  color: #808080;
 }
 
 .image-upload:hover {
@@ -854,6 +936,10 @@ const resetForm = () => {
 
 .upload-hint {
   font-size: 12px;
+  color: #999;
+}
+
+:global(.dark) .upload-hint {
   color: #606060;
 }
 

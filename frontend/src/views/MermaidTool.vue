@@ -1001,6 +1001,10 @@ watch(theme, () => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 
@@ -1027,27 +1031,40 @@ watch(theme, () => {
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   overflow: hidden;
 }
 
+:global(.dark) .editor-panel {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .panel-header {
   padding: 10px 15px;
-  background-color: #2d2d2d;
-  color: #a0a0a0;
+  background-color: #f5f5f5;
+  color: #333;
   font-size: 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+:global(.dark) .panel-header {
+  background-color: #2d2d2d;
+  color: #a0a0a0;
+  border-bottom-color: #404040;
 }
 
 .code-editor {
   flex: 1;
   width: 100%;
   padding: 15px;
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  background-color: #ffffff;
+  color: #333;
   border: none;
   resize: none;
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
@@ -1057,12 +1074,27 @@ watch(theme, () => {
   tab-size: 4;
 }
 
+:global(.dark) .code-editor {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+}
+
 .code-editor::placeholder {
+  color: #999;
+}
+
+:global(.dark) .code-editor::placeholder {
   color: #6a6a6a;
 }
 
 .preview-panel {
   background-color: #ffffff;
+  border: 1px solid #e0e0e0;
+}
+
+:global(.dark) .preview-panel {
+  background-color: #1e1e1e;
+  border-color: #333;
 }
 
 .preview-content {
@@ -1073,6 +1105,10 @@ watch(theme, () => {
   display: flex;
   justify-content: center;
   align-items: flex-start;
+}
+
+:global(.dark) .preview-content {
+  background-color: #1a1a1a;
 }
 
 .diagram-container {
@@ -1208,12 +1244,19 @@ watch(theme, () => {
 
 .fullscreen-header {
   padding: 12px 20px;
-  background-color: #2d2d2d;
-  color: #e0e0e0;
+  background-color: #f5f5f5;
+  color: #333;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+:global(.dark) .fullscreen-header {
+  background-color: #2d2d2d;
+  color: #e0e0e0;
+  border-bottom-color: #404040;
 }
 
 .fullscreen-header span {

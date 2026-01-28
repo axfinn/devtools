@@ -320,13 +320,21 @@ const copyToClipboard = async (text) => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 
 .current-time-card {
-  background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+  background: linear-gradient(135deg, #64b5f6 0%, #42a5f5 100%);
   padding: 20px;
   border-radius: 12px;
+}
+
+:global(.dark) .current-time-card {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
 }
 
 .time-display {
@@ -344,14 +352,23 @@ const copyToClipboard = async (text) => {
 }
 
 .time-item .label {
-  color: #a0c4e8;
+  color: rgba(0, 0, 0, 0.7);
   font-size: 14px;
 }
 
+:global(.dark) .time-item .label {
+  color: #a0c4e8;
+}
+
 .time-item .value {
-  color: #fff;
+  color: #1565c0;
   font-size: 20px;
   font-family: 'Consolas', 'Monaco', monospace;
+  font-weight: 600;
+}
+
+:global(.dark) .time-item .value {
+  color: #fff;
 }
 
 .timestamp {
@@ -370,28 +387,46 @@ const copyToClipboard = async (text) => {
 }
 
 .converter-card {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
 }
 
+:global(.dark) .converter-card {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .converter-card h3 {
   margin: 0 0 15px 0;
+  color: #333;
+}
+
+:global(.dark) .converter-card h3 {
   color: #e0e0e0;
 }
 
 .result {
   margin-top: 15px;
   padding: 15px;
-  background-color: #2d2d2d;
+  background-color: #f5f5f5;
   border-radius: 6px;
+}
+
+:global(.dark) .result {
+  background-color: #2d2d2d;
 }
 
 .result-item {
   display: flex;
   justify-content: space-between;
   padding: 8px 0;
-  border-bottom: 1px solid #3d3d3d;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+:global(.dark) .result-item {
+  border-bottom-color: #3d3d3d;
 }
 
 .result-item:last-child {
@@ -399,6 +434,10 @@ const copyToClipboard = async (text) => {
 }
 
 .result-item .label {
+  color: #666;
+}
+
+:global(.dark) .result-item .label {
   color: #a0a0a0;
 }
 
@@ -408,13 +447,23 @@ const copyToClipboard = async (text) => {
 }
 
 .time-calc-section {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
 }
 
+:global(.dark) .time-calc-section {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .time-calc-section h3 {
   margin: 0 0 15px 0;
+  color: #333;
+}
+
+:global(.dark) .time-calc-section h3 {
   color: #e0e0e0;
 }
 
@@ -430,18 +479,32 @@ const copyToClipboard = async (text) => {
   font-size: 18px;
   font-family: 'Consolas', 'Monaco', monospace;
   padding: 10px 20px;
-  background-color: #2d2d2d;
+  background-color: #f5f5f5;
   border-radius: 6px;
 }
 
+:global(.dark) .calc-result {
+  background-color: #2d2d2d;
+}
+
 .quick-times {
-  background-color: #1e1e1e;
+  background-color: #ffffff;
+  border: 1px solid #e0e0e0;
   padding: 20px;
   border-radius: 8px;
 }
 
+:global(.dark) .quick-times {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
 .quick-times h3 {
   margin: 0 0 15px 0;
+  color: #333;
+}
+
+:global(.dark) .quick-times h3 {
   color: #e0e0e0;
 }
 </style>

@@ -962,6 +962,10 @@ onUnmounted(() => {
 
 .tool-header h2 {
   margin: 0;
+  color: #333;
+}
+
+:global(.dark) .tool-header h2 {
   color: #e0e0e0;
 }
 
@@ -974,9 +978,13 @@ onUnmounted(() => {
 }
 
 .section-title {
-  color: #a0a0a0;
+  color: #666;
   font-size: 14px;
   margin-bottom: 12px;
+}
+
+:global(.dark) .section-title {
+  color: #a0a0a0;
 }
 
 .room-list {
@@ -985,9 +993,13 @@ onUnmounted(() => {
 }
 
 .empty-tip {
-  color: #666;
+  color: #999;
   text-align: center;
   padding: 40px;
+}
+
+:global(.dark) .empty-tip {
+  color: #666;
 }
 
 .room-item {
@@ -995,14 +1007,24 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: #1e1e1e;
+  background: #ffffff;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   margin-bottom: 8px;
   cursor: pointer;
   transition: background 0.2s;
 }
 
+:global(.dark) .room-item {
+  background: #1e1e1e;
+  border-color: #333;
+}
+
 .room-item:hover {
+  background: #f5f5f5;
+}
+
+:global(.dark) .room-item:hover {
   background: #2a2a2a;
 }
 
@@ -1016,13 +1038,21 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #e0e0e0;
+  color: #333;
   font-size: 16px;
 }
 
+:global(.dark) .room-name {
+  color: #e0e0e0;
+}
+
 .room-id {
-  color: #666;
+  color: #999;
   font-size: 12px;
+}
+
+:global(.dark) .room-id {
+  color: #666;
 }
 
 /* 聊天界面 */
@@ -1037,25 +1067,40 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding-bottom: 16px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid #e0e0e0;
   margin-bottom: 16px;
+}
+
+:global(.dark) .chat-header {
+  border-bottom-color: #333;
 }
 
 .room-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #e0e0e0;
+  color: #333;
   font-size: 18px;
   flex-wrap: wrap;
 }
 
+:global(.dark) .room-title {
+  color: #e0e0e0;
+}
+
 .room-id-tag {
   font-size: 12px;
-  color: #666;
-  background: #2a2a2a;
+  color: #999;
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
   padding: 2px 8px;
   border-radius: 4px;
+}
+
+:global(.dark) .room-id-tag {
+  color: #666;
+  background: #2a2a2a;
+  border-color: #404040;
 }
 
 /* 连接状态指示器 */
@@ -1104,9 +1149,15 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-  background: #1a1a1a;
+  background: #f8f8f8;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   margin-bottom: 16px;
+}
+
+:global(.dark) .messages-container {
+  background: #1a1a1a;
+  border-color: #333;
 }
 
 .message-item {
@@ -1118,11 +1169,18 @@ onUnmounted(() => {
 }
 
 .system-text {
-  color: #666;
+  color: #999;
   font-size: 12px;
-  background: #2a2a2a;
+  background: #e8e8e8;
+  border: 1px solid #d0d0d0;
   padding: 4px 12px;
   border-radius: 12px;
+}
+
+:global(.dark) .system-text {
+  color: #666;
+  background: #2a2a2a;
+  border-color: #404040;
 }
 
 .message-header {
@@ -1142,14 +1200,22 @@ onUnmounted(() => {
 }
 
 .time {
-  color: #666;
+  color: #999;
   font-size: 12px;
 }
 
+:global(.dark) .time {
+  color: #666;
+}
+
 .message-content {
-  color: #e0e0e0;
+  color: #333;
   line-height: 1.5;
   word-break: break-word;
+}
+
+:global(.dark) .message-content {
+  color: #e0e0e0;
 }
 
 .message-image {
@@ -1182,14 +1248,24 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #2a2a2a;
+  background: #f0f0f0;
+  border: 1px solid #e0e0e0;
   border-radius: 8px;
   color: #409eff;
   text-decoration: none;
   transition: background 0.2s;
 }
 
+:global(.dark) .message-file {
+  background: #2a2a2a;
+  border-color: #404040;
+}
+
 .message-file:hover {
+  background: #e0e0e0;
+}
+
+:global(.dark) .message-file:hover {
   background: #333;
 }
 
