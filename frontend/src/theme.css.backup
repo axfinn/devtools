@@ -503,7 +503,7 @@ hr {
 
 /* Mermaid 图表在暗色模式下的处理 */
 .dark .mermaid svg {
-  filter: invert(0.9) hue-rotate(180deg) !important;
+  filter: invert(0.9) hue-rotate(180deg);
 }
 
 /* PasteBin 样式 */
