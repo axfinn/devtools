@@ -386,7 +386,7 @@ onMounted(() => {
 
 /* Mark/highlight */
 .preview-content :deep(mark) {
-  background-color: var(--bg-primary);3cd;
+  background-color: rgba(255, 235, 59, 0.3);
   padding: 0.1em 0.2em;
   border-radius: 2px;
 }

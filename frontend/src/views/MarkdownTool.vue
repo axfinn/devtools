@@ -607,7 +607,7 @@ const getFullHtml = async () => {
     img { max-width: 100%; }
     hr { border: 0; height: 1px; background: #d0d7de; margin: 24px 0; }
     .mermaid { display: flex; justify-content: center; margin: 20px 0; background: #f8f9fa; padding: 20px; border-radius: var(--radius-md); }
-    mark { background-color: var(--bg-primary);3cd; padding: 0.1em 0.2em; }
+    mark { background-color: rgba(255, 235, 59, 0.3); padding: 0.1em 0.2em; }
     .task-list-item { list-style: none; }
     .task-list-item input { margin-right: 8px; }
     @media print { body { max-width: none; padding: 20px; } }
@@ -1318,7 +1318,7 @@ const isExpiringSoon = (dateStr) => {
 
 /* Mark/highlight */
 .preview-content :deep(mark) {
-  background-color: var(--bg-primary);3cd;
+  background-color: rgba(255, 235, 59, 0.3);
   padding: 0.1em 0.2em;
   border-radius: 2px;
 }
