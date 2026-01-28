@@ -143,7 +143,12 @@ func (h *MockAPIHandler) Create(c *gin.Context) {
 	// Hash password if provided
 	hashedPassword := ""
 	if req.Password != "" {
-		hashedPassword = utils.HashPassword(req.Password)
+		hashed, err := utils.HashPassword(req.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "密码处理失败", "code": 500})
+			return
+		}
+		hashedPassword = hashed
 	}
 
 	// Calculate expiration

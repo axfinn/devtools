@@ -139,11 +139,23 @@ func (h *MDShareHandler) Create(c *gin.Context) {
 	creatorKey := generateKey()
 	accessKey := generateKey()
 
+	hashedCreatorKey, err := utils.HashPassword(creatorKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "密钥生成失败", "code": 500})
+		return
+	}
+
+	hashedAccessKey, err := utils.HashPassword(accessKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "密钥生成失败", "code": 500})
+		return
+	}
+
 	share := &models.MDShare{
 		Content:     req.Content,
 		Title:       req.Title,
-		CreatorKey:  utils.HashPassword(creatorKey),
-		AccessKey:   utils.HashPassword(accessKey),
+		CreatorKey:  hashedCreatorKey,
+		AccessKey:   hashedAccessKey,
 		MaxViews:    maxViews,
 		Views:       0,
 		ExpiresAt:   &expiresAt,
@@ -310,7 +322,12 @@ func (h *MDShareHandler) Update(c *gin.Context) {
 	case "reshare":
 		// Generate new access key and reset views
 		newAccessKey := generateKey()
-		share.AccessKey = utils.HashPassword(newAccessKey)
+		hashedAccessKey, err := utils.HashPassword(newAccessKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "密钥生成失败", "code": 500})
+			return
+		}
+		share.AccessKey = hashedAccessKey
 		share.Views = 0
 		if req.MaxViews >= 2 && req.MaxViews <= 10 {
 			share.MaxViews = req.MaxViews

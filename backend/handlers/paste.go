@@ -152,7 +152,12 @@ func (h *PasteHandler) Create(c *gin.Context) {
 
 	// 密码加密存储
 	if req.Password != "" {
-		paste.Password = utils.HashPassword(req.Password)
+		hashedPassword, err := utils.HashPassword(req.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "密码处理失败", "code": 500})
+			return
+		}
+		paste.Password = hashedPassword
 	}
 
 	if err := h.db.CreatePaste(paste); err != nil {

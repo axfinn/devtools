@@ -1,16 +1,47 @@
 # DevTools 配置文件
 # 复制此文件为 config.yaml 并修改
 
+# 服务器配置
+server:
+  port: "8080"        # 服务端口（也可通过环境变量 PORT 设置）
+  mode: "release"     # 运行模式: debug, release
+
+# 数据库配置
+database:
+  path: "./data/paste.db"  # 数据库文件路径（也可通过环境变量 DB_PATH 设置）
+  max_connections: 10       # 最大数据库连接数
+
+# 安全配置
+security:
+  # CORS 允许的来源（生产环境建议设置具体域名）
+  cors_origins:
+    - "*"
+    # - "https://yourdomain.com"
+    # - "http://localhost:5173"
+  bcrypt_cost: 10  # Bcrypt 加密强度（10-12 推荐）
+
+# 限流配置
+rate_limit:
+  enabled: true             # 是否启用限流
+  create_per_minute: 10     # 创建操作每分钟限制次数
+
+# 内容大小限制
+limits:
+  paste_max_content_size: 102400      # 粘贴板最大文本大小（100KB）
+  paste_max_images: 15                # 粘贴板最大图片数量
+  paste_max_total_size: 31457280      # 粘贴板总大小（30MB）
+  max_upload_size: 57671680           # 最大上传文件大小（55MB，支持视频上传）
+
 # 短链服务配置
 shorturl:
   # 管理密码（用于自定义短链ID）
-  # 留空 = 普通模式，只能随机ID
-  # 设置密码 = 可使用自定义ID如 /s/1 /s/abc
-  password: "your_password_here"
+  # 留空 = 普通模式，只能随机ID，有速率限制
+  # 设置密码 = 可使用自定义ID如 /s/1 /s/abc，无速率限制
+  password: ""
 
 # Markdown 分享配置
 mdshare:
-  # 管理员密码（可管理所有分享、设置永久）
+  # 管理员密码（可管理所有分享）
   # 留空 = 无管理员功能
   admin_password: ""
   # 默认最大查看次数（2-10）

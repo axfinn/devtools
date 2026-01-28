@@ -133,11 +133,23 @@ func (h *ExcalidrawHandler) Create(c *gin.Context) {
 	// Generate creator key
 	creatorKey := generateKey()
 
+	hashedCreatorKey, err := utils.HashPassword(creatorKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "密钥生成失败", "code": 500})
+		return
+	}
+
+	hashedPassword, err := utils.HashPassword(req.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "密码处理失败", "code": 500})
+		return
+	}
+
 	share := &models.ExcalidrawShare{
 		Content:     req.Content,
 		Title:       req.Title,
-		CreatorKey:  utils.HashPassword(creatorKey),
-		AccessKey:   utils.HashPassword(req.Password),
+		CreatorKey:  hashedCreatorKey,
+		AccessKey:   hashedPassword,
 		ExpiresAt:   expiresAt,
 		CreatorIP:   ip,
 		IsPermanent: isPermanent,

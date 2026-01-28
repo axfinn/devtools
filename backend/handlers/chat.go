@@ -166,7 +166,12 @@ func (h *ChatHandler) CreateRoom(c *gin.Context) {
 	}
 
 	if req.Password != "" {
-		room.Password = utils.HashPassword(req.Password)
+		hashedPassword, err := utils.HashPassword(req.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "密码处理失败"})
+			return
+		}
+		room.Password = hashedPassword
 	}
 
 	if err := h.db.CreateRoom(room); err != nil {
