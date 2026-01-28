@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, URL shortening, and Mock API testing.
+DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, URL shortening, Mock API testing, and Excalidraw drawing.
 
 **Tech Stack:**
 - Frontend: Vue 3 + Vite + Element Plus + TailwindCSS
@@ -85,6 +85,13 @@ Docker exposes the backend on port 8082.
   - Admin password for global management (list, view, delete all)
   - Reshare generates new access key and short URL
   - Supports image paste/drag (Base64 embedded, max 1MB per image)
+- **handlers/excalidraw.go**: Excalidraw drawing handlers
+  - Cloud save with password protection (required)
+  - Default 30-day expiration, configurable 1-365 days
+  - Admin password can set permanent save (no expiration)
+  - Creator key for management (stored in localStorage)
+  - Content compressed with gzip (max 10MB)
+  - Auto-generates short URL for sharing
 - **config/config.go**: Configuration file loader for YAML config
 - **models/paste.go**: SQLite operations for pastes
   - Generates 8-character random hex IDs
@@ -92,6 +99,7 @@ Docker exposes the backend on port 8082.
 - **models/shorturl.go**: SQLite operations for short URLs
 - **models/mockapi.go**: SQLite operations for Mock APIs and request logs
 - **models/mdshare.go**: SQLite operations for Markdown shares
+- **models/excalidraw.go**: SQLite operations for Excalidraw drawings (with gzip compression)
 - **middleware/ratelimit.go**: IP-based rate limiting middleware
 - **utils/crypto.go**: Password hashing utilities (SHA256)
 - **utils/cleanup.go**: File cleanup utilities for expired uploads
@@ -141,6 +149,18 @@ Docker exposes the backend on port 8082.
 - `DELETE /api/mdshare/admin/:id?admin_password=xxx`: Admin delete any share
 - `GET /md/:id?key=xxx`: Frontend view route (auto-generates short URL `/s/xxx`)
 
+**Excalidraw:**
+- `POST /api/excalidraw`: Create drawing (requires `content`, `password`, optional `title`, `expires_in` days, `admin_password` for permanent)
+  - Returns `id`, `creator_key`, `short_code`, `share_url`, `expires_at`, `is_permanent`
+- `GET /api/excalidraw/:id?password=xxx`: Get drawing content (requires password)
+- `GET /api/excalidraw/:id/creator?creator_key=xxx`: Get drawing for creator
+- `PUT /api/excalidraw/:id`: Manage drawing (actions: `extend`, `edit`, `set_permanent`)
+- `DELETE /api/excalidraw/:id?creator_key=xxx`: Delete drawing
+- `GET /api/excalidraw/admin/list?admin_password=xxx`: Admin list all drawings
+- `GET /api/excalidraw/admin/:id?admin_password=xxx`: Admin view any drawing
+- `DELETE /api/excalidraw/admin/:id?admin_password=xxx`: Admin delete any drawing
+- `GET /draw/:id`: Frontend view route
+
 **Health:**
 - `GET /api/health`: Health check endpoint
 
@@ -168,6 +188,11 @@ mdshare:
   admin_password: ""         # 管理员密码
   default_max_views: 5       # 默认最大查看次数 (2-10)
   default_expires_days: 30   # 默认过期天数
+
+excalidraw:
+  admin_password: ""         # 管理员密码（可永久保存）
+  default_expires_days: 30   # 默认过期天数
+  max_content_size: 10485760 # 最大内容大小（10MB）
 ```
 
 **Short URL modes:**
@@ -177,7 +202,18 @@ mdshare:
 **Markdown Share:**
 - 创建者密钥自动存储在浏览器 localStorage
 - 访问密钥用于分享给他人查看
-- 管理员密码可设置永久分享
+- 管理员密码可管理所有分享（查看、删除）
+- 管理员面板入口：Markdown 编辑器页面右上角"管理"按钮
+- 管理员密码存储在 sessionStorage（关闭浏览器失效）
+
+**Excalidraw:**
+- 云端保存需要设置访问密码（必填）
+- 默认30天过期，可设置1-365天
+- 管理员密码可设置永久保存（无过期）
+- 创建者密钥自动存储在浏览器 localStorage
+- 支持本地保存到浏览器 localStorage
+- 支持导出 PNG、SVG、JSON 格式
+- 内容使用 gzip 压缩存储（最大10MB）
 
 ## Key Design Patterns
 
@@ -189,14 +225,14 @@ mdshare:
 
 ### Backend
 - **Security**: Rate limiting per IP, content size limits, password hashing (SHA256), input validation
-- **Auto-cleanup**: Background goroutine removes expired data every hour (pastes, chat rooms inactive >7 days, messages >7 days old, expired short URLs, expired Mock APIs, expired Markdown shares, uploaded files >7 days old)
+- **Auto-cleanup**: Background goroutine removes expired data every hour (pastes, chat rooms inactive >7 days, messages >7 days old, expired short URLs, expired Mock APIs, expired Markdown shares, expired Excalidraw drawings, uploaded files >7 days old)
 - **Graceful Degradation**: Attempts cleanup when storage limit reached before rejecting
 - **Static-first**: SPA routing handled by serving index.html for unmatched routes
 - **Config System**: YAML-based configuration loaded from `./config.yaml` or `CONFIG_PATH` env var
 
 ## Database Schema
 
-The SQLite database contains six main tables: `pastes`, `chat_rooms`, `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), and `markdown_shares`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
+The SQLite database contains seven main tables: `pastes`, `chat_rooms`, `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), `markdown_shares`, and `excalidraw_shares`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
 
 ## Common Tasks
 
@@ -222,6 +258,71 @@ curl -X POST http://localhost:8082/api/paste \
 
 # Get paste (returns id in response)
 curl http://localhost:8082/api/paste/{id}
+```
+
+### Testing Markdown Share
+```bash
+# Create share
+curl -X POST http://localhost:8082/api/mdshare \
+  -H "Content-Type: application/json" \
+  -d '{"content":"# Hello\nThis is **Markdown**","title":"Test","max_views":5,"expires_in":30}'
+
+# Response: {"id":"abc12345","creator_key":"xxx","access_key":"yyy","short_code":"zzz","share_url":"/s/zzz"}
+
+# View share (consumes 1 view)
+curl "http://localhost:8082/api/mdshare/{id}?key={access_key}"
+
+# View as creator (no view consumption)
+curl "http://localhost:8082/api/mdshare/{id}/creator?creator_key={creator_key}"
+
+# Reshare (generate new access key)
+curl -X PUT http://localhost:8082/api/mdshare/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"action":"reshare","max_views":5,"creator_key":"xxx"}'
+
+# Delete share
+curl -X DELETE "http://localhost:8082/api/mdshare/{id}?creator_key={creator_key}"
+
+# Admin: List all shares (requires admin_password in config.yaml)
+curl "http://localhost:8082/api/mdshare/admin/list?admin_password=your_password"
+
+# Admin: View any share
+curl "http://localhost:8082/api/mdshare/admin/{id}?admin_password=your_password"
+
+# Admin: Delete any share
+curl -X DELETE "http://localhost:8082/api/mdshare/admin/{id}?admin_password=your_password"
+```
+
+### Testing Excalidraw
+```bash
+# Create cloud save (password required)
+curl -X POST http://localhost:8082/api/excalidraw \
+  -H "Content-Type: application/json" \
+  -d '{"content":"{\"type\":\"excalidraw\",\"elements\":[]}","title":"Test","password":"123456","expires_in":30}'
+
+# Response: {"id":"abc12345","creator_key":"xxx","short_code":"zzz","share_url":"/s/zzz","expires_at":"...","is_permanent":false}
+
+# Get drawing (requires password)
+curl "http://localhost:8082/api/excalidraw/{id}?password=123456"
+
+# Get as creator (no password needed)
+curl "http://localhost:8082/api/excalidraw/{id}/creator?creator_key={creator_key}"
+
+# Extend expiration
+curl -X PUT http://localhost:8082/api/excalidraw/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"action":"extend","expires_in":30,"creator_key":"xxx"}'
+
+# Set permanent (admin only)
+curl -X PUT http://localhost:8082/api/excalidraw/{id} \
+  -H "Content-Type: application/json" \
+  -d '{"action":"set_permanent","admin_password":"your_password"}'
+
+# Delete drawing
+curl -X DELETE "http://localhost:8082/api/excalidraw/{id}?creator_key={creator_key}"
+
+# Admin: List all drawings
+curl "http://localhost:8082/api/excalidraw/admin/list?admin_password=your_password"
 ```
 
 ### WebSocket Chat Architecture

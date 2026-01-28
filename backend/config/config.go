@@ -7,8 +7,9 @@ import (
 )
 
 type Config struct {
-	ShortURL ShortURLConfig  `yaml:"shorturl"`
-	MDShare  MDShareConfig   `yaml:"mdshare"`
+	ShortURL   ShortURLConfig   `yaml:"shorturl"`
+	MDShare    MDShareConfig    `yaml:"mdshare"`
+	Excalidraw ExcalidrawConfig `yaml:"excalidraw"`
 }
 
 type ShortURLConfig struct {
@@ -16,9 +17,15 @@ type ShortURLConfig struct {
 }
 
 type MDShareConfig struct {
-	AdminPassword     string `yaml:"admin_password"`      // 管理员密码，可管理所有分享
-	DefaultMaxViews   int    `yaml:"default_max_views"`   // 默认最大查看次数，默认5
-	DefaultExpiresDays int   `yaml:"default_expires_days"` // 默认过期天数，默认30
+	AdminPassword      string `yaml:"admin_password"`       // 管理员密码，可管理所有分享
+	DefaultMaxViews    int    `yaml:"default_max_views"`    // 默认最大查看次数，默认5
+	DefaultExpiresDays int    `yaml:"default_expires_days"` // 默认过期天数，默认30
+}
+
+type ExcalidrawConfig struct {
+	AdminPassword      string `yaml:"admin_password"`       // 管理员密码，可永久保存
+	DefaultExpiresDays int    `yaml:"default_expires_days"` // 默认过期天数，默认30
+	MaxContentSize     int    `yaml:"max_content_size"`     // 最大内容大小，默认10MB
 }
 
 var globalConfig *Config

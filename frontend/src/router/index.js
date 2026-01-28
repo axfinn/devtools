@@ -100,6 +100,18 @@ const routes = [
     name: 'MockApi',
     component: () => import('../views/MockApi.vue'),
     meta: { title: 'Mock API', icon: 'Connection' }
+  },
+  {
+    path: '/excalidraw',
+    name: 'Excalidraw',
+    component: () => import('../views/ExcalidrawTool.vue'),
+    meta: { title: '画图工具', icon: 'Edit' }
+  },
+  {
+    path: '/draw/:id',
+    name: 'ExcalidrawShare',
+    component: () => import('../views/ExcalidrawShareView.vue'),
+    meta: { title: '查看画图', icon: 'Edit', hideSidebar: true }
   }
 ]
 

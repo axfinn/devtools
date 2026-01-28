@@ -11,6 +11,14 @@
           <el-icon><Folder /></el-icon>
           我的分享
         </el-button>
+        <el-button v-if="isAdmin" type="danger" @click="openAdminPanel">
+          <el-icon><Setting /></el-icon>
+          管理
+        </el-button>
+        <el-button v-else @click="showAdminLogin = true">
+          <el-icon><Setting /></el-icon>
+          管理
+        </el-button>
         <el-button type="primary" @click="exportHtml">
           <el-icon><Download /></el-icon>
           导出 HTML
@@ -61,25 +69,30 @@
 
     <!-- Share Dialog -->
     <el-dialog v-model="showShareDialog" title="分享 Markdown" width="450px" :close-on-click-modal="false">
-      <el-form label-width="100px">
+      <el-form label-width="100px" class="share-form">
         <el-form-item label="标题">
           <el-input v-model="shareForm.title" placeholder="可选，方便识别" maxlength="50" show-word-limit />
         </el-form-item>
         <el-form-item label="查看次数">
-          <el-select v-model="shareForm.maxViews" style="width: 100%">
-            <el-option :value="2" label="2 次" />
-            <el-option :value="3" label="3 次" />
-            <el-option :value="5" label="5 次 (默认)" />
-            <el-option :value="7" label="7 次" />
-            <el-option :value="10" label="10 次" />
+          <el-select v-model="shareForm.maxViews" style="width: 100%" popper-class="share-select-dropdown">
+            <el-option v-for="opt in viewsOptions" :key="opt.value" :value="opt.value" :label="opt.label">
+              <div class="select-option">
+                <span class="option-label">{{ opt.label }}</span>
+                <el-tag v-if="opt.recommended" type="success" size="small" effect="plain">推荐</el-tag>
+                <span v-else class="option-desc">{{ opt.desc }}</span>
+              </div>
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="有效期">
-          <el-select v-model="shareForm.expiresDays" style="width: 100%">
-            <el-option :value="7" label="7 天" />
-            <el-option :value="30" label="30 天 (默认)" />
-            <el-option :value="90" label="90 天" />
-            <el-option :value="365" label="1 年" />
+          <el-select v-model="shareForm.expiresDays" style="width: 100%" popper-class="share-select-dropdown">
+            <el-option v-for="opt in expiresOptions" :key="opt.value" :value="opt.value" :label="opt.label">
+              <div class="select-option">
+                <span class="option-label">{{ opt.label }}</span>
+                <el-tag v-if="opt.recommended" type="success" size="small" effect="plain">推荐</el-tag>
+                <span v-else class="option-desc">{{ opt.desc }}</span>
+              </div>
+            </el-option>
           </el-select>
         </el-form-item>
       </el-form>
@@ -161,14 +174,16 @@
 
     <!-- Reshare Dialog -->
     <el-dialog v-model="showReshareDialog" title="再次分享" width="400px">
-      <el-form label-width="100px">
+      <el-form label-width="100px" class="share-form">
         <el-form-item label="新查看次数">
-          <el-select v-model="reshareForm.maxViews" style="width: 100%">
-            <el-option :value="2" label="2 次" />
-            <el-option :value="3" label="3 次" />
-            <el-option :value="5" label="5 次" />
-            <el-option :value="7" label="7 次" />
-            <el-option :value="10" label="10 次" />
+          <el-select v-model="reshareForm.maxViews" style="width: 100%" popper-class="share-select-dropdown">
+            <el-option v-for="opt in viewsOptions" :key="opt.value" :value="opt.value" :label="opt.label">
+              <div class="select-option">
+                <span class="option-label">{{ opt.label }}</span>
+                <el-tag v-if="opt.recommended" type="success" size="small" effect="plain">推荐</el-tag>
+                <span v-else class="option-desc">{{ opt.desc }}</span>
+              </div>
+            </el-option>
           </el-select>
         </el-form-item>
       </el-form>
@@ -178,6 +193,132 @@
       <template #footer>
         <el-button @click="showReshareDialog = false">取消</el-button>
         <el-button type="primary" @click="doReshare" :loading="reshareLoading">生成新链接</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Admin Login Dialog -->
+    <el-dialog v-model="showAdminLogin" title="管理员登录" width="350px" :close-on-click-modal="false">
+      <el-form @submit.prevent="verifyAdminPassword">
+        <el-form-item>
+          <el-input
+            v-model="adminPassword"
+            type="password"
+            placeholder="请输入管理员密码"
+            show-password
+            @keyup.enter="verifyAdminPassword"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAdminLogin = false">取消</el-button>
+        <el-button type="primary" @click="verifyAdminPassword" :loading="adminLoading">确认</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Admin Panel Dialog -->
+    <el-dialog v-model="showAdminPanel" title="分享管理" width="900px" :close-on-click-modal="false">
+      <div class="admin-toolbar">
+        <el-input
+          v-model="adminSearchKeyword"
+          placeholder="搜索标题或 ID"
+          clearable
+          style="width: 250px"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-button @click="loadAllShares" :loading="loadingAllShares">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+        <span class="share-count">共 {{ filteredAllShares.length }} 条</span>
+      </div>
+
+      <el-table
+        :data="paginatedShares"
+        v-loading="loadingAllShares"
+        empty-text="暂无分享"
+        max-height="400"
+        stripe
+      >
+        <el-table-column prop="id" label="ID" width="100">
+          <template #default="{ row }">
+            <el-tooltip :content="row.id" placement="top">
+              <span class="id-cell">{{ row.id }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="标题" min-width="150">
+          <template #default="{ row }">
+            {{ row.title || '(无标题)' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="次数" width="100">
+          <template #default="{ row }">
+            <el-tag
+              :type="row.remaining_views <= 1 ? 'danger' : row.remaining_views <= 3 ? 'warning' : 'success'"
+              size="small"
+            >
+              {{ row.remaining_views }}/{{ row.max_views }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="160">
+          <template #default="{ row }">
+            {{ formatDate(row.created_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="过期时间" width="160">
+          <template #default="{ row }">
+            <span :class="{ 'text-danger': isExpiringSoon(row.expires_at) }">
+              {{ formatDate(row.expires_at) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" @click="previewShareAdmin(row)">
+              <el-icon><View /></el-icon>
+              查看
+            </el-button>
+            <el-button size="small" @click="copyShareLink(row)">
+              <el-icon><Link /></el-icon>
+              链接
+            </el-button>
+            <el-button size="small" type="danger" @click="deleteShareAdmin(row)">
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="admin-pagination">
+        <el-pagination
+          v-model:current-page="adminCurrentPage"
+          :page-size="adminPageSize"
+          :total="filteredAllShares.length"
+          layout="prev, pager, next"
+          :hide-on-single-page="true"
+        />
+      </div>
+
+      <template #footer>
+        <el-button @click="logoutAdmin" type="warning">退出登录</el-button>
+        <el-button @click="showAdminPanel = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Admin Preview Dialog -->
+    <el-dialog v-model="showAdminPreview" title="内容预览" width="800px">
+      <div class="admin-preview-header">
+        <span class="preview-title">{{ adminPreviewShare?.title || '(无标题)' }}</span>
+        <el-tag size="small">{{ adminPreviewShare?.remaining_views }}/{{ adminPreviewShare?.max_views }} 次</el-tag>
+      </div>
+      <div class="admin-preview-content markdown-body" v-html="adminPreviewHtml"></div>
+      <template #footer>
+        <el-button @click="showAdminPreview = false">关闭</el-button>
+        <el-button type="primary" @click="loadAdminShareToEditor">加载到编辑器</el-button>
       </template>
     </el-dialog>
 
@@ -525,6 +666,22 @@ const shareResult = ref({
   expiresDays: 30
 })
 
+// Select options with descriptions
+const viewsOptions = [
+  { value: 2, label: '2 次', desc: '私密分享' },
+  { value: 3, label: '3 次', desc: '小范围' },
+  { value: 5, label: '5 次', recommended: true },
+  { value: 7, label: '7 次', desc: '团队内' },
+  { value: 10, label: '10 次', desc: '最大限制' }
+]
+
+const expiresOptions = [
+  { value: 7, label: '7 天', desc: '临时分享' },
+  { value: 30, label: '30 天', recommended: true },
+  { value: 90, label: '90 天', desc: '长期保存' },
+  { value: 365, label: '1 年', desc: '归档用途' }
+]
+
 const createShare = async () => {
   if (!markdownText.value.trim()) {
     ElMessage.warning('请输入内容后再分享')
@@ -748,6 +905,184 @@ const copyToClipboard = async (text, name) => {
   } catch {
     ElMessage.error('复制失败')
   }
+}
+
+// Admin functionality
+const isAdmin = ref(false)
+const adminPassword = ref('')
+const showAdminLogin = ref(false)
+const showAdminPanel = ref(false)
+const adminLoading = ref(false)
+const loadingAllShares = ref(false)
+const allShares = ref([])
+const adminSearchKeyword = ref('')
+const adminCurrentPage = ref(1)
+const adminPageSize = 10
+
+// Check if already logged in
+onMounted(() => {
+  const savedPwd = sessionStorage.getItem('mdshare_admin_pwd')
+  if (savedPwd) {
+    isAdmin.value = true
+  }
+})
+
+const filteredAllShares = computed(() => {
+  if (!adminSearchKeyword.value) return allShares.value
+  const keyword = adminSearchKeyword.value.toLowerCase()
+  return allShares.value.filter(s =>
+    s.id.toLowerCase().includes(keyword) ||
+    (s.title && s.title.toLowerCase().includes(keyword))
+  )
+})
+
+const paginatedShares = computed(() => {
+  const start = (adminCurrentPage.value - 1) * adminPageSize
+  return filteredAllShares.value.slice(start, start + adminPageSize)
+})
+
+const verifyAdminPassword = async () => {
+  if (!adminPassword.value.trim()) {
+    ElMessage.warning('请输入密码')
+    return
+  }
+
+  adminLoading.value = true
+  try {
+    const res = await fetch(`/api/mdshare/admin/list?admin_password=${encodeURIComponent(adminPassword.value)}`)
+    if (res.ok) {
+      sessionStorage.setItem('mdshare_admin_pwd', adminPassword.value)
+      isAdmin.value = true
+      showAdminLogin.value = false
+      const data = await res.json()
+      allShares.value = data.list || []
+      showAdminPanel.value = true
+      ElMessage.success('登录成功')
+    } else {
+      ElMessage.error('密码错误')
+    }
+  } catch {
+    ElMessage.error('网络错误')
+  }
+  adminLoading.value = false
+}
+
+const openAdminPanel = async () => {
+  showAdminPanel.value = true
+  await loadAllShares()
+}
+
+const loadAllShares = async () => {
+  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
+  if (!pwd) {
+    isAdmin.value = false
+    showAdminPanel.value = false
+    showAdminLogin.value = true
+    return
+  }
+
+  loadingAllShares.value = true
+  try {
+    const res = await fetch(`/api/mdshare/admin/list?admin_password=${encodeURIComponent(pwd)}`)
+    if (res.ok) {
+      const data = await res.json()
+      allShares.value = data.list || []
+    } else if (res.status === 401 || res.status === 403) {
+      sessionStorage.removeItem('mdshare_admin_pwd')
+      isAdmin.value = false
+      showAdminPanel.value = false
+      ElMessage.error('密码已失效，请重新登录')
+      showAdminLogin.value = true
+    }
+  } catch {
+    ElMessage.error('加载失败')
+  }
+  loadingAllShares.value = false
+}
+
+const logoutAdmin = () => {
+  sessionStorage.removeItem('mdshare_admin_pwd')
+  isAdmin.value = false
+  showAdminPanel.value = false
+  adminPassword.value = ''
+  allShares.value = []
+  ElMessage.success('已退出管理')
+}
+
+// Admin preview
+const showAdminPreview = ref(false)
+const adminPreviewShare = ref(null)
+const adminPreviewHtml = ref('')
+
+const previewShareAdmin = async (share) => {
+  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
+  try {
+    const res = await fetch(`/api/mdshare/admin/${share.id}?admin_password=${encodeURIComponent(pwd)}`)
+    if (res.ok) {
+      const data = await res.json()
+      adminPreviewShare.value = data
+      adminPreviewHtml.value = md.render(data.content || '')
+      showAdminPreview.value = true
+    } else {
+      ElMessage.error('加载失败')
+    }
+  } catch {
+    ElMessage.error('网络错误')
+  }
+}
+
+const loadAdminShareToEditor = () => {
+  if (adminPreviewShare.value?.content) {
+    markdownText.value = adminPreviewShare.value.content
+    showAdminPreview.value = false
+    showAdminPanel.value = false
+    ElMessage.success('已加载到编辑器')
+  }
+}
+
+const deleteShareAdmin = async (share) => {
+  try {
+    await ElMessageBox.confirm(`确定要删除 "${share.title || share.id}" 吗？`, '确认删除', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+
+  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
+  try {
+    const res = await fetch(`/api/mdshare/admin/${share.id}?admin_password=${encodeURIComponent(pwd)}`, {
+      method: 'DELETE'
+    })
+    if (res.ok) {
+      allShares.value = allShares.value.filter(s => s.id !== share.id)
+      ElMessage.success('删除成功')
+    } else {
+      const data = await res.json()
+      ElMessage.error(data.error || '删除失败')
+    }
+  } catch {
+    ElMessage.error('网络错误')
+  }
+}
+
+const copyShareLink = (share) => {
+  const baseUrl = window.location.origin
+  // Use short URL if available
+  const url = share.short_code
+    ? `${baseUrl}/s/${share.short_code}`
+    : `${baseUrl}/md/${share.id}?key=${share.access_key}`
+  copyToClipboard(url, '链接')
+}
+
+const isExpiringSoon = (dateStr) => {
+  if (!dateStr) return false
+  const expires = new Date(dateStr)
+  const now = new Date()
+  const daysLeft = (expires - now) / (1000 * 60 * 60 * 24)
+  return daysLeft <= 3
 }
 </script>
 
@@ -1013,6 +1348,81 @@ const copyToClipboard = async (text, name) => {
 
 .result-form {
   margin-top: 20px;
+}
+
+/* Admin panel styles */
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.share-count {
+  color: #909399;
+  font-size: 13px;
+  margin-left: auto;
+}
+
+.id-cell {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: #409eff;
+  cursor: pointer;
+}
+
+.text-danger {
+  color: #f56c6c;
+}
+
+.admin-pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.admin-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.preview-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #303133;
+}
+
+.admin-preview-content {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 6px;
+}
+
+/* Share form select styles */
+.share-form :deep(.el-select) {
+  width: 100%;
+}
+
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.option-label {
+  font-weight: 500;
+}
+
+.option-desc {
+  font-size: 12px;
+  color: #909399;
 }
 
 /* Mobile */

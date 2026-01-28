@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), react()],
   // 支持域名部署，base 可以通过环境变量配置
   base: process.env.VITE_BASE_URL || '/',
   server: {
@@ -13,6 +14,11 @@ export default defineConfig({
         changeOrigin: true
       }
     }
+  },
+  // 优化依赖预构建
+  optimizeDeps: {
+    include: ['react', 'react-dom', '@excalidraw/excalidraw'],
+    exclude: []
   },
   build: {
     outDir: 'dist',
@@ -26,6 +32,8 @@ export default defineConfig({
           'vue-vendor': ['vue', 'vue-router'],
           // Element Plus UI 库
           'element-plus': ['element-plus'],
+          // React 核心（Excalidraw 依赖）
+          'react-vendor': ['react', 'react-dom'],
           // Mermaid 图表库（按需加载）
           'mermaid': ['mermaid'],
           // KaTeX 数学公式

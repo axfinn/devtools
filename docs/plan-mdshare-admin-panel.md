@@ -1,152 +1,147 @@
-# Markdown 分享管理员面板实现计划
+# Markdown 分享管理员面板
+
+## 状态: ✅ 已完成
+
+实现日期: 2026-01-28
 
 ## 概述
 
 为 Markdown 分享功能添加前端管理员面板，支持查看和管理所有分享。
 
-## 当前状态
+## 功能说明
 
-- 后端 API 已实现完成
-- 缺少前端管理界面
+### 入口位置
 
-## 已有 API
+Markdown 编辑器页面 (`/markdown`) 右上角的"管理"按钮。
 
-| 方法 | 路径 | 功能 |
-|------|------|------|
-| GET | `/api/mdshare/admin/list?admin_password=xxx` | 获取所有分享列表 |
-| GET | `/api/mdshare/admin/:id?admin_password=xxx` | 查看分享内容（不消耗次数） |
-| DELETE | `/api/mdshare/admin/:id?admin_password=xxx` | 删除分享 |
+### 使用流程
 
-## 实现计划
+1. 点击"管理"按钮
+2. 首次使用需输入管理员密码（配置在 `config.yaml`）
+3. 验证成功后进入管理面板
+4. 可进行查看、搜索、删除等操作
+5. 关闭浏览器后需重新登录
 
-### 1. 前端界面设计
+### 功能列表
 
-**入口位置**: `MarkdownTool.vue` 页面，header 区域添加"管理"按钮
+| 功能 | 说明 |
+|------|------|
+| 搜索 | 按标题或 ID 搜索分享 |
+| 分页 | 每页 10 条，支持翻页 |
+| 查看 | 预览 Markdown 渲染内容（不消耗次数） |
+| 复制链接 | 一键复制分享链接 |
+| 删除 | 删除任意分享 |
+| 加载到编辑器 | 将内容加载到编辑器继续编辑 |
+| 退出登录 | 清除密码，退出管理状态 |
 
-**界面组件**:
-- 密码输入对话框（首次使用时）
-- 分享列表表格
-- 内容预览对话框
-- 批量操作功能
+## 配置要求
 
-### 2. 功能需求
+在 `backend/config.yaml` 中设置管理员密码：
 
-#### 2.1 密码验证
-- 输入管理员密码
-- 密码存储到 sessionStorage（当前会话有效）
-- 密码错误提示
-
-#### 2.2 分享列表
-- 显示所有分享：ID、标题、剩余次数、创建时间、过期时间
-- 支持搜索/筛选
-- 分页显示
-
-#### 2.3 管理操作
-- 查看内容（预览模式，渲染 Markdown）
-- 删除分享
-- 批量删除
-- 复制分享链接
-
-### 3. 文件改动
-
-```
-frontend/src/views/MarkdownTool.vue
-├── 添加"管理"按钮
-├── 添加密码输入对话框
-├── 添加管理面板对话框
-└── 添加相关逻辑函数
+```yaml
+mdshare:
+  admin_password: "your_secure_password"  # 必填，否则无法使用管理功能
+  default_max_views: 5
+  default_expires_days: 30
 ```
 
-### 4. 代码示例
+## API 示例
 
-```vue
-<!-- 管理员按钮 -->
-<el-button v-if="isAdmin" type="danger" @click="showAdminPanel = true">
-  <el-icon><Setting /></el-icon>
-  管理
-</el-button>
+### 列出所有分享
 
-<!-- 密码对话框 -->
-<el-dialog v-model="showAdminLogin" title="管理员登录" width="350px">
-  <el-input v-model="adminPassword" type="password" placeholder="请输入管理员密码" />
-  <template #footer>
-    <el-button @click="showAdminLogin = false">取消</el-button>
-    <el-button type="primary" @click="verifyAdminPassword">确认</el-button>
-  </template>
-</el-dialog>
-
-<!-- 管理面板 -->
-<el-dialog v-model="showAdminPanel" title="分享管理" width="900px">
-  <el-table :data="allShares" v-loading="loadingAllShares">
-    <el-table-column prop="id" label="ID" width="100" />
-    <el-table-column prop="title" label="标题" />
-    <el-table-column label="次数" width="100">
-      <template #default="{ row }">
-        {{ row.remaining_views }}/{{ row.max_views }}
-      </template>
-    </el-table-column>
-    <el-table-column prop="created_at" label="创建时间" width="180" />
-    <el-table-column label="操作" width="150">
-      <template #default="{ row }">
-        <el-button size="small" @click="previewShare(row)">查看</el-button>
-        <el-button size="small" type="danger" @click="deleteShareAdmin(row)">删除</el-button>
-      </template>
-    </el-table-column>
-  </el-table>
-</el-dialog>
+```bash
+curl "http://localhost:8082/api/mdshare/admin/list?admin_password=your_password"
 ```
 
-### 5. 逻辑函数
-
-```javascript
-// 状态
-const isAdmin = ref(false)
-const adminPassword = ref('')
-const showAdminLogin = ref(false)
-const showAdminPanel = ref(false)
-const allShares = ref([])
-
-// 验证密码
-const verifyAdminPassword = async () => {
-  const res = await fetch(`/api/mdshare/admin/list?admin_password=${adminPassword.value}`)
-  if (res.ok) {
-    sessionStorage.setItem('mdshare_admin_pwd', adminPassword.value)
-    isAdmin.value = true
-    showAdminLogin.value = false
-    await loadAllShares()
-    showAdminPanel.value = true
-  } else {
-    ElMessage.error('密码错误')
-  }
-}
-
-// 加载所有分享
-const loadAllShares = async () => {
-  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
-  const res = await fetch(`/api/mdshare/admin/list?admin_password=${pwd}`)
-  const data = await res.json()
-  allShares.value = data.list || []
-}
-
-// 删除分享
-const deleteShareAdmin = async (share) => {
-  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
-  await fetch(`/api/mdshare/admin/${share.id}?admin_password=${pwd}`, { method: 'DELETE' })
-  await loadAllShares()
+响应：
+```json
+{
+  "list": [
+    {
+      "id": "abc12345",
+      "title": "测试分享",
+      "max_views": 5,
+      "remaining_views": 3,
+      "created_at": "2026-01-28T10:00:00Z",
+      "expires_at": "2026-02-27T10:00:00Z",
+      "short_code": "xyz789",
+      "access_key": "key123"
+    }
+  ]
 }
 ```
 
-## 优先级
+### 查看分享内容
 
-**中等** - 非核心功能，但对运维有帮助
+```bash
+curl "http://localhost:8082/api/mdshare/admin/abc12345?admin_password=your_password"
+```
 
-## 预估工作量
+响应：
+```json
+{
+  "id": "abc12345",
+  "title": "测试分享",
+  "content": "# Hello\n\nThis is **Markdown** content.",
+  "max_views": 5,
+  "remaining_views": 3,
+  "created_at": "2026-01-28T10:00:00Z",
+  "expires_at": "2026-02-27T10:00:00Z"
+}
+```
 
-- 前端界面: ~100 行代码
-- 测试验证: 需要
+### 删除分享
 
-## 注意事项
+```bash
+curl -X DELETE "http://localhost:8082/api/mdshare/admin/abc12345?admin_password=your_password"
+```
 
-1. 密码仅存 sessionStorage，关闭浏览器失效
-2. 管理员查看不消耗查看次数
-3. 需要在 config.yaml 中配置 admin_password 才能使用
+响应：
+```json
+{
+  "message": "deleted"
+}
+```
+
+## 界面截图说明
+
+### 管理按钮位置
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Markdown 编辑器                                         │
+│                    [分享] [我的分享] [管理] [导出] [打印] │
+├─────────────────────────────────────────────────────────┤
+```
+
+### 管理面板
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  分享管理                                          [×]  │
+├─────────────────────────────────────────────────────────┤
+│  [🔍 搜索标题或 ID        ] [刷新]        共 15 条      │
+├─────────────────────────────────────────────────────────┤
+│  ID       │ 标题      │ 次数  │ 创建时间   │ 过期时间   │
+│  abc123   │ 测试文档  │ 3/5   │ 01-28 10:00│ 02-27 10:00│
+│           │           │       │            │ [查看][链接][删除]│
+│  ...      │ ...       │ ...   │ ...        │ ...        │
+├─────────────────────────────────────────────────────────┤
+│                    < 1 2 3 >                            │
+├─────────────────────────────────────────────────────────┤
+│  [退出登录]                                     [关闭]  │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 安全说明
+
+1. **密码存储**: 管理员密码仅存储在 sessionStorage，关闭浏览器自动清除
+2. **密码验证**: 每次 API 调用都会验证密码
+3. **无权限分离**: 管理员可以查看和删除所有分享，请谨慎设置密码
+4. **HTTPS 建议**: 生产环境建议使用 HTTPS 传输密码
+
+## 相关文件
+
+- 前端: `frontend/src/views/MarkdownTool.vue`
+- 后端: `backend/handlers/mdshare.go`
+- 配置: `backend/config.yaml`

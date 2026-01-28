@@ -17,3 +17,13 @@ mdshare:
   default_max_views: 5
   # 默认过期天数
   default_expires_days: 30
+
+# Excalidraw 画图配置
+excalidraw:
+  # 管理员密码（可永久保存、管理所有画图）
+  # 留空 = 无管理员功能
+  admin_password: ""
+  # 默认过期天数（1-365）
+  default_expires_days: 30
+  # 最大内容大小（字节），默认10MB
+  max_content_size: 10485760

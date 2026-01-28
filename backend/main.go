@@ -68,6 +68,11 @@ func main() {
 		log.Fatalf("Markdown 分享数据库初始化失败: %v", err)
 	}
 
+	// 初始化 Excalidraw 数据库表
+	if err := db.InitExcalidraw(); err != nil {
+		log.Fatalf("Excalidraw 数据库初始化失败: %v", err)
+	}
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -101,6 +106,11 @@ func main() {
 			mdCount, err := db.CleanExpiredMDShares()
 			if err == nil && mdCount > 0 {
 				log.Printf("已清理 %d 个过期 Markdown 分享", mdCount)
+			}
+			// 清理过期 Excalidraw 画图
+			excalidrawCount, err := db.CleanExpiredExcalidrawShares()
+			if err == nil && excalidrawCount > 0 {
+				log.Printf("已清理 %d 个过期 Excalidraw 画图", excalidrawCount)
 			}
 			// 清理过期上传文件（7天）
 			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
@@ -138,6 +148,7 @@ func main() {
 	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
 	mockAPIHandler := handlers.NewMockAPIHandler(db)
 	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)
+	excalidrawHandler := handlers.NewExcalidrawHandler(db, cfg.Excalidraw.AdminPassword, cfg.Excalidraw.DefaultExpiresDays, cfg.Excalidraw.MaxContentSize)
 
 	// API 路由
 	api := r.Group("/api")
@@ -198,6 +209,20 @@ func main() {
 			mdshare.GET("/admin/list", mdShareHandler.List)
 			mdshare.GET("/admin/:id", mdShareHandler.AdminGet)
 			mdshare.DELETE("/admin/:id", mdShareHandler.AdminDelete)
+		}
+
+		// Excalidraw 画图 API
+		excalidraw := api.Group("/excalidraw")
+		{
+			excalidraw.POST("", createRateLimiter.Middleware(), excalidrawHandler.Create)
+			excalidraw.GET("/:id", excalidrawHandler.Get)
+			excalidraw.GET("/:id/creator", excalidrawHandler.GetByCreator)
+			excalidraw.PUT("/:id", excalidrawHandler.Update)
+			excalidraw.DELETE("/:id", excalidrawHandler.Delete)
+			// Admin routes
+			excalidraw.GET("/admin/list", excalidrawHandler.List)
+			excalidraw.GET("/admin/:id", excalidrawHandler.AdminGet)
+			excalidraw.DELETE("/admin/:id", excalidrawHandler.AdminDelete)
 		}
 
 		// 健康检查
