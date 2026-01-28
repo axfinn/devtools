@@ -4,12 +4,38 @@
    ======================================== */
 
 /* ===== 基础样式 ===== */
+/* 强制所有根元素为深色背景 */
+html.dark,
+html.dark body,
+body.dark {
+  background-color: #121212 !important;
+  color: #e0e0e0 !important;
+  min-height: 100vh !important;
+}
+
+.dark,
 .dark body {
   background-color: #121212 !important;
   color: #e0e0e0 !important;
 }
 
 .dark #app {
+  background-color: transparent !important;
+}
+
+.dark .app-container {
+  background-color: #121212 !important;
+}
+
+.dark .main-content {
+  background-color: transparent !important;
+}
+
+.dark .el-main {
+  background-color: transparent !important;
+}
+
+.dark .el-container {
   background-color: transparent !important;
 }
 
