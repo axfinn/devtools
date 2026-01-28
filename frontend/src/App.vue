@@ -7,27 +7,29 @@
         <span class="mobile-title">DevTools</span>
       </div>
       <div class="mobile-header-right">
-        <el-dropdown @command="setThemeMode" trigger="click" size="small">
-          <el-icon :size="20" class="theme-toggle">
-            <component :is="themeIcon" />
+        <div class="theme-switcher">
+          <el-icon
+            :size="18"
+            :class="['theme-icon', { 'active': themeMode === 'auto' }]"
+            @click="setThemeMode('auto')"
+          >
+            <Monitor />
           </el-icon>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="auto" :class="{ 'is-active': themeMode === 'auto' }">
-                <el-icon><Monitor /></el-icon>
-                <span>自动</span>
-              </el-dropdown-item>
-              <el-dropdown-item command="light" :class="{ 'is-active': themeMode === 'light' }">
-                <el-icon><Sunny /></el-icon>
-                <span>浅色</span>
-              </el-dropdown-item>
-              <el-dropdown-item command="dark" :class="{ 'is-active': themeMode === 'dark' }">
-                <el-icon><Moon /></el-icon>
-                <span>深色</span>
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+          <el-icon
+            :size="18"
+            :class="['theme-icon', { 'active': themeMode === 'light' }]"
+            @click="setThemeMode('light')"
+          >
+            <Sunny />
+          </el-icon>
+          <el-icon
+            :size="18"
+            :class="['theme-icon', { 'active': themeMode === 'dark' }]"
+            @click="setThemeMode('dark')"
+          >
+            <Moon />
+          </el-icon>
+        </div>
         <span class="current-tool">{{ currentTitle }}</span>
       </div>
     </el-header>
@@ -74,27 +76,41 @@
           <el-icon :size="24"><Tools /></el-icon>
           <span v-show="!isCollapse" class="logo-text">DevTools</span>
         </div>
-        <el-dropdown @command="setThemeMode" trigger="click" placement="bottom-end">
-          <el-icon :size="20" class="theme-toggle-pc">
-            <component :is="themeIcon" />
+        <div class="theme-switcher-pc" v-show="!isCollapse">
+          <el-icon
+            :size="18"
+            :class="['theme-icon', { 'active': themeMode === 'auto' }]"
+            @click="setThemeMode('auto')"
+            title="自动"
+          >
+            <Monitor />
           </el-icon>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="auto" :class="{ 'is-active': themeMode === 'auto' }">
-                <el-icon><Monitor /></el-icon>
-                <span>自动</span>
-              </el-dropdown-item>
-              <el-dropdown-item command="light" :class="{ 'is-active': themeMode === 'light' }">
-                <el-icon><Sunny /></el-icon>
-                <span>浅色</span>
-              </el-dropdown-item>
-              <el-dropdown-item command="dark" :class="{ 'is-active': themeMode === 'dark' }">
-                <el-icon><Moon /></el-icon>
-                <span>深色</span>
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+          <el-icon
+            :size="18"
+            :class="['theme-icon', { 'active': themeMode === 'light' }]"
+            @click="setThemeMode('light')"
+            title="浅色"
+          >
+            <Sunny />
+          </el-icon>
+          <el-icon
+            :size="18"
+            :class="['theme-icon', { 'active': themeMode === 'dark' }]"
+            @click="setThemeMode('dark')"
+            title="深色"
+          >
+            <Moon />
+          </el-icon>
+        </div>
+        <el-icon
+          v-show="isCollapse"
+          :size="20"
+          :class="['theme-icon-collapsed', { 'active': true }]"
+          @click="toggleThemeCollapsed"
+          :title="themeModeName"
+        >
+          <component :is="themeIcon" />
+        </el-icon>
       </div>
       <el-menu
         :default-active="$route.path"
@@ -233,6 +249,24 @@ const themeIcon = computed(() => {
   }
   return themeMode.value === 'dark' ? Moon : Sunny
 })
+
+// 获取主题模式名称
+const themeModeName = computed(() => {
+  const modeText = {
+    auto: '自动',
+    light: '浅色',
+    dark: '深色'
+  }
+  return modeText[themeMode.value]
+})
+
+// 折叠时切换主题（循环）
+const toggleThemeCollapsed = () => {
+  const modes = ['auto', 'light', 'dark']
+  const currentIndex = modes.indexOf(themeMode.value)
+  const nextIndex = (currentIndex + 1) % modes.length
+  setThemeMode(modes[nextIndex])
+}
 </script>
 
 <style scoped>
@@ -298,7 +332,7 @@ const themeIcon = computed(() => {
 .mobile-header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   color: #666;
   font-size: 14px;
 }
@@ -307,25 +341,40 @@ const themeIcon = computed(() => {
   color: #a0a0a0;
 }
 
-.theme-toggle {
-  color: #666;
+.theme-switcher {
+  display: flex;
+  gap: 4px;
+  background: #f0f0f0;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+:global(.dark) .theme-switcher {
+  background: #2a2a2a;
+}
+
+.theme-icon {
+  color: #999;
   cursor: pointer;
-  padding: 6px;
-  transition: color 0.3s;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.3s;
   display: flex;
   align-items: center;
 }
 
-.theme-toggle:hover {
+.theme-icon:hover {
   color: #409eff;
+  background: rgba(64, 158, 255, 0.1);
 }
 
-:global(.dark) .theme-toggle {
-  color: #a0a0a0;
+.theme-icon.active {
+  color: #409eff;
+  background: #fff;
 }
 
-:global(.dark) .theme-toggle:hover {
-  color: #409eff;
+:global(.dark) .theme-icon.active {
+  background: #1e1e1e;
 }
 
 .current-tool {
@@ -381,9 +430,10 @@ const themeIcon = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 8px;
+  padding: 0 12px;
   border-bottom: 1px solid #e0e0e0;
   transition: border-color 0.3s;
+  gap: 8px;
 }
 
 :global(.dark) .sidebar-header {
@@ -397,7 +447,7 @@ const themeIcon = computed(() => {
   color: #409eff;
   cursor: pointer;
   flex: 1;
-  justify-content: center;
+  min-width: 0;
 }
 
 .logo-text {
@@ -405,25 +455,38 @@ const themeIcon = computed(() => {
   font-weight: bold;
 }
 
-.theme-toggle-pc {
+.theme-switcher-pc {
+  display: flex;
+  gap: 4px;
+  background: #f0f0f0;
+  padding: 4px;
+  border-radius: 6px;
+}
+
+:global(.dark) .theme-switcher-pc {
+  background: #2a2a2a;
+}
+
+.theme-icon-collapsed {
   color: #666;
   cursor: pointer;
   padding: 8px;
-  transition: color 0.3s;
-  flex-shrink: 0;
+  border-radius: 6px;
+  transition: all 0.3s;
   display: flex;
   align-items: center;
 }
 
-.theme-toggle-pc:hover {
+.theme-icon-collapsed:hover {
   color: #409eff;
+  background: rgba(64, 158, 255, 0.1);
 }
 
-:global(.dark) .theme-toggle-pc {
+:global(.dark) .theme-icon-collapsed {
   color: #a0a0a0;
 }
 
-:global(.dark) .theme-toggle-pc:hover {
+:global(.dark) .theme-icon-collapsed:hover {
   color: #409eff;
 }
 
@@ -603,25 +666,6 @@ const themeIcon = computed(() => {
 </style>
 
 <style>
-/* 主题菜单样式 */
-.el-dropdown-menu__item.is-active {
-  color: #409eff;
-  font-weight: 600;
-  background-color: #ecf5ff;
-}
-
-.dark .el-dropdown-menu__item.is-active {
-  background-color: #1f3a5f;
-}
-
-.el-dropdown-menu__item.is-active .el-icon {
-  color: #409eff;
-}
-
-.el-dropdown-menu__item .el-icon {
-  margin-right: 8px;
-}
-
 /* 全局移动端样式 */
 @media (max-width: 768px) {
   /* 抽屉样式 */

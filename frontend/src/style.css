@@ -16,8 +16,234 @@
 
 body {
   min-height: 100vh;
+  background-color: #f5f5f5;
+  color: #333;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+body.dark {
+  background-color: #121212;
+  color: #e0e0e0;
 }
 
 #app {
   min-height: 100vh;
+}
+
+/* Element Plus 组件暗色主题 */
+.dark .el-card {
+  background-color: #1e1e1e;
+  border-color: #333;
+  color: #e0e0e0;
+}
+
+.dark .el-card__header {
+  background-color: #252525;
+  border-color: #333;
+  color: #e0e0e0;
+}
+
+.dark .el-input__wrapper {
+  background-color: #2a2a2a;
+  box-shadow: 0 0 0 1px #404040 inset;
+}
+
+.dark .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px #606060 inset;
+}
+
+.dark .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px #409eff inset;
+}
+
+.dark .el-input__inner {
+  color: #e0e0e0;
+}
+
+.dark .el-input__inner::placeholder {
+  color: #909399;
+}
+
+.dark .el-textarea__inner {
+  background-color: #2a2a2a;
+  border-color: #404040;
+  color: #e0e0e0;
+}
+
+.dark .el-textarea__inner:hover {
+  border-color: #606060;
+}
+
+.dark .el-textarea__inner:focus {
+  border-color: #409eff;
+}
+
+.dark .el-select .el-input__wrapper {
+  background-color: #2a2a2a;
+}
+
+.dark .el-select-dropdown {
+  background-color: #2a2a2a;
+  border-color: #404040;
+}
+
+.dark .el-select-dropdown__item {
+  color: #e0e0e0;
+}
+
+.dark .el-select-dropdown__item:hover {
+  background-color: #333;
+}
+
+.dark .el-select-dropdown__item.selected {
+  color: #409eff;
+  font-weight: 600;
+}
+
+.dark .el-dialog {
+  background-color: #1e1e1e;
+  border-color: #333;
+}
+
+.dark .el-dialog__header {
+  border-color: #333;
+}
+
+.dark .el-dialog__title {
+  color: #e0e0e0;
+}
+
+.dark .el-dialog__body {
+  color: #e0e0e0;
+}
+
+.dark .el-table {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+}
+
+.dark .el-table th,
+.dark .el-table tr {
+  background-color: #1e1e1e;
+  color: #e0e0e0;
+}
+
+.dark .el-table td,
+.dark .el-table th.is-leaf {
+  border-color: #333;
+}
+
+.dark .el-table--border::after,
+.dark .el-table--group::after,
+.dark .el-table::before {
+  background-color: #333;
+}
+
+.dark .el-table tbody tr:hover > td {
+  background-color: #252525;
+}
+
+.dark .el-button {
+  border-color: #404040;
+  background-color: #2a2a2a;
+  color: #e0e0e0;
+}
+
+.dark .el-button:hover {
+  border-color: #606060;
+  background-color: #333;
+}
+
+.dark .el-button--primary {
+  background-color: #409eff;
+  border-color: #409eff;
+  color: #fff;
+}
+
+.dark .el-button--primary:hover {
+  background-color: #66b1ff;
+  border-color: #66b1ff;
+}
+
+.dark .el-button--success {
+  background-color: #67c23a;
+  border-color: #67c23a;
+}
+
+.dark .el-button--warning {
+  background-color: #e6a23c;
+  border-color: #e6a23c;
+}
+
+.dark .el-button--danger {
+  background-color: #f56c6c;
+  border-color: #f56c6c;
+}
+
+.dark .el-tag {
+  background-color: #2a2a2a;
+  border-color: #404040;
+  color: #e0e0e0;
+}
+
+.dark .el-alert {
+  background-color: #252525;
+  border-color: #404040;
+}
+
+.dark .el-alert--info {
+  background-color: #252932;
+}
+
+.dark .el-alert--warning {
+  background-color: #332b1f;
+}
+
+.dark .el-alert--error {
+  background-color: #342020;
+}
+
+.dark .el-alert--success {
+  background-color: #1f2d1f;
+}
+
+.dark .el-form-item__label {
+  color: #e0e0e0;
+}
+
+.dark .el-checkbox__label {
+  color: #e0e0e0;
+}
+
+.dark .el-radio__label {
+  color: #e0e0e0;
+}
+
+.dark .el-tabs__item {
+  color: #909399;
+}
+
+.dark .el-tabs__item.is-active {
+  color: #409eff;
+}
+
+.dark .el-tabs__item:hover {
+  color: #409eff;
+}
+
+.dark .el-result__title {
+  color: #e0e0e0;
+}
+
+.dark .el-result__subtitle {
+  color: #909399;
+}
+
+/* Monaco Editor 暗色主题 */
+.dark .monaco-editor {
+  background-color: #1e1e1e !important;
+}
+
+.dark .monaco-editor .margin {
+  background-color: #1e1e1e !important;
 }
