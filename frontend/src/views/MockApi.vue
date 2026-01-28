@@ -87,7 +87,7 @@
               placeholder="例如: my-api (可选，留空则随机生成)"
               clearable
             />
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               只能包含字母、数字、下划线、短横线，最长32字符
             </div>
           </el-form-item>
@@ -100,7 +100,7 @@
               placeholder='{"status": "ok", "message": "Hello World"}'
               class="font-mono"
             />
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               最大 100KB
             </div>
           </el-form-item>
@@ -159,9 +159,9 @@
                 show-input
                 class="flex-1"
               />
-              <span class="text-sm text-gray-500">秒</span>
+              <span class="hint-text">秒</span>
             </div>
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               模拟慢速 API，0-30 秒
             </div>
           </el-form-item>
@@ -184,7 +184,7 @@
               :step="100"
               class="w-full"
             />
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               默认 1000 次，最多 100000 次
             </div>
           </el-form-item>
@@ -197,7 +197,7 @@
               clearable
               show-password
             />
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               设置后更新、删除、查看日志需要密码
             </div>
           </el-form-item>
@@ -352,7 +352,7 @@
         </div>
       </template>
 
-      <div v-if="logs.length === 0" class="text-center text-gray-400 py-8">
+      <div v-if="logs.length === 0" class="empty-text">
         暂无请求日志
       </div>
       <el-table v-else :data="logs" size="small" max-height="500">
@@ -1156,5 +1156,19 @@ pre {
   overflow-x: auto;
   max-height: 384px;
   color: var(--text-primary);
+}
+
+/* 提示文本 */
+.hint-text {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* 空状态文本 */
+.empty-text {
+  text-align: center;
+  color: var(--text-quaternary);
+  padding: 32px 0;
 }
 </style>

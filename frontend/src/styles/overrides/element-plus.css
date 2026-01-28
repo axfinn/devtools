@@ -3,6 +3,119 @@
 /* 大部分通过 element-plus-vars.css 中的变量映射自动生效 */
 /* 此文件仅用于处理特殊情况 */
 
+/* Card 卡片 */
+.el-card {
+  background-color: var(--bg-primary);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.el-card__header {
+  background-color: var(--bg-primary);
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.el-card__body {
+  color: var(--text-primary);
+}
+
+/* Table 表格 */
+.el-table {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.el-table th.el-table__cell {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.el-table tr {
+  background-color: var(--bg-primary);
+}
+
+.el-table__body tr.hover-row > td.el-table__cell {
+  background-color: var(--bg-hover);
+}
+
+.el-table__empty-text {
+  color: var(--text-tertiary);
+}
+
+/* Descriptions 描述列表 */
+.el-descriptions {
+  color: var(--text-primary);
+}
+
+.el-descriptions__label {
+  color: var(--text-secondary);
+}
+
+.el-descriptions__content {
+  color: var(--text-primary);
+}
+
+.el-descriptions__body {
+  background-color: var(--bg-primary);
+}
+
+.el-descriptions__table .el-descriptions__cell {
+  border-color: var(--border-base);
+}
+
+/* Divider 分割线 */
+.el-divider {
+  border-color: var(--border-base);
+}
+
+.el-divider__text {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+/* Dialog 对话框 */
+.el-dialog {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+}
+
+.el-dialog__header {
+  border-color: var(--border-base);
+}
+
+.el-dialog__title {
+  color: var(--text-primary);
+}
+
+.el-dialog__body {
+  color: var(--text-primary);
+}
+
+.el-dialog__footer {
+  border-color: var(--border-base);
+}
+
+/* Drawer 抽屉 */
+.el-drawer {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.el-drawer__header {
+  border-color: var(--border-base);
+  color: var(--text-primary);
+}
+
+.el-drawer__body {
+  color: var(--text-primary);
+}
+
+/* Empty 空状态 */
+.el-empty__description {
+  color: var(--text-tertiary);
+}
+
 /* Tabs 标签页背景透明化 */
 .el-tabs {
   background-color: transparent;

@@ -93,7 +93,7 @@
                 <el-icon><Lock /></el-icon>
               </template>
             </el-input>
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               配置密码后可使用自定义短链ID
             </div>
           </el-form-item>
@@ -109,7 +109,7 @@
                 <el-icon><Edit /></el-icon>
               </template>
             </el-input>
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               只能包含字母、数字、下划线、短横线，最长32字符
             </div>
           </el-form-item>
@@ -137,7 +137,7 @@
               :step="100"
               class="w-full"
             />
-            <div class="text-sm text-gray-500 mt-1">
+            <div class="hint-text">
               默认 1000 次，最多 100000 次
             </div>
           </el-form-item>
@@ -295,7 +295,7 @@
         </el-table-column>
       </el-table>
       <el-empty v-else-if="listLoaded" description="暂无数据" />
-      <div v-else class="text-center text-gray-400 py-4">输入密码后点击加载</div>
+      <div v-else class="empty-text">输入密码后点击加载</div>
     </el-card>
   </div>
 </template>
@@ -586,5 +586,19 @@ const copyLink = async (id) => {
   padding: 16px;
   background: var(--qr-bg);
   border-radius: var(--radius-md);
+}
+
+/* 提示文本 */
+.hint-text {
+  font-size: 14px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+
+/* 空状态文本 */
+.empty-text {
+  text-align: center;
+  color: var(--text-quaternary);
+  padding: 16px 0;
 }
 </style>
