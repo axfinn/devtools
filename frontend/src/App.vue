@@ -35,9 +35,6 @@
         :default-active="$route.path"
         router
         class="drawer-menu"
-        :background-color="currentTheme === 'dark' ? '#1e1e1e' : '#ffffff'"
-        :text-color="currentTheme === 'dark' ? '#a0a0a0' : '#666'"
-        active-text-color="#409eff"
         @select="showDrawer = false"
       >
         <el-menu-item
@@ -69,9 +66,6 @@
         :collapse="isCollapse"
         router
         class="sidebar-menu"
-        :background-color="currentTheme === 'dark' ? '#1e1e1e' : '#ffffff'"
-        :text-color="currentTheme === 'dark' ? '#a0a0a0' : '#666'"
-        active-text-color="#409eff"
       >
         <el-menu-item
           v-for="route in menuRoutes"
@@ -216,7 +210,7 @@ const themeModeName = computed(() => {
 <style scoped>
 .app-container {
   height: 100vh;
-  background-color: #f5f5f5;
+  background-color: var(--bg-base);
   overflow: hidden;
   transition: background-color 0.3s;
 }
@@ -230,29 +224,19 @@ const themeModeName = computed(() => {
   padding: 0;
 }
 
-/* 暗色主题 */
-:global(.dark) .app-container {
-  background-color: #121212;
-}
-
 /* 移动端头部 */
 .mobile-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #ffffff;
-  border-bottom: 1px solid #e0e0e0;
+  background-color: var(--bg-primary);
+  border-bottom: 1px solid var(--border-base);
   padding: 0 15px;
   height: 56px;
   position: sticky;
   top: 0;
   z-index: 100;
   transition: background-color 0.3s, border-color 0.3s;
-}
-
-:global(.dark) .mobile-header {
-  background-color: #1e1e1e;
-  border-bottom-color: #333;
 }
 
 .mobile-header-left {
@@ -277,16 +261,12 @@ const themeModeName = computed(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: #666;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
-:global(.dark) .mobile-header-right {
-  color: #a0a0a0;
-}
-
 .theme-toggle {
-  color: #666;
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 6px;
   border-radius: 6px;
@@ -296,28 +276,15 @@ const themeModeName = computed(() => {
 }
 
 .theme-toggle:hover {
-  color: #409eff;
+  color: var(--color-primary);
   background: rgba(64, 158, 255, 0.1);
 }
 
-:global(.dark) .theme-toggle {
-  color: #a0a0a0;
-}
-
-:global(.dark) .theme-toggle:hover {
-  color: #409eff;
-  background: rgba(64, 158, 255, 0.15);
-}
-
 .current-tool {
-  background: #f0f0f0;
+  background: var(--bg-secondary);
   padding: 4px 12px;
   border-radius: 12px;
   transition: background-color 0.3s;
-}
-
-:global(.dark) .current-tool {
-  background: #333;
 }
 
 /* 移动端抽屉 */
@@ -336,25 +303,27 @@ const themeModeName = computed(() => {
 
 .drawer-menu {
   border-right: none;
+  background-color: var(--bg-primary);
 }
 
 .drawer-menu .el-menu-item {
   height: 50px;
   line-height: 50px;
   font-size: 16px;
+  color: var(--text-secondary);
+}
+
+.drawer-menu .el-menu-item.is-active {
+  color: var(--color-primary);
 }
 
 /* PC端侧边栏 */
 .sidebar {
-  background-color: #ffffff;
+  background-color: var(--bg-primary);
   transition: width 0.3s, background-color 0.3s;
   overflow: hidden;
   flex-shrink: 0;
   z-index: 10;
-}
-
-:global(.dark) .sidebar {
-  background-color: #1e1e1e;
 }
 
 .sidebar-header {
@@ -363,13 +332,9 @@ const themeModeName = computed(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-base);
   transition: border-color 0.3s;
   gap: 8px;
-}
-
-:global(.dark) .sidebar-header {
-  border-bottom-color: #333;
 }
 
 .logo {
@@ -388,7 +353,7 @@ const themeModeName = computed(() => {
 }
 
 .theme-toggle-pc {
-  color: #666;
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 8px;
   border-radius: 6px;
@@ -399,17 +364,8 @@ const themeModeName = computed(() => {
 }
 
 .theme-toggle-pc:hover {
-  color: #409eff;
+  color: var(--color-primary);
   background: rgba(64, 158, 255, 0.1);
-}
-
-:global(.dark) .theme-toggle-pc {
-  color: #a0a0a0;
-}
-
-:global(.dark) .theme-toggle-pc:hover {
-  color: #409eff;
-  background: rgba(64, 158, 255, 0.15);
 }
 
 .sidebar-menu {
@@ -427,27 +383,15 @@ const themeModeName = computed(() => {
 
 /* Element Plus Menu 主题覆盖 */
 :global(.sidebar-menu.el-menu) {
-  background-color: #ffffff;
-}
-
-:global(.dark .sidebar-menu.el-menu) {
-  background-color: #1e1e1e;
+  background-color: var(--bg-primary);
 }
 
 :global(.sidebar-menu .el-menu-item) {
-  color: #666;
-}
-
-:global(.dark .sidebar-menu .el-menu-item) {
-  color: #a0a0a0;
+  color: var(--text-secondary);
 }
 
 :global(.sidebar-menu .el-menu-item.is-active) {
-  color: #409eff;
-}
-
-:global(.dark .sidebar-menu .el-menu-item.is-active) {
-  color: #409eff;
+  color: var(--color-primary);
 }
 
 /* 捐赠对话框 */
@@ -456,7 +400,7 @@ const themeModeName = computed(() => {
 }
 
 .donate-text {
-  color: #666;
+  color: var(--text-secondary);
   margin-bottom: 20px;
   font-size: 14px;
 }
@@ -482,25 +426,20 @@ const themeModeName = computed(() => {
 }
 
 .qr-item span {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
 /* 主内容区 */
 .main-content {
-  background-color: #f5f5f5;
+  background-color: var(--bg-base);
   padding: 20px;
-  color: #333;
+  color: var(--text-primary);
   height: 100vh;
   overflow-y: auto;
   flex: 1;
   min-width: 0;
   transition: background-color 0.3s, color 0.3s;
-}
-
-:global(.dark) .main-content {
-  background-color: #121212;
-  color: #e0e0e0;
 }
 
 .mobile-main {
@@ -513,12 +452,8 @@ const themeModeName = computed(() => {
 .page-footer {
   margin-top: 40px;
   padding: 20px 0;
-  border-top: 1px solid #e0e0e0;
+  border-top: 1px solid var(--border-base);
   transition: border-color 0.3s;
-}
-
-:global(.dark) .page-footer {
-  border-top-color: #333;
 }
 
 .footer-content {
@@ -526,31 +461,23 @@ const themeModeName = computed(() => {
   align-items: center;
   justify-content: center;
   gap: 15px;
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 14px;
   transition: color 0.3s;
-}
-
-:global(.dark) .footer-content {
-  color: #808080;
 }
 
 .footer-link {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #999;
+  color: var(--text-tertiary);
   text-decoration: none;
   cursor: pointer;
   transition: color 0.2s;
 }
 
-:global(.dark) .footer-link {
-  color: #808080;
-}
-
 .footer-link:hover {
-  color: #409eff;
+  color: var(--color-primary);
 }
 
 .footer-link .github-icon {
@@ -563,12 +490,8 @@ const themeModeName = computed(() => {
 }
 
 .footer-divider {
-  color: #ccc;
+  color: var(--border-dark);
   transition: color 0.3s;
-}
-
-:global(.dark) .footer-divider {
-  color: #404040;
 }
 
 /* 中等屏幕适配 */
@@ -594,28 +517,16 @@ const themeModeName = computed(() => {
   .mobile-drawer .el-drawer__header {
     margin-bottom: 0;
     padding: 16px 20px;
-    border-bottom: 1px solid #e0e0e0;
-  }
-
-  .dark .mobile-drawer .el-drawer__header {
-    border-bottom-color: #333;
+    border-bottom: 1px solid var(--border-base);
   }
 
   .mobile-drawer .el-drawer__body {
     padding: 0;
-    background-color: #ffffff;
-  }
-
-  .dark .mobile-drawer .el-drawer__body {
-    background-color: #1e1e1e;
+    background-color: var(--bg-primary);
   }
 
   .mobile-drawer .el-drawer {
-    background-color: #ffffff;
-  }
-
-  .dark .mobile-drawer .el-drawer {
-    background-color: #1e1e1e;
+    background-color: var(--bg-primary);
   }
 
   /* 捐赠对话框移动端适配 */
