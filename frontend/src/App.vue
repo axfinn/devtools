@@ -7,11 +7,27 @@
         <span class="mobile-title">DevTools</span>
       </div>
       <div class="mobile-header-right">
-        <el-tooltip :content="themeTooltip" placement="bottom">
-          <el-icon :size="20" class="theme-toggle" @click="toggleTheme">
+        <el-dropdown @command="setThemeMode" trigger="click" size="small">
+          <el-icon :size="20" class="theme-toggle">
             <component :is="themeIcon" />
           </el-icon>
-        </el-tooltip>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="auto" :class="{ 'is-active': themeMode === 'auto' }">
+                <el-icon><Monitor /></el-icon>
+                <span>自动</span>
+              </el-dropdown-item>
+              <el-dropdown-item command="light" :class="{ 'is-active': themeMode === 'light' }">
+                <el-icon><Sunny /></el-icon>
+                <span>浅色</span>
+              </el-dropdown-item>
+              <el-dropdown-item command="dark" :class="{ 'is-active': themeMode === 'dark' }">
+                <el-icon><Moon /></el-icon>
+                <span>深色</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <span class="current-tool">{{ currentTitle }}</span>
       </div>
     </el-header>
@@ -58,11 +74,27 @@
           <el-icon :size="24"><Tools /></el-icon>
           <span v-show="!isCollapse" class="logo-text">DevTools</span>
         </div>
-        <el-tooltip :content="themeTooltip" placement="right">
-          <el-icon :size="20" class="theme-toggle-pc" @click="toggleTheme">
+        <el-dropdown @command="setThemeMode" trigger="click" placement="bottom-end">
+          <el-icon :size="20" class="theme-toggle-pc">
             <component :is="themeIcon" />
           </el-icon>
-        </el-tooltip>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="auto" :class="{ 'is-active': themeMode === 'auto' }">
+                <el-icon><Monitor /></el-icon>
+                <span>自动</span>
+              </el-dropdown-item>
+              <el-dropdown-item command="light" :class="{ 'is-active': themeMode === 'light' }">
+                <el-icon><Sunny /></el-icon>
+                <span>浅色</span>
+              </el-dropdown-item>
+              <el-dropdown-item command="dark" :class="{ 'is-active': themeMode === 'dark' }">
+                <el-icon><Moon /></el-icon>
+                <span>深色</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
       <el-menu
         :default-active="$route.path"
@@ -138,7 +170,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Menu, Coffee, Sunny, Moon } from '@element-plus/icons-vue'
+import { Menu, Coffee, Sunny, Moon, Monitor } from '@element-plus/icons-vue'
 import { useTheme } from './composables/useTheme'
 
 const router = useRouter()
@@ -149,7 +181,7 @@ const isMobile = ref(false)
 const showDonateDialog = ref(false)
 
 // 主题管理
-const { themeMode, currentTheme, toggleTheme } = useTheme()
+const { themeMode, currentTheme, setThemeMode } = useTheme()
 
 // 是否隐藏侧边栏（全屏模式）
 const hideSidebar = computed(() => route.meta?.hideSidebar === true)
@@ -197,19 +229,9 @@ onMounted(() => {
 // 获取主题图标
 const themeIcon = computed(() => {
   if (themeMode.value === 'auto') {
-    return currentTheme.value === 'dark' ? Moon : Sunny
+    return Monitor
   }
   return themeMode.value === 'dark' ? Moon : Sunny
-})
-
-// 获取主题提示文本
-const themeTooltip = computed(() => {
-  const modeText = {
-    auto: '自动',
-    light: '浅色',
-    dark: '深色'
-  }
-  return `当前: ${modeText[themeMode.value]}`
 })
 </script>
 
@@ -290,6 +312,8 @@ const themeTooltip = computed(() => {
   cursor: pointer;
   padding: 6px;
   transition: color 0.3s;
+  display: flex;
+  align-items: center;
 }
 
 .theme-toggle:hover {
@@ -298,6 +322,10 @@ const themeTooltip = computed(() => {
 
 :global(.dark) .theme-toggle {
   color: #a0a0a0;
+}
+
+:global(.dark) .theme-toggle:hover {
+  color: #409eff;
 }
 
 .current-tool {
@@ -383,6 +411,8 @@ const themeTooltip = computed(() => {
   padding: 8px;
   transition: color 0.3s;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 .theme-toggle-pc:hover {
@@ -391,6 +421,10 @@ const themeTooltip = computed(() => {
 
 :global(.dark) .theme-toggle-pc {
   color: #a0a0a0;
+}
+
+:global(.dark) .theme-toggle-pc:hover {
+  color: #409eff;
 }
 
 .sidebar-menu {
@@ -569,6 +603,25 @@ const themeTooltip = computed(() => {
 </style>
 
 <style>
+/* 主题菜单样式 */
+.el-dropdown-menu__item.is-active {
+  color: #409eff;
+  font-weight: 600;
+  background-color: #ecf5ff;
+}
+
+.dark .el-dropdown-menu__item.is-active {
+  background-color: #1f3a5f;
+}
+
+.el-dropdown-menu__item.is-active .el-icon {
+  color: #409eff;
+}
+
+.el-dropdown-menu__item .el-icon {
+  margin-right: 8px;
+}
+
 /* 全局移动端样式 */
 @media (max-width: 768px) {
   /* 抽屉样式 */
