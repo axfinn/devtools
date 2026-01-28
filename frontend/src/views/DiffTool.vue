@@ -137,91 +137,10 @@ const clearAll = () => {
 </script>
 
 <style scoped>
-.tool-container {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.tool-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.tool-header h2 {
-  margin: 0;
-  color: #333;
-}
-
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
-
-.editor-container {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
-  min-height: 300px;
-}
-
-.editor-panel {
-  display: flex;
-  flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
-
-.panel-header {
-  padding: 10px 15px;
-  background-color: #f5f5f5;
-  color: #333;
-  font-size: 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  color: #e0e0e0;
-  border-bottom-color: #404040;
-}
-
-.code-editor {
-  flex: 1;
-  width: 100%;
-  padding: 15px;
-  background-color: #ffffff;
-  color: #333;
-  border: none;
-  resize: none;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  outline: none;
-}
-
-:global(.dark) .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
-
 .diff-result {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
   overflow: hidden;
   flex: 1;
   min-height: 200px;
@@ -229,58 +148,39 @@ const clearAll = () => {
   flex-direction: column;
 }
 
-:global(.dark) .diff-result {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
-
 .diff-stats {
   font-size: 12px;
 }
 
 .diff-stats .added {
-  color: #4caf50;
+  color: var(--color-success);
   margin-right: 10px;
 }
 
 .diff-stats .removed {
-  color: #f44336;
+  color: var(--color-danger);
 }
 
 .diff-content {
   padding: 15px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
   overflow-y: auto;
   flex: 1;
-  color: #333;
-}
-
-:global(.dark) .diff-content {
-  color: #d4d4d4;
+  color: var(--text-primary);
 }
 
 .diff-added {
-  background-color: rgba(76, 175, 80, 0.2);
-  color: #2e7d32;
-}
-
-:global(.dark) .diff-added {
-  background-color: rgba(76, 175, 80, 0.3);
-  color: #81c784;
+  background-color: var(--success-light);
+  color: var(--success-dark);
 }
 
 .diff-removed {
-  background-color: rgba(244, 67, 54, 0.2);
-  color: #c62828;
+  background-color: var(--danger-light);
+  color: var(--danger-dark);
   text-decoration: line-through;
-}
-
-:global(.dark) .diff-removed {
-  background-color: rgba(244, 67, 54, 0.3);
-  color: #e57373;
 }
 </style>

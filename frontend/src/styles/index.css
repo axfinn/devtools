@@ -1,0 +1,37 @@
+/* DevTools 主题系统统一入口 */
+
+/* 1. 基础变量 */
+@import './colors.css';
+@import './component-vars.css';
+@import './element-plus-vars.css';
+
+/* 2. 通用组件样式 */
+@import './tools.css';
+@import './utilities.css';
+
+/* 3. 第三方覆盖 */
+@import './overrides/element-plus.css';
+@import './overrides/markdown.css';
+
+/* 4. 全局基础样式 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100vh;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+#app {
+  min-height: 100vh;
+}

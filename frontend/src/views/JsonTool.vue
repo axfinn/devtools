@@ -281,87 +281,8 @@ const copyOutput = async () => {
 </script>
 
 <style scoped>
-.tool-container {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.tool-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.tool-header h2 {
-  margin: 0;
-  color: #333;
-}
-
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
-
 .editor-container {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
   flex: 1;
-  min-height: 400px;
-}
-
-.editor-panel {
-  display: flex;
-  flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
-
-.panel-header {
-  padding: 10px 15px;
-  background-color: #f5f5f5;
-  color: #333;
-  font-size: 14px;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  color: #a0a0a0;
-  border-bottom-color: #404040;
-}
-
-.code-editor {
-  flex: 1;
-  width: 100%;
-  padding: 15px;
-  background-color: #ffffff;
-  color: #333;
-  border: none;
-  resize: none;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  outline: none;
-}
-
-:global(.dark) .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
-
-.error-msg {
-  margin-top: 10px;
 }
 
 .jsonpath-section {
@@ -370,11 +291,7 @@ const copyOutput = async () => {
 
 .jsonpath-section h3 {
   margin-bottom: 10px;
-  color: #333;
-}
-
-:global(.dark) .jsonpath-section h3 {
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .jsonpath-input {
@@ -382,25 +299,16 @@ const copyOutput = async () => {
 }
 
 .jsonpath-result {
-  background-color: #f5f5f5;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-base);
   padding: 15px;
-  border-radius: 8px;
-}
-
-:global(.dark) .jsonpath-result {
-  background-color: #1e1e1e;
-  border-color: #333;
+  border-radius: var(--radius-md);
 }
 
 .jsonpath-result pre {
   margin: 0;
-  color: #333;
-  font-family: 'Consolas', 'Monaco', monospace;
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
   white-space: pre-wrap;
-}
-
-:global(.dark) .jsonpath-result pre {
-  color: #d4d4d4;
 }
 </style>

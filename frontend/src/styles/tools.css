@@ -1,0 +1,106 @@
+/* 工具页面通用样式 */
+
+/* === 容器布局 === */
+.tool-container {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  height: 100%;
+  background-color: transparent;
+}
+
+.tool-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tool-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 500;
+}
+
+/* === 编辑器组件 === */
+.editor-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  min-height: 300px;
+}
+
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 10px 15px;
+  background-color: var(--panel-header-bg);
+  color: var(--panel-header-text);
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.code-editor {
+  flex: 1;
+  width: 100%;
+  padding: 15px;
+  background-color: var(--editor-bg);
+  color: var(--editor-text);
+  border: none;
+  resize: none;
+  font-family: var(--font-family-mono);
+  font-size: 14px;
+  line-height: var(--editor-line-height);
+  outline: none;
+}
+
+.code-editor::placeholder {
+  color: var(--input-placeholder);
+}
+
+/* === 结果展示 === */
+.result-card,
+.result-panel,
+.output-panel {
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+}
+
+/* === 按钮组 === */
+.button-group {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* === 错误提示 === */
+.error-msg {
+  margin-top: 10px;
+}
+
+/* === 响应式 === */
+@media (max-width: 768px) {
+  .editor-container {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

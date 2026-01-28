@@ -530,12 +530,9 @@ const resetForm = () => {
 
 .tool-header h2 {
   margin: 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
 
 .info-text {
   color: #67c23a;
@@ -550,36 +547,28 @@ const resetForm = () => {
 }
 
 .quick-editor {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   overflow: hidden;
   min-height: 300px;
   display: flex;
 }
 
-:global(.dark) .quick-editor {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .quick-editor .code-editor {
   flex: 1;
   padding: 20px;
-  background-color: #ffffff;
-  color: #333;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   border: none;
   resize: none;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 15px;
   line-height: 1.6;
   outline: none;
 }
 
-:global(.dark) .quick-editor .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
 
 .quick-actions {
   display: flex;
@@ -602,66 +591,50 @@ const resetForm = () => {
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   overflow: hidden;
   min-height: 300px;
 }
 
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .panel-header {
   padding: 10px 15px;
-  background-color: #f5f5f5;
+  background-color: var(--bg-secondary);
   display: flex;
   gap: 10px;
   align-items: center;
   border-bottom: 1px solid #e0e0e0;
 }
 
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  border-bottom-color: #404040;
-}
 
 .code-editor {
   flex: 1;
   width: 100%;
   padding: 15px;
-  background-color: #ffffff;
-  color: #333;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   border: none;
   resize: none;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 14px;
   line-height: 1.5;
   outline: none;
 }
 
-:global(.dark) .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
 
 .options-row {
   display: flex;
   gap: 20px;
   align-items: center;
   flex-wrap: wrap;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
   padding: 15px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
-:global(.dark) .options-row {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .option-item {
   display: flex;
@@ -670,13 +643,10 @@ const resetForm = () => {
 }
 
 .option-label {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
-:global(.dark) .option-label {
-  color: #a0a0a0;
-}
 
 /* 结果展示 */
 .result-section {
@@ -713,7 +683,7 @@ const resetForm = () => {
 .share-url-box {
   width: 100%;
   background: #252525;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 15px;
   display: flex;
   flex-direction: column;
@@ -721,13 +691,13 @@ const resetForm = () => {
 }
 
 .url-display {
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 14px;
   color: #67c23a;
   word-break: break-all;
   padding: 10px;
   background: #1a1a1a;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   text-align: center;
 }
 
@@ -745,12 +715,12 @@ const resetForm = () => {
 }
 
 .qr-title {
-  color: #a0a0a0;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
 .qr-code {
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #fff;
   padding: 10px;
 }
@@ -769,36 +739,26 @@ const resetForm = () => {
 }
 
 .tips-section {
-  background-color: #f5f5f5;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-base);
   padding: 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
-:global(.dark) .tips-section {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .tips-section h4 {
   margin: 0 0 10px 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .tips-section h4 {
-  color: #e0e0e0;
-}
 
 .tips-section ul {
   margin: 0;
   padding-left: 20px;
-  color: #666;
+  color: var(--text-secondary);
   line-height: 1.8;
 }
 
-:global(.dark) .tips-section ul {
-  color: #a0a0a0;
-}
 
 .error-msg {
   margin-top: 10px;
@@ -806,16 +766,12 @@ const resetForm = () => {
 
 /* 图片上传区域 */
 .image-section {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   padding: 15px;
 }
 
-:global(.dark) .image-section {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .image-header {
   display: flex;
@@ -828,13 +784,10 @@ const resetForm = () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #333;
+  color: var(--text-primary);
   font-size: 14px;
 }
 
-:global(.dark) .image-title {
-  color: #e0e0e0;
-}
 
 .size-info {
   color: #67c23a;
@@ -850,16 +803,12 @@ const resetForm = () => {
 .image-item {
   position: relative;
   aspect-ratio: 1;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
-  background-color: #f5f5f5;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-base);
 }
 
-:global(.dark) .image-item {
-  background-color: #2d2d2d;
-  border-color: #404040;
-}
 
 .image-item img {
   width: 100%;
@@ -885,25 +834,21 @@ const resetForm = () => {
 .image-add {
   aspect-ratio: 1;
   border: 2px dashed #d0d0d0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #999;
+  color: var(--text-tertiary);
   cursor: pointer;
   transition: all 0.2s;
 }
 
-:global(.dark) .image-add {
-  border-color: #404040;
-  color: #808080;
-}
 
 .image-add:hover {
-  border-color: #409eff;
-  color: #409eff;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .image-add span {
@@ -912,36 +857,29 @@ const resetForm = () => {
 
 .image-upload {
   border: 2px dashed #d0d0d0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 30px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: #999;
+  color: var(--text-tertiary);
   cursor: pointer;
   transition: all 0.2s;
 }
 
-:global(.dark) .image-upload {
-  border-color: #404040;
-  color: #808080;
-}
 
 .image-upload:hover {
-  border-color: #409eff;
-  color: #409eff;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .upload-hint {
   font-size: 12px;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
-:global(.dark) .upload-hint {
-  color: #606060;
-}
 
 /* 拖拽状态 */
 .quick-editor,
@@ -962,10 +900,10 @@ const resetForm = () => {
   align-items: center;
   justify-content: center;
   gap: 15px;
-  color: #409eff;
+  color: var(--color-primary);
   font-size: 18px;
   z-index: 10;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 @media (max-width: 480px) {

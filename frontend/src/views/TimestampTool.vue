@@ -313,27 +313,17 @@ const copyToClipboard = async (text) => {
 
 <style scoped>
 .tool-container {
-  display: flex;
-  flex-direction: column;
   gap: 20px;
 }
 
-.tool-header h2 {
-  margin: 0;
-  color: #333;
-}
-
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
-
+/* 特殊渐变卡片 - 保留自定义渐变 */
 .current-time-card {
   background: linear-gradient(135deg, #64b5f6 0%, #42a5f5 100%);
   padding: 20px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
 }
 
-:global(.dark) .current-time-card {
+html.dark .current-time-card {
   background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
 }
 
@@ -356,18 +346,18 @@ const copyToClipboard = async (text) => {
   font-size: 14px;
 }
 
-:global(.dark) .time-item .label {
+html.dark .time-item .label {
   color: #a0c4e8;
 }
 
 .time-item .value {
   color: #1565c0;
   font-size: 20px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-weight: 600;
 }
 
-:global(.dark) .time-item .value {
+html.dark .time-item .value {
   color: #fff;
 }
 
@@ -379,7 +369,7 @@ const copyToClipboard = async (text) => {
 }
 
 .timestamp:hover {
-  color: #409eff;
+  color: var(--color-primary);
 }
 
 .converter-section {
@@ -387,46 +377,29 @@ const copyToClipboard = async (text) => {
 }
 
 .converter-card {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
   padding: 20px;
-  border-radius: 8px;
-}
-
-:global(.dark) .converter-card {
-  background-color: #1e1e1e;
-  border-color: #333;
+  border-radius: var(--radius-md);
 }
 
 .converter-card h3 {
   margin: 0 0 15px 0;
-  color: #333;
-}
-
-:global(.dark) .converter-card h3 {
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .result {
   margin-top: 15px;
   padding: 15px;
-  background-color: #f5f5f5;
-  border-radius: 6px;
-}
-
-:global(.dark) .result {
-  background-color: #2d2d2d;
+  background-color: var(--bg-secondary);
+  border-radius: var(--radius-sm);
 }
 
 .result-item {
   display: flex;
   justify-content: space-between;
   padding: 8px 0;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-:global(.dark) .result-item {
-  border-bottom-color: #3d3d3d;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .result-item:last-child {
@@ -434,37 +407,24 @@ const copyToClipboard = async (text) => {
 }
 
 .result-item .label {
-  color: #666;
-}
-
-:global(.dark) .result-item .label {
-  color: #a0a0a0;
+  color: var(--text-secondary);
 }
 
 .result-item .value {
-  color: #4caf50;
-  font-family: 'Consolas', 'Monaco', monospace;
+  color: var(--color-success);
+  font-family: var(--font-family-mono);
 }
 
 .time-calc-section {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
   padding: 20px;
-  border-radius: 8px;
-}
-
-:global(.dark) .time-calc-section {
-  background-color: #1e1e1e;
-  border-color: #333;
+  border-radius: var(--radius-md);
 }
 
 .time-calc-section h3 {
   margin: 0 0 15px 0;
-  color: #333;
-}
-
-:global(.dark) .time-calc-section h3 {
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .calc-row {
@@ -475,36 +435,23 @@ const copyToClipboard = async (text) => {
 }
 
 .calc-result {
-  color: #4caf50;
+  color: var(--color-success);
   font-size: 18px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   padding: 10px 20px;
-  background-color: #f5f5f5;
-  border-radius: 6px;
-}
-
-:global(.dark) .calc-result {
-  background-color: #2d2d2d;
+  background-color: var(--bg-secondary);
+  border-radius: var(--radius-sm);
 }
 
 .quick-times {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
   padding: 20px;
-  border-radius: 8px;
-}
-
-:global(.dark) .quick-times {
-  background-color: #1e1e1e;
-  border-color: #333;
+  border-radius: var(--radius-md);
 }
 
 .quick-times h3 {
   margin: 0 0 15px 0;
-  color: #333;
-}
-
-:global(.dark) .quick-times h3 {
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 </style>

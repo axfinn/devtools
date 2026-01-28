@@ -286,7 +286,7 @@ const formatDate = (dateStr) => {
 
 .share-header h2 {
   margin: 0;
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 20px;
 }
 
@@ -320,7 +320,7 @@ const formatDate = (dateStr) => {
   align-items: center;
   flex: 1;
   gap: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
 }
 
 .loading-icon {
@@ -343,7 +343,7 @@ const formatDate = (dateStr) => {
 .viewer-wrapper {
   flex: 1;
   min-height: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: #121212;
 }

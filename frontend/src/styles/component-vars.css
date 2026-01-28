@@ -1,0 +1,54 @@
+/* 组件专用变量 */
+
+:root {
+  /* Editor 编辑器 */
+  --editor-bg: var(--bg-primary);
+  --editor-text: var(--text-primary);
+  --editor-border: var(--border-base);
+  --editor-line-height: 1.5;
+
+  /* Panel 面板 */
+  --panel-bg: var(--bg-primary);
+  --panel-header-bg: var(--bg-secondary);
+  --panel-header-text: var(--text-primary);
+  --panel-border: var(--border-base);
+
+  /* Card 卡片 */
+  --card-bg: var(--bg-primary);
+  --card-border: var(--border-base);
+  --card-shadow: var(--shadow);
+  --card-radius: 8px;
+
+  /* Button（自定义，非 EP） */
+  --button-radius: 4px;
+  --button-padding: 8px 16px;
+
+  /* Form 表单 */
+  --input-bg: var(--bg-primary);
+  --input-text: var(--text-primary);
+  --input-border: var(--border-base);
+  --input-border-hover: var(--border-dark);
+  --input-border-focus: var(--color-primary);
+  --input-placeholder: var(--text-placeholder);
+
+  /* 特殊组件 */
+  --qr-bg: #ffffff;              /* QR码永远白底黑字 */
+  --qr-fg: #333333;
+
+  /* 字体 */
+  --font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --font-family-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+
+  /* 圆角 */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+}

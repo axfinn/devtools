@@ -204,12 +204,9 @@ onMounted(() => {
   overflow: hidden;
   padding: 20px;
   gap: 15px;
-  background-color: #f5f5f5;
+  background-color: var(--bg-secondary);
 }
 
-:global(.dark) .share-view-container {
-  background-color: #121212;
-}
 
 .status-container {
   display: flex;
@@ -248,12 +245,9 @@ onMounted(() => {
 
 .title-section h2 {
   margin: 0 0 8px 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .title-section h2 {
-  color: #e0e0e0;
-}
 
 .meta-info {
   display: flex;
@@ -263,34 +257,27 @@ onMounted(() => {
 
 .create-time {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
 }
 
 .content-container {
   flex: 1;
-  background-color: #fff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   overflow: hidden;
   min-height: 0;
 }
 
-:global(.dark) .content-container {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .preview-content {
   height: 100%;
   padding: 25px;
   overflow-y: auto;
-  color: #333;
+  color: var(--text-primary);
   line-height: 1.8;
 }
 
-:global(.dark) .preview-content {
-  color: #e0e0e0;
-}
 
 .footer-notice {
   flex-shrink: 0;
@@ -298,9 +285,9 @@ onMounted(() => {
 
 /* Markdown styles */
 .preview-content :deep(pre) {
-  background-color: #1e1e1e;
+  background-color: var(--bg-primary);
   padding: 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
 }
 
@@ -342,7 +329,7 @@ onMounted(() => {
 
 .preview-content :deep(img) {
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .preview-content :deep(h1),
@@ -364,7 +351,7 @@ onMounted(() => {
   margin: 20px 0;
   background: #f8f9fa;
   padding: 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .preview-content :deep(.mermaid svg) {
@@ -376,7 +363,7 @@ onMounted(() => {
   color: #d32f2f;
   padding: 10px;
   background: #ffebee;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .preview-content :deep(.katex-display) {
@@ -399,7 +386,7 @@ onMounted(() => {
 
 /* Mark/highlight */
 .preview-content :deep(mark) {
-  background-color: #fff3cd;
+  background-color: var(--bg-primary);3cd;
   padding: 0.1em 0.2em;
   border-radius: 2px;
 }
@@ -410,7 +397,7 @@ onMounted(() => {
   margin-top: 30px;
   padding-top: 20px;
   font-size: 0.9em;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 768px) {

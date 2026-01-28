@@ -171,22 +171,6 @@ const decodeImage = () => {
 </script>
 
 <style scoped>
-.tool-container {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-.tool-header h2 {
-  margin: 0;
-  color: #333;
-}
-
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
-
 .tool-tabs {
   flex: 1;
 }
@@ -213,65 +197,8 @@ const decodeImage = () => {
   gap: 20px;
 }
 
-.editor-panel {
-  display: flex;
-  flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
-
-.panel-header {
-  padding: 10px 15px;
-  background-color: #f5f5f5;
-  color: #333;
-  font-size: 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  color: #e0e0e0;
-  border-bottom-color: #404040;
-}
-
-.code-editor {
-  flex: 1;
-  width: 100%;
-  padding: 15px;
-  background-color: #ffffff;
-  color: #333;
-  border: none;
-  resize: none;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  outline: none;
-}
-
-:global(.dark) .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
-
 .code-editor.small {
   max-height: 150px;
-}
-
-.button-group {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 10px;
 }
 
 .upload-section {
@@ -279,30 +206,21 @@ const decodeImage = () => {
 }
 
 .image-uploader :deep(.el-upload-dragger) {
-  background-color: #fafafa;
-  border-color: #dcdfe6;
-}
-
-:global(.dark) .image-uploader :deep(.el-upload-dragger) {
-  background-color: #1e1e1e;
-  border-color: #444;
+  background-color: var(--bg-tertiary);
+  border-color: var(--border-base);
 }
 
 .image-uploader :deep(.el-upload-dragger:hover) {
-  border-color: #409eff;
+  border-color: var(--color-primary);
 }
 
 .image-preview {
   max-width: 100%;
   max-height: 300px;
   overflow: auto;
-  background-color: #f5f5f5;
+  background-color: var(--bg-secondary);
   padding: 10px;
-  border-radius: 8px;
-}
-
-:global(.dark) .image-preview {
-  background-color: #1e1e1e;
+  border-radius: var(--radius-md);
 }
 
 .image-preview img {
@@ -312,18 +230,9 @@ const decodeImage = () => {
 }
 
 .decode-section {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
   padding: 15px;
-  border-radius: 8px;
-}
-
-:global(.dark) .decode-section {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
-
-.error-msg {
-  margin-top: 10px;
+  border-radius: var(--radius-md);
 }
 </style>

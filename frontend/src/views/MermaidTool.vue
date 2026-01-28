@@ -1001,12 +1001,9 @@ watch(theme, () => {
 
 .tool-header h2 {
   margin: 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
 
 .actions {
   display: flex;
@@ -1031,21 +1028,17 @@ watch(theme, () => {
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .panel-header {
   padding: 10px 15px;
-  background-color: #f5f5f5;
-  color: #333;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 14px;
   display: flex;
   justify-content: space-between;
@@ -1053,68 +1046,49 @@ watch(theme, () => {
   border-bottom: 1px solid #e0e0e0;
 }
 
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  color: #a0a0a0;
-  border-bottom-color: #404040;
-}
 
 .code-editor {
   flex: 1;
   width: 100%;
   padding: 15px;
-  background-color: #ffffff;
-  color: #333;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   border: none;
   resize: none;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-family-mono);
   font-size: 14px;
   line-height: 1.6;
   outline: none;
   tab-size: 4;
 }
 
-:global(.dark) .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
 
 .code-editor::placeholder {
-  color: #999;
+  color: var(--text-tertiary);
 }
 
-:global(.dark) .code-editor::placeholder {
-  color: #6a6a6a;
-}
 
 .preview-panel {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
 }
 
-:global(.dark) .preview-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .preview-content {
   flex: 1;
   padding: 20px;
   overflow: auto;
-  background-color: #f5f5f5;
+  background-color: var(--bg-secondary);
   display: flex;
   justify-content: center;
   align-items: flex-start;
 }
 
-:global(.dark) .preview-content {
-  background-color: #1a1a1a;
-}
 
 .diagram-container {
-  background-color: #ffffff;
+  background-color: var(--bg-primary);
   padding: 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   min-width: 200px;
 }
@@ -1130,7 +1104,7 @@ watch(theme, () => {
   padding: 20px;
   background-color: #fef0f0;
   border: 1px solid #fbc4c4;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: #c53929;
   max-width: 100%;
 }
@@ -1148,12 +1122,12 @@ watch(theme, () => {
 .error-detail {
   margin: 0;
   font-size: 12px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   white-space: pre-wrap;
   word-break: break-word;
   background-color: rgba(0, 0, 0, 0.05);
   padding: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   max-height: 200px;
   overflow-y: auto;
 }
@@ -1203,7 +1177,7 @@ watch(theme, () => {
 
 .zoom-hint {
   font-weight: normal;
-  color: #909399;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 
@@ -1235,8 +1209,8 @@ watch(theme, () => {
 .fullscreen-container {
   width: 100%;
   height: 100%;
-  background-color: #ffffff;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1244,8 +1218,8 @@ watch(theme, () => {
 
 .fullscreen-header {
   padding: 12px 20px;
-  background-color: #f5f5f5;
-  color: #333;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1253,11 +1227,6 @@ watch(theme, () => {
   border-bottom: 1px solid #e0e0e0;
 }
 
-:global(.dark) .fullscreen-header {
-  background-color: #2d2d2d;
-  color: #e0e0e0;
-  border-bottom-color: #404040;
-}
 
 .fullscreen-header span {
   font-size: 16px;
@@ -1281,9 +1250,9 @@ watch(theme, () => {
 }
 
 .fullscreen-diagram {
-  background-color: #ffffff;
+  background-color: var(--bg-primary);
   padding: 40px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 

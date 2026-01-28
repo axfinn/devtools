@@ -306,12 +306,9 @@ onMounted(() => {
   justify-content: center;
   gap: 15px;
   min-height: 300px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
-:global(.dark) .loading {
-  color: #a0a0a0;
-}
 
 .password-section {
   display: flex;
@@ -321,25 +318,18 @@ onMounted(() => {
 
 .password-card {
   width: 400px;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
 }
 
-:global(.dark) .password-card {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .card-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .card-header {
-  color: #e0e0e0;
-}
 
 .error-text {
   color: #f56c6c;
@@ -359,16 +349,12 @@ onMounted(() => {
 }
 
 .paste-header {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
   padding: 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
-:global(.dark) .paste-header {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .paste-title {
   display: flex;
@@ -379,42 +365,32 @@ onMounted(() => {
 
 .paste-title h2 {
   margin: 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .paste-title h2 {
-  color: #e0e0e0;
-}
 
 .paste-meta {
   display: flex;
   gap: 10px;
-  color: #666;
+  color: var(--text-secondary);
   font-size: 14px;
 }
 
-:global(.dark) .paste-meta {
-  color: #a0a0a0;
-}
 
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .panel-header {
   padding: 10px 15px;
-  background-color: #f5f5f5;
-  color: #333;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 14px;
   display: flex;
   justify-content: space-between;
@@ -422,11 +398,6 @@ onMounted(() => {
   border-bottom: 1px solid #e0e0e0;
 }
 
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  color: #a0a0a0;
-  border-bottom-color: #404040;
-}
 
 .actions {
   display: flex;
@@ -436,9 +407,9 @@ onMounted(() => {
 .code-content {
   margin: 0;
   padding: 20px;
-  background-color: #ffffff;
-  color: #333;
-  font-family: 'Consolas', 'Monaco', monospace;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
   font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -449,10 +420,6 @@ onMounted(() => {
   overflow-y: auto;
 }
 
-:global(.dark) .code-content {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
 
 .back-section {
   display: flex;
@@ -461,16 +428,12 @@ onMounted(() => {
 
 /* 图片画廊 */
 .image-gallery {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   padding: 20px;
 }
 
-:global(.dark) .image-gallery {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .gallery-header {
   display: flex;
@@ -483,13 +446,10 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #333;
+  color: var(--text-primary);
   font-size: 16px;
 }
 
-:global(.dark) .gallery-title {
-  color: #e0e0e0;
-}
 
 .gallery-grid {
   display: grid;
@@ -500,17 +460,13 @@ onMounted(() => {
 .gallery-item {
   position: relative;
   aspect-ratio: 1;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   cursor: pointer;
-  background-color: #f5f5f5;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-base);
 }
 
-:global(.dark) .gallery-item {
-  background-color: #2d2d2d;
-  border-color: #404040;
-}
 
 .gallery-item img {
   width: 100%;
@@ -564,7 +520,7 @@ onMounted(() => {
   max-width: 100%;
   max-height: calc(90vh - 80px);
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .preview-actions {
@@ -574,7 +530,7 @@ onMounted(() => {
 }
 
 .preview-index {
-  color: #e0e0e0;
+  color: var(--text-primary);
   font-size: 14px;
   min-width: 60px;
   text-align: center;

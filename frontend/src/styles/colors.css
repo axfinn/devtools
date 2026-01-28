@@ -1,0 +1,119 @@
+/* 核心颜色变量定义 */
+
+:root {
+  /* === 语义化基础色 === */
+  --color-primary: #409eff;      /* Element Plus 主色 */
+  --color-success: #67c23a;
+  --color-warning: #e6a23c;
+  --color-danger: #f56c6c;
+  --color-info: #909399;
+
+  /* === 背景色系统 === */
+  --bg-base: #f5f5f5;            /* 页面根背景 */
+  --bg-primary: #ffffff;         /* 主要内容背景 */
+  --bg-secondary: #f5f5f5;       /* 次级背景 */
+  --bg-tertiary: #fafafa;        /* 第三级背景 */
+  --bg-elevated: #ffffff;        /* 浮起元素背景 */
+  --bg-hover: #f5f7fa;           /* 悬停背景 */
+  --bg-active: #ecf5ff;          /* 激活背景 */
+
+  /* === 文字色系统 === */
+  --text-primary: #333333;       /* 主文字 */
+  --text-secondary: #666666;     /* 次级文字 */
+  --text-tertiary: #999999;      /* 第三级文字 */
+  --text-quaternary: #c0c4cc;    /* 第四级文字 */
+  --text-disabled: #c0c4cc;      /* 禁用文字 */
+  --text-placeholder: #a8abb2;   /* 占位文字 */
+  --text-inverse: #ffffff;       /* 反色文字（用于深色背景） */
+
+  /* === 边框色系统 === */
+  --border-base: #dcdfe6;        /* 基础边框 */
+  --border-light: #ebeef5;       /* 浅边框 */
+  --border-lighter: #f2f6fc;     /* 更浅边框 */
+  --border-dark: #d4d7de;        /* 深边框 */
+  --border-darker: #cdd0d6;      /* 更深边框 */
+
+  /* === 特殊用途色 === */
+  --link-color: #409eff;
+  --link-hover: #66b1ff;
+  --code-bg: #f5f5f5;
+  --code-text: #333333;
+  --code-inline-bg: #e4e7ed;
+  --shadow: rgba(0, 0, 0, 0.1);
+  --shadow-light: rgba(0, 0, 0, 0.05);
+  --shadow-heavy: rgba(0, 0, 0, 0.2);
+
+  /* === 高亮和提示色 === */
+  --highlight-bg: rgba(255, 235, 59, 0.3);
+  --highlight-text: #e65100;
+  --selection-bg: rgba(64, 158, 255, 0.2);
+
+  /* === 功能色变体（浅色背景用） === */
+  --success-light: #f0f9ff;
+  --success-dark: #2e7d32;
+  --warning-light: #fdf6ec;
+  --warning-dark: #e6a23c;
+  --danger-light: #fef0f0;
+  --danger-dark: #d32f2f;
+  --info-light: #f4f4f5;
+  --info-dark: #606266;
+}
+
+.dark {
+  /* === 语义化基础色（保持一致） === */
+  --color-primary: #409eff;
+  --color-success: #67c23a;
+  --color-warning: #e6a23c;
+  --color-danger: #f56c6c;
+  --color-info: #909399;
+
+  /* === 背景色系统 === */
+  --bg-base: #121212;            /* 页面根背景（更深） */
+  --bg-primary: #1e1e1e;         /* 主要内容背景 */
+  --bg-secondary: #252525;       /* 次级背景 */
+  --bg-tertiary: #2a2a2a;        /* 第三级背景 */
+  --bg-elevated: #2d2d2d;        /* 浮起元素背景 */
+  --bg-hover: #333333;           /* 悬停背景 */
+  --bg-active: #3a3a3a;          /* 激活背景 */
+
+  /* === 文字色系统 === */
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0a0;
+  --text-tertiary: #909399;
+  --text-quaternary: #606266;
+  --text-disabled: #606266;
+  --text-placeholder: #909399;
+  --text-inverse: #1e1e1e;
+
+  /* === 边框色系统 === */
+  --border-base: #404040;
+  --border-light: #333333;
+  --border-lighter: #2d2d2d;
+  --border-dark: #4a4a4a;
+  --border-darker: #555555;
+
+  /* === 特殊用途色 === */
+  --link-color: #409eff;
+  --link-hover: #66b1ff;
+  --code-bg: #2a2a2a;
+  --code-text: #e0e0e0;
+  --code-inline-bg: #333333;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --shadow-light: rgba(0, 0, 0, 0.3);
+  --shadow-heavy: rgba(0, 0, 0, 0.7);
+
+  /* === 高亮和提示色 === */
+  --highlight-bg: rgba(255, 235, 59, 0.2);
+  --highlight-text: #ffeb3b;
+  --selection-bg: rgba(64, 158, 255, 0.3);
+
+  /* === 功能色变体（深色背景用） === */
+  --success-light: #1f2d1f;
+  --success-dark: #81c784;
+  --warning-light: #332b1f;
+  --warning-dark: #ffb74d;
+  --danger-light: #342020;
+  --danger-dark: #e57373;
+  --info-light: #252932;
+  --info-dark: #b0bec5;
+}

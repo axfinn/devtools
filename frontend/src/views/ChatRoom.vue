@@ -962,12 +962,9 @@ onUnmounted(() => {
 
 .tool-header h2 {
   margin: 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
 
 .join-section {
   margin-bottom: 20px;
@@ -978,14 +975,11 @@ onUnmounted(() => {
 }
 
 .section-title {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 14px;
   margin-bottom: 12px;
 }
 
-:global(.dark) .section-title {
-  color: #a0a0a0;
-}
 
 .room-list {
   flex: 1;
@@ -993,14 +987,11 @@ onUnmounted(() => {
 }
 
 .empty-tip {
-  color: #999;
+  color: var(--text-tertiary);
   text-align: center;
   padding: 40px;
 }
 
-:global(.dark) .empty-tip {
-  color: #666;
-}
 
 .room-item {
   display: flex;
@@ -1008,25 +999,18 @@ onUnmounted(() => {
   align-items: center;
   padding: 12px 16px;
   background: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   margin-bottom: 8px;
   cursor: pointer;
   transition: background 0.2s;
 }
 
-:global(.dark) .room-item {
-  background: #1e1e1e;
-  border-color: #333;
-}
 
 .room-item:hover {
   background: #f5f5f5;
 }
 
-:global(.dark) .room-item:hover {
-  background: #2a2a2a;
-}
 
 .room-info {
   display: flex;
@@ -1038,22 +1022,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #333;
+  color: var(--text-primary);
   font-size: 16px;
 }
 
-:global(.dark) .room-name {
-  color: #e0e0e0;
-}
 
 .room-id {
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 
-:global(.dark) .room-id {
-  color: #666;
-}
 
 /* 聊天界面 */
 .chat-view {
@@ -1071,37 +1049,26 @@ onUnmounted(() => {
   margin-bottom: 16px;
 }
 
-:global(.dark) .chat-header {
-  border-bottom-color: #333;
-}
 
 .room-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #333;
+  color: var(--text-primary);
   font-size: 18px;
   flex-wrap: wrap;
 }
 
-:global(.dark) .room-title {
-  color: #e0e0e0;
-}
 
 .room-id-tag {
   font-size: 12px;
-  color: #999;
+  color: var(--text-tertiary);
   background: #f5f5f5;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--border-base);
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
-:global(.dark) .room-id-tag {
-  color: #666;
-  background: #2a2a2a;
-  border-color: #404040;
-}
 
 /* 连接状态指示器 */
 .connection-status {
@@ -1115,7 +1082,7 @@ onUnmounted(() => {
 }
 
 .connection-status.connected {
-  color: #67c23a;
+  color: var(--color-success);
   background: rgba(103, 194, 58, 0.1);
 }
 
@@ -1150,15 +1117,11 @@ onUnmounted(() => {
   overflow-y: auto;
   padding: 16px;
   background: #f8f8f8;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   margin-bottom: 16px;
 }
 
-:global(.dark) .messages-container {
-  background: #1a1a1a;
-  border-color: #333;
-}
 
 .message-item {
   margin-bottom: 16px;
@@ -1169,19 +1132,14 @@ onUnmounted(() => {
 }
 
 .system-text {
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 12px;
   background: #e8e8e8;
   border: 1px solid #d0d0d0;
   padding: 4px 12px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
 }
 
-:global(.dark) .system-text {
-  color: #666;
-  background: #2a2a2a;
-  border-color: #404040;
-}
 
 .message-header {
   display: flex;
@@ -1191,37 +1149,31 @@ onUnmounted(() => {
 }
 
 .nickname {
-  color: #409eff;
+  color: var(--color-primary);
   font-weight: 500;
 }
 
 .my-message .nickname {
-  color: #67c23a;
+  color: var(--color-success);
 }
 
 .time {
-  color: #999;
+  color: var(--text-tertiary);
   font-size: 12px;
 }
 
-:global(.dark) .time {
-  color: #666;
-}
 
 .message-content {
-  color: #333;
+  color: var(--text-primary);
   line-height: 1.5;
   word-break: break-word;
 }
 
-:global(.dark) .message-content {
-  color: #e0e0e0;
-}
 
 .message-image {
   max-width: 300px;
   max-height: 200px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: transform 0.2s;
 }
@@ -1233,7 +1185,7 @@ onUnmounted(() => {
 .message-video {
   max-width: 400px;
   max-height: 300px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #000;
 }
 
@@ -1249,25 +1201,18 @@ onUnmounted(() => {
   gap: 8px;
   padding: 8px 16px;
   background: #f0f0f0;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  color: #409eff;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  color: var(--color-primary);
   text-decoration: none;
   transition: background 0.2s;
 }
 
-:global(.dark) .message-file {
-  background: #2a2a2a;
-  border-color: #404040;
-}
 
 .message-file:hover {
   background: #e0e0e0;
 }
 
-:global(.dark) .message-file:hover {
-  background: #333;
-}
 
 .input-area {
   display: flex;
@@ -1315,7 +1260,7 @@ onUnmounted(() => {
   padding: 4px;
   cursor: pointer;
   text-align: center;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: background 0.2s;
 }
 
@@ -1342,7 +1287,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 8px 16px;
   background: rgba(245, 108, 108, 0.1);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: #f56c6c;
   font-size: 14px;
   margin-top: 8px;
@@ -1361,7 +1306,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: center;
   background: #000;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 

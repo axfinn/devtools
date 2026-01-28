@@ -7,9 +7,6 @@
 }
 
 .dark .tool-header h2,
-.dark .tool-header h1 {
-  color: #e0e0e0 !important;
-}
 
 /* 编辑器面板 */
 .editor-panel,
@@ -21,10 +18,6 @@
 
 .dark .editor-panel,
 .dark .panel,
-.dark .code-panel {
-  background-color: #1e1e1e !important;
-  border-color: #333 !important;
-}
 
 /* 面板标题 */
 .panel-header,
@@ -35,11 +28,6 @@
 }
 
 .dark .panel-header,
-.dark .editor-header {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-  border-bottom-color: #404040 !important;
-}
 
 /* 文本区域 */
 .text-area,
@@ -52,11 +40,6 @@ textarea.code-input {
 
 .dark .text-area,
 .dark .code-area,
-.dark textarea.code-input {
-  background-color: #1e1e1e !important;
-  color: #e0e0e0 !important;
-  border-color: #333 !important;
-}
 
 /* 结果区域 */
 .result-card,
@@ -68,10 +51,6 @@ textarea.code-input {
 
 .dark .result-card,
 .dark .result-panel,
-.dark .output-panel {
-  background-color: #1e1e1e !important;
-  border-color: #333 !important;
-}
 
 /* 信息卡片 */
 .info-card,
@@ -81,10 +60,6 @@ textarea.code-input {
 }
 
 .dark .info-card,
-.dark .stats-card {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-}
 
 /* 代码高亮覆盖 */
 .hljs {
@@ -92,10 +67,6 @@ textarea.code-input {
   color: #333 !important;
 }
 
-.dark .hljs {
-  background: #1e1e1e !important;
-  color: #e0e0e0 !important;
-}
 
 /* 标签 */
 .info-item label,
@@ -106,9 +77,6 @@ textarea.code-input {
 
 .dark .info-item label,
 .dark .form-label,
-.dark .field-label {
-  color: #a0a0a0 !important;
-}
 
 /* 分隔线 */
 .divider,
@@ -117,9 +85,6 @@ hr {
 }
 
 .dark .divider,
-.dark hr {
-  border-color: #333 !important;
-}
 
 /* 聊天消息 */
 .message-item {
@@ -127,18 +92,11 @@ hr {
   border-color: #e0e0e0 !important;
 }
 
-.dark .message-item {
-  background-color: #2d2d2d !important;
-  border-color: #404040 !important;
-}
 
 .message-content {
   color: #333 !important;
 }
 
-.dark .message-content {
-  color: #e0e0e0 !important;
-}
 
 /* 房间卡片 */
 .room-card {
@@ -146,18 +104,11 @@ hr {
   border-color: #e0e0e0 !important;
 }
 
-.dark .room-card {
-  background-color: #2d2d2d !important;
-  border-color: #404040 !important;
-}
 
 .room-card h3 {
   color: #333 !important;
 }
 
-.dark .room-card h3 {
-  color: #e0e0e0 !important;
-}
 
 /* URL 列表 */
 .url-item {
@@ -165,35 +116,22 @@ hr {
   border-color: #e0e0e0 !important;
 }
 
-.dark .url-item {
-  background-color: #2d2d2d !important;
-  border-color: #404040 !important;
-}
 
 /* 差异对比 */
 .diff-line {
   color: #333 !important;
 }
 
-.dark .diff-line {
-  color: #e0e0e0 !important;
-}
 
 .diff-added {
   background-color: #e6ffed !important;
 }
 
-.dark .diff-added {
-  background-color: #1f3a2d !important;
-}
 
 .diff-removed {
   background-color: #ffebe9 !important;
 }
 
-.dark .diff-removed {
-  background-color: #3a1f1f !important;
-}
 
 /* 文本统计 */
 .stats-grid,
@@ -202,9 +140,6 @@ hr {
 }
 
 .dark .stats-grid,
-.dark .info-grid {
-  background-color: #2d2d2d !important;
-}
 
 .stat-item,
 .info-item {
@@ -213,10 +148,6 @@ hr {
 }
 
 .dark .stat-item,
-.dark .info-item {
-  background-color: #1e1e1e !important;
-  border-color: #333 !important;
-}
 
 .stat-value,
 .info-value {
@@ -232,11 +163,6 @@ hr {
 }
 
 .dark .timestamp-display,
-.dark .time-display {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-  border-color: #404040 !important;
-}
 
 /* DNS 记录 */
 .dns-record,
@@ -246,10 +172,6 @@ hr {
 }
 
 .dark .dns-record,
-.dark .record-item {
-  background-color: #2d2d2d !important;
-  border-color: #404040 !important;
-}
 
 /* 正则测试匹配 */
 .match-item {
@@ -257,10 +179,6 @@ hr {
   border-color: #91d5ff !important;
 }
 
-.dark .match-item {
-  background-color: #1f3a5f !important;
-  border-color: #2d5a8a !important;
-}
 
 /* 文件上传区域 */
 .upload-area,
@@ -271,11 +189,6 @@ hr {
 }
 
 .dark .upload-area,
-.dark .drop-zone {
-  background-color: #252525 !important;
-  border-color: #404040 !important;
-  color: #909399 !important;
-}
 
 /* 提示区域 */
 .tips-section,
@@ -285,10 +198,6 @@ hr {
 }
 
 .dark .tips-section,
-.dark .hint-section {
-  background-color: #1f2937 !important;
-  border-color: #2d5a8a !important;
-}
 
 .tip-text,
 .hint-text {
@@ -296,9 +205,6 @@ hr {
 }
 
 .dark .tip-text,
-.dark .hint-text {
-  color: #a0a0a0 !important;
-}
 
 /* 预览区域 */
 .preview-panel,
@@ -308,10 +214,6 @@ hr {
 }
 
 .dark .preview-panel,
-.dark .preview-area {
-  background-color: #1e1e1e !important;
-  border-color: #333 !important;
-}
 
 /* Markdown 预览 */
 .markdown-preview {
@@ -319,10 +221,6 @@ hr {
   color: #333 !important;
 }
 
-.dark .markdown-preview {
-  background-color: #1e1e1e !important;
-  color: #e0e0e0 !important;
-}
 
 .markdown-preview h1,
 .markdown-preview h2,
@@ -338,94 +236,59 @@ hr {
 .dark .markdown-preview h3,
 .dark .markdown-preview h4,
 .dark .markdown-preview h5,
-.dark .markdown-preview h6 {
-  color: #e0e0e0 !important;
-}
 
 .markdown-preview code {
   background-color: #f5f5f5 !important;
   color: #c7254e !important;
 }
 
-.dark .markdown-preview code {
-  background-color: #2d2d2d !important;
-  color: #e06c75 !important;
-}
 
 .markdown-preview pre {
   background-color: #f5f5f5 !important;
   border-color: #e0e0e0 !important;
 }
 
-.dark .markdown-preview pre {
-  background-color: #2d2d2d !important;
-  border-color: #404040 !important;
-}
 
 .markdown-preview blockquote {
   border-left-color: #d0d0d0 !important;
   color: #666 !important;
 }
 
-.dark .markdown-preview blockquote {
-  border-left-color: #404040 !important;
-  color: #a0a0a0 !important;
-}
 
 .markdown-preview table {
   border-color: #e0e0e0 !important;
 }
 
-.dark .markdown-preview table {
-  border-color: #404040 !important;
-}
 
 .markdown-preview th {
   background-color: #f5f5f5 !important;
   color: #333 !important;
 }
 
-.dark .markdown-preview th {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-}
 
 .markdown-preview td {
   border-color: #e0e0e0 !important;
   color: #333 !important;
 }
 
-.dark .markdown-preview td {
-  border-color: #404040 !important;
-  color: #e0e0e0 !important;
-}
 
 /* Mermaid 图表容器 */
 .mermaid-container {
   background-color: #ffffff !important;
 }
 
-.dark .mermaid-container {
-  background-color: #1e1e1e !important;
-}
 
 /* 加载状态 */
 .loading-container {
   color: #666 !important;
 }
 
-.dark .loading-container {
-  color: #909399 !important;
-}
 
 /* 空状态 */
 .empty-state {
   color: #999 !important;
 }
 
-.dark .empty-state {
-  color: #606060 !important;
-}
 
 /* 错误状态 */
 .error-message {
@@ -434,11 +297,6 @@ hr {
   color: #cf1322 !important;
 }
 
-.dark .error-message {
-  background-color: #2c1618 !important;
-  border-color: #58181c !important;
-  color: #ff7875 !important;
-}
 
 /* 成功状态 */
 .success-message {
@@ -447,11 +305,6 @@ hr {
   color: #389e0d !important;
 }
 
-.dark .success-message {
-  background-color: #1f2c1a !important;
-  border-color: #3d5a2f !important;
-  color: #95de64 !important;
-}
 
 /* 聊天室特定样式 */
 .room-id-tag {
@@ -459,52 +312,31 @@ hr {
   color: #666 !important;
 }
 
-.dark .room-id-tag {
-  background: #2a2a2a !important;
-  color: #a0a0a0 !important;
-}
 
 .chat-container {
   background-color: #fafafa !important;
   border-color: #e0e0e0 !important;
 }
 
-.dark .chat-container {
-  background-color: #1a1a1a !important;
-  border-color: #333 !important;
-}
 
 .chat-messages {
   background-color: #ffffff !important;
 }
 
-.dark .chat-messages {
-  background-color: #1e1e1e !important;
-}
 
 .input-area {
   background-color: #ffffff !important;
   border-color: #e0e0e0 !important;
 }
 
-.dark .input-area {
-  background-color: #252525 !important;
-  border-color: #404040 !important;
-}
 
 /* 房间列表 */
 .room-list {
   background-color: #fafafa !important;
 }
 
-.dark .room-list {
-  background-color: #1a1a1a !important;
-}
 
 /* Mermaid 图表在暗色模式下的处理 */
-.dark .mermaid svg {
-  filter: invert(0.9) hue-rotate(180deg) !important;
-}
 
 /* PasteBin 样式 */
 .paste-form,
@@ -513,19 +345,12 @@ hr {
 }
 
 .dark .paste-form,
-.dark .paste-view {
-  background-color: #1e1e1e !important;
-}
 
 .code-display {
   background-color: #f5f5f5 !important;
   color: #333 !important;
 }
 
-.dark .code-display {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-}
 
 /* Mock API */
 .api-info,
@@ -535,20 +360,12 @@ hr {
 }
 
 .dark .api-info,
-.dark .endpoint-card {
-  background-color: #2d2d2d !important;
-  border-color: #404040 !important;
-}
 
 .log-item {
   background-color: #fafafa !important;
   border-color: #e0e0e0 !important;
 }
 
-.dark .log-item {
-  background-color: #252525 !important;
-  border-color: #404040 !important;
-}
 
 /* Short URL */
 .url-display {
@@ -557,20 +374,12 @@ hr {
   border-color: #e0e0e0 !important;
 }
 
-.dark .url-display {
-  background-color: #2d2d2d !important;
-  color: #e0e0e0 !important;
-  border-color: #404040 !important;
-}
 
 /* 统计卡片 */
 .stat-card {
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
 }
 
-.dark .stat-card {
-  background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%) !important;
-}
 
 /* 二维码容器 */
 .qr-container {
@@ -579,9 +388,6 @@ hr {
   border-radius: 8px;
 }
 
-.dark .qr-container {
-  background-color: #2d2d2d !important;
-}
 
 /* 特性提示标签 */
 .feature-tag {
@@ -589,10 +395,6 @@ hr {
   color: #666 !important;
 }
 
-.dark .feature-tag {
-  background-color: #2a2a2a !important;
-  color: #a0a0a0 !important;
-}
 
 /* 代码行号 */
 .line-number {
@@ -600,43 +402,27 @@ hr {
   background-color: #f5f5f5 !important;
 }
 
-.dark .line-number {
-  color: #606060 !important;
-  background-color: #252525 !important;
-}
 
 /* Excalidraw 页面 */
 .share-container {
   background: #f5f5f5 !important;
 }
 
-.dark .share-container {
-  background: #1a1a1a !important;
-}
 
 .share-header h2 {
   color: #333 !important;
 }
 
-.dark .share-header h2 {
-  color: #e0e0e0 !important;
-}
 
 .viewer-wrapper {
   background: #ffffff !important;
 }
 
-.dark .viewer-wrapper {
-  background: #121212 !important;
-}
 
 .editor-wrapper {
   background-color: #ffffff !important;
 }
 
-.dark .editor-wrapper {
-  background-color: #1e1e1e !important;
-}
 
 /* JSON 格式化 */
 .json-viewer {
@@ -644,10 +430,6 @@ hr {
   color: #333 !important;
 }
 
-.dark .json-viewer {
-  background-color: #1e1e1e !important;
-  color: #e0e0e0 !important;
-}
 
 /* 文本工具 */
 .text-operation {
@@ -655,7 +437,3 @@ hr {
   border-color: #e0e0e0 !important;
 }
 
-.dark .text-operation {
-  background-color: #2d2d2d !important;
-  border-color: #404040 !important;
-}

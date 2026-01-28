@@ -1078,12 +1078,9 @@ const copyToClipboard = async (text, name) => {
 
 .tool-header h2 {
   margin: 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
 
 .actions {
   display: flex;
@@ -1094,7 +1091,7 @@ const copyToClipboard = async (text, name) => {
 .editor-wrapper {
   flex: 1;
   min-height: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: #121212;
 }
@@ -1115,15 +1112,15 @@ const copyToClipboard = async (text, name) => {
 }
 
 .drawing-count {
-  color: #909399;
+  color: var(--text-tertiary);
   font-size: 13px;
   margin-left: auto;
 }
 
 .id-cell {
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 12px;
-  color: #409eff;
+  color: var(--color-primary);
   cursor: pointer;
 }
 

@@ -593,11 +593,11 @@ const getFullHtml = async () => {
   <title>Markdown Export</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 40px 20px; color: #333; background: #fff; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 40px 20px; color: var(--text-primary); background: #fff; }
     h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25; }
     h1 { font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
     h2 { font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-    pre { background-color: #1e1e1e; padding: 16px; border-radius: 6px; overflow-x: auto; color: #d4d4d4; }
+    pre { background-color: var(--bg-primary); padding: 16px; border-radius: var(--radius-sm); overflow-x: auto; color: var(--text-primary); }
     code { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 85%; }
     :not(pre) > code { background-color: rgba(175, 184, 193, 0.2); padding: 0.2em 0.4em; border-radius: 3px; }
     table { border-collapse: collapse; width: 100%; margin: 16px 0; }
@@ -606,8 +606,8 @@ const getFullHtml = async () => {
     blockquote { border-left: 4px solid #0969da; margin: 16px 0; padding: 0 16px; color: #57606a; background-color: #f6f8fa; }
     img { max-width: 100%; }
     hr { border: 0; height: 1px; background: #d0d7de; margin: 24px 0; }
-    .mermaid { display: flex; justify-content: center; margin: 20px 0; background: #f8f9fa; padding: 20px; border-radius: 8px; }
-    mark { background-color: #fff3cd; padding: 0.1em 0.2em; }
+    .mermaid { display: flex; justify-content: center; margin: 20px 0; background: #f8f9fa; padding: 20px; border-radius: var(--radius-md); }
+    mark { background-color: var(--bg-primary);3cd; padding: 0.1em 0.2em; }
     .task-list-item { list-style: none; }
     .task-list-item input { margin-right: 8px; }
     @media print { body { max-width: none; padding: 20px; } }
@@ -1107,12 +1107,9 @@ const isExpiringSoon = (dateStr) => {
 
 .tool-header h2 {
   margin: 0;
-  color: #333;
+  color: var(--text-primary);
 }
 
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
 
 .feature-hints {
   display: flex;
@@ -1133,54 +1130,42 @@ const isExpiringSoon = (dateStr) => {
 .editor-panel {
   display: flex;
   flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
   overflow: hidden;
   height: 100%;
 }
 
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
 
 .panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 10px 15px;
-  background-color: #f5f5f5;
-  color: #333;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
   font-size: 14px;
   flex-shrink: 0;
   border-bottom: 1px solid #e0e0e0;
 }
 
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  color: #a0a0a0;
-  border-bottom-color: #404040;
-}
 
 .char-count {
   font-size: 12px;
-  color: #666;
+  color: var(--text-secondary);
 }
 
-:global(.dark) .char-count {
-  color: #666;
-}
 
 .code-editor {
   flex: 1;
   width: 100%;
   padding: 15px;
-  background-color: #ffffff;
-  color: #333;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   border: none;
   resize: none;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 14px;
   line-height: 1.5;
   outline: none;
@@ -1188,20 +1173,16 @@ const isExpiringSoon = (dateStr) => {
   min-height: 0;
 }
 
-:global(.dark) .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-}
 
 .preview-panel {
-  background-color: #fff;
+  background-color: var(--bg-primary);
 }
 
 .preview-content {
   flex: 1;
   padding: 20px;
   overflow-y: auto;
-  color: #333;
+  color: var(--text-primary);
   min-height: 0;
   line-height: 1.8;
 }
@@ -1236,9 +1217,9 @@ const isExpiringSoon = (dateStr) => {
 
 /* Markdown styles */
 .preview-content :deep(pre) {
-  background-color: #1e1e1e;
+  background-color: var(--bg-primary);
   padding: 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow-x: auto;
 }
 
@@ -1280,7 +1261,7 @@ const isExpiringSoon = (dateStr) => {
 
 .preview-content :deep(img) {
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .preview-content :deep(h1),
@@ -1302,7 +1283,7 @@ const isExpiringSoon = (dateStr) => {
   margin: 20px 0;
   background: #f8f9fa;
   padding: 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .preview-content :deep(.mermaid svg) {
@@ -1314,7 +1295,7 @@ const isExpiringSoon = (dateStr) => {
   color: #d32f2f;
   padding: 10px;
   background: #ffebee;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .preview-content :deep(.katex-display) {
@@ -1337,7 +1318,7 @@ const isExpiringSoon = (dateStr) => {
 
 /* Mark/highlight */
 .preview-content :deep(mark) {
-  background-color: #fff3cd;
+  background-color: var(--bg-primary);3cd;
   padding: 0.1em 0.2em;
   border-radius: 2px;
 }
@@ -1348,7 +1329,7 @@ const isExpiringSoon = (dateStr) => {
   margin-top: 30px;
   padding-top: 20px;
   font-size: 0.9em;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 /* Dialog styles */
@@ -1356,12 +1337,12 @@ const isExpiringSoon = (dateStr) => {
   margin-top: 20px;
   padding: 15px;
   background: #f5f7fa;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .preview-label {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
   margin-bottom: 8px;
 }
 
@@ -1385,15 +1366,15 @@ const isExpiringSoon = (dateStr) => {
 }
 
 .share-count {
-  color: #909399;
+  color: var(--text-tertiary);
   font-size: 13px;
   margin-left: auto;
 }
 
 .id-cell {
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 12px;
-  color: #409eff;
+  color: var(--color-primary);
   cursor: pointer;
 }
 
@@ -1427,7 +1408,7 @@ const isExpiringSoon = (dateStr) => {
   overflow-y: auto;
   padding: 16px;
   background: #fafafa;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 /* Share form select styles */
@@ -1448,7 +1429,7 @@ const isExpiringSoon = (dateStr) => {
 
 .option-desc {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
 }
 
 /* Mobile */

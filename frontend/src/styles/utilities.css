@@ -1,0 +1,64 @@
+/* 工具类样式 */
+
+/* === 通用工具类 === */
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: var(--text-tertiary);
+}
+
+.bg-primary {
+  background-color: var(--bg-primary);
+}
+
+.bg-secondary {
+  background-color: var(--bg-secondary);
+}
+
+.bg-tertiary {
+  background-color: var(--bg-tertiary);
+}
+
+.border-base {
+  border-color: var(--border-base);
+}
+
+/* === 交互状态 === */
+.hover-bg:hover {
+  background-color: var(--bg-hover);
+}
+
+.focus-border:focus {
+  border-color: var(--input-border-focus);
+  outline: none;
+}
+
+/* === 间距工具 === */
+.p-xs { padding: var(--spacing-xs); }
+.p-sm { padding: var(--spacing-sm); }
+.p-md { padding: var(--spacing-md); }
+.p-lg { padding: var(--spacing-lg); }
+.p-xl { padding: var(--spacing-xl); }
+
+.m-xs { margin: var(--spacing-xs); }
+.m-sm { margin: var(--spacing-sm); }
+.m-md { margin: var(--spacing-md); }
+.m-lg { margin: var(--spacing-lg); }
+.m-xl { margin: var(--spacing-xl); }
+
+/* === 圆角工具 === */
+.rounded-sm { border-radius: var(--radius-sm); }
+.rounded-md { border-radius: var(--radius-md); }
+.rounded-lg { border-radius: var(--radius-lg); }
+.rounded-xl { border-radius: var(--radius-xl); }
+
+/* === 阴影工具 === */
+.shadow { box-shadow: 0 2px 8px var(--shadow); }
+.shadow-light { box-shadow: 0 1px 4px var(--shadow-light); }
+.shadow-heavy { box-shadow: 0 4px 16px var(--shadow-heavy); }

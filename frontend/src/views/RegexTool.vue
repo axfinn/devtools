@@ -231,30 +231,14 @@ const copyAllMatches = async () => {
 
 <style scoped>
 .tool-container {
-  display: flex;
-  flex-direction: column;
   gap: 20px;
 }
 
-.tool-header h2 {
-  margin: 0;
-  color: #333;
-}
-
-:global(.dark) .tool-header h2 {
-  color: #e0e0e0;
-}
-
 .regex-input-section {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
   padding: 20px;
-  border-radius: 8px;
-}
-
-:global(.dark) .regex-input-section {
-  background-color: #1e1e1e;
-  border-color: #333;
+  border-radius: var(--radius-md);
 }
 
 .regex-row {
@@ -265,9 +249,9 @@ const copyAllMatches = async () => {
 }
 
 .regex-delimiter {
-  color: #f44336;
+  color: var(--color-danger);
   font-size: 24px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
 }
 
 .regex-input {
@@ -275,7 +259,7 @@ const copyAllMatches = async () => {
 }
 
 .regex-input :deep(.el-input__inner) {
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 16px;
 }
 
@@ -285,100 +269,34 @@ const copyAllMatches = async () => {
   flex-wrap: wrap;
 }
 
-.editor-container {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 15px;
-  min-height: 300px;
-}
-
-.editor-panel {
-  display: flex;
-  flex-direction: column;
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-:global(.dark) .editor-panel {
-  background-color: #1e1e1e;
-  border-color: #333;
-}
-
-.panel-header {
-  padding: 10px 15px;
-  background-color: #f5f5f5;
-  color: #333;
-  font-size: 14px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid #e0e0e0;
-}
-
-:global(.dark) .panel-header {
-  background-color: #2d2d2d;
-  color: #a0a0a0;
-  border-bottom-color: #404040;
-}
-
 .match-count {
-  color: #4caf50;
-}
-
-.code-editor {
-  flex: 1;
-  width: 100%;
-  padding: 15px;
-  background-color: #ffffff;
-  color: #333;
-  border: none;
-  resize: none;
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 14px;
-  line-height: 1.6;
-  outline: none;
-}
-
-:global(.dark) .code-editor {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
+  color: var(--color-success);
 }
 
 .highlighted-text {
   flex: 1;
   padding: 15px;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: var(--font-family-mono);
   font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-all;
-  color: #333;
+  color: var(--text-primary);
   overflow-y: auto;
 }
 
-:global(.dark) .highlighted-text {
-  color: #d4d4d4;
-}
-
 .highlighted-text :deep(.highlight) {
-  background-color: rgba(255, 235, 59, 0.4);
-  color: #ffeb3b;
+  background-color: var(--highlight-bg);
+  color: var(--highlight-text);
   padding: 2px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .matches-detail {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
   padding: 20px;
-  border-radius: 8px;
-}
-
-:global(.dark) .matches-detail {
-  background-color: #1e1e1e;
-  border-color: #333;
+  border-radius: var(--radius-md);
 }
 
 .detail-header {
@@ -390,32 +308,19 @@ const copyAllMatches = async () => {
 
 .matches-detail h4 {
   margin: 0;
-  color: #333;
-}
-
-:global(.dark) .matches-detail h4 {
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .common-patterns {
-  background-color: #ffffff;
-  border: 1px solid #e0e0e0;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
   padding: 20px;
-  border-radius: 8px;
-}
-
-:global(.dark) .common-patterns {
-  background-color: #1e1e1e;
-  border-color: #333;
+  border-radius: var(--radius-md);
 }
 
 .common-patterns h4 {
   margin: 0 0 15px 0;
-  color: #333;
-}
-
-:global(.dark) .common-patterns h4 {
-  color: #e0e0e0;
+  color: var(--text-primary);
 }
 
 .pattern-grid {
@@ -425,46 +330,29 @@ const copyAllMatches = async () => {
 }
 
 .pattern-card {
-  background-color: #f5f5f5;
-  border: 1px solid #e0e0e0;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-base);
   padding: 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.2s;
 }
 
-:global(.dark) .pattern-card {
-  background-color: #2d2d2d;
-  border-color: #404040;
-}
-
 .pattern-card:hover {
-  background-color: #e8e8e8;
+  background-color: var(--bg-hover);
   transform: translateY(-2px);
 }
 
-:global(.dark) .pattern-card:hover {
-  background-color: #3d3d3d;
-}
-
 .pattern-name {
-  color: #333;
+  color: var(--text-primary);
   font-weight: 500;
   margin-bottom: 5px;
 }
 
-:global(.dark) .pattern-name {
-  color: #e0e0e0;
-}
-
 .pattern-regex {
-  color: #4caf50;
-  font-family: 'Consolas', 'Monaco', monospace;
+  color: var(--color-success);
+  font-family: var(--font-family-mono);
   font-size: 12px;
   word-break: break-all;
-}
-
-.error-msg {
-  margin-top: 10px;
 }
 </style>
