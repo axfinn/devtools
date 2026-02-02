@@ -6,6 +6,10 @@
         <div class="info-text">
           支持文本、图片、视频分享 - 自动压缩优化
         </div>
+        <el-button size="small" @click="showMyShares = true">
+          <el-icon><FolderOpened /></el-icon>
+          我的分享
+        </el-button>
         <el-button size="small" @click="showAdminPanel = true">
           <el-icon><Lock /></el-icon>
           管理
@@ -292,6 +296,53 @@
       </ul>
     </div>
 
+    <!-- 我的分享 -->
+    <el-dialog v-model="showMyShares" title="我的分享" width="90%" :close-on-click-modal="false">
+      <div v-if="mySharesList.length === 0" style="text-align: center; padding: 40px; color: var(--text-secondary);">
+        <el-icon :size="64"><FolderOpened /></el-icon>
+        <p style="margin-top: 20px;">暂无分享记录</p>
+      </div>
+      <el-table v-else :data="mySharesList" style="width: 100%" max-height="500">
+        <el-table-column prop="id" label="ID" width="100">
+          <template #default="{ row }">
+            <el-button link @click="openMyShare(row.id)">{{ row.id }}</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="标题" width="150">
+          <template #default="{ row }">
+            {{ row.title || '(无标题)' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" width="180">
+          <template #default="{ row }">
+            {{ formatTimestamp(row.created_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="expires_at" label="过期时间" width="180">
+          <template #default="{ row }">
+            {{ formatTimestamp(row.expires_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="views" label="访问次数" width="120">
+          <template #default="{ row }">
+            {{ row.views }} / {{ row.max_views }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="copyMyShareUrl(row.id)">
+              <el-icon><CopyDocument /></el-icon>
+              复制链接
+            </el-button>
+            <el-button link type="danger" size="small" @click="removeMyShare(row.id)">
+              <el-icon><Delete /></el-icon>
+              移除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
     <!-- 管理员面板 -->
     <el-dialog v-model="showAdminPanel" title="管理员面板" width="90%" :close-on-click-modal="false">
       <div v-if="!adminAuthenticated">
@@ -379,7 +430,7 @@
 <script setup>
 import { ref, nextTick, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, Delete, Upload, Lock, Refresh } from '@element-plus/icons-vue'
+import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { API_BASE } from '../api'
 import { FFmpeg } from '@ffmpeg/ffmpeg'
@@ -411,6 +462,82 @@ const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
 // FFmpeg 实例 (懒加载)
 let ffmpegInstance = null
 let ffmpegLoaded = false
+
+// 我的分享功能
+const showMyShares = ref(false)
+const MY_SHARES_KEY = 'paste_my_shares'
+
+// 从localStorage读取我的分享列表
+const mySharesList = computed(() => {
+  try {
+    const stored = localStorage.getItem(MY_SHARES_KEY)
+    if (!stored) return []
+    const shares = JSON.parse(stored)
+    // 过滤过期的分享
+    const now = Date.now()
+    return shares.filter(share => new Date(share.expires_at).getTime() > now)
+  } catch (e) {
+    return []
+  }
+})
+
+// 保存分享到localStorage
+const saveMyShare = (shareData) => {
+  try {
+    const stored = localStorage.getItem(MY_SHARES_KEY)
+    const shares = stored ? JSON.parse(stored) : []
+    shares.unshift(shareData) // 添加到开头
+    // 只保留最近100条
+    if (shares.length > 100) {
+      shares.splice(100)
+    }
+    localStorage.setItem(MY_SHARES_KEY, JSON.stringify(shares))
+  } catch (e) {
+    console.error('保存分享失败:', e)
+  }
+}
+
+// 打开我的分享
+const openMyShare = (id) => {
+  window.open(`/paste/${id}`, '_blank')
+}
+
+// 复制我的分享链接
+const copyMyShareUrl = async (id) => {
+  const url = `${window.location.origin}/paste/${id}`
+  try {
+    await navigator.clipboard.writeText(url)
+    ElMessage.success('链接已复制')
+  } catch (e) {
+    ElMessage.error('复制失败')
+  }
+}
+
+// 从列表移除分享（不删除服务器数据）
+const removeMyShare = (id) => {
+  ElMessageBox.confirm('确定从列表中移除此分享？(不会删除服务器数据)', '提示', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  }).then(() => {
+    try {
+      const stored = localStorage.getItem(MY_SHARES_KEY)
+      if (stored) {
+        const shares = JSON.parse(stored)
+        const filtered = shares.filter(s => s.id !== id)
+        localStorage.setItem(MY_SHARES_KEY, JSON.stringify(filtered))
+        ElMessage.success('已移除')
+      }
+    } catch (e) {
+      ElMessage.error('移除失败')
+    }
+  }).catch(() => {})
+}
+
+// 格式化时间戳
+const formatTimestamp = (timestamp) => {
+  return new Date(timestamp).toLocaleString('zh-CN')
+}
 
 // 管理员功能
 const showAdminPanel = ref(false)
@@ -762,6 +889,16 @@ const createPaste = async () => {
     createdMaxViews.value = data.max_views
     shareUrl.value = `${window.location.origin}/paste/${data.id}`
     showResult.value = true
+
+    // 保存到我的分享列表
+    saveMyShare({
+      id: data.id,
+      title: title.value || '',
+      created_at: data.created_at || new Date().toISOString(),
+      expires_at: data.expires_at,
+      max_views: data.max_views,
+      views: 0
+    })
 
     // 自动复制链接
     try {
@@ -1247,8 +1384,11 @@ restoreAdminPassword()
 .result-section {
   display: flex;
   justify-content: center;
-  margin-bottom: 120px;
-  padding-bottom: 40px;
+  margin-top: 30px;
+  margin-bottom: 200px;
+  padding-bottom: 60px;
+  position: relative;
+  z-index: 10;
 }
 
 .result-card {
