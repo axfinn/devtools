@@ -5,6 +5,10 @@
       <div class="tool-header">
         <h2>聊天室</h2>
         <div class="actions">
+          <el-button @click="showAdminPasswordDialog = true" size="small">
+            <el-icon><Setting /></el-icon>
+            管理
+          </el-button>
           <el-button type="primary" @click="showCreateDialog = true">
             <el-icon><Plus /></el-icon>
             创建房间
@@ -61,7 +65,13 @@
             {{ connectionStatusText }}
           </span>
         </div>
-        <el-button @click="leaveRoom" type="danger" size="small">退出</el-button>
+        <div class="header-actions">
+          <el-button @click="showQRCode" size="small" type="primary">
+            <el-icon><Tickets /></el-icon>
+            扫码进房
+          </el-button>
+          <el-button @click="leaveRoom" type="danger" size="small">退出</el-button>
+        </div>
       </div>
 
       <div class="messages-container" ref="messagesContainer">
@@ -104,7 +114,12 @@
                 />
               </template>
               <template v-else-if="msg.msg_type === 'file'">
-                <a :href="msg.content" class="message-file" target="_blank" download>
+                <a
+                  :href="msg.content"
+                  class="message-file"
+                  target="_blank"
+                  :download="msg.original_name || 'file'"
+                >
                   <el-icon><Document /></el-icon>
                   <span>{{ msg.original_name || '下载文件' }}</span>
                 </a>
@@ -259,13 +274,87 @@
         <el-button type="primary" @click="confirmJoin" :loading="joining">加入</el-button>
       </template>
     </el-dialog>
+
+    <!-- 二维码对话框 -->
+    <el-dialog v-model="showQRDialog" title="扫码快速进房" width="400px">
+      <div class="qr-container">
+        <canvas ref="qrCanvas"></canvas>
+        <div class="qr-info">
+          <p>房间名称：{{ currentRoom?.name }}</p>
+          <p>房间ID：{{ currentRoom?.id }}</p>
+          <p class="qr-tip">使用手机扫描二维码即可快速加入房间</p>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 管理员密码输入对话框 -->
+    <el-dialog v-model="showAdminPasswordDialog" title="管理员登录" width="400px">
+      <el-form label-width="80px">
+        <el-form-item label="管理密码">
+          <el-input
+            v-model="adminPassword"
+            type="password"
+            placeholder="请输入管理员密码"
+            show-password
+            @keyup.enter="verifyAdminPassword"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAdminPasswordDialog = false">取消</el-button>
+        <el-button type="primary" @click="verifyAdminPassword" :loading="verifyingAdmin">登录</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 管理员面板对话框 -->
+    <el-dialog v-model="showAdminPanel" title="房间管理" width="800px">
+      <div class="admin-panel">
+        <div class="admin-header">
+          <span>共 {{ adminRooms.length }} 个房间</span>
+          <el-button size="small" @click="loadAdminRooms" :loading="loadingAdminRooms">
+            <el-icon><Refresh /></el-icon>
+            刷新
+          </el-button>
+        </div>
+        <el-table :data="adminRooms" style="width: 100%" max-height="500">
+          <el-table-column prop="id" label="房间ID" width="120" />
+          <el-table-column prop="name" label="房间名称" min-width="150" />
+          <el-table-column label="密码保护" width="100">
+            <template #default="{ row }">
+              <el-tag v-if="row.has_password" type="warning" size="small">有密码</el-tag>
+              <el-tag v-else type="success" size="small">公开</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="150">
+            <template #default="{ row }">
+              {{ formatDateTime(row.created_at) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="最后活跃" width="150">
+            <template #default="{ row }">
+              {{ formatDateTime(row.last_active_at) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                type="danger"
+                size="small"
+                @click="confirmDeleteRoom(row)"
+              >删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { ElMessage, ElImageViewer } from 'element-plus'
+import { ElMessage, ElImageViewer, ElMessageBox } from 'element-plus'
 import { API_BASE, WS_BASE } from '../api'
+import QRCode from 'qrcode'
 
 const MAX_RECONNECT_ATTEMPTS = 5
 
@@ -280,11 +369,20 @@ const showCreateDialog = ref(false)
 const showJoinDialog = ref(false)
 const showEmoji = ref(false)
 const showCameraDialog = ref(false)
+const showQRDialog = ref(false)
+const showAdminPasswordDialog = ref(false)
+const showAdminPanel = ref(false)
 const creating = ref(false)
 const joining = ref(false)
 const uploading = ref(false)
+const verifyingAdmin = ref(false)
+const loadingAdminRooms = ref(false)
 const previewVisible = ref(false)
 const previewUrl = ref('')
+
+// 管理员相关
+const adminPassword = ref('')
+const adminRooms = ref([])
 
 // 连接状态
 const connectionStatus = ref('disconnected') // connected, connecting, disconnected
@@ -318,6 +416,7 @@ const fileInput = ref(null)
 const imageInput = ref(null)
 const cameraVideo = ref(null)
 const cameraCanvas = ref(null)
+const qrCanvas = ref(null)
 let ws = null
 
 const connectionStatusText = computed(() => {
@@ -613,7 +712,7 @@ const uploadFile = async (file) => {
         type: 'message',
         content: data.url,
         msg_type: data.type,
-        original_name: data.original_name
+        original_name: data.original_name || file.name
       }))
       ElMessage.success('发送成功')
     }
@@ -929,8 +1028,174 @@ const formatTime = (timeStr) => {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
+// 显示二维码
+const showQRCode = async () => {
+  if (!currentRoom.value) return
+
+  showQRDialog.value = true
+
+  await nextTick()
+
+  if (!qrCanvas.value) return
+
+  // 生成房间链接
+  const roomUrl = `${window.location.origin}${window.location.pathname}#/chat?roomId=${currentRoom.value.id}`
+
+  try {
+    await QRCode.toCanvas(qrCanvas.value, roomUrl, {
+      width: 280,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#ffffff'
+      }
+    })
+  } catch (error) {
+    console.error('生成二维码失败:', error)
+    ElMessage.error('生成二维码失败')
+  }
+}
+
+// 验证管理员密码
+const verifyAdminPassword = async () => {
+  if (!adminPassword.value.trim()) {
+    ElMessage.warning('请输入管理员密码')
+    return
+  }
+
+  verifyingAdmin.value = true
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/chat/admin/rooms?admin_password=${encodeURIComponent(adminPassword.value)}`
+    )
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '验证失败')
+    }
+
+    // 验证成功，显示管理面板
+    adminRooms.value = data.rooms || []
+    showAdminPasswordDialog.value = false
+    showAdminPanel.value = true
+
+    // 保存密码到 sessionStorage
+    sessionStorage.setItem('chat_admin_password', adminPassword.value)
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    verifyingAdmin.value = false
+  }
+}
+
+// 加载管理员房间列表
+const loadAdminRooms = async () => {
+  const password = adminPassword.value || sessionStorage.getItem('chat_admin_password')
+  if (!password) {
+    ElMessage.error('请先登录')
+    showAdminPanel.value = false
+    showAdminPasswordDialog.value = true
+    return
+  }
+
+  loadingAdminRooms.value = true
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/chat/admin/rooms?admin_password=${encodeURIComponent(password)}`
+    )
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '获取房间列表失败')
+    }
+
+    adminRooms.value = data.rooms || []
+  } catch (error) {
+    ElMessage.error(error.message)
+    // 如果密码错误，清除缓存并要求重新登录
+    if (error.message.includes('密码')) {
+      sessionStorage.removeItem('chat_admin_password')
+      adminPassword.value = ''
+      showAdminPanel.value = false
+      showAdminPasswordDialog.value = true
+    }
+  } finally {
+    loadingAdminRooms.value = false
+  }
+}
+
+// 确认删除房间
+const confirmDeleteRoom = (room) => {
+  ElMessageBox.confirm(
+    `确定要删除房间 "${room.name}" (${room.id}) 吗？此操作不可撤销。`,
+    '警告',
+    {
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  ).then(() => {
+    deleteRoom(room.id)
+  }).catch(() => {
+    // 取消删除
+  })
+}
+
+// 删除房间
+const deleteRoom = async (roomId) => {
+  const password = adminPassword.value || sessionStorage.getItem('chat_admin_password')
+  if (!password) {
+    ElMessage.error('请先登录')
+    return
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE}/api/chat/admin/room/${roomId}?admin_password=${encodeURIComponent(password)}`,
+      { method: 'DELETE' }
+    )
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '删除失败')
+    }
+
+    ElMessage.success('房间删除成功')
+    loadAdminRooms()
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
+// 格式化日期时间
+const formatDateTime = (timeStr) => {
+  if (!timeStr) return ''
+  const date = new Date(timeStr)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
 onMounted(() => {
   loadRooms()
+
+  // 检查URL参数，支持扫码进房
+  const urlParams = new URLSearchParams(window.location.hash.split('?')[1])
+  const roomId = urlParams.get('roomId')
+  if (roomId) {
+    joinRoomId.value = roomId
+    joinRoomById()
+  }
+
+  // 检查是否有保存的管理员密码
+  const savedPassword = sessionStorage.getItem('chat_admin_password')
+  if (savedPassword) {
+    adminPassword.value = savedPassword
+  }
 })
 
 onUnmounted(() => {
@@ -1040,6 +1305,11 @@ onUnmounted(() => {
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border-base);
   margin-bottom: 16px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .room-title {
@@ -1298,6 +1568,52 @@ onUnmounted(() => {
   width: 100%;
   max-height: 400px;
   object-fit: contain;
+}
+
+/* 二维码对话框 */
+.qr-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  gap: 20px;
+}
+
+.qr-container canvas {
+  border: 2px solid var(--border-base);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.qr-info {
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.qr-info p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.qr-tip {
+  color: var(--text-secondary);
+  font-size: 12px !important;
+  margin-top: 12px !important;
+}
+
+/* 管理面板 */
+.admin-panel {
+  padding: 0;
+}
+
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 0 4px;
+  color: var(--text-primary);
+  font-size: 14px;
 }
 
 @media (max-width: 768px) {

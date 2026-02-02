@@ -15,12 +15,13 @@ type ChatRoom struct {
 }
 
 type ChatMessage struct {
-	ID        int64     `json:"id"`
-	RoomID    string    `json:"room_id"`
-	Nickname  string    `json:"nickname"`
-	Content   string    `json:"content"`
-	MsgType   string    `json:"msg_type"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           int64     `json:"id"`
+	RoomID       string    `json:"room_id"`
+	Nickname     string    `json:"nickname"`
+	Content      string    `json:"content"`
+	MsgType      string    `json:"msg_type"`
+	OriginalName string    `json:"original_name,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (db *DB) InitChat() error {
@@ -41,6 +42,7 @@ func (db *DB) InitChat() error {
 		nickname TEXT NOT NULL,
 		content TEXT NOT NULL,
 		msg_type TEXT DEFAULT 'text',
+		original_name TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (room_id) REFERENCES chat_rooms(id) ON DELETE CASCADE
 	);
@@ -118,9 +120,9 @@ func (db *DB) DeleteRoom(id string) error {
 func (db *DB) CreateMessage(msg *ChatMessage) error {
 	msg.CreatedAt = time.Now()
 	result, err := db.conn.Exec(`
-		INSERT INTO chat_messages (room_id, nickname, content, msg_type, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, msg.RoomID, msg.Nickname, msg.Content, msg.MsgType, msg.CreatedAt)
+		INSERT INTO chat_messages (room_id, nickname, content, msg_type, original_name, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, msg.RoomID, msg.Nickname, msg.Content, msg.MsgType, msg.OriginalName, msg.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -131,7 +133,7 @@ func (db *DB) CreateMessage(msg *ChatMessage) error {
 
 func (db *DB) GetMessages(roomID string, limit int) ([]*ChatMessage, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, room_id, nickname, content, msg_type, created_at
+		SELECT id, room_id, nickname, content, msg_type, original_name, created_at
 		FROM chat_messages
 		WHERE room_id = ?
 		ORDER BY created_at DESC
@@ -145,7 +147,7 @@ func (db *DB) GetMessages(roomID string, limit int) ([]*ChatMessage, error) {
 	var messages []*ChatMessage
 	for rows.Next() {
 		msg := &ChatMessage{}
-		if err := rows.Scan(&msg.ID, &msg.RoomID, &msg.Nickname, &msg.Content, &msg.MsgType, &msg.CreatedAt); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.RoomID, &msg.Nickname, &msg.Content, &msg.MsgType, &msg.OriginalName, &msg.CreatedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, msg)

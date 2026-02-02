@@ -16,6 +16,7 @@ type Config struct {
 	Limits     LimitsConfig     `yaml:"limits"`
 	ShortURL   ShortURLConfig   `yaml:"shorturl"`
 	Paste      PasteConfig      `yaml:"paste"`
+	Chat       ChatConfig       `yaml:"chat"`
 	MDShare    MDShareConfig    `yaml:"mdshare"`
 	Excalidraw ExcalidrawConfig `yaml:"excalidraw"`
 }
@@ -63,6 +64,11 @@ type PasteConfig struct {
 	AdminPassword        string `yaml:"admin_password"`          // 管理员密码，可设置更多访问次数或永久
 	DefaultVideoMaxViews int    `yaml:"default_video_max_views"` // 视频默认最大访问次数，默认10
 	MaxFileSize          int64  `yaml:"max_file_size"`           // 最大文件大小，默认200MB
+}
+
+// ChatConfig 聊天室配置
+type ChatConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 管理员密码，可管理所有聊天室
 }
 
 // MDShareConfig Markdown 分享配置

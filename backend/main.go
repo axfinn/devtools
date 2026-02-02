@@ -144,7 +144,7 @@ func main() {
 	// 处理器
 	pasteHandler := handlers.NewPasteHandler(db)
 	dnsHandler := handlers.NewDNSHandler()
-	chatHandler := handlers.NewChatHandler(db)
+	chatHandler := handlers.NewChatHandler(db, cfg.Chat.AdminPassword)
 	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
 	mockAPIHandler := handlers.NewMockAPIHandler(db)
 	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)
@@ -185,6 +185,9 @@ func main() {
 			// 图片上传
 			chat.POST("/upload", createRateLimiter.Middleware(), chatHandler.UploadImage)
 			chat.Static("/uploads", "./data/uploads")
+			// 管理员 API
+			chat.GET("/admin/rooms", chatHandler.AdminListRooms)
+			chat.DELETE("/admin/room/:id", chatHandler.AdminDeleteRoom)
 		}
 
 		// 短链 API

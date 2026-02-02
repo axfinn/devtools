@@ -103,9 +103,10 @@ var upgrader = websocket.Upgrader{
 }
 
 type ChatHandler struct {
-	db    *models.DB
-	rooms map[string]*Room
-	mu    sync.RWMutex
+	db            *models.DB
+	rooms         map[string]*Room
+	mu            sync.RWMutex
+	adminPassword string
 }
 
 type Room struct {
@@ -122,18 +123,20 @@ type Client struct {
 }
 
 type WSMessage struct {
-	Type      string `json:"type"`
-	Content   string `json:"content,omitempty"`
-	Nickname  string `json:"nickname,omitempty"`
-	ID        int64  `json:"id,omitempty"`
-	CreatedAt string `json:"created_at,omitempty"`
-	MsgType   string `json:"msg_type,omitempty"`
+	Type         string `json:"type"`
+	Content      string `json:"content,omitempty"`
+	Nickname     string `json:"nickname,omitempty"`
+	ID           int64  `json:"id,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	MsgType      string `json:"msg_type,omitempty"`
+	OriginalName string `json:"original_name,omitempty"`
 }
 
-func NewChatHandler(db *models.DB) *ChatHandler {
+func NewChatHandler(db *models.DB, adminPassword string) *ChatHandler {
 	return &ChatHandler{
-		db:    db,
-		rooms: make(map[string]*Room),
+		db:            db,
+		rooms:         make(map[string]*Room),
+		adminPassword: adminPassword,
 	}
 }
 
@@ -358,6 +361,9 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 			if msg.MsgType != "" {
 				chatMsg.MsgType = msg.MsgType
 			}
+			if msg.OriginalName != "" {
+				chatMsg.OriginalName = msg.OriginalName
+			}
 			h.db.CreateMessage(chatMsg)
 
 			// 更新房间活跃时间
@@ -365,12 +371,13 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 
 			// 广播消息
 			broadcastMsg := WSMessage{
-				Type:      "message",
-				ID:        chatMsg.ID,
-				Nickname:  client.nickname,
-				Content:   msg.Content,
-				MsgType:   chatMsg.MsgType,
-				CreatedAt: chatMsg.CreatedAt.Format(time.RFC3339),
+				Type:         "message",
+				ID:           chatMsg.ID,
+				Nickname:     client.nickname,
+				Content:      msg.Content,
+				MsgType:      chatMsg.MsgType,
+				OriginalName: chatMsg.OriginalName,
+				CreatedAt:    chatMsg.CreatedAt.Format(time.RFC3339),
 			}
 			h.broadcast(client.room, broadcastMsg, nil)
 		}
@@ -626,4 +633,81 @@ func getExtFromMimeType(mimeType string) string {
 // UploadImage 保持向后兼容
 func (h *ChatHandler) UploadImage(c *gin.Context) {
 	h.UploadFile(c)
+}
+
+// AdminListRooms 管理员列出所有房间
+func (h *ChatHandler) AdminListRooms(c *gin.Context) {
+	adminPassword := c.Query("admin_password")
+	if adminPassword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需要管理员密码", "code": 400})
+		return
+	}
+
+	if h.adminPassword == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "管理员功能未启用", "code": 403})
+		return
+	}
+
+	if adminPassword != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+		return
+	}
+
+	// 获取所有房间（增加限制）
+	rooms, err := h.db.GetRooms(1000)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取房间列表失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"rooms": rooms, "total": len(rooms)})
+}
+
+// AdminDeleteRoom 管理员删除房间
+func (h *ChatHandler) AdminDeleteRoom(c *gin.Context) {
+	roomID := c.Param("id")
+	adminPassword := c.Query("admin_password")
+
+	if adminPassword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需要管理员密码", "code": 400})
+		return
+	}
+
+	if h.adminPassword == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "管理员功能未启用", "code": 403})
+		return
+	}
+
+	if adminPassword != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+		return
+	}
+
+	// 检查房间是否存在
+	if !h.db.RoomExists(roomID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "房间不存在", "code": 404})
+		return
+	}
+
+	// 从内存中移除房间
+	h.mu.Lock()
+	if room, exists := h.rooms[roomID]; exists {
+		// 关闭所有连接
+		room.mu.Lock()
+		for client := range room.clients {
+			close(client.send)
+			client.conn.Close()
+		}
+		room.mu.Unlock()
+		delete(h.rooms, roomID)
+	}
+	h.mu.Unlock()
+
+	// 从数据库中删除房间
+	if err := h.db.DeleteRoom(roomID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除房间失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "房间删除成功"})
 }
