@@ -3,11 +3,11 @@
     <div class="tool-header">
       <h2>共享粘贴板</h2>
       <div class="info-text">
-        多设备快速同步 - 创建后自动复制链接
+        支持文本、图片、视频分享 - 自动压缩优化
       </div>
     </div>
 
-    <!-- 快捷模式：简洁界面 -->
+    <!-- 简洁模式 -->
     <div class="quick-section" v-if="!showAdvanced">
       <div
         class="quick-editor"
@@ -20,53 +20,64 @@
         <textarea
           v-model="content"
           class="code-editor"
-          placeholder="粘贴或输入内容/图片，点击分享即可获得链接..."
+          placeholder="粘贴或输入内容,支持拖拽图片/视频..."
           spellcheck="false"
-          @paste="onPaste"
         ></textarea>
         <div v-if="isDragging" class="drop-overlay">
           <el-icon :size="48"><Upload /></el-icon>
-          <span>拖放图片到此处</span>
+          <span>拖放文件到此处</span>
         </div>
       </div>
 
-      <!-- 图片上传区域 -->
-      <div class="image-section">
-        <div class="image-header">
-          <span class="image-title">
-            <el-icon><Picture /></el-icon>
-            图片分享 ({{ images.length }}/{{ MAX_IMAGES }})
+      <!-- 文件上传区域 -->
+      <div class="file-section">
+        <div class="file-header">
+          <span class="file-title">
+            <el-icon><Folder /></el-icon>
+            文件 ({{ files.length }}/{{ MAX_FILES }})
           </span>
-          <span class="size-info" v-if="images.length > 0">
-            总大小: {{ totalSizeMB }} MB / 30 MB
+          <span class="size-info" v-if="files.length > 0">
+            总大小: {{ (totalSize / 1024 / 1024).toFixed(2) }} MB
           </span>
         </div>
 
-        <div class="image-grid" v-if="images.length > 0">
-          <div class="image-item" v-for="(img, index) in images" :key="index">
-            <img :src="img.preview" alt="预览" />
-            <div class="image-overlay">
-              <el-button type="danger" circle size="small" @click="removeImage(index)">
+        <div class="file-grid" v-if="files.length > 0">
+          <div class="file-item" v-for="(file, index) in files" :key="index">
+            <div class="file-preview">
+              <img v-if="file.type === 'image'" :src="file.preview" alt="预览" />
+              <video v-else-if="file.type === 'video'" :src="file.preview" controls></video>
+            </div>
+            <div class="file-info">
+              <span class="file-name">{{ file.name }}</span>
+              <span class="file-size">{{ (file.size / 1024 / 1024).toFixed(2) }} MB</span>
+              <el-tag v-if="file.compressed" type="success" size="small">已压缩</el-tag>
+              <el-tag v-if="file.compressing" type="warning" size="small">压缩中...</el-tag>
+            </div>
+            <div class="file-actions">
+              <el-button v-if="!file.compressed && canCompress(file)" size="small" @click="compressFile(index)" :loading="file.compressing">
+                压缩
+              </el-button>
+              <el-button type="danger" size="small" @click="removeFile(index)">
                 <el-icon><Delete /></el-icon>
               </el-button>
             </div>
           </div>
-          <div class="image-add" v-if="canAddMore" @click="selectFiles">
+          <div class="file-add" v-if="canAddMore" @click="selectFiles">
             <el-icon :size="24"><Plus /></el-icon>
-            <span>添加图片</span>
+            <span>添加文件</span>
           </div>
         </div>
 
-        <div class="image-upload" v-else @click="selectFiles">
-          <el-icon :size="32"><Picture /></el-icon>
-          <span>点击上传图片或直接粘贴/拖拽</span>
-          <span class="upload-hint">最多 15 张，总大小不超过 30MB</span>
+        <div class="file-upload" v-else @click="selectFiles">
+          <el-icon :size="32"><Upload /></el-icon>
+          <span>点击上传文件或直接拖拽</span>
+          <span class="upload-hint">支持图片和视频 (最大 200MB)</span>
         </div>
 
         <input
           ref="fileInput"
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           multiple
           style="display: none"
           @change="onFileChange"
@@ -74,7 +85,7 @@
       </div>
 
       <div class="quick-actions">
-        <el-button type="primary" size="large" @click="quickCreate" :loading="creating" :disabled="!content.trim() && images.length === 0">
+        <el-button type="primary" size="large" @click="quickCreate" :loading="creating" :disabled="!content.trim() && files.length === 0">
           <el-icon><Share /></el-icon>
           一键分享
         </el-button>
@@ -105,18 +116,9 @@
             <el-option label="纯文本" value="text" />
             <el-option label="JSON" value="json" />
             <el-option label="JavaScript" value="javascript" />
-            <el-option label="TypeScript" value="typescript" />
             <el-option label="Python" value="python" />
             <el-option label="Go" value="go" />
-            <el-option label="Java" value="java" />
-            <el-option label="C/C++" value="cpp" />
-            <el-option label="HTML" value="html" />
-            <el-option label="CSS" value="css" />
-            <el-option label="SQL" value="sql" />
             <el-option label="Markdown" value="markdown" />
-            <el-option label="Shell" value="bash" />
-            <el-option label="YAML" value="yaml" />
-            <el-option label="XML" value="xml" />
           </el-select>
           <el-button size="small" text @click="showAdvanced = false">简洁模式</el-button>
         </div>
@@ -125,51 +127,62 @@
           class="code-editor"
           placeholder="在此输入要分享的内容..."
           spellcheck="false"
-          @paste="onPaste"
         ></textarea>
         <div v-if="isDragging" class="drop-overlay">
           <el-icon :size="48"><Upload /></el-icon>
-          <span>拖放图片到此处</span>
+          <span>拖放文件到此处</span>
         </div>
       </div>
 
-      <!-- 高级模式图片上传 -->
-      <div class="image-section">
-        <div class="image-header">
-          <span class="image-title">
-            <el-icon><Picture /></el-icon>
-            图片分享 ({{ images.length }}/{{ MAX_IMAGES }})
+      <!-- 高级模式文件区域 (同上) -->
+      <div class="file-section">
+        <div class="file-header">
+          <span class="file-title">
+            <el-icon><Folder /></el-icon>
+            文件 ({{ files.length }}/{{ MAX_FILES }})
           </span>
-          <span class="size-info" v-if="images.length > 0">
-            总大小: {{ totalSizeMB }} MB / 30 MB
+          <span class="size-info" v-if="files.length > 0">
+            总大小: {{ (totalSize / 1024 / 1024).toFixed(2) }} MB
           </span>
         </div>
 
-        <div class="image-grid" v-if="images.length > 0">
-          <div class="image-item" v-for="(img, index) in images" :key="index">
-            <img :src="img.preview" alt="预览" />
-            <div class="image-overlay">
-              <el-button type="danger" circle size="small" @click="removeImage(index)">
+        <div class="file-grid" v-if="files.length > 0">
+          <div class="file-item" v-for="(file, index) in files" :key="index">
+            <div class="file-preview">
+              <img v-if="file.type === 'image'" :src="file.preview" alt="预览" />
+              <video v-else-if="file.type === 'video'" :src="file.preview" controls></video>
+            </div>
+            <div class="file-info">
+              <span class="file-name">{{ file.name }}</span>
+              <span class="file-size">{{ (file.size / 1024 / 1024).toFixed(2) }} MB</span>
+              <el-tag v-if="file.compressed" type="success" size="small">已压缩</el-tag>
+              <el-tag v-if="file.compressing" type="warning" size="small">压缩中...</el-tag>
+            </div>
+            <div class="file-actions">
+              <el-button v-if="!file.compressed && canCompress(file)" size="small" @click="compressFile(index)" :loading="file.compressing">
+                压缩
+              </el-button>
+              <el-button type="danger" size="small" @click="removeFile(index)">
                 <el-icon><Delete /></el-icon>
               </el-button>
             </div>
           </div>
-          <div class="image-add" v-if="canAddMore" @click="selectFiles">
+          <div class="file-add" v-if="canAddMore" @click="selectFiles">
             <el-icon :size="24"><Plus /></el-icon>
-            <span>添加图片</span>
+            <span>添加文件</span>
           </div>
         </div>
 
-        <div class="image-upload" v-else @click="selectFiles">
-          <el-icon :size="32"><Picture /></el-icon>
-          <span>点击上传图片或直接粘贴/拖拽</span>
-          <span class="upload-hint">最多 15 张，总大小不超过 30MB</span>
+        <div class="file-upload" v-else @click="selectFiles">
+          <el-icon :size="32"><Upload /></el-icon>
+          <span>点击上传文件或直接拖拽</span>
+          <span class="upload-hint">支持图片和视频 (最大 200MB)</span>
         </div>
 
         <input
           ref="fileInput"
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           multiple
           style="display: none"
           @change="onFileChange"
@@ -189,7 +202,8 @@
         </div>
         <div class="option-item">
           <span class="option-label">最大访问次数</span>
-          <el-input-number v-model="maxViews" :min="1" :max="1000" />
+          <el-input-number v-model="maxViews" :min="1" :max="hasVideo ? 10 : 1000" />
+          <span v-if="hasVideo" class="hint-text">(视频默认限制10次)</span>
         </div>
         <div class="option-item">
           <span class="option-label">访问密码</span>
@@ -201,13 +215,23 @@
             show-password
           />
         </div>
-        <el-button type="primary" size="large" @click="createPaste" :loading="creating" :disabled="!content.trim() && images.length === 0">
+        <div class="option-item" v-if="hasVideo">
+          <span class="option-label">管理员密码</span>
+          <el-input
+            v-model="adminPassword"
+            type="password"
+            placeholder="可设置更多次数"
+            style="width: 150px"
+            show-password
+          />
+        </div>
+        <el-button type="primary" size="large" @click="createPaste" :loading="creating" :disabled="!content.trim() && files.length === 0">
           创建分享
         </el-button>
       </div>
     </div>
 
-    <!-- 分享结果：突出显示 -->
+    <!-- 分享结果 -->
     <div v-if="showResult" class="result-section">
       <div class="result-card">
         <div class="result-header">
@@ -237,6 +261,7 @@
         <div class="result-info">
           <span>ID: {{ createdId }}</span>
           <span>过期: {{ createdExpires }}</span>
+          <span>最大访问: {{ createdMaxViews }} 次</span>
           <span v-if="password">密码: {{ password }}</span>
         </div>
 
@@ -254,10 +279,10 @@
     <div class="tips-section" v-if="!showResult">
       <h4>使用提示</h4>
       <ul>
-        <li>直接粘贴内容，点击分享即可</li>
-        <li>链接自动复制到剪贴板</li>
-        <li>手机可扫描二维码访问</li>
-        <li>默认 24 小时后过期</li>
+        <li>支持文本、图片、视频分享</li>
+        <li>大文件自动压缩优化</li>
+        <li>视频默认最多10次访问（防止滥用）</li>
+        <li>管理员可设置更多访问次数或永久访问</li>
       </ul>
     </div>
   </div>
@@ -266,134 +291,50 @@
 <script setup>
 import { ref, nextTick, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Share, CircleCheck, CopyDocument, Link, Plus, Picture, Delete, Upload } from '@element-plus/icons-vue'
+import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, Delete, Upload } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { API_BASE } from '../api'
+import { FFmpeg } from '@ffmpeg/ffmpeg'
+import { fetchFile, toBlobURL } from '@ffmpeg/util'
 
 const content = ref('')
 const title = ref('')
 const language = ref('text')
 const expiresIn = ref(24)
-const maxViews = ref(100)
+const maxViews = ref(0)
 const password = ref('')
+const adminPassword = ref('')
 const creating = ref(false)
 const showResult = ref(false)
 const showAdvanced = ref(false)
 const createdId = ref('')
 const createdExpires = ref('')
+const createdMaxViews = ref(0)
 const shareUrl = ref('')
 const errorMsg = ref('')
 const qrCanvas = ref(null)
-const images = ref([]) // { file: File, preview: string, base64: string }
+const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string }]
 const fileInput = ref(null)
 const isDragging = ref(false)
 
-const MAX_IMAGES = 15
-const MAX_TOTAL_SIZE = 30 * 1024 * 1024 // 30MB
+const MAX_FILES = 10
+const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
 
-// 计算当前总大小
+// FFmpeg 实例 (懒加载)
+let ffmpegInstance = null
+let ffmpegLoaded = false
+
 const totalSize = computed(() => {
-  let size = content.value.length
-  for (const img of images.value) {
-    size += img.base64.length
-  }
-  return size
+  return files.value.reduce((sum, file) => sum + file.size, 0)
 })
 
-const totalSizeMB = computed(() => (totalSize.value / 1024 / 1024).toFixed(2))
+const canAddMore = computed(() => files.value.length < MAX_FILES)
 
-const canAddMore = computed(() => images.value.length < MAX_IMAGES && totalSize.value < MAX_TOTAL_SIZE)
+const hasVideo = computed(() => files.value.some(f => f.type === 'video'))
 
 // 快捷创建
 const quickCreate = async () => {
   await createPaste()
-}
-
-// 粘贴时自动检测内容类型或图片
-const onPaste = async (e) => {
-  const items = e.clipboardData?.items
-  if (items) {
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const file = item.getAsFile()
-        if (file) {
-          await addImage(file)
-        }
-        return
-      }
-    }
-  }
-
-  const text = e.clipboardData?.getData('text') || ''
-  // 简单检测 JSON
-  if (text.trim().startsWith('{') || text.trim().startsWith('[')) {
-    try {
-      JSON.parse(text)
-      language.value = 'json'
-    } catch {}
-  }
-}
-
-// 添加图片
-const addImage = async (file) => {
-  if (!file.type.startsWith('image/')) {
-    ElMessage.warning('只支持图片文件')
-    return
-  }
-
-  if (images.value.length >= MAX_IMAGES) {
-    ElMessage.warning(`最多只能上传 ${MAX_IMAGES} 张图片`)
-    return
-  }
-
-  // 读取为 base64
-  const base64 = await fileToBase64(file)
-
-  // 检查总大小
-  const newSize = totalSize.value + base64.length
-  if (newSize > MAX_TOTAL_SIZE) {
-    ElMessage.warning('总大小超过 30MB 限制')
-    return
-  }
-
-  images.value.push({
-    file,
-    preview: URL.createObjectURL(file),
-    base64
-  })
-}
-
-// 文件转 base64
-const fileToBase64 = (file) => {
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.readAsDataURL(file)
-  })
-}
-
-// 删除图片
-const removeImage = (index) => {
-  const img = images.value[index]
-  if (img.preview) {
-    URL.revokeObjectURL(img.preview)
-  }
-  images.value.splice(index, 1)
-}
-
-// 选择文件
-const selectFiles = () => {
-  fileInput.value?.click()
-}
-
-// 文件选择变化
-const onFileChange = async (e) => {
-  const files = e.target.files
-  for (const file of files) {
-    await addImage(file)
-  }
-  e.target.value = ''
 }
 
 // 拖拽处理
@@ -414,17 +355,266 @@ const onDragOver = (e) => {
 const onDrop = async (e) => {
   e.preventDefault()
   isDragging.value = false
-  const files = e.dataTransfer?.files
-  if (files) {
-    for (const file of files) {
-      await addImage(file)
+  const droppedFiles = e.dataTransfer?.files
+  if (droppedFiles) {
+    for (const file of droppedFiles) {
+      await addFile(file)
     }
   }
 }
 
+// 选择文件
+const selectFiles = () => {
+  fileInput.value?.click()
+}
+
+// 文件选择变化
+const onFileChange = async (e) => {
+  const selectedFiles = e.target.files
+  for (const file of selectedFiles) {
+    await addFile(file)
+  }
+  e.target.value = ''
+}
+
+// 添加文件
+const addFile = async (file) => {
+  if (files.value.length >= MAX_FILES) {
+    ElMessage.warning(`最多只能上传 ${MAX_FILES} 个文件`)
+    return
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    ElMessage.warning(`文件 ${file.name} 超过 200MB 限制`)
+    return
+  }
+
+  // 检测文件类型
+  let fileType = 'unknown'
+  if (file.type.startsWith('image/')) {
+    fileType = 'image'
+  } else if (file.type.startsWith('video/')) {
+    fileType = 'video'
+  } else {
+    ElMessage.warning('只支持图片和视频文件')
+    return
+  }
+
+  // 创建预览
+  const preview = URL.createObjectURL(file)
+
+  files.value.push({
+    file,
+    preview,
+    type: fileType,
+    name: file.name,
+    size: file.size,
+    compressed: false,
+    compressing: false,
+    uploadedId: null
+  })
+}
+
+// 删除文件
+const removeFile = (index) => {
+  const file = files.value[index]
+  if (file.preview) {
+    URL.revokeObjectURL(file.preview)
+  }
+  files.value.splice(index, 1)
+}
+
+// 是否可以压缩
+const canCompress = (file) => {
+  // 图片大于 1MB 或视频大于 10MB 可以压缩
+  if (file.type === 'image' && file.size > 1024 * 1024) {
+    return true
+  }
+  if (file.type === 'video' && file.size > 10 * 1024 * 1024) {
+    return true
+  }
+  return false
+}
+
+// 压缩文件
+const compressFile = async (index) => {
+  const fileObj = files.value[index]
+  if (fileObj.compressing) return
+
+  fileObj.compressing = true
+
+  try {
+    if (fileObj.type === 'image') {
+      await compressImage(index)
+    } else if (fileObj.type === 'video') {
+      await compressVideo(index)
+    }
+  } catch (err) {
+    ElMessage.error(`压缩失败: ${err.message}`)
+    fileObj.compressing = false
+  }
+}
+
+// 压缩图片 (Canvas)
+const compressImage = async (index) => {
+  const fileObj = files.value[index]
+
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      let width = img.width
+      let height = img.height
+
+      // 限制最大尺寸为 1920x1080
+      const maxWidth = 1920
+      const maxHeight = 1080
+
+      if (width > maxWidth || height > maxHeight) {
+        const ratio = Math.min(maxWidth / width, maxHeight / height)
+        width *= ratio
+        height *= ratio
+      }
+
+      canvas.width = width
+      canvas.height = height
+
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, width, height)
+
+      canvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            reject(new Error('压缩失败'))
+            return
+          }
+
+          const compressedFile = new File([blob], fileObj.name, { type: 'image/jpeg' })
+
+          // 更新文件对象
+          URL.revokeObjectURL(fileObj.preview)
+          fileObj.file = compressedFile
+          fileObj.preview = URL.createObjectURL(compressedFile)
+          fileObj.size = compressedFile.size
+          fileObj.compressed = true
+          fileObj.compressing = false
+
+          ElMessage.success(`图片已压缩: ${(fileObj.size / 1024 / 1024).toFixed(2)} MB`)
+          resolve()
+        },
+        'image/jpeg',
+        0.8 // 质量 80%
+      )
+    }
+
+    img.onerror = () => {
+      reject(new Error('图片加载失败'))
+    }
+
+    img.src = fileObj.preview
+  })
+}
+
+// 初始化 FFmpeg
+const initFFmpeg = async () => {
+  if (ffmpegLoaded) return ffmpegInstance
+
+  try {
+    const ffmpeg = new FFmpeg()
+
+    // 加载 FFmpeg 核心
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    })
+
+    ffmpegInstance = ffmpeg
+    ffmpegLoaded = true
+    return ffmpeg
+  } catch (err) {
+    console.error('FFmpeg 加载失败:', err)
+    throw new Error('FFmpeg 初始化失败')
+  }
+}
+
+// 压缩视频 (FFmpeg.wasm)
+const compressVideo = async (index) => {
+  const fileObj = files.value[index]
+
+  try {
+    ElMessage.info('正在初始化视频压缩工具...')
+    const ffmpeg = await initFFmpeg()
+
+    ElMessage.info('正在压缩视频，请稍候...')
+
+    // 读取文件
+    await ffmpeg.writeFile('input.mp4', await fetchFile(fileObj.file))
+
+    // 压缩视频: 降低分辨率和比特率
+    await ffmpeg.exec([
+      '-i', 'input.mp4',
+      '-vf', 'scale=-2:720', // 720p
+      '-b:v', '1M', // 1 Mbps
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      'output.mp4'
+    ])
+
+    // 读取输出
+    const data = await ffmpeg.readFile('output.mp4')
+    const compressedBlob = new Blob([data.buffer], { type: 'video/mp4' })
+    const compressedFile = new File([compressedBlob], fileObj.name.replace(/\.[^.]+$/, '.mp4'), { type: 'video/mp4' })
+
+    // 清理 FFmpeg 文件
+    await ffmpeg.deleteFile('input.mp4')
+    await ffmpeg.deleteFile('output.mp4')
+
+    // 更新文件对象
+    URL.revokeObjectURL(fileObj.preview)
+    fileObj.file = compressedFile
+    fileObj.preview = URL.createObjectURL(compressedFile)
+    fileObj.size = compressedFile.size
+    fileObj.compressed = true
+    fileObj.compressing = false
+
+    ElMessage.success(`视频已压缩: ${(fileObj.size / 1024 / 1024).toFixed(2)} MB`)
+  } catch (err) {
+    console.error('视频压缩失败:', err)
+    fileObj.compressing = false
+    throw err
+  }
+}
+
+// 上传文件到服务器
+const uploadFile = async (fileObj) => {
+  const formData = new FormData()
+  formData.append('file', fileObj.file)
+
+  try {
+    const response = await fetch(`${API_BASE}/api/paste/upload`, {
+      method: 'POST',
+      body: formData
+    })
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '上传失败')
+    }
+
+    return data.id
+  } catch (err) {
+    throw new Error(`文件 ${fileObj.name} 上传失败: ${err.message}`)
+  }
+}
+
+// 创建分享
 const createPaste = async () => {
-  if (!content.value.trim() && images.value.length === 0) {
-    errorMsg.value = '请输入内容或上传图片'
+  if (!content.value.trim() && files.value.length === 0) {
+    errorMsg.value = '请输入内容或上传文件'
     return
   }
 
@@ -432,6 +622,20 @@ const createPaste = async () => {
   errorMsg.value = ''
 
   try {
+    // 1. 上传所有文件
+    const fileIDs = []
+    for (const fileObj of files.value) {
+      if (!fileObj.uploadedId) {
+        ElMessage.info(`正在上传 ${fileObj.name}...`)
+        const id = await uploadFile(fileObj)
+        fileObj.uploadedId = id
+        fileIDs.push(id)
+      } else {
+        fileIDs.push(fileObj.uploadedId)
+      }
+    }
+
+    // 2. 创建粘贴板
     const response = await fetch(`${API_BASE}/api/paste`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -442,7 +646,8 @@ const createPaste = async () => {
         expires_in: expiresIn.value,
         max_views: maxViews.value,
         password: password.value,
-        images: images.value.map(img => img.base64)
+        file_ids: fileIDs,
+        admin_password: adminPassword.value
       })
     })
 
@@ -454,6 +659,7 @@ const createPaste = async () => {
 
     createdId.value = data.id
     createdExpires.value = new Date(data.expires_at).toLocaleString('zh-CN')
+    createdMaxViews.value = data.max_views
     shareUrl.value = `${window.location.origin}/paste/${data.id}`
     showResult.value = true
 
@@ -501,15 +707,17 @@ const resetForm = () => {
   content.value = ''
   title.value = ''
   password.value = ''
+  adminPassword.value = ''
   showResult.value = false
   createdId.value = ''
-  // 清理图片
-  for (const img of images.value) {
-    if (img.preview) {
-      URL.revokeObjectURL(img.preview)
+
+  // 清理文件
+  for (const fileObj of files.value) {
+    if (fileObj.preview) {
+      URL.revokeObjectURL(fileObj.preview)
     }
   }
-  images.value = []
+  files.value = []
 }
 </script>
 
@@ -533,13 +741,12 @@ const resetForm = () => {
   color: var(--text-primary);
 }
 
-
 .info-text {
   color: #67c23a;
   font-size: 14px;
 }
 
-/* 快捷模式 */
+/* 简洁模式 */
 .quick-section {
   display: flex;
   flex-direction: column;
@@ -551,10 +758,10 @@ const resetForm = () => {
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
   overflow: hidden;
-  min-height: 300px;
+  min-height: 200px;
   display: flex;
+  position: relative;
 }
-
 
 .quick-editor .code-editor {
   flex: 1;
@@ -568,7 +775,6 @@ const resetForm = () => {
   line-height: 1.6;
   outline: none;
 }
-
 
 .quick-actions {
   display: flex;
@@ -595,9 +801,9 @@ const resetForm = () => {
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
   overflow: hidden;
-  min-height: 300px;
+  min-height: 200px;
+  position: relative;
 }
-
 
 .panel-header {
   padding: 10px 15px;
@@ -605,9 +811,8 @@ const resetForm = () => {
   display: flex;
   gap: 10px;
   align-items: center;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--border-base);
 }
-
 
 .code-editor {
   flex: 1;
@@ -623,7 +828,6 @@ const resetForm = () => {
   outline: none;
 }
 
-
 .options-row {
   display: flex;
   gap: 20px;
@@ -634,7 +838,6 @@ const resetForm = () => {
   padding: 15px;
   border-radius: var(--radius-md);
 }
-
 
 .option-item {
   display: flex;
@@ -647,6 +850,159 @@ const resetForm = () => {
   font-size: 14px;
 }
 
+.hint-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* 文件上传区域 */
+.file-section {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  padding: 15px;
+}
+
+.file-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.file-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.size-info {
+  color: #67c23a;
+  font-size: 13px;
+}
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.file-item {
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background-color: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+}
+
+.file-preview {
+  width: 100%;
+  height: 150px;
+  background-color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-preview img,
+.file-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.file-info {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.file-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.file-actions {
+  padding: 10px;
+  display: flex;
+  gap: 5px;
+  border-top: 1px solid var(--border-base);
+}
+
+.file-add {
+  border: 2px dashed #d0d0d0;
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.2s;
+  min-height: 150px;
+}
+
+.file-add:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.file-upload {
+  border: 2px dashed #d0d0d0;
+  border-radius: var(--radius-md);
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.file-upload:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.upload-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* 拖拽状态 */
+.is-dragging {
+  border: 2px dashed #409eff !important;
+}
+
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 30, 30, 0.95);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  color: var(--color-primary);
+  font-size: 18px;
+  z-index: 10;
+  border-radius: var(--radius-md);
+}
 
 /* 结果展示 */
 .result-section {
@@ -745,12 +1101,10 @@ const resetForm = () => {
   border-radius: var(--radius-md);
 }
 
-
 .tips-section h4 {
   margin: 0 0 10px 0;
   color: var(--text-primary);
 }
-
 
 .tips-section ul {
   margin: 0;
@@ -759,162 +1113,7 @@ const resetForm = () => {
   line-height: 1.8;
 }
 
-
 .error-msg {
   margin-top: 10px;
-}
-
-/* 图片上传区域 */
-.image-section {
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  padding: 15px;
-}
-
-
-.image-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.image-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
-  font-size: 14px;
-}
-
-
-.size-info {
-  color: #67c23a;
-  font-size: 13px;
-}
-
-.image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 12px;
-}
-
-.image-item {
-  position: relative;
-  aspect-ratio: 1;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  background-color: var(--bg-secondary);
-  border: 1px solid var(--border-base);
-}
-
-
-.image-item img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.image-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.image-item:hover .image-overlay {
-  opacity: 1;
-}
-
-.image-add {
-  aspect-ratio: 1;
-  border: 2px dashed #d0d0d0;
-  border-radius: var(--radius-md);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-
-.image-add:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.image-add span {
-  font-size: 12px;
-}
-
-.image-upload {
-  border: 2px dashed #d0d0d0;
-  border-radius: var(--radius-md);
-  padding: 30px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-
-.image-upload:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.upload-hint {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-
-/* 拖拽状态 */
-.quick-editor,
-.editor-panel {
-  position: relative;
-}
-
-.is-dragging {
-  border: 2px dashed #409eff !important;
-}
-
-.drop-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(30, 30, 30, 0.95);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
-  color: var(--color-primary);
-  font-size: 18px;
-  z-index: 10;
-  border-radius: var(--radius-md);
-}
-
-@media (max-width: 480px) {
-  .image-grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-
-  .image-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
 }
 </style>

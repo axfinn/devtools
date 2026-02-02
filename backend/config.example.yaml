@@ -39,6 +39,17 @@ shorturl:
   # 设置密码 = 可使用自定义ID如 /s/1 /s/abc，无速率限制
   password: ""
 
+# 粘贴板配置
+paste:
+  # 管理员密码（可设置更多访问次数或永久访问）
+  # 留空 = 视频默认10次访问限制
+  # 设置密码 = 可设置更多次数或永久访问
+  admin_password: ""
+  # 视频默认最大访问次数
+  default_video_max_views: 10
+  # 最大文件大小（字节），默认200MB
+  max_file_size: 209715200
+
 # Markdown 分享配置
 mdshare:
   # 管理员密码（可管理所有分享）

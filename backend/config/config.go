@@ -15,6 +15,7 @@ type Config struct {
 	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
 	Limits     LimitsConfig     `yaml:"limits"`
 	ShortURL   ShortURLConfig   `yaml:"shorturl"`
+	Paste      PasteConfig      `yaml:"paste"`
 	MDShare    MDShareConfig    `yaml:"mdshare"`
 	Excalidraw ExcalidrawConfig `yaml:"excalidraw"`
 }
@@ -55,6 +56,13 @@ type LimitsConfig struct {
 // ShortURLConfig 短链服务配置
 type ShortURLConfig struct {
 	Password string `yaml:"password"` // 管理密码，为空则不需要密码
+}
+
+// PasteConfig 粘贴板配置
+type PasteConfig struct {
+	AdminPassword        string `yaml:"admin_password"`          // 管理员密码，可设置更多访问次数或永久
+	DefaultVideoMaxViews int    `yaml:"default_video_max_views"` // 视频默认最大访问次数，默认10
+	MaxFileSize          int64  `yaml:"max_file_size"`           // 最大文件大小，默认200MB
 }
 
 // MDShareConfig Markdown 分享配置
@@ -98,6 +106,10 @@ func DefaultConfig() *Config {
 			PasteMaxImages:      15,
 			PasteMaxTotalSize:   30 * 1024 * 1024, // 30MB
 			MaxUploadSize:       55 * 1024 * 1024, // 55MB
+		},
+		Paste: PasteConfig{
+			DefaultVideoMaxViews: 10,
+			MaxFileSize:          200 * 1024 * 1024, // 200MB
 		},
 		MDShare: MDShareConfig{
 			DefaultMaxViews:    5,

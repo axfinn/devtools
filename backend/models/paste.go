@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -20,7 +23,7 @@ type Paste struct {
 	Views       int       `json:"views"`
 	CreatedAt   time.Time `json:"created_at"`
 	CreatorIP   string    `json:"-"`
-	Images      string    `json:"images"` // JSON array of base64 images
+	Files       string    `json:"files"` // JSON array of file metadata [{filename, type, size, url}]
 }
 
 type DB struct {
@@ -45,7 +48,7 @@ func (db *DB) init() error {
 	query := `
 	CREATE TABLE IF NOT EXISTS pastes (
 		id TEXT PRIMARY KEY,
-		content TEXT NOT NULL,
+		content TEXT DEFAULT '',
 		title TEXT DEFAULT '',
 		language TEXT DEFAULT 'text',
 		password TEXT DEFAULT '',
@@ -54,7 +57,7 @@ func (db *DB) init() error {
 		views INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		creator_ip TEXT,
-		images TEXT DEFAULT ''
+		files TEXT DEFAULT ''
 	);
 	CREATE INDEX IF NOT EXISTS idx_expires_at ON pastes(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_creator_ip ON pastes(creator_ip);
@@ -63,8 +66,8 @@ func (db *DB) init() error {
 	if err != nil {
 		return err
 	}
-	// 添加 images 列（如果不存在）
-	db.conn.Exec("ALTER TABLE pastes ADD COLUMN images TEXT DEFAULT ''")
+	// 添加 files 列（如果不存在）
+	db.conn.Exec("ALTER TABLE pastes ADD COLUMN files TEXT DEFAULT ''")
 	return nil
 }
 
@@ -73,28 +76,28 @@ func (db *DB) CreatePaste(paste *Paste) error {
 	paste.CreatedAt = time.Now()
 
 	_, err := db.conn.Exec(`
-		INSERT INTO pastes (id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip, images)
+		INSERT INTO pastes (id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip, files)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, paste.ID, paste.Content, paste.Title, paste.Language, paste.Password,
-		paste.ExpiresAt, paste.MaxViews, paste.Views, paste.CreatedAt, paste.CreatorIP, paste.Images)
+		paste.ExpiresAt, paste.MaxViews, paste.Views, paste.CreatedAt, paste.CreatorIP, paste.Files)
 
 	return err
 }
 
 func (db *DB) GetPaste(id string) (*Paste, error) {
 	paste := &Paste{}
-	var images sql.NullString
+	var files sql.NullString
 	err := db.conn.QueryRow(`
-		SELECT id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip, COALESCE(images, '')
+		SELECT id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip, COALESCE(files, '')
 		FROM pastes WHERE id = ?
 	`, id).Scan(
 		&paste.ID, &paste.Content, &paste.Title, &paste.Language, &paste.Password,
-		&paste.ExpiresAt, &paste.MaxViews, &paste.Views, &paste.CreatedAt, &paste.CreatorIP, &images)
+		&paste.ExpiresAt, &paste.MaxViews, &paste.Views, &paste.CreatedAt, &paste.CreatorIP, &files)
 
 	if err != nil {
 		return nil, err
 	}
-	paste.Images = images.String
+	paste.Files = files.String
 
 	return paste, nil
 }
@@ -110,10 +113,52 @@ func (db *DB) DeletePaste(id string) error {
 }
 
 func (db *DB) CleanExpired() (int64, error) {
+	// 先获取过期的 paste 及其文件列表
+	rows, err := db.conn.Query("SELECT id, files FROM pastes WHERE expires_at < ?", time.Now())
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type fileMetadata struct {
+		Filename string `json:"filename"`
+	}
+
+	var filesToDelete []string
+	var idsToDelete []string
+
+	for rows.Next() {
+		var id string
+		var filesJSON sql.NullString
+		if err := rows.Scan(&id, &filesJSON); err != nil {
+			continue
+		}
+
+		idsToDelete = append(idsToDelete, id)
+
+		// 解析文件列表
+		if filesJSON.Valid && filesJSON.String != "" {
+			var files []fileMetadata
+			if err := json.Unmarshal([]byte(filesJSON.String), &files); err == nil {
+				for _, f := range files {
+					filesToDelete = append(filesToDelete, f.Filename)
+				}
+			}
+		}
+	}
+
+	// 删除数据库记录
 	result, err := db.conn.Exec("DELETE FROM pastes WHERE expires_at < ?", time.Now())
 	if err != nil {
 		return 0, err
 	}
+
+	// 删除文件
+	for _, filename := range filesToDelete {
+		filePath := filepath.Join("./data/paste_files", filename)
+		os.Remove(filePath) // 忽略错误，文件可能已不存在
+	}
+
 	return result.RowsAffected()
 }
 

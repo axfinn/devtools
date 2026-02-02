@@ -1,15 +1,36 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"devtools/config"
 	"devtools/models"
 	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
 )
+
+const (
+	pasteUploadDir = "./data/paste_files"
+)
+
+// FileMetadata 文件元数据
+type FileMetadata struct {
+	Filename     string `json:"filename"`
+	OriginalName string `json:"original_name"`
+	Type         string `json:"type"` // image, video
+	Size         int64  `json:"size"`
+	URL          string `json:"url"`
+}
 
 type PasteHandler struct {
 	db         *models.DB
@@ -28,26 +49,115 @@ func NewPasteHandler(db *models.DB) *PasteHandler {
 }
 
 type CreatePasteRequest struct {
-	Content   string   `json:"content"`
-	Title     string   `json:"title"`
-	Language  string   `json:"language"`
-	Password  string   `json:"password"`
-	ExpiresIn int      `json:"expires_in"` // 过期时间（小时）
-	MaxViews  int      `json:"max_views"`
-	Images    []string `json:"images"` // base64 encoded images (max 15, total 30MB)
+	Content       string   `json:"content"`
+	Title         string   `json:"title"`
+	Language      string   `json:"language"`
+	Password      string   `json:"password"`
+	ExpiresIn     int      `json:"expires_in"` // 过期时间（小时）
+	MaxViews      int      `json:"max_views"`
+	FileIDs       []string `json:"file_ids"`       // 上传文件的ID列表
+	AdminPassword string   `json:"admin_password"` // 管理员密码（设置更多访问次数或永久）
 }
 
 type PasteResponse struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Language    string    `json:"language"`
-	Content     string    `json:"content,omitempty"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	MaxViews    int       `json:"max_views"`
-	Views       int       `json:"views"`
-	CreatedAt   time.Time `json:"created_at"`
-	HasPassword bool      `json:"has_password"`
-	Images      []string  `json:"images,omitempty"`
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Language    string          `json:"language"`
+	Content     string          `json:"content,omitempty"`
+	ExpiresAt   time.Time       `json:"expires_at"`
+	MaxViews    int             `json:"max_views"`
+	Views       int             `json:"views"`
+	CreatedAt   time.Time       `json:"created_at"`
+	HasPassword bool            `json:"has_password"`
+	Files       []*FileMetadata `json:"files,omitempty"`
+}
+
+// UploadFile 上传文件（图片或视频）
+func (h *PasteHandler) UploadFile(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择文件", "code": 400})
+		return
+	}
+	defer file.Close()
+
+	cfg := config.Get()
+
+	// 检查文件大小
+	if header.Size > cfg.Paste.MaxFileSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("文件大小超过限制 (最大 %dMB)", cfg.Paste.MaxFileSize/1024/1024),
+			"code":  400,
+		})
+		return
+	}
+
+	// 读取文件头检测类型
+	magicBytes := make([]byte, 16)
+	n, _ := file.Read(magicBytes)
+	magicBytes = magicBytes[:n]
+	file.Seek(0, 0)
+
+	detectedType := detectFileType(magicBytes)
+	if detectedType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的文件类型", "code": 400})
+		return
+	}
+
+	// 确定文件类别
+	var fileCategory string
+	if strings.HasPrefix(detectedType, "image/") {
+		fileCategory = "image"
+	} else if strings.HasPrefix(detectedType, "video/") {
+		fileCategory = "video"
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "只支持图片和视频文件", "code": 400})
+		return
+	}
+
+	// 生成随机文件名
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext == "" {
+		ext = getExtFromMimeType(detectedType)
+	}
+	filename := fmt.Sprintf("%s%s", hex.EncodeToString(randomBytes), ext)
+
+	// 确保上传目录存在
+	if err := os.MkdirAll(pasteUploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
+
+	// 保存文件
+	filePath := filepath.Join(pasteUploadDir, filename)
+	out, err := os.Create(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败", "code": 500})
+		return
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败", "code": 500})
+		return
+	}
+
+	// 返回文件信息
+	fileURL := "/api/paste/files/" + filename
+	c.JSON(http.StatusOK, gin.H{
+		"id":            filename,
+		"url":           fileURL,
+		"filename":      filename,
+		"original_name": header.Filename,
+		"type":          fileCategory,
+		"size":          header.Size,
+	})
 }
 
 func (h *PasteHandler) Create(c *gin.Context) {
@@ -57,31 +167,13 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// 检查是否有内容或图片
-	if req.Content == "" && len(req.Images) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入内容或上传图片", "code": 400})
+	// 检查是否有内容或文件
+	if req.Content == "" && len(req.FileIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入内容或上传文件", "code": 400})
 		return
 	}
 
-	// 检查图片数量（最多15张）
-	if len(req.Images) > 15 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "图片数量超过15张限制", "code": 400})
-		return
-	}
-
-	// 计算总大小
-	totalSize := len(req.Content)
-	for _, img := range req.Images {
-		totalSize += len(img)
-	}
-
-	// 检查总大小（30MB 限制）
-	if totalSize > 30*1024*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "内容总大小超过 30MB 限制", "code": 400})
-		return
-	}
-
-	// 纯文本内容限制（100KB）
+	// 文本内容限制（100KB）
 	if len(req.Content) > 100*1024 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "文本内容超过 100KB 限制", "code": 400})
 		return
@@ -89,14 +181,13 @@ func (h *PasteHandler) Create(c *gin.Context) {
 
 	ip := c.ClientIP()
 
-	// 检查 IP 限流（每分钟最多 10 次）
+	// 检查 IP 限流
 	count, err := h.db.CountByIP(ip, time.Now().Add(-h.ipWindow))
 	if err == nil && count >= h.maxPerIP {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "创建过于频繁，请稍后再试", "code": 429})
 		return
 	}
 
-	// 检查 IP 限流（每小时最多 100 次）
 	hourlyCount, err := h.db.CountByIP(ip, time.Now().Add(-time.Hour))
 	if err == nil && hourlyCount >= 100 {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "创建过于频繁，请稍后再试", "code": 429})
@@ -106,9 +197,7 @@ func (h *PasteHandler) Create(c *gin.Context) {
 	// 检查总量限制
 	total, err := h.db.TotalCount()
 	if err == nil && total >= h.maxTotal {
-		// 清理过期数据
 		h.db.CleanExpired()
-		// 再次检查
 		total, _ = h.db.TotalCount()
 		if total >= h.maxTotal {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "存储已满，请稍后再试", "code": 503})
@@ -121,23 +210,82 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		req.Language = "text"
 	}
 	if req.ExpiresIn <= 0 {
-		req.ExpiresIn = 24 // 默认 24 小时
+		req.ExpiresIn = 24
 	}
-	if req.ExpiresIn > 168 { // 最长 7 天
+	if req.ExpiresIn > 168 {
 		req.ExpiresIn = 168
 	}
-	if req.MaxViews <= 0 {
-		req.MaxViews = 100
-	}
-	if req.MaxViews > 1000 {
-		req.MaxViews = 1000
+
+	cfg := config.Get()
+
+	// 检查文件并生成元数据
+	var files []*FileMetadata
+	hasVideo := false
+	for _, fileID := range req.FileIDs {
+		filePath := filepath.Join(pasteUploadDir, fileID)
+		info, err := os.Stat(filePath)
+		if err != nil {
+			continue // 跳过不存在的文件
+		}
+
+		// 检测文件类型
+		f, _ := os.Open(filePath)
+		magicBytes := make([]byte, 16)
+		f.Read(magicBytes)
+		f.Close()
+
+		detectedType := detectFileType(magicBytes)
+		var fileType string
+		if strings.HasPrefix(detectedType, "image/") {
+			fileType = "image"
+		} else if strings.HasPrefix(detectedType, "video/") {
+			fileType = "video"
+			hasVideo = true
+		}
+
+		files = append(files, &FileMetadata{
+			Filename:     fileID,
+			OriginalName: fileID,
+			Type:         fileType,
+			Size:         info.Size(),
+			URL:          "/api/paste/files/" + fileID,
+		})
 	}
 
-	// 将图片数组转为 JSON 字符串
-	imagesJSON := ""
-	if len(req.Images) > 0 {
-		jsonBytes, _ := json.Marshal(req.Images)
-		imagesJSON = string(jsonBytes)
+	// 视频访问次数限制
+	if req.MaxViews <= 0 {
+		if hasVideo {
+			req.MaxViews = cfg.Paste.DefaultVideoMaxViews
+		} else {
+			req.MaxViews = 100
+		}
+	}
+
+	// 管理员可以设置更多次数或永久
+	if req.AdminPassword != "" && cfg.Paste.AdminPassword != "" {
+		if req.AdminPassword == cfg.Paste.AdminPassword {
+			// 管理员模式，使用用户指定的值
+			if req.MaxViews == 0 {
+				req.MaxViews = 999999 // 近似永久
+			}
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+			return
+		}
+	} else {
+		// 非管理员模式，限制最大访问次数
+		if hasVideo && req.MaxViews > cfg.Paste.DefaultVideoMaxViews {
+			req.MaxViews = cfg.Paste.DefaultVideoMaxViews
+		} else if !hasVideo && req.MaxViews > 1000 {
+			req.MaxViews = 1000
+		}
+	}
+
+	// 将文件元数据转为 JSON
+	filesJSON := ""
+	if len(files) > 0 {
+		jsonBytes, _ := json.Marshal(files)
+		filesJSON = string(jsonBytes)
 	}
 
 	paste := &models.Paste{
@@ -147,7 +295,7 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		ExpiresAt: time.Now().Add(time.Duration(req.ExpiresIn) * time.Hour),
 		MaxViews:  req.MaxViews,
 		CreatorIP: ip,
-		Images:    imagesJSON,
+		Files:     filesJSON,
 	}
 
 	// 密码加密存储
@@ -184,6 +332,7 @@ func (h *PasteHandler) Get(c *gin.Context) {
 
 	// 检查是否过期
 	if time.Now().After(paste.ExpiresAt) {
+		h.cleanupPasteFiles(paste.Files)
 		h.db.DeletePaste(id)
 		c.JSON(http.StatusGone, gin.H{"error": "该分享已过期", "code": 410})
 		return
@@ -191,6 +340,7 @@ func (h *PasteHandler) Get(c *gin.Context) {
 
 	// 检查访问次数
 	if paste.Views >= paste.MaxViews {
+		h.cleanupPasteFiles(paste.Files)
 		h.db.DeletePaste(id)
 		c.JSON(http.StatusGone, gin.H{"error": "该分享已达到最大访问次数", "code": 410})
 		return
@@ -216,10 +366,10 @@ func (h *PasteHandler) Get(c *gin.Context) {
 	h.db.IncrementViews(id)
 	paste.Views++
 
-	// 解析图片 JSON
-	var images []string
-	if paste.Images != "" {
-		json.Unmarshal([]byte(paste.Images), &images)
+	// 解析文件 JSON
+	var files []*FileMetadata
+	if paste.Files != "" {
+		json.Unmarshal([]byte(paste.Files), &files)
 	}
 
 	c.JSON(http.StatusOK, PasteResponse{
@@ -232,7 +382,7 @@ func (h *PasteHandler) Get(c *gin.Context) {
 		Views:       paste.Views,
 		CreatedAt:   paste.CreatedAt,
 		HasPassword: paste.Password != "",
-		Images:      images,
+		Files:       files,
 	})
 }
 
@@ -263,3 +413,35 @@ func (h *PasteHandler) GetInfo(c *gin.Context) {
 		HasPassword: paste.Password != "",
 	})
 }
+
+// ServeFile 提供文件访问
+func (h *PasteHandler) ServeFile(c *gin.Context) {
+	filename := c.Param("filename")
+	filePath := filepath.Join(pasteUploadDir, filename)
+
+	// 检查文件是否存在
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在", "code": 404})
+		return
+	}
+
+	c.File(filePath)
+}
+
+// cleanupPasteFiles 清理 paste 关联的文件
+func (h *PasteHandler) cleanupPasteFiles(filesJSON string) {
+	if filesJSON == "" {
+		return
+	}
+
+	var files []*FileMetadata
+	if err := json.Unmarshal([]byte(filesJSON), &files); err != nil {
+		return
+	}
+
+	for _, file := range files {
+		filePath := filepath.Join(pasteUploadDir, file.Filename)
+		os.Remove(filePath)
+	}
+}
+

@@ -158,6 +158,8 @@ func main() {
 		{
 			// 只有创建操作需要限流
 			paste.POST("", createRateLimiter.Middleware(), pasteHandler.Create)
+			paste.POST("/upload", pasteHandler.UploadFile) // 文件上传
+			paste.GET("/files/:filename", pasteHandler.ServeFile) // 文件访问
 			paste.GET("/:id", pasteHandler.Get)
 			paste.GET("/:id/info", pasteHandler.GetInfo)
 		}
