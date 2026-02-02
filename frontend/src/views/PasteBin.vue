@@ -1247,7 +1247,8 @@ restoreAdminPassword()
 .result-section {
   display: flex;
   justify-content: center;
-  margin-bottom: 80px;
+  margin-bottom: 120px;
+  padding-bottom: 40px;
 }
 
 .result-card {

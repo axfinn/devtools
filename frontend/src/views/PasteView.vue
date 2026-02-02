@@ -452,8 +452,8 @@ onMounted(() => {
   justify-content: center;
 }
 
-/* 图片画廊 */
-.image-gallery {
+/* 文件画廊 */
+.file-gallery {
   background-color: var(--bg-primary);
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
@@ -484,25 +484,59 @@ onMounted(() => {
 }
 
 .gallery-item {
-  position: relative;
-  aspect-ratio: 1;
   border-radius: var(--radius-md);
   overflow: hidden;
-  cursor: pointer;
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-base);
+  display: flex;
+  flex-direction: column;
 }
 
+.file-preview-img {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  cursor: pointer;
+  background-color: #000;
+}
 
-.gallery-item img {
+.file-preview-img img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   transition: transform 0.3s;
 }
 
-.gallery-item:hover img {
+.file-preview-img:hover img {
   transform: scale(1.05);
+}
+
+.file-preview-video {
+  width: 100%;
+  background-color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-info {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background-color: var(--bg-secondary);
+}
+
+.file-name {
+  color: var(--text-primary);
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.file-size {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .gallery-overlay {
@@ -517,7 +551,7 @@ onMounted(() => {
   transition: opacity 0.2s;
 }
 
-.gallery-item:hover .gallery-overlay {
+.file-preview-img:hover .gallery-overlay {
   opacity: 1;
 }
 
