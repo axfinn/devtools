@@ -255,6 +255,11 @@ const downloadContent = () => {
 // 解析文件列表
 const filesList = computed(() => {
   if (!paste.value || !paste.value.files) return []
+  // 后端已经返回数组，直接使用
+  if (Array.isArray(paste.value.files)) {
+    return paste.value.files
+  }
+  // 兼容旧数据（字符串格式）
   try {
     return JSON.parse(paste.value.files)
   } catch (e) {

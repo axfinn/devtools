@@ -262,15 +262,19 @@ func (h *PasteHandler) Create(c *gin.Context) {
 	}
 
 	// 管理员可以设置更多次数或永久
-	if req.AdminPassword != "" && cfg.Paste.AdminPassword != "" {
-		if req.AdminPassword == cfg.Paste.AdminPassword {
-			// 管理员模式，使用用户指定的值
-			if req.MaxViews == 0 {
-				req.MaxViews = 999999 // 近似永久
-			}
-		} else {
+	if req.AdminPassword != "" {
+		// 用户输入了管理员密码
+		if cfg.Paste.AdminPassword == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "系统未设置管理员密码，请联系管理员在config.yaml中配置paste.admin_password", "code": 403})
+			return
+		}
+		if req.AdminPassword != cfg.Paste.AdminPassword {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
 			return
+		}
+		// 管理员模式，使用用户指定的值
+		if req.MaxViews == 0 {
+			req.MaxViews = 999999 // 近似永久
 		}
 	} else {
 		// 非管理员模式，限制最大访问次数
