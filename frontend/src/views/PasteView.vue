@@ -74,28 +74,36 @@
         <pre class="code-content" v-html="highlightedContent"></pre>
       </div>
 
-      <!-- 图片画廊 -->
-      <div class="image-gallery" v-if="paste.images && paste.images.length > 0">
+      <!-- 文件展示 -->
+      <div class="file-gallery" v-if="filesList.length > 0">
         <div class="gallery-header">
           <span class="gallery-title">
             <el-icon><Picture /></el-icon>
-            图片 ({{ paste.images.length }})
+            附件文件 ({{ filesList.length }})
           </span>
-          <el-button size="small" @click="downloadAllImages" v-if="paste.images.length > 1">
-            <el-icon><Download /></el-icon>
-            下载全部
-          </el-button>
         </div>
         <div class="gallery-grid">
           <div
             class="gallery-item"
-            v-for="(img, index) in paste.images"
+            v-for="(file, index) in filesList"
             :key="index"
-            @click="openPreview(index)"
           >
-            <img :src="img" alt="图片" />
-            <div class="gallery-overlay">
-              <el-icon :size="24"><ZoomIn /></el-icon>
+            <div v-if="file.type === 'image'" class="file-preview-img" @click="openPreview(file)">
+              <img :src="API_BASE + file.url" alt="图片" />
+              <div class="gallery-overlay">
+                <el-icon :size="24"><ZoomIn /></el-icon>
+              </div>
+            </div>
+            <div v-else-if="file.type === 'video'" class="file-preview-video">
+              <video :src="API_BASE + file.url" controls style="width: 100%; max-height: 300px;"></video>
+            </div>
+            <div class="file-info">
+              <span class="file-name">{{ file.original_name || file.filename }}</span>
+              <span class="file-size">{{ (file.size / 1024 / 1024).toFixed(2) }} MB</span>
+              <el-button size="small" @click="downloadFile(file)">
+                <el-icon><Download /></el-icon>
+                下载
+              </el-button>
             </div>
           </div>
         </div>
@@ -104,16 +112,16 @@
       <!-- 图片预览弹窗 -->
       <div class="image-preview" v-if="previewImage" @click.self="closePreview">
         <div class="preview-container">
-          <img :src="previewImage" alt="预览" />
+          <img :src="API_BASE + previewImage.url" alt="预览" />
           <div class="preview-actions">
             <el-button circle @click="prevImage" :disabled="previewIndex === 0">
               <el-icon><Back /></el-icon>
             </el-button>
-            <span class="preview-index">{{ previewIndex + 1 }} / {{ paste.images.length }}</span>
-            <el-button circle @click="nextImage" :disabled="previewIndex === paste.images.length - 1">
+            <span class="preview-index">{{ previewIndex + 1 }} / {{ imageFiles.length }}</span>
+            <el-button circle @click="nextImage" :disabled="previewIndex === imageFiles.length - 1">
               <el-icon style="transform: rotate(180deg)"><Back /></el-icon>
             </el-button>
-            <el-button circle @click="downloadImage(previewImage, previewIndex)">
+            <el-button circle @click="downloadFile(previewImage)">
               <el-icon><Download /></el-icon>
             </el-button>
             <el-button circle type="danger" @click="closePreview">
@@ -244,10 +252,29 @@ const downloadContent = () => {
   URL.revokeObjectURL(url)
 }
 
+// 解析文件列表
+const filesList = computed(() => {
+  if (!paste.value || !paste.value.files) return []
+  try {
+    return JSON.parse(paste.value.files)
+  } catch (e) {
+    return []
+  }
+})
+
+// 只获取图片类型的文件用于预览
+const imageFiles = computed(() => {
+  return filesList.value.filter(f => f.type === 'image')
+})
+
 // 图片预览
-const openPreview = (index) => {
-  previewIndex.value = index
-  previewImage.value = paste.value.images[index]
+const openPreview = (file) => {
+  const images = imageFiles.value
+  const index = images.findIndex(f => f.filename === file.filename)
+  if (index !== -1) {
+    previewIndex.value = index
+    previewImage.value = images[index]
+  }
 }
 
 const closePreview = () => {
@@ -257,33 +284,32 @@ const closePreview = () => {
 const prevImage = () => {
   if (previewIndex.value > 0) {
     previewIndex.value--
-    previewImage.value = paste.value.images[previewIndex.value]
+    previewImage.value = imageFiles.value[previewIndex.value]
   }
 }
 
 const nextImage = () => {
-  if (previewIndex.value < paste.value.images.length - 1) {
+  if (previewIndex.value < imageFiles.value.length - 1) {
     previewIndex.value++
-    previewImage.value = paste.value.images[previewIndex.value]
+    previewImage.value = imageFiles.value[previewIndex.value]
   }
 }
 
-// 下载图片
-const downloadImage = (base64, index) => {
-  const link = document.createElement('a')
-  link.href = base64
-  // 从 base64 中提取文件类型
-  const match = base64.match(/^data:image\/(\w+);/)
-  const ext = match ? match[1] : 'png'
-  link.download = `${paste.value.title || paste.value.id}_${index + 1}.${ext}`
-  link.click()
-}
-
-// 下载所有图片
-const downloadAllImages = () => {
-  paste.value.images.forEach((img, index) => {
-    setTimeout(() => downloadImage(img, index), index * 100)
-  })
+// 下载文件
+const downloadFile = async (file) => {
+  try {
+    const response = await fetch(API_BASE + file.url)
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.original_name || file.filename
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('下载成功')
+  } catch (e) {
+    ElMessage.error('下载失败')
+  }
 }
 
 onMounted(() => {

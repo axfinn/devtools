@@ -2,8 +2,14 @@
   <div class="tool-container">
     <div class="tool-header">
       <h2>共享粘贴板</h2>
-      <div class="info-text">
-        支持文本、图片、视频分享 - 自动压缩优化
+      <div class="header-right">
+        <div class="info-text">
+          支持文本、图片、视频分享 - 自动压缩优化
+        </div>
+        <el-button size="small" @click="showAdminPanel = true">
+          <el-icon><Lock /></el-icon>
+          管理
+        </el-button>
       </div>
     </div>
 
@@ -285,13 +291,95 @@
         <li>管理员可设置更多访问次数或永久访问</li>
       </ul>
     </div>
+
+    <!-- 管理员面板 -->
+    <el-dialog v-model="showAdminPanel" title="管理员面板" width="90%" :close-on-click-modal="false">
+      <div v-if="!adminAuthenticated">
+        <el-form @submit.prevent="adminLogin">
+          <el-form-item label="管理员密码">
+            <el-input v-model="adminPasswordInput" type="password" show-password placeholder="请输入管理员密码" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" @click="adminLogin" :loading="adminLoading">登录</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
+      <div v-else>
+        <el-button type="primary" @click="loadAdminPastes" :loading="adminLoading" style="margin-bottom: 15px">
+          <el-icon><Refresh /></el-icon>
+          刷新列表
+        </el-button>
+        <el-table :data="adminPastes" style="width: 100%" max-height="500">
+          <el-table-column prop="id" label="ID" width="100" />
+          <el-table-column prop="title" label="标题" width="150">
+            <template #default="{ row }">
+              {{ row.title || '(无标题)' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="内容" width="100">
+            <template #default="{ row }">
+              <el-tag v-if="row.has_content" type="success" size="small">有文本</el-tag>
+              <el-tag v-if="row.file_count > 0" type="warning" size="small">{{ row.file_count }} 文件</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="views" label="访问" width="80">
+            <template #default="{ row }">
+              {{ row.views }}/{{ row.max_views }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="created_at" label="创建时间" width="180">
+            <template #default="{ row }">
+              {{ new Date(row.created_at).toLocaleString('zh-CN') }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="expires_at" label="过期时间" width="180">
+            <template #default="{ row }">
+              {{ new Date(row.expires_at).toLocaleString('zh-CN') }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="200" fixed="right">
+            <template #default="{ row }">
+              <el-button size="small" @click="viewAdminPaste(row.id)">查看</el-button>
+              <el-button size="small" type="primary" @click="editAdminPaste(row)">编辑</el-button>
+              <el-button size="small" type="danger" @click="deleteAdminPaste(row.id)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-dialog>
+
+    <!-- 管理员编辑弹窗 -->
+    <el-dialog v-model="showEditDialog" title="编辑粘贴板" width="500px">
+      <el-form label-width="120px">
+        <el-form-item label="ID">
+          <el-input v-model="editingPaste.id" disabled />
+        </el-form-item>
+        <el-form-item label="延长时间">
+          <el-select v-model="editExpiresIn" placeholder="选择延长时间">
+            <el-option label="1 小时" :value="1" />
+            <el-option label="6 小时" :value="6" />
+            <el-option label="24 小时" :value="24" />
+            <el-option label="3 天" :value="72" />
+            <el-option label="7 天" :value="168" />
+            <el-option label="30 天" :value="720" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="最大访问次数">
+          <el-input-number v-model="editMaxViews" :min="1" :max="999999" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveAdminEdit" :loading="adminLoading">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, nextTick, computed } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, Delete, Upload } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, Delete, Upload, Lock, Refresh } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { API_BASE } from '../api'
 import { FFmpeg } from '@ffmpeg/ffmpeg'
@@ -323,6 +411,18 @@ const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
 // FFmpeg 实例 (懒加载)
 let ffmpegInstance = null
 let ffmpegLoaded = false
+
+// 管理员功能
+const showAdminPanel = ref(false)
+const adminAuthenticated = ref(false)
+const adminPasswordInput = ref('')
+const adminPasswordStored = ref('')
+const adminLoading = ref(false)
+const adminPastes = ref([])
+const showEditDialog = ref(false)
+const editingPaste = ref({})
+const editExpiresIn = ref(24)
+const editMaxViews = ref(100)
 
 const totalSize = computed(() => {
   return files.value.reduce((sum, file) => sum + file.size, 0)
@@ -719,6 +819,145 @@ const resetForm = () => {
   }
   files.value = []
 }
+
+// 管理员登录
+const adminLogin = async () => {
+  if (!adminPasswordInput.value) {
+    ElMessage.warning('请输入管理员密码')
+    return
+  }
+
+  adminLoading.value = true
+
+  try {
+    const response = await fetch(`${API_BASE}/api/paste/admin/list?admin_password=${encodeURIComponent(adminPasswordInput.value)}`)
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '登录失败')
+    }
+
+    adminAuthenticated.value = true
+    adminPasswordStored.value = adminPasswordInput.value
+    adminPastes.value = data.pastes || []
+    ElMessage.success('登录成功')
+
+    // 存储到 sessionStorage
+    sessionStorage.setItem('paste_admin_password', adminPasswordInput.value)
+  } catch (err) {
+    ElMessage.error(err.message)
+  } finally {
+    adminLoading.value = false
+  }
+}
+
+// 加载管理员粘贴板列表
+const loadAdminPastes = async () => {
+  adminLoading.value = true
+
+  try {
+    const response = await fetch(`${API_BASE}/api/paste/admin/list?admin_password=${encodeURIComponent(adminPasswordStored.value)}`)
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '加载失败')
+    }
+
+    adminPastes.value = data.pastes || []
+    ElMessage.success('刷新成功')
+  } catch (err) {
+    ElMessage.error(err.message)
+  } finally {
+    adminLoading.value = false
+  }
+}
+
+// 查看粘贴板详情
+const viewAdminPaste = (id) => {
+  window.open(`/paste/${id}`, '_blank')
+}
+
+// 编辑粘贴板
+const editAdminPaste = (paste) => {
+  editingPaste.value = paste
+  editExpiresIn.value = 24
+  editMaxViews.value = paste.max_views
+  showEditDialog.value = true
+}
+
+// 保存编辑
+const saveAdminEdit = async () => {
+  adminLoading.value = true
+
+  try {
+    const response = await fetch(`${API_BASE}/api/paste/admin/${editingPaste.value.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        admin_password: adminPasswordStored.value,
+        expires_in: editExpiresIn.value,
+        max_views: editMaxViews.value
+      })
+    })
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '更新失败')
+    }
+
+    ElMessage.success('更新成功')
+    showEditDialog.value = false
+    await loadAdminPastes()
+  } catch (err) {
+    ElMessage.error(err.message)
+  } finally {
+    adminLoading.value = false
+  }
+}
+
+// 删除粘贴板
+const deleteAdminPaste = async (id) => {
+  try {
+    await ElMessageBox.confirm('确定要删除这个粘贴板吗？', '确认删除', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+
+    adminLoading.value = true
+
+    const response = await fetch(`${API_BASE}/api/paste/admin/${id}?admin_password=${encodeURIComponent(adminPasswordStored.value)}`, {
+      method: 'DELETE'
+    })
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.error || '删除失败')
+    }
+
+    ElMessage.success('删除成功')
+    await loadAdminPastes()
+  } catch (err) {
+    if (err !== 'cancel') {
+      ElMessage.error(err.message || '删除失败')
+    }
+  } finally {
+    adminLoading.value = false
+  }
+}
+
+// 从 sessionStorage 恢复管理员密码
+const restoreAdminPassword = () => {
+  const stored = sessionStorage.getItem('paste_admin_password')
+  if (stored) {
+    adminPasswordInput.value = stored
+    adminPasswordStored.value = stored
+  }
+}
+
+restoreAdminPassword()
 </script>
 
 <style scoped>
@@ -1008,6 +1247,7 @@ const resetForm = () => {
 .result-section {
   display: flex;
   justify-content: center;
+  margin-bottom: 80px;
 }
 
 .result-card {

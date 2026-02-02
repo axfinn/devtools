@@ -414,6 +414,175 @@ func (h *PasteHandler) GetInfo(c *gin.Context) {
 	})
 }
 
+// AdminListPastes 管理员获取所有粘贴板列表
+func (h *PasteHandler) AdminListPastes(c *gin.Context) {
+	cfg := config.Get()
+	adminPassword := c.Query("admin_password")
+
+	// 验证管理员密码
+	if cfg.Paste.AdminPassword == "" || adminPassword != cfg.Paste.AdminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+		return
+	}
+
+	// 分页参数
+	limit := 50
+	offset := 0
+
+	pastes, err := h.db.GetAllPastes(limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取列表失败", "code": 500})
+		return
+	}
+
+	// 构建响应
+	var responses []gin.H
+	for _, paste := range pastes {
+		var files []*FileMetadata
+		if paste.Files != "" {
+			json.Unmarshal([]byte(paste.Files), &files)
+		}
+
+		responses = append(responses, gin.H{
+			"id":           paste.ID,
+			"title":        paste.Title,
+			"language":     paste.Language,
+			"expires_at":   paste.ExpiresAt,
+			"max_views":    paste.MaxViews,
+			"views":        paste.Views,
+			"created_at":   paste.CreatedAt,
+			"has_password": paste.Password != "",
+			"has_content":  paste.Content != "",
+			"file_count":   len(files),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"pastes": responses,
+		"total":  len(responses),
+	})
+}
+
+// AdminGetPaste 管理员获取指定粘贴板详情
+func (h *PasteHandler) AdminGetPaste(c *gin.Context) {
+	cfg := config.Get()
+	adminPassword := c.Query("admin_password")
+
+	// 验证管理员密码
+	if cfg.Paste.AdminPassword == "" || adminPassword != cfg.Paste.AdminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+		return
+	}
+
+	id := c.Param("id")
+	paste, err := h.db.GetPaste(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该分享", "code": 404})
+		return
+	}
+
+	// 解析文件
+	var files []*FileMetadata
+	if paste.Files != "" {
+		json.Unmarshal([]byte(paste.Files), &files)
+	}
+
+	c.JSON(http.StatusOK, PasteResponse{
+		ID:          paste.ID,
+		Title:       paste.Title,
+		Language:    paste.Language,
+		Content:     paste.Content,
+		ExpiresAt:   paste.ExpiresAt,
+		MaxViews:    paste.MaxViews,
+		Views:       paste.Views,
+		CreatedAt:   paste.CreatedAt,
+		HasPassword: paste.Password != "",
+		Files:       files,
+	})
+}
+
+// AdminUpdatePaste 管理员更新粘贴板
+func (h *PasteHandler) AdminUpdatePaste(c *gin.Context) {
+	cfg := config.Get()
+
+	var req struct {
+		AdminPassword string `json:"admin_password" binding:"required"`
+		ExpiresIn     int    `json:"expires_in"` // 延长小时数
+		MaxViews      int    `json:"max_views"`  // 新的最大访问次数
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据", "code": 400})
+		return
+	}
+
+	// 验证管理员密码
+	if cfg.Paste.AdminPassword == "" || req.AdminPassword != cfg.Paste.AdminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+		return
+	}
+
+	id := c.Param("id")
+	paste, err := h.db.GetPaste(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该分享", "code": 404})
+		return
+	}
+
+	// 更新过期时间
+	newExpiresAt := paste.ExpiresAt
+	if req.ExpiresIn > 0 {
+		newExpiresAt = time.Now().Add(time.Duration(req.ExpiresIn) * time.Hour)
+	}
+
+	// 更新最大访问次数
+	newMaxViews := paste.MaxViews
+	if req.MaxViews > 0 {
+		newMaxViews = req.MaxViews
+	}
+
+	if err := h.db.UpdatePaste(id, newExpiresAt, newMaxViews); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "更新成功",
+		"expires_at": newExpiresAt,
+		"max_views":  newMaxViews,
+	})
+}
+
+// AdminDeletePaste 管理员删除粘贴板
+func (h *PasteHandler) AdminDeletePaste(c *gin.Context) {
+	cfg := config.Get()
+	adminPassword := c.Query("admin_password")
+
+	// 验证管理员密码
+	if cfg.Paste.AdminPassword == "" || adminPassword != cfg.Paste.AdminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+		return
+	}
+
+	id := c.Param("id")
+	paste, err := h.db.GetPaste(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该分享", "code": 404})
+		return
+	}
+
+	// 删除关联文件
+	h.cleanupPasteFiles(paste.Files)
+
+	// 删除数据库记录
+	if err := h.db.DeletePaste(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+}
+
 // ServeFile 提供文件访问
 func (h *PasteHandler) ServeFile(c *gin.Context) {
 	filename := c.Param("filename")

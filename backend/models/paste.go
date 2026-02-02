@@ -186,3 +186,41 @@ func generateID(length int) string {
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)[:length]
 }
+
+// GetAllPastes 获取所有粘贴板（管理员用）
+func (db *DB) GetAllPastes(limit, offset int) ([]*Paste, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, content, title, language, password, expires_at, max_views, views, created_at, creator_ip, COALESCE(files, '')
+		FROM pastes
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var pastes []*Paste
+	for rows.Next() {
+		paste := &Paste{}
+		var files sql.NullString
+		err := rows.Scan(
+			&paste.ID, &paste.Content, &paste.Title, &paste.Language, &paste.Password,
+			&paste.ExpiresAt, &paste.MaxViews, &paste.Views, &paste.CreatedAt, &paste.CreatorIP, &files)
+		if err != nil {
+			continue
+		}
+		paste.Files = files.String
+		pastes = append(pastes, paste)
+	}
+
+	return pastes, nil
+}
+
+// UpdatePaste 更新粘贴板（管理员用）
+func (db *DB) UpdatePaste(id string, expiresAt time.Time, maxViews int) error {
+	_, err := db.conn.Exec(`
+		UPDATE pastes SET expires_at = ?, max_views = ? WHERE id = ?
+	`, expiresAt, maxViews, id)
+	return err
+}

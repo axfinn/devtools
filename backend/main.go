@@ -158,10 +158,16 @@ func main() {
 		{
 			// 只有创建操作需要限流
 			paste.POST("", createRateLimiter.Middleware(), pasteHandler.Create)
-			paste.POST("/upload", pasteHandler.UploadFile) // 文件上传
-			paste.GET("/files/:filename", pasteHandler.ServeFile) // 文件访问
+			paste.POST("/upload", pasteHandler.UploadFile)           // 文件上传
+			paste.GET("/files/:filename", pasteHandler.ServeFile)    // 文件访问
 			paste.GET("/:id", pasteHandler.Get)
 			paste.GET("/:id/info", pasteHandler.GetInfo)
+
+			// 管理员 API
+			paste.GET("/admin/list", pasteHandler.AdminListPastes)   // 管理员列表
+			paste.GET("/admin/:id", pasteHandler.AdminGetPaste)      // 管理员查看
+			paste.PUT("/admin/:id", pasteHandler.AdminUpdatePaste)   // 管理员编辑
+			paste.DELETE("/admin/:id", pasteHandler.AdminDeletePaste) // 管理员删除
 		}
 
 		// IP/DNS API
