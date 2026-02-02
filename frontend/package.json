@@ -13,7 +13,7 @@
     "@excalidraw/excalidraw": "^0.18.0",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
-    "diff": "^8.0.2",
+    "diff": "^8.0.3",
     "element-plus": "^2.13.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.27",
