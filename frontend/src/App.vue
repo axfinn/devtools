@@ -233,8 +233,10 @@ const themeModeName = computed(() => {
   border-bottom: 1px solid var(--border-base);
   padding: 0 15px;
   height: 56px;
-  position: sticky;
+  position: fixed; /* 改为固定定位 */
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 100;
   transition: background-color 0.3s, border-color 0.3s;
 }
@@ -444,8 +446,10 @@ const themeModeName = computed(() => {
 
 .mobile-main {
   padding: 15px;
-  padding-bottom: 20px; /* 为底部留出空间 */
-  height: calc(100vh - 56px); /* 减去移动端头部高度 */
+  padding-top: calc(56px + 15px); /* 头部高度 + 内边距 */
+  padding-bottom: 60px; /* 为底部留出足够空间 */
+  height: auto; /* 改为自动高度 */
+  min-height: calc(100vh - 56px); /* 最小高度减去头部 */
 }
 
 /* 页面底部 Footer */
@@ -549,7 +553,12 @@ const themeModeName = computed(() => {
 @media (max-width: 768px) {
   .app-container {
     flex-direction: column;
-    overflow: hidden;
+    overflow: visible; /* 允许滚动 */
+  }
+
+  .main-content {
+    height: auto; /* 移动端不限制高度 */
+    overflow-y: visible; /* 允许自然滚动 */
   }
 }
 </style>
@@ -701,6 +710,8 @@ const themeModeName = computed(() => {
 
   .mobile-main {
     padding: 10px;
+    padding-top: calc(56px + 10px); /* 头部高度 + 内边距 */
+    padding-bottom: 50px; /* 底部留白 */
   }
 
   .tool-header .actions .el-button {
