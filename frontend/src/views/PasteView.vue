@@ -709,5 +709,71 @@ onMounted(() => {
     flex-wrap: wrap;
     justify-content: center;
   }
+
+  .paste-title {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .paste-meta {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .paste-meta span {
+    display: block;
+  }
+
+  .paste-meta span:contains("·") {
+    display: none;
+  }
+
+  .password-card {
+    width: 90%;
+    max-width: 400px;
+  }
+
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .file-info {
+    padding: 8px;
+  }
+
+  .file-name {
+    font-size: 12px;
+  }
+
+  .preview-container {
+    max-width: 95vw;
+  }
+
+  .preview-actions .el-button {
+    padding: 8px;
+  }
+
+  .paste-header {
+    padding: 15px;
+  }
+
+  .code-content {
+    padding: 15px;
+    font-size: 12px;
+  }
 }
 </style>

@@ -138,15 +138,6 @@
           <span>点击上传文件或直接拖拽</span>
           <span class="upload-hint">支持图片、视频、音频、PDF、Office文档、压缩包等 (最大 200MB)</span>
         </div>
-
-        <input
-          ref="fileInput"
-          type="file"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.mov"
-          multiple
-          style="display: none"
-          @change="onFileChange"
-        />
       </div>
 
       <div class="quick-actions">
@@ -253,15 +244,6 @@
           <span>点击上传文件或直接拖拽</span>
           <span class="upload-hint">支持图片、视频、音频、PDF、Office文档、压缩包等 (最大 200MB)</span>
         </div>
-
-        <input
-          ref="fileInput"
-          type="file"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.mov"
-          multiple
-          style="display: none"
-          @change="onFileChange"
-        />
       </div>
 
       <div class="options-row">
@@ -322,6 +304,16 @@
           <li>所有文件最大支持200MB</li>
         </ul>
       </div>
+
+      <!-- 共享文件输入框 -->
+      <input
+        ref="fileInput"
+        type="file"
+        accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.mov"
+        multiple
+        style="display: none"
+        @change="onFileChange"
+      />
     </div>
     <!-- create-page 结束 -->
 
@@ -1681,5 +1673,105 @@ restoreAdminPassword()
 
 .error-msg {
   margin-top: 10px;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .tool-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .header-right {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .header-right .el-button {
+    width: 100%;
+  }
+
+  .info-text {
+    text-align: center;
+  }
+
+  .options-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 15px;
+  }
+
+  .option-item {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .option-item .el-select,
+  .option-item .el-input,
+  .option-item .el-input-number {
+    width: 100% !important;
+  }
+
+  .option-label {
+    margin-bottom: 5px;
+  }
+
+  .file-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .result-card {
+    padding: 20px;
+  }
+
+  .url-actions {
+    flex-direction: column;
+  }
+
+  .url-actions .el-button {
+    width: 100%;
+  }
+
+  .paste-meta {
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .paste-meta span:contains("·") {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .file-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .result-info {
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .quick-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .quick-actions .el-button--large {
+    width: 100%;
+  }
+
+  .panel-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .panel-header .el-input,
+  .panel-header .el-select {
+    width: 100% !important;
+  }
 }
 </style>
