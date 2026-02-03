@@ -317,43 +317,6 @@
       </ul>
     </div>
 
-    <!-- 支持项目 Footer -->
-    <div class="project-footer">
-      <div class="footer-content">
-        <div class="footer-section">
-          <h4>💖 支持项目</h4>
-          <p>如果这个工具对你有帮助，欢迎通过以下方式支持项目发展</p>
-        </div>
-        <div class="footer-donate">
-          <div class="donate-item">
-            <span class="donate-label">⭐ GitHub Star</span>
-            <a href="https://github.com" target="_blank" class="donate-link">给项目加星</a>
-          </div>
-          <div class="donate-item">
-            <span class="donate-label">💰 赞赏支持</span>
-            <el-button size="small" @click="showDonateDialog = true">查看二维码</el-button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 赞赏二维码弹窗 -->
-    <el-dialog v-model="showDonateDialog" title="赞赏支持" width="500px" center>
-      <div class="donate-dialog">
-        <div class="donate-qr-group">
-          <div class="donate-qr-item">
-            <img src="/alipay.jpeg" alt="支付宝" />
-            <span>支付宝</span>
-          </div>
-          <div class="donate-qr-item">
-            <img src="/wxpay.jpeg" alt="微信支付" />
-            <span>微信支付</span>
-          </div>
-        </div>
-        <p class="donate-thanks">感谢您的支持，这将帮助我们持续改进项目！</p>
-      </div>
-    </el-dialog>
-
     <!-- 我的分享 -->
     <el-dialog v-model="showMyShares" title="我的分享" width="90%" :close-on-click-modal="false">
       <div v-if="mySharesList.length === 0" style="text-align: center; padding: 40px; color: var(--text-secondary);">
