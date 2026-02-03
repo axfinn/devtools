@@ -317,6 +317,43 @@
       </ul>
     </div>
 
+    <!-- 支持项目 Footer -->
+    <div class="project-footer">
+      <div class="footer-content">
+        <div class="footer-section">
+          <h4>💖 支持项目</h4>
+          <p>如果这个工具对你有帮助，欢迎通过以下方式支持项目发展</p>
+        </div>
+        <div class="footer-donate">
+          <div class="donate-item">
+            <span class="donate-label">⭐ GitHub Star</span>
+            <a href="https://github.com" target="_blank" class="donate-link">给项目加星</a>
+          </div>
+          <div class="donate-item">
+            <span class="donate-label">💰 赞赏支持</span>
+            <el-button size="small" @click="showDonateDialog = true">查看二维码</el-button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 赞赏二维码弹窗 -->
+    <el-dialog v-model="showDonateDialog" title="赞赏支持" width="500px" center>
+      <div class="donate-dialog">
+        <div class="donate-qr-group">
+          <div class="donate-qr-item">
+            <img src="/alipay.jpeg" alt="支付宝" />
+            <span>支付宝</span>
+          </div>
+          <div class="donate-qr-item">
+            <img src="/wxpay.jpeg" alt="微信支付" />
+            <span>微信支付</span>
+          </div>
+        </div>
+        <p class="donate-thanks">感谢您的支持，这将帮助我们持续改进项目！</p>
+      </div>
+    </el-dialog>
+
     <!-- 我的分享 -->
     <el-dialog v-model="showMyShares" title="我的分享" width="90%" :close-on-click-modal="false">
       <div v-if="mySharesList.length === 0" style="text-align: center; padding: 40px; color: var(--text-secondary);">
@@ -476,6 +513,7 @@ const qrCanvas = ref(null)
 const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video'|'audio'|'document'|'archive'|'file', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string, uploading: boolean, uploadProgress: number }]
 const fileInput = ref(null)
 const isDragging = ref(false)
+const showDonateDialog = ref(false)
 
 const MAX_FILES = 10
 const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
@@ -1544,10 +1582,7 @@ restoreAdminPassword()
   display: flex;
   justify-content: center;
   margin-top: 30px;
-  margin-bottom: 200px;
-  padding-bottom: 60px;
-  position: relative;
-  z-index: 10;
+  margin-bottom: 40px;
 }
 
 .result-card {
@@ -1561,6 +1596,7 @@ restoreAdminPassword()
   flex-direction: column;
   align-items: center;
   gap: 20px;
+  box-shadow: 0 8px 32px rgba(103, 194, 58, 0.2);
 }
 
 .result-header {
@@ -1655,5 +1691,120 @@ restoreAdminPassword()
 
 .error-msg {
   margin-top: 10px;
+}
+
+/* 支持项目 Footer */
+.project-footer {
+  margin-top: 40px;
+  padding: 30px 20px;
+  background: linear-gradient(135deg, #1a1a1a 0%, #252525 100%);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+}
+
+.footer-content {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.footer-section {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.footer-section h4 {
+  margin: 0 0 10px 0;
+  color: #67c23a;
+  font-size: 20px;
+}
+
+.footer-section p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.footer-donate {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+
+.donate-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.donate-label {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.donate-link {
+  color: #409eff;
+  text-decoration: none;
+  padding: 6px 16px;
+  border: 1px solid #409eff;
+  border-radius: 4px;
+  transition: all 0.3s;
+}
+
+.donate-link:hover {
+  background: #409eff;
+  color: white;
+}
+
+/* 赞赏弹窗 */
+.donate-dialog {
+  text-align: center;
+}
+
+.donate-qr-group {
+  display: flex;
+  justify-content: center;
+  gap: 30px;
+  margin: 20px 0;
+}
+
+.donate-qr-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.donate-qr-item img {
+  width: 180px;
+  height: 180px;
+  border-radius: 8px;
+  border: 2px solid var(--border-base);
+}
+
+.donate-qr-item span {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.donate-thanks {
+  margin-top: 20px;
+  color: #67c23a;
+  font-size: 14px;
+}
+
+@media (max-width: 768px) {
+  .donate-qr-group {
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .footer-donate {
+    flex-direction: column;
+    gap: 20px;
+  }
 }
 </style>
