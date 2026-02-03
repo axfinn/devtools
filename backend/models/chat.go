@@ -50,7 +50,34 @@ func (db *DB) InitChat() error {
 	CREATE INDEX IF NOT EXISTS idx_messages_created ON chat_messages(created_at);
 	`
 	_, err := db.conn.Exec(query)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 数据库迁移：添加 msg_type 和 original_name 字段（如果不存在）
+	// 检查 msg_type 字段是否存在
+	var msgTypeExists bool
+	row := db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_messages') WHERE name='msg_type'")
+	row.Scan(&msgTypeExists)
+	if !msgTypeExists {
+		_, err = db.conn.Exec("ALTER TABLE chat_messages ADD COLUMN msg_type TEXT DEFAULT 'text'")
+		if err != nil {
+			return err
+		}
+	}
+
+	// 检查 original_name 字段是否存在
+	var originalNameExists bool
+	row = db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_messages') WHERE name='original_name'")
+	row.Scan(&originalNameExists)
+	if !originalNameExists {
+		_, err = db.conn.Exec("ALTER TABLE chat_messages ADD COLUMN original_name TEXT DEFAULT ''")
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (db *DB) CreateRoom(room *ChatRoom) error {
