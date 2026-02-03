@@ -37,63 +37,6 @@ var allowedExtensions = map[string]bool{
 	".pdf": true, ".zip": true,
 }
 
-// 检测文件真实类型
-func detectFileType(data []byte) string {
-	if len(data) < 4 {
-		return ""
-	}
-
-	// JPEG
-	if data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
-		return "image/jpeg"
-	}
-	// PNG
-	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-		return "image/png"
-	}
-	// GIF
-	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
-		return "image/gif"
-	}
-	// WebP (RIFF....WEBP)
-	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
-		data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
-		return "image/webp"
-	}
-	// MP4/MOV (ftyp)
-	if len(data) >= 8 && data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70 {
-		return "video/mp4"
-	}
-	// WebM/MKV
-	if data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3 {
-		return "video/webm"
-	}
-	// MP3 (ID3 or sync)
-	if (data[0] == 0x49 && data[1] == 0x44 && data[2] == 0x33) || // ID3
-		(data[0] == 0xFF && (data[1]&0xE0) == 0xE0) { // sync
-		return "audio/mpeg"
-	}
-	// WAV (RIFF....WAVE)
-	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
-		data[8] == 0x57 && data[9] == 0x41 && data[10] == 0x56 && data[11] == 0x45 {
-		return "audio/wav"
-	}
-	// OGG
-	if data[0] == 0x4F && data[1] == 0x67 && data[2] == 0x67 && data[3] == 0x53 {
-		return "audio/ogg"
-	}
-	// PDF
-	if data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46 {
-		return "application/pdf"
-	}
-	// ZIP
-	if data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04 {
-		return "application/zip"
-	}
-
-	return ""
-}
-
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true
@@ -596,38 +539,6 @@ func (h *ChatHandler) UploadFile(c *gin.Context) {
 		"type":          fileCategory,
 		"size":          header.Size,
 	})
-}
-
-// getExtFromMimeType 根据 MIME 类型获取扩展名
-func getExtFromMimeType(mimeType string) string {
-	switch mimeType {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	case "video/mp4", "video/quicktime":
-		return ".mp4"
-	case "video/webm":
-		return ".webm"
-	case "audio/mpeg":
-		return ".mp3"
-	case "audio/wav":
-		return ".wav"
-	case "audio/ogg":
-		return ".ogg"
-	case "audio/webm":
-		return ".webm"
-	case "application/pdf":
-		return ".pdf"
-	case "application/zip":
-		return ".zip"
-	default:
-		return ""
-	}
 }
 
 // UploadImage 保持向后兼容

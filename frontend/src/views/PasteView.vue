@@ -88,14 +88,39 @@
             v-for="(file, index) in filesList"
             :key="index"
           >
+            <!-- 图片预览 -->
             <div v-if="file.type === 'image'" class="file-preview-img" @click="openPreview(file)">
               <img :src="API_BASE + file.url" alt="图片" />
               <div class="gallery-overlay">
                 <el-icon :size="24"><ZoomIn /></el-icon>
               </div>
             </div>
+            <!-- 视频预览 -->
             <div v-else-if="file.type === 'video'" class="file-preview-video">
               <video :src="API_BASE + file.url" controls style="width: 100%; max-height: 300px;"></video>
+            </div>
+            <!-- 音频预览 -->
+            <div v-else-if="file.type === 'audio'" class="file-preview-audio">
+              <el-icon :size="48"><Headset /></el-icon>
+              <audio :src="API_BASE + file.url" controls style="width: 100%; margin-top: 10px;"></audio>
+            </div>
+            <!-- PDF预览 -->
+            <div v-else-if="file.type === 'document' && file.url.endsWith('.pdf')" class="file-preview-doc">
+              <el-icon :size="48"><Document /></el-icon>
+              <span class="doc-label">PDF文档</span>
+              <el-button size="small" type="primary" @click="viewPDF(file)">
+                <el-icon><View /></el-icon>
+                在线查看
+              </el-button>
+            </div>
+            <!-- 其他文件 -->
+            <div v-else class="file-preview-other">
+              <el-icon :size="48">
+                <Document v-if="file.type === 'document'" />
+                <Folder v-else-if="file.type === 'archive'" />
+                <Files v-else />
+              </el-icon>
+              <span class="file-type-label">{{ getFileTypeLabel(file) }}</span>
             </div>
             <div class="file-info">
               <span class="file-name">{{ file.original_name || file.filename }}</span>
@@ -108,6 +133,11 @@
           </div>
         </div>
       </div>
+
+      <!-- PDF预览弹窗 -->
+      <el-dialog v-model="showPDFPreview" title="PDF预览" width="90%" :close-on-click-modal="false" fullscreen>
+        <iframe v-if="pdfUrl" :src="pdfUrl" style="width: 100%; height: 80vh; border: none;"></iframe>
+      </el-dialog>
 
       <!-- 图片预览弹窗 -->
       <div class="image-preview" v-if="previewImage" @click.self="closePreview">
@@ -145,7 +175,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Loading, Lock, Back, Picture, Download, ZoomIn } from '@element-plus/icons-vue'
+import { Loading, Lock, Back, Picture, Download, ZoomIn, Document, Folder, Files, Headset, View } from '@element-plus/icons-vue'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { API_BASE } from '../api'
@@ -160,6 +190,8 @@ const passwordError = ref('')
 const verifying = ref(false)
 const previewImage = ref(null)
 const previewIndex = ref(0)
+const showPDFPreview = ref(false)
+const pdfUrl = ref('')
 
 const fetchPaste = async (pwd = '') => {
   const id = route.params.id
@@ -315,6 +347,26 @@ const downloadFile = async (file) => {
   } catch (e) {
     ElMessage.error('下载失败')
   }
+}
+
+// 获取文件类型标签
+const getFileTypeLabel = (file) => {
+  const filename = file.original_name || file.filename
+  const ext = filename.split('.').pop().toUpperCase()
+
+  if (file.type === 'document') {
+    return `${ext} 文档`
+  } else if (file.type === 'archive') {
+    return `${ext} 压缩包`
+  } else {
+    return `${ext} 文件`
+  }
+}
+
+// 在线查看PDF
+const viewPDF = (file) => {
+  pdfUrl.value = API_BASE + file.url
+  showPDFPreview.value = true
 }
 
 onMounted(() => {
@@ -523,6 +575,53 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.file-preview-audio {
+  width: 100%;
+  padding: 20px;
+  background-color: #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #67c23a;
+}
+
+.file-preview-doc {
+  width: 100%;
+  padding: 30px 20px;
+  background-color: #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #e74c3c;
+}
+
+.doc-label {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.file-preview-other {
+  width: 100%;
+  padding: 30px 20px;
+  background-color: #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #9b59b6;
+}
+
+.file-type-label {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: bold;
 }
 
 .file-info {

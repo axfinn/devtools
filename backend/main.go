@@ -163,6 +163,12 @@ func main() {
 			paste.GET("/:id", pasteHandler.Get)
 			paste.GET("/:id/info", pasteHandler.GetInfo)
 
+			// 分片上传 API
+			paste.POST("/chunk/init", pasteHandler.InitChunkUpload)       // 初始化分片上传
+			paste.POST("/chunk/:file_id", pasteHandler.UploadChunk)       // 上传分片
+			paste.POST("/chunk/:file_id/merge", pasteHandler.MergeChunks) // 合并分片
+			paste.GET("/chunk/:file_id/status", pasteHandler.CheckChunkStatus) // 检查上传状态
+
 			// 管理员 API
 			paste.GET("/admin/list", pasteHandler.AdminListPastes)   // 管理员列表
 			paste.GET("/admin/:id", pasteHandler.AdminGetPaste)      // 管理员查看

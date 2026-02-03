@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"devtools/config"
@@ -21,6 +22,25 @@ import (
 
 const (
 	pasteUploadDir = "./data/paste_files"
+	chunkDir       = "./data/paste_chunks" // 分片临时目录
+)
+
+// ChunkUploadInfo 分片上传信息
+type ChunkUploadInfo struct {
+	FileID         string    `json:"file_id"`
+	FileName       string    `json:"file_name"`
+	TotalChunks    int       `json:"total_chunks"`
+	ChunkSize      int64     `json:"chunk_size"`
+	FileSize       int64     `json:"file_size"`
+	UploadedChunks []int     `json:"uploaded_chunks"`
+	CreatedAt      time.Time `json:"created_at"`
+	mu             sync.Mutex
+}
+
+var (
+	// 全局分片上传管理器
+	chunkUploads   = make(map[string]*ChunkUploadInfo)
+	chunkUploadsMu sync.RWMutex
 )
 
 // FileMetadata 文件元数据
@@ -105,15 +125,7 @@ func (h *PasteHandler) UploadFile(c *gin.Context) {
 	}
 
 	// 确定文件类别
-	var fileCategory string
-	if strings.HasPrefix(detectedType, "image/") {
-		fileCategory = "image"
-	} else if strings.HasPrefix(detectedType, "video/") {
-		fileCategory = "video"
-	} else {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "只支持图片和视频文件", "code": 400})
-		return
-	}
+	fileCategory := getFileCategory(detectedType)
 
 	// 生成随机文件名
 	randomBytes := make([]byte, 16)
@@ -235,11 +247,8 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		f.Close()
 
 		detectedType := detectFileType(magicBytes)
-		var fileType string
-		if strings.HasPrefix(detectedType, "image/") {
-			fileType = "image"
-		} else if strings.HasPrefix(detectedType, "video/") {
-			fileType = "video"
+		fileType := getFileCategory(detectedType)
+		if fileType == "video" {
 			hasVideo = true
 		}
 
@@ -601,6 +610,275 @@ func (h *PasteHandler) ServeFile(c *gin.Context) {
 	c.File(filePath)
 }
 
+// InitChunkUpload 初始化分片上传
+func (h *PasteHandler) InitChunkUpload(c *gin.Context) {
+	var req struct {
+		FileName    string `json:"file_name" binding:"required"`
+		FileSize    int64  `json:"file_size" binding:"required"`
+		ChunkSize   int64  `json:"chunk_size" binding:"required"`
+		TotalChunks int    `json:"total_chunks" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据", "code": 400})
+		return
+	}
+
+	cfg := config.Get()
+
+	// 检查文件大小
+	if req.FileSize > cfg.Paste.MaxFileSize {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("文件大小超过限制 (最大 %dMB)", cfg.Paste.MaxFileSize/1024/1024),
+			"code":  400,
+		})
+		return
+	}
+
+	// 生成文件ID
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
+	fileID := hex.EncodeToString(randomBytes)
+
+	// 确保分片目录存在
+	chunkPath := filepath.Join(chunkDir, fileID)
+	if err := os.MkdirAll(chunkPath, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
+
+	// 创建分片上传信息
+	uploadInfo := &ChunkUploadInfo{
+		FileID:         fileID,
+		FileName:       req.FileName,
+		TotalChunks:    req.TotalChunks,
+		ChunkSize:      req.ChunkSize,
+		FileSize:       req.FileSize,
+		UploadedChunks: []int{},
+		CreatedAt:      time.Now(),
+	}
+
+	chunkUploadsMu.Lock()
+	chunkUploads[fileID] = uploadInfo
+	chunkUploadsMu.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"file_id": fileID,
+		"message": "分片上传初始化成功",
+	})
+}
+
+// UploadChunk 上传分片
+func (h *PasteHandler) UploadChunk(c *gin.Context) {
+	fileID := c.Param("file_id")
+	chunkIndex := c.PostForm("chunk_index")
+
+	if fileID == "" || chunkIndex == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少必要参数", "code": 400})
+		return
+	}
+
+	// 获取上传信息
+	chunkUploadsMu.RLock()
+	uploadInfo, exists := chunkUploads[fileID]
+	chunkUploadsMu.RUnlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
+		return
+	}
+
+	// 检查是否已超时(24小时)
+	if time.Since(uploadInfo.CreatedAt) > 24*time.Hour {
+		h.CleanupChunkUpload(fileID)
+		c.JSON(http.StatusGone, gin.H{"error": "上传会话已过期", "code": 410})
+		return
+	}
+
+	// 接收分片数据
+	file, _, err := c.Request.FormFile("chunk")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取分片失败", "code": 400})
+		return
+	}
+	defer file.Close()
+
+	// 保存分片
+	chunkPath := filepath.Join(chunkDir, fileID, chunkIndex)
+	out, err := os.Create(chunkPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存分片失败", "code": 500})
+		return
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存分片失败", "code": 500})
+		return
+	}
+
+	// 更新已上传分片列表
+	uploadInfo.mu.Lock()
+	var chunkIdx int
+	fmt.Sscanf(chunkIndex, "%d", &chunkIdx)
+	uploadInfo.UploadedChunks = append(uploadInfo.UploadedChunks, chunkIdx)
+	uploadInfo.mu.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":         "分片上传成功",
+		"uploaded_chunks": len(uploadInfo.UploadedChunks),
+		"total_chunks":    uploadInfo.TotalChunks,
+	})
+}
+
+// MergeChunks 合并分片
+func (h *PasteHandler) MergeChunks(c *gin.Context) {
+	fileID := c.Param("file_id")
+
+	// 获取上传信息
+	chunkUploadsMu.RLock()
+	uploadInfo, exists := chunkUploads[fileID]
+	chunkUploadsMu.RUnlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
+		return
+	}
+
+	// 检查所有分片是否都已上传
+	if len(uploadInfo.UploadedChunks) != uploadInfo.TotalChunks {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":           "分片未全部上传",
+			"uploaded_chunks": len(uploadInfo.UploadedChunks),
+			"total_chunks":    uploadInfo.TotalChunks,
+			"code":            400,
+		})
+		return
+	}
+
+	// 确保上传目录存在
+	if err := os.MkdirAll(pasteUploadDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
+
+	// 读取第一个分片检测文件类型
+	firstChunkPath := filepath.Join(chunkDir, fileID, "0")
+	firstChunk, err := os.ReadFile(firstChunkPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取分片失败", "code": 500})
+		return
+	}
+
+	magicBytes := firstChunk
+	if len(firstChunk) > 16 {
+		magicBytes = firstChunk[:16]
+	}
+
+	detectedType := detectFileType(magicBytes)
+	if detectedType == "" {
+		h.CleanupChunkUpload(fileID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的文件类型", "code": 400})
+		return
+	}
+
+	fileCategory := getFileCategory(detectedType)
+
+	// 确定最终文件扩展名
+	ext := strings.ToLower(filepath.Ext(uploadInfo.FileName))
+	if ext == "" {
+		ext = getExtFromMimeType(detectedType)
+	}
+
+	finalFilename := fmt.Sprintf("%s%s", fileID, ext)
+	finalPath := filepath.Join(pasteUploadDir, finalFilename)
+
+	// 创建最终文件
+	finalFile, err := os.Create(finalPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建文件失败", "code": 500})
+		return
+	}
+	defer finalFile.Close()
+
+	// 按顺序合并分片
+	for i := 0; i < uploadInfo.TotalChunks; i++ {
+		chunkPath := filepath.Join(chunkDir, fileID, fmt.Sprintf("%d", i))
+		chunkData, err := os.ReadFile(chunkPath)
+		if err != nil {
+			h.CleanupChunkUpload(fileID)
+			os.Remove(finalPath)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取分片失败", "code": 500})
+			return
+		}
+
+		if _, err := finalFile.Write(chunkData); err != nil {
+			h.CleanupChunkUpload(fileID)
+			os.Remove(finalPath)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "合并分片失败", "code": 500})
+			return
+		}
+	}
+
+	// 清理分片临时文件
+	h.CleanupChunkUpload(fileID)
+
+	// 获取文件大小
+	fileInfo, _ := os.Stat(finalPath)
+	fileSize := int64(0)
+	if fileInfo != nil {
+		fileSize = fileInfo.Size()
+	}
+
+	// 返回文件信息
+	fileURL := "/api/paste/files/" + finalFilename
+	c.JSON(http.StatusOK, gin.H{
+		"id":            finalFilename,
+		"url":           fileURL,
+		"filename":      finalFilename,
+		"original_name": uploadInfo.FileName,
+		"type":          fileCategory,
+		"size":          fileSize,
+		"message":       "文件合并成功",
+	})
+}
+
+// CheckChunkStatus 检查分片上传状态
+func (h *PasteHandler) CheckChunkStatus(c *gin.Context) {
+	fileID := c.Param("file_id")
+
+	chunkUploadsMu.RLock()
+	uploadInfo, exists := chunkUploads[fileID]
+	chunkUploadsMu.RUnlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"file_id":         uploadInfo.FileID,
+		"file_name":       uploadInfo.FileName,
+		"total_chunks":    uploadInfo.TotalChunks,
+		"uploaded_chunks": uploadInfo.UploadedChunks,
+		"completed":       len(uploadInfo.UploadedChunks) == uploadInfo.TotalChunks,
+	})
+}
+
+// CleanupChunkUpload 清理分片上传临时文件
+func (h *PasteHandler) CleanupChunkUpload(fileID string) {
+	chunkUploadsMu.Lock()
+	delete(chunkUploads, fileID)
+	chunkUploadsMu.Unlock()
+
+	// 删除临时分片目录
+	chunkPath := filepath.Join(chunkDir, fileID)
+	os.RemoveAll(chunkPath)
+}
+
 // cleanupPasteFiles 清理 paste 关联的文件
 func (h *PasteHandler) cleanupPasteFiles(filesJSON string) {
 	if filesJSON == "" {
@@ -617,4 +895,5 @@ func (h *PasteHandler) cleanupPasteFiles(filesJSON string) {
 		os.Remove(filePath)
 	}
 }
+
 

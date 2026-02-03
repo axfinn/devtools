@@ -56,18 +56,28 @@
             <div class="file-preview">
               <img v-if="file.type === 'image'" :src="file.preview" alt="预览" />
               <video v-else-if="file.type === 'video'" :src="file.preview" controls></video>
+              <audio v-else-if="file.type === 'audio'" :src="file.preview" controls></audio>
+              <div v-else class="file-icon">
+                <el-icon :size="48">
+                  <Document v-if="file.type === 'document'" />
+                  <Folder v-else-if="file.type === 'archive'" />
+                  <Files v-else />
+                </el-icon>
+                <span class="file-ext">{{ getFileExt(file.name) }}</span>
+              </div>
             </div>
             <div class="file-info">
               <span class="file-name">{{ file.name }}</span>
               <span class="file-size">{{ (file.size / 1024 / 1024).toFixed(2) }} MB</span>
               <el-tag v-if="file.compressed" type="success" size="small">已压缩</el-tag>
               <el-tag v-if="file.compressing" type="warning" size="small">压缩中...</el-tag>
+              <el-tag v-if="file.uploading" type="info" size="small">上传中 {{ file.uploadProgress }}%</el-tag>
             </div>
             <div class="file-actions">
               <el-button v-if="!file.compressed && canCompress(file)" size="small" @click="compressFile(index)" :loading="file.compressing">
                 压缩
               </el-button>
-              <el-button type="danger" size="small" @click="removeFile(index)">
+              <el-button type="danger" size="small" @click="removeFile(index)" :disabled="file.uploading">
                 <el-icon><Delete /></el-icon>
               </el-button>
             </div>
@@ -81,13 +91,13 @@
         <div class="file-upload" v-else @click="selectFiles">
           <el-icon :size="32"><Upload /></el-icon>
           <span>点击上传文件或直接拖拽</span>
-          <span class="upload-hint">支持图片和视频 (最大 200MB)</span>
+          <span class="upload-hint">支持图片、视频、音频、PDF、Office文档、压缩包等 (最大 200MB)</span>
         </div>
 
         <input
           ref="fileInput"
           type="file"
-          accept="image/*,video/*"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z"
           multiple
           style="display: none"
           @change="onFileChange"
@@ -161,18 +171,28 @@
             <div class="file-preview">
               <img v-if="file.type === 'image'" :src="file.preview" alt="预览" />
               <video v-else-if="file.type === 'video'" :src="file.preview" controls></video>
+              <audio v-else-if="file.type === 'audio'" :src="file.preview" controls></audio>
+              <div v-else class="file-icon">
+                <el-icon :size="48">
+                  <Document v-if="file.type === 'document'" />
+                  <Folder v-else-if="file.type === 'archive'" />
+                  <Files v-else />
+                </el-icon>
+                <span class="file-ext">{{ getFileExt(file.name) }}</span>
+              </div>
             </div>
             <div class="file-info">
               <span class="file-name">{{ file.name }}</span>
               <span class="file-size">{{ (file.size / 1024 / 1024).toFixed(2) }} MB</span>
               <el-tag v-if="file.compressed" type="success" size="small">已压缩</el-tag>
               <el-tag v-if="file.compressing" type="warning" size="small">压缩中...</el-tag>
+              <el-tag v-if="file.uploading" type="info" size="small">上传中 {{ file.uploadProgress }}%</el-tag>
             </div>
             <div class="file-actions">
               <el-button v-if="!file.compressed && canCompress(file)" size="small" @click="compressFile(index)" :loading="file.compressing">
                 压缩
               </el-button>
-              <el-button type="danger" size="small" @click="removeFile(index)">
+              <el-button type="danger" size="small" @click="removeFile(index)" :disabled="file.uploading">
                 <el-icon><Delete /></el-icon>
               </el-button>
             </div>
@@ -186,13 +206,13 @@
         <div class="file-upload" v-else @click="selectFiles">
           <el-icon :size="32"><Upload /></el-icon>
           <span>点击上传文件或直接拖拽</span>
-          <span class="upload-hint">支持图片和视频 (最大 200MB)</span>
+          <span class="upload-hint">支持图片、视频、音频、PDF、Office文档、压缩包等 (最大 200MB)</span>
         </div>
 
         <input
           ref="fileInput"
           type="file"
-          accept="image/*,video/*"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z"
           multiple
           style="display: none"
           @change="onFileChange"
@@ -289,10 +309,11 @@
     <div class="tips-section" v-if="!showResult">
       <h4>使用提示</h4>
       <ul>
-        <li>支持文本、图片、视频分享</li>
-        <li>大文件自动压缩优化</li>
-        <li>视频默认最多10次访问（防止滥用）</li>
+        <li>支持文本、图片、视频、音频、PDF、Office文档、压缩包等多种格式</li>
+        <li>大文件自动分片上传,支持断点续传</li>
+        <li>视频默认最多10次访问(防止滥用)</li>
         <li>管理员可设置更多访问次数或永久访问</li>
+        <li>所有文件最大支持200MB</li>
       </ul>
     </div>
 
@@ -430,7 +451,7 @@
 <script setup>
 import { ref, nextTick, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh } from '@element-plus/icons-vue'
+import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { API_BASE } from '../api'
 import { FFmpeg } from '@ffmpeg/ffmpeg'
@@ -452,12 +473,13 @@ const createdMaxViews = ref(0)
 const shareUrl = ref('')
 const errorMsg = ref('')
 const qrCanvas = ref(null)
-const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string }]
+const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video'|'audio'|'document'|'archive'|'file', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string, uploading: boolean, uploadProgress: number }]
 const fileInput = ref(null)
 const isDragging = ref(false)
 
 const MAX_FILES = 10
 const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
+const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB per chunk for chunked upload
 
 // FFmpeg 实例 (懒加载)
 let ffmpegInstance = null
@@ -617,18 +639,32 @@ const addFile = async (file) => {
   }
 
   // 检测文件类型
-  let fileType = 'unknown'
+  let fileType = 'file'
   if (file.type.startsWith('image/')) {
     fileType = 'image'
   } else if (file.type.startsWith('video/')) {
     fileType = 'video'
-  } else {
-    ElMessage.warning('只支持图片和视频文件')
-    return
+  } else if (file.type.startsWith('audio/')) {
+    fileType = 'audio'
+  } else if (file.type === 'application/pdf' ||
+             file.type.includes('document') ||
+             file.type.includes('word') ||
+             file.type.includes('excel') ||
+             file.type.includes('powerpoint') ||
+             file.type.includes('openxmlformats')) {
+    fileType = 'document'
+  } else if (file.type.includes('zip') ||
+             file.type.includes('rar') ||
+             file.type.includes('7z') ||
+             file.type.includes('compressed')) {
+    fileType = 'archive'
   }
 
-  // 创建预览
-  const preview = URL.createObjectURL(file)
+  // 创建预览 (仅限图片、视频、音频)
+  let preview = null
+  if (fileType === 'image' || fileType === 'video' || fileType === 'audio') {
+    preview = URL.createObjectURL(file)
+  }
 
   files.value.push({
     file,
@@ -638,8 +674,16 @@ const addFile = async (file) => {
     size: file.size,
     compressed: false,
     compressing: false,
-    uploadedId: null
+    uploadedId: null,
+    uploading: false,
+    uploadProgress: 0
   })
+}
+
+// 获取文件扩展名
+const getFileExt = (filename) => {
+  const ext = filename.split('.').pop()
+  return ext ? `.${ext.toUpperCase()}` : ''
 }
 
 // 删除文件
@@ -815,12 +859,28 @@ const compressVideo = async (index) => {
   }
 }
 
-// 上传文件到服务器
+// 上传文件到服务器 (支持分片上传)
 const uploadFile = async (fileObj) => {
+  const file = fileObj.file
+
+  // 小于10MB的文件直接上传
+  if (file.size < 10 * 1024 * 1024) {
+    return await uploadFileDirectly(fileObj)
+  }
+
+  // 大文件使用分片上传
+  return await uploadFileInChunks(fileObj)
+}
+
+// 直接上传小文件
+const uploadFileDirectly = async (fileObj) => {
   const formData = new FormData()
   formData.append('file', fileObj.file)
 
   try {
+    fileObj.uploading = true
+    fileObj.uploadProgress = 0
+
     const response = await fetch(`${API_BASE}/api/paste/upload`, {
       method: 'POST',
       body: formData
@@ -832,8 +892,86 @@ const uploadFile = async (fileObj) => {
       throw new Error(data.error || '上传失败')
     }
 
+    fileObj.uploadProgress = 100
+    fileObj.uploading = false
+
     return data.id
   } catch (err) {
+    fileObj.uploading = false
+    throw new Error(`文件 ${fileObj.name} 上传失败: ${err.message}`)
+  }
+}
+
+// 分片上传大文件
+const uploadFileInChunks = async (fileObj) => {
+  const file = fileObj.file
+  const totalSize = file.size
+  const chunkSize = CHUNK_SIZE
+  const totalChunks = Math.ceil(totalSize / chunkSize)
+
+  try {
+    fileObj.uploading = true
+    fileObj.uploadProgress = 0
+
+    // 1. 初始化分片上传
+    const initResponse = await fetch(`${API_BASE}/api/paste/chunk/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file_name: file.name,
+        file_size: totalSize,
+        chunk_size: chunkSize,
+        total_chunks: totalChunks
+      })
+    })
+
+    const initData = await initResponse.json()
+    if (!initResponse.ok) {
+      throw new Error(initData.error || '初始化上传失败')
+    }
+
+    const fileID = initData.file_id
+
+    // 2. 上传每个分片
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * chunkSize
+      const end = Math.min(start + chunkSize, totalSize)
+      const chunk = file.slice(start, end)
+
+      const chunkFormData = new FormData()
+      chunkFormData.append('chunk', chunk)
+      chunkFormData.append('chunk_index', i.toString())
+
+      const chunkResponse = await fetch(`${API_BASE}/api/paste/chunk/${fileID}`, {
+        method: 'POST',
+        body: chunkFormData
+      })
+
+      const chunkData = await chunkResponse.json()
+      if (!chunkResponse.ok) {
+        throw new Error(chunkData.error || `分片 ${i + 1} 上传失败`)
+      }
+
+      // 更新进度
+      fileObj.uploadProgress = Math.round(((i + 1) / totalChunks) * 90)
+    }
+
+    // 3. 合并分片
+    const mergeResponse = await fetch(`${API_BASE}/api/paste/chunk/${fileID}/merge`, {
+      method: 'POST'
+    })
+
+    const mergeData = await mergeResponse.json()
+    if (!mergeResponse.ok) {
+      throw new Error(mergeData.error || '合并分片失败')
+    }
+
+    fileObj.uploadProgress = 100
+    fileObj.uploading = false
+
+    return mergeData.id
+  } catch (err) {
+    fileObj.uploading = false
     throw new Error(`文件 ${fileObj.name} 上传失败: ${err.message}`)
   }
 }
@@ -1288,6 +1426,27 @@ restoreAdminPassword()
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.file-preview audio {
+  width: 100%;
+  padding: 10px;
+  background-color: #252525;
+}
+
+.file-icon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #67c23a;
+}
+
+.file-ext {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: bold;
 }
 
 .file-info {
