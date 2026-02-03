@@ -1091,8 +1091,7 @@ const isExpiringSoon = (dateStr) => {
   display: flex;
   flex-direction: column;
   gap: 15px;
-  height: 100%;
-  overflow: hidden;
+  min-height: 500px;
   position: relative;
 }
 
@@ -1134,7 +1133,7 @@ const isExpiringSoon = (dateStr) => {
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
   overflow: hidden;
-  height: 100%;
+  min-height: 500px;
 }
 
 

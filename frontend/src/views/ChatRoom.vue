@@ -1233,7 +1233,7 @@ onUnmounted(() => {
 .tool-container {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 40px);
+  min-height: 400px;
   padding: 20px;
   box-sizing: border-box;
 }
@@ -1315,7 +1315,7 @@ onUnmounted(() => {
 .chat-view {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-height: 500px;
 }
 
 .chat-header {
@@ -1639,7 +1639,6 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .tool-container {
     padding: 12px;
-    height: calc(100vh - 56px);
   }
 
   .emoji-panel {

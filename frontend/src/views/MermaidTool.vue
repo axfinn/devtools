@@ -985,7 +985,7 @@ watch(theme, () => {
 
 <style scoped>
 .tool-container {
-  height: 100%;
+  min-height: 500px;
   display: flex;
   flex-direction: column;
   gap: 15px;

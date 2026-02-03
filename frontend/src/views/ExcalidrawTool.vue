@@ -1062,8 +1062,7 @@ const copyToClipboard = async (text, name) => {
 .tool-container {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  overflow: hidden;
+  min-height: 500px;
 }
 
 .tool-header {

@@ -447,7 +447,7 @@ const themeModeName = computed(() => {
 .mobile-main {
   padding: 15px;
   padding-top: calc(56px + 15px); /* 头部高度 + 内边距 */
-  padding-bottom: 80px; /* 为底部留出足够空间 */
+  padding-bottom: 100px; /* 为底部留出足够空间 */
   height: auto; /* 改为自动高度 */
   min-height: calc(100vh - 56px); /* 最小高度减去头部 */
 }
@@ -502,8 +502,8 @@ const themeModeName = computed(() => {
 /* 移动端 Footer 适配 */
 @media (max-width: 768px) {
   .page-footer {
-    margin-top: 24px;
-    padding: 12px 0 16px;
+    margin-top: 30px;
+    padding: 16px 0 20px;
   }
 
   .footer-content {
@@ -711,7 +711,7 @@ const themeModeName = computed(() => {
   .mobile-main {
     padding: 10px;
     padding-top: calc(56px + 10px); /* 头部高度 + 内边距 */
-    padding-bottom: 70px; /* 底部留白 */
+    padding-bottom: 90px; /* 底部留白 */
   }
 
   .tool-header .actions .el-button {
