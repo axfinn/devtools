@@ -444,7 +444,7 @@ const themeModeName = computed(() => {
 
 .mobile-main {
   padding: 15px;
-  padding-bottom: 80px; /* 为底部留出空间 */
+  padding-bottom: 20px; /* 为底部留出空间 */
   height: calc(100vh - 56px); /* 减去移动端头部高度 */
 }
 

@@ -721,14 +721,6 @@ onMounted(() => {
     gap: 5px;
   }
 
-  .paste-meta span {
-    display: block;
-  }
-
-  .paste-meta span:contains("·") {
-    display: none;
-  }
-
   .password-card {
     width: 90%;
     max-width: 400px;

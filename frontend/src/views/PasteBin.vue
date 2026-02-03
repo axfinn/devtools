@@ -1738,10 +1738,6 @@ restoreAdminPassword()
     flex-direction: column;
     gap: 5px;
   }
-
-  .paste-meta span:contains("·") {
-    display: none;
-  }
 }
 
 @media (max-width: 480px) {
