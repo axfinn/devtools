@@ -31,7 +31,8 @@ type DB struct {
 }
 
 func NewDB(dbPath string) (*DB, error) {
-	conn, err := sql.Open("sqlite3", dbPath)
+	// 添加 _parse_time=true 参数以正确解析 DATETIME 字段
+	conn, err := sql.Open("sqlite3", dbPath+"?_parse_time=true")
 	if err != nil {
 		return nil, err
 	}

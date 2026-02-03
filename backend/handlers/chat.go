@@ -169,6 +169,7 @@ func (h *ChatHandler) GetRoomMessages(c *gin.Context) {
 
 	// 检查房间是否存在
 	if !h.db.RoomExists(id) {
+		log.Printf("房间不存在: %s", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "房间不存在", "code": 404})
 		return
 	}
@@ -176,6 +177,7 @@ func (h *ChatHandler) GetRoomMessages(c *gin.Context) {
 	// 获取最近100条消息
 	messages, err := h.db.GetMessages(id, 100)
 	if err != nil {
+		log.Printf("获取消息失败 (room_id=%s): %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败", "code": 500})
 		return
 	}
@@ -193,6 +195,7 @@ func (h *ChatHandler) GetRoomMessages(c *gin.Context) {
 		})
 	}
 
+	log.Printf("成功获取 %d 条历史消息 (room_id=%s)", len(result), id)
 	c.JSON(http.StatusOK, gin.H{"messages": result})
 }
 
