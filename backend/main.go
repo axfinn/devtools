@@ -186,6 +186,7 @@ func main() {
 			chat.POST("/room", createRateLimiter.Middleware(), chatHandler.CreateRoom)
 			chat.GET("/rooms", chatHandler.GetRooms)
 			chat.GET("/room/:id", chatHandler.GetRoom)
+			chat.GET("/room/:id/messages", chatHandler.GetRoomMessages) // 获取历史消息
 			chat.POST("/room/:id/join", chatHandler.JoinRoom)
 			chat.GET("/room/:id/ws", chatHandler.HandleWebSocket)
 			// 图片上传

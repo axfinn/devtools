@@ -163,6 +163,39 @@ func (h *ChatHandler) GetRooms(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"rooms": rooms})
 }
 
+// GetRoomMessages 获取聊天室历史消息
+func (h *ChatHandler) GetRoomMessages(c *gin.Context) {
+	id := c.Param("id")
+
+	// 检查房间是否存在
+	if !h.db.RoomExists(id) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "房间不存在", "code": 404})
+		return
+	}
+
+	// 获取最近100条消息
+	messages, err := h.db.GetMessages(id, 100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取消息失败", "code": 500})
+		return
+	}
+
+	// 转换消息格式为前端需要的格式
+	var result []gin.H
+	for _, msg := range messages {
+		result = append(result, gin.H{
+			"id":            msg.ID,
+			"nickname":      msg.Nickname,
+			"content":       msg.Content,
+			"msg_type":      msg.MsgType,
+			"original_name": msg.OriginalName,
+			"created_at":    msg.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"messages": result})
+}
+
 // JoinRoom 验证密码加入房间
 func (h *ChatHandler) JoinRoom(c *gin.Context) {
 	id := c.Param("id")

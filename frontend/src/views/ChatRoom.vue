@@ -541,12 +541,11 @@ const confirmJoin = async () => {
 
     nickname.value = joinForm.value.nickname
     currentRoom.value = data.room
-    messages.value = (data.messages || []).map(m => ({
-      ...m,
-      type: 'message'
-    }))
     showJoinDialog.value = false
     reconnectAttempts.value = 0
+
+    // 加载历史消息
+    await loadHistoryMessages()
 
     connectWebSocket()
 
@@ -557,6 +556,27 @@ const confirmJoin = async () => {
     ElMessage.error(error.message)
   } finally {
     joining.value = false
+  }
+}
+
+// 加载历史消息
+const loadHistoryMessages = async () => {
+  try {
+    const response = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/messages`)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.error || '加载历史消息失败')
+    }
+
+    // 将历史消息格式化并添加到消息列表
+    messages.value = (data.messages || []).map(m => ({
+      ...m,
+      type: 'message'
+    }))
+  } catch (error) {
+    console.error('加载历史消息失败:', error)
+    // 不阻断流程,即使加载失败也可以继续聊天
+    messages.value = []
   }
 }
 
