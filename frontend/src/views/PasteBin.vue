@@ -1,23 +1,68 @@
 <template>
   <div class="tool-container">
-    <div class="tool-header">
-      <h2>共享粘贴板</h2>
-      <div class="header-right">
-        <div class="info-text">
-          支持文本、图片、视频分享 - 自动压缩优化
+    <!-- 分享结果页面 (独立显示) -->
+    <div v-if="showResult" class="result-page">
+      <div class="result-wrapper">
+        <div class="result-card">
+          <div class="result-header">
+            <el-icon class="success-icon"><CircleCheck /></el-icon>
+            <span>分享创建成功！链接已复制</span>
+          </div>
+
+          <div class="share-url-box">
+            <div class="url-display">{{ shareUrl }}</div>
+            <div class="url-actions">
+              <el-button type="primary" @click="copyUrl">
+                <el-icon><CopyDocument /></el-icon>
+                复制链接
+              </el-button>
+              <el-button @click="openShare">
+                <el-icon><Link /></el-icon>
+                打开
+              </el-button>
+            </div>
+          </div>
+
+          <div class="qr-section">
+            <div class="qr-title">扫码访问</div>
+            <canvas ref="qrCanvas" class="qr-code"></canvas>
+          </div>
+
+          <div class="result-info">
+            <span>ID: {{ createdId }}</span>
+            <span>过期: {{ createdExpires }}</span>
+            <span>最大访问: {{ createdMaxViews }} 次</span>
+            <span v-if="password">密码: {{ password }}</span>
+          </div>
+
+          <el-button class="new-share-btn" @click="resetForm" type="success" plain size="large">
+            <el-icon><Plus /></el-icon>
+            创建新分享
+          </el-button>
         </div>
-        <el-button size="small" @click="showMyShares = true">
-          <el-icon><FolderOpened /></el-icon>
-          我的分享
-        </el-button>
-        <el-button size="small" @click="showAdminPanel = true">
-          <el-icon><Lock /></el-icon>
-          管理
-        </el-button>
       </div>
     </div>
 
-    <!-- 简洁模式 -->
+    <!-- 创建页面 (独立显示) -->
+    <div v-else class="create-page">
+      <div class="tool-header">
+        <h2>共享粘贴板</h2>
+        <div class="header-right">
+          <div class="info-text">
+            支持文本、图片、视频分享 - 自动压缩优化
+          </div>
+          <el-button size="small" @click="showMyShares = true">
+            <el-icon><FolderOpened /></el-icon>
+            我的分享
+          </el-button>
+          <el-button size="small" @click="showAdminPanel = true">
+            <el-icon><Lock /></el-icon>
+            管理
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 简洁模式 -->
     <div class="quick-section" v-if="!showAdvanced">
       <div
         class="quick-editor"
@@ -261,61 +306,24 @@
       </div>
     </div>
 
-    <!-- 分享结果 -->
-    <div v-if="showResult" class="result-section">
-      <div class="result-card">
-        <div class="result-header">
-          <el-icon class="success-icon"><CircleCheck /></el-icon>
-          <span>分享创建成功！链接已复制</span>
-        </div>
+      <!-- 错误提示 -->
+      <div v-if="errorMsg" class="error-msg">
+        <el-alert :title="errorMsg" type="error" show-icon :closable="false" />
+      </div>
 
-        <div class="share-url-box">
-          <div class="url-display">{{ shareUrl }}</div>
-          <div class="url-actions">
-            <el-button type="primary" @click="copyUrl">
-              <el-icon><CopyDocument /></el-icon>
-              复制链接
-            </el-button>
-            <el-button @click="openShare">
-              <el-icon><Link /></el-icon>
-              打开
-            </el-button>
-          </div>
-        </div>
-
-        <div class="qr-section">
-          <div class="qr-title">扫码访问</div>
-          <canvas ref="qrCanvas" class="qr-code"></canvas>
-        </div>
-
-        <div class="result-info">
-          <span>ID: {{ createdId }}</span>
-          <span>过期: {{ createdExpires }}</span>
-          <span>最大访问: {{ createdMaxViews }} 次</span>
-          <span v-if="password">密码: {{ password }}</span>
-        </div>
-
-        <el-button class="new-share-btn" @click="resetForm" type="success" plain>
-          <el-icon><Plus /></el-icon>
-          创建新分享
-        </el-button>
+      <!-- 使用提示 -->
+      <div class="tips-section">
+        <h4>使用提示</h4>
+        <ul>
+          <li>支持文本、图片、视频、音频、PDF、Office文档、压缩包等多种格式</li>
+          <li>大文件自动分片上传,支持断点续传</li>
+          <li>视频默认最多10次访问(防止滥用)</li>
+          <li>管理员可设置更多访问次数或永久访问</li>
+          <li>所有文件最大支持200MB</li>
+        </ul>
       </div>
     </div>
-
-    <div v-if="errorMsg" class="error-msg">
-      <el-alert :title="errorMsg" type="error" show-icon :closable="false" />
-    </div>
-
-    <div class="tips-section" v-if="!showResult">
-      <h4>使用提示</h4>
-      <ul>
-        <li>支持文本、图片、视频、音频、PDF、Office文档、压缩包等多种格式</li>
-        <li>大文件自动分片上传,支持断点续传</li>
-        <li>视频默认最多10次访问(防止滥用)</li>
-        <li>管理员可设置更多访问次数或永久访问</li>
-        <li>所有文件最大支持200MB</li>
-      </ul>
-    </div>
+    <!-- create-page 结束 -->
 
     <!-- 我的分享 -->
     <el-dialog v-model="showMyShares" title="我的分享" width="90%" :close-on-click-modal="false">
@@ -1242,6 +1250,27 @@ restoreAdminPassword()
   gap: 20px;
 }
 
+/* 结果页面 - 全屏显示 */
+.result-page {
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.result-wrapper {
+  width: 100%;
+  max-width: 600px;
+}
+
+/* 创建页面 */
+.create-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
 .tool-header {
   display: flex;
   justify-content: space-between;
@@ -1253,6 +1282,13 @@ restoreAdminPassword()
 .tool-header h2 {
   margin: 0;
   color: var(--text-primary);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .info-text {
@@ -1539,25 +1575,17 @@ restoreAdminPassword()
   border-radius: var(--radius-md);
 }
 
-/* 结果展示 */
-.result-section {
-  display: flex;
-  justify-content: center;
-  margin-top: 30px;
-  margin-bottom: 40px;
-}
-
+/* 结果展示卡片 */
 .result-card {
   background: linear-gradient(135deg, #1e3a2f 0%, #1e1e1e 100%);
   border: 2px solid #67c23a;
   border-radius: 16px;
-  padding: 30px;
-  max-width: 500px;
+  padding: 40px;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 24px;
   box-shadow: 0 8px 32px rgba(103, 194, 58, 0.2);
 }
 
