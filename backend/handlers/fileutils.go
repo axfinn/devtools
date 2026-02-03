@@ -26,7 +26,16 @@ func detectFileType(data []byte) string {
 		return "image/webp"
 	}
 	// MP4/MOV (ftyp)
-	if len(data) >= 8 && data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70 {
+	if len(data) >= 12 && data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70 {
+		// 检查brand type来区分MP4和MOV
+		// MOV常见brand: qt__, M4V, M4A
+		// MP4常见brand: isom, mp41, mp42, avc1
+		if len(data) >= 12 {
+			brand := string(data[8:12])
+			if strings.HasPrefix(brand, "qt") || brand == "M4V " || brand == "M4A " {
+				return "video/quicktime"
+			}
+		}
 		return "video/mp4"
 	}
 	// WebM/MKV
@@ -93,8 +102,10 @@ func getExtFromMimeType(mimeType string) string {
 		return ".gif"
 	case "image/webp":
 		return ".webp"
-	case "video/mp4", "video/quicktime":
+	case "video/mp4":
 		return ".mp4"
+	case "video/quicktime":
+		return ".mov"
 	case "video/webm":
 		return ".webm"
 	case "video/avi":

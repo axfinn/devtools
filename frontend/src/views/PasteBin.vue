@@ -97,7 +97,7 @@
         <input
           ref="fileInput"
           type="file"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.mov"
           multiple
           style="display: none"
           @change="onFileChange"
@@ -212,7 +212,7 @@
         <input
           ref="fileInput"
           type="file"
-          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.mov"
           multiple
           style="display: none"
           @change="onFileChange"
