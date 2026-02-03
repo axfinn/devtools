@@ -476,7 +476,6 @@ const qrCanvas = ref(null)
 const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video'|'audio'|'document'|'archive'|'file', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string, uploading: boolean, uploadProgress: number }]
 const fileInput = ref(null)
 const isDragging = ref(false)
-const showDonateDialog = ref(false)
 
 const MAX_FILES = 10
 const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
@@ -1654,120 +1653,5 @@ restoreAdminPassword()
 
 .error-msg {
   margin-top: 10px;
-}
-
-/* 支持项目 Footer */
-.project-footer {
-  margin-top: 40px;
-  padding: 30px 20px;
-  background: linear-gradient(135deg, #1a1a1a 0%, #252525 100%);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-}
-
-.footer-content {
-  max-width: 800px;
-  margin: 0 auto;
-}
-
-.footer-section {
-  text-align: center;
-  margin-bottom: 20px;
-}
-
-.footer-section h4 {
-  margin: 0 0 10px 0;
-  color: #67c23a;
-  font-size: 20px;
-}
-
-.footer-section p {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.footer-donate {
-  display: flex;
-  justify-content: center;
-  gap: 40px;
-  flex-wrap: wrap;
-}
-
-.donate-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-
-.donate-label {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.donate-link {
-  color: #409eff;
-  text-decoration: none;
-  padding: 6px 16px;
-  border: 1px solid #409eff;
-  border-radius: 4px;
-  transition: all 0.3s;
-}
-
-.donate-link:hover {
-  background: #409eff;
-  color: white;
-}
-
-/* 赞赏弹窗 */
-.donate-dialog {
-  text-align: center;
-}
-
-.donate-qr-group {
-  display: flex;
-  justify-content: center;
-  gap: 30px;
-  margin: 20px 0;
-}
-
-.donate-qr-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-
-.donate-qr-item img {
-  width: 180px;
-  height: 180px;
-  border-radius: 8px;
-  border: 2px solid var(--border-base);
-}
-
-.donate-qr-item span {
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.donate-thanks {
-  margin-top: 20px;
-  color: #67c23a;
-  font-size: 14px;
-}
-
-@media (max-width: 768px) {
-  .donate-qr-group {
-    flex-direction: column;
-    gap: 20px;
-  }
-
-  .footer-donate {
-    flex-direction: column;
-    gap: 20px;
-  }
 }
 </style>
