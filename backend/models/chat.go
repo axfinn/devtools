@@ -133,7 +133,10 @@ func (db *DB) CreateMessage(msg *ChatMessage) error {
 
 func (db *DB) GetMessages(roomID string, limit int) ([]*ChatMessage, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, room_id, nickname, content, msg_type, original_name, created_at
+		SELECT id, room_id, nickname, content,
+		       COALESCE(msg_type, 'text') as msg_type,
+		       COALESCE(original_name, '') as original_name,
+		       created_at
 		FROM chat_messages
 		WHERE room_id = ?
 		ORDER BY created_at DESC
