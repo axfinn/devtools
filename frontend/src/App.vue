@@ -464,6 +464,7 @@ const themeModeName = computed(() => {
   color: var(--text-tertiary);
   font-size: 14px;
   transition: color 0.3s;
+  flex-wrap: wrap;
 }
 
 .footer-link {
@@ -492,6 +493,49 @@ const themeModeName = computed(() => {
 .footer-divider {
   color: var(--border-dark);
   transition: color 0.3s;
+}
+
+/* 移动端 Footer 适配 */
+@media (max-width: 768px) {
+  .page-footer {
+    margin-top: 30px;
+    padding: 15px 0;
+  }
+
+  .footer-content {
+    font-size: 12px;
+    gap: 10px;
+    padding: 0 15px;
+  }
+
+  .footer-link .github-icon {
+    width: 14px;
+    height: 14px;
+  }
+
+  .footer-link .el-icon {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-footer {
+    margin-top: 20px;
+    padding: 12px 0;
+  }
+
+  .footer-content {
+    font-size: 11px;
+    gap: 8px;
+  }
+
+  .footer-link span {
+    display: none;
+  }
+
+  .footer-divider {
+    display: none;
+  }
 }
 
 /* 中等屏幕适配 */
