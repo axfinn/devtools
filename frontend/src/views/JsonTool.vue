@@ -1,5 +1,5 @@
 <template>
-  <div class="tool-container">
+  <div class="tool-container" :class="{ 'is-fullscreen': isFullscreen }">
     <div class="tool-header">
       <h2>JSON 工具</h2>
       <div class="actions">
@@ -15,6 +15,10 @@
         <el-button @click="copyOutput" style="margin-left: 10px">
           <el-icon><CopyDocument /></el-icon>
           复制
+        </el-button>
+        <el-button class="fullscreen-btn" @click="toggleFullscreen" style="margin-left: 10px">
+          <el-icon><FullScreen v-if="!isFullscreen" /><Close v-else /></el-icon>
+          {{ isFullscreen ? '退出' : '放大' }}
         </el-button>
       </div>
     </div>
@@ -70,8 +74,29 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { FullScreen, Close } from '@element-plus/icons-vue'
+
+const isFullscreen = ref(false)
+
+const toggleFullscreen = () => {
+  isFullscreen.value = !isFullscreen.value
+}
+
+const onKeydown = (e) => {
+  if (e.key === 'Escape' && isFullscreen.value) {
+    isFullscreen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+})
 
 const inputJson = ref('')
 const outputJson = ref('')
@@ -281,10 +306,6 @@ const copyOutput = async () => {
 </script>
 
 <style scoped>
-.editor-container {
-  flex: 1;
-}
-
 .jsonpath-section {
   margin-top: 20px;
 }

@@ -73,6 +73,11 @@ func main() {
 		log.Fatalf("Excalidraw 数据库初始化失败: %v", err)
 	}
 
+	// 初始化孕期管理数据库表
+	if err := db.InitPregnancy(); err != nil {
+		log.Fatalf("孕期管理数据库初始化失败: %v", err)
+	}
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -112,6 +117,11 @@ func main() {
 			if err == nil && excalidrawCount > 0 {
 				log.Printf("已清理 %d 个过期 Excalidraw 画图", excalidrawCount)
 			}
+			// 清理过期孕期档案
+			pregnancyCount, err := db.CleanExpiredPregnancyProfiles()
+			if err == nil && pregnancyCount > 0 {
+				log.Printf("已清理 %d 个过期孕期档案", pregnancyCount)
+			}
 			// 清理过期上传文件（7天）
 			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
 			if err == nil && uploadCount > 0 {
@@ -149,6 +159,7 @@ func main() {
 	mockAPIHandler := handlers.NewMockAPIHandler(db)
 	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)
 	excalidrawHandler := handlers.NewExcalidrawHandler(db, cfg.Excalidraw.AdminPassword, cfg.Excalidraw.DefaultExpiresDays, cfg.Excalidraw.MaxContentSize)
+	pregnancyHandler := handlers.NewPregnancyHandler(db, cfg.Pregnancy.DefaultExpiresDays, cfg.Pregnancy.MaxDataSize)
 
 	// API 路由
 	api := r.Group("/api")
@@ -241,6 +252,17 @@ func main() {
 			excalidraw.GET("/admin/list", excalidrawHandler.List)
 			excalidraw.GET("/admin/:id", excalidrawHandler.AdminGet)
 			excalidraw.DELETE("/admin/:id", excalidrawHandler.AdminDelete)
+		}
+
+		// 孕期管理 API
+		pregnancy := api.Group("/pregnancy")
+		{
+			pregnancy.POST("", createRateLimiter.Middleware(), pregnancyHandler.Create)
+			pregnancy.POST("/login", pregnancyHandler.Login)
+			pregnancy.GET("/:id", pregnancyHandler.Get)
+			pregnancy.GET("/:id/creator", pregnancyHandler.GetByCreator)
+			pregnancy.PUT("/:id", pregnancyHandler.Update)
+			pregnancy.DELETE("/:id", pregnancyHandler.Delete)
 		}
 
 		// 健康检查

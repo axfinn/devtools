@@ -18,7 +18,8 @@ type Config struct {
 	Paste      PasteConfig      `yaml:"paste"`
 	Chat       ChatConfig       `yaml:"chat"`
 	MDShare    MDShareConfig    `yaml:"mdshare"`
-	Excalidraw ExcalidrawConfig `yaml:"excalidraw"`
+	Excalidraw  ExcalidrawConfig  `yaml:"excalidraw"`
+	Pregnancy   PregnancyConfig   `yaml:"pregnancy"`
 }
 
 // ServerConfig 服务器配置
@@ -85,6 +86,12 @@ type ExcalidrawConfig struct {
 	MaxContentSize     int    `yaml:"max_content_size"`     // 最大内容大小，默认10MB
 }
 
+// PregnancyConfig 孕期管理配置
+type PregnancyConfig struct {
+	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数，默认365
+	MaxDataSize        int `yaml:"max_data_size"`        // 最大数据大小，默认1MB
+}
+
 var globalConfig *Config
 
 // DefaultConfig 返回默认配置
@@ -124,6 +131,10 @@ func DefaultConfig() *Config {
 		Excalidraw: ExcalidrawConfig{
 			DefaultExpiresDays: 30,
 			MaxContentSize:     10 * 1024 * 1024, // 10MB
+		},
+		Pregnancy: PregnancyConfig{
+			DefaultExpiresDays: 365,
+			MaxDataSize:        1024 * 1024, // 1MB
 		},
 	}
 }

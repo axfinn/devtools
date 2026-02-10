@@ -112,6 +112,12 @@ const routes = [
     name: 'ExcalidrawShare',
     component: () => import('../views/ExcalidrawShareView.vue'),
     meta: { title: '查看画图', icon: 'Edit', hideSidebar: true }
+  },
+  {
+    path: '/yun',
+    name: 'Pregnancy',
+    component: () => import('../views/PregnancyTool.vue'),
+    meta: { title: '孕期管理', icon: 'Calendar' }
   }
 ]
 

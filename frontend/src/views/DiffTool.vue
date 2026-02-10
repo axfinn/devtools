@@ -1,5 +1,5 @@
 <template>
-  <div class="tool-container">
+  <div class="tool-container" :class="{ 'is-fullscreen': isFullscreen }">
     <div class="tool-header">
       <h2>Diff 对比工具</h2>
       <div class="actions">
@@ -16,6 +16,10 @@
           交换
         </el-button>
         <el-button @click="clearAll">清空</el-button>
+        <el-button class="fullscreen-btn" @click="toggleFullscreen">
+          <el-icon><FullScreen v-if="!isFullscreen" /><Close v-else /></el-icon>
+          {{ isFullscreen ? '退出' : '放大' }}
+        </el-button>
       </div>
     </div>
 
@@ -67,8 +71,29 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { diffChars, diffWords, diffLines } from 'diff'
+import { FullScreen, Close } from '@element-plus/icons-vue'
+
+const isFullscreen = ref(false)
+
+const toggleFullscreen = () => {
+  isFullscreen.value = !isFullscreen.value
+}
+
+const onKeydown = (e) => {
+  if (e.key === 'Escape' && isFullscreen.value) {
+    isFullscreen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+})
 
 const leftText = ref('')
 const rightText = ref('')

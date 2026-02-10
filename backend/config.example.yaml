@@ -76,3 +76,10 @@ excalidraw:
   default_expires_days: 30
   # 最大内容大小（字节），默认10MB
   max_content_size: 10485760
+
+# 孕期管理配置
+pregnancy:
+  # 默认过期天数（默认365天）
+  default_expires_days: 365
+  # 最大数据大小（字节），默认1MB
+  max_data_size: 1048576
