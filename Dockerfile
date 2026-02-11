@@ -8,7 +8,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # 阶段二：构建后端
-FROM golang:1.21-alpine AS backend-builder
+FROM golang:1.25-alpine AS backend-builder
 
 WORKDIR /app
 # 安装 SQLite 依赖
