@@ -373,6 +373,8 @@ const themeModeName = computed(() => {
 .sidebar-menu {
   border-right: none;
   height: calc(100vh - 60px);
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .sidebar-menu:not(.el-menu--collapse) {
