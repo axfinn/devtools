@@ -111,6 +111,8 @@ ssh:
   # 超过此天数未活跃的会话（包括数据库记录和历史）会被自动清理
   session_max_age_days: 7
 
-# 加密密钥配置（通过环境变量设置）
-# export TERMINAL_ENCRYPTION_KEY="your-32-byte-secret-key"
-# 如果未设置，服务器会生成临时密钥（重启后已保存的 SSH 密码将无法解密）
+  # SSH 密码加密密钥（Base64 编码的 32 字节密钥）
+  # 示例生成命令: go run -c 'import "devtools/utils"; println(utils.GenerateRandomKey())'
+  # 或: openssl rand -base64 32
+  # 如果未设置，已保存的 SSH 密码在重启后将无法解密
+  # encryption_key: ""

@@ -101,6 +101,7 @@ type SSHConfig struct {
 	SessionIdleTimeout  int    `yaml:"session_idle_timeout"`  // 会话空闲超时（分钟，默认5）
 	HistoryMaxAgeDays   int    `yaml:"history_max_age_days"`  // 历史记录最大保存天数（默认30）
 	SessionMaxAgeDays   int    `yaml:"session_max_age_days"`  // 不活跃会话最大保存天数（默认7）
+	EncryptionKey       string `yaml:"encryption_key"`        // 加密密钥（Base64 编码的 32 字节密钥）
 }
 
 var globalConfig *Config

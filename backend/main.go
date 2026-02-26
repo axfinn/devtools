@@ -193,7 +193,19 @@ func main() {
 	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
 
 	// 创建加密服务（用于 SSH 密码加密）
-	encryptionService, err := utils.NewEncryptionServiceFromEnv()
+	// 优先使用配置文件中设置的密钥，如果没有则使用环境变量
+	encryptionKey := cfg.SSH.EncryptionKey
+	if encryptionKey == "" {
+		encryptionKey = os.Getenv("TERMINAL_ENCRYPTION_KEY")
+	}
+	if encryptionKey == "" {
+		// 生成随机密钥并提示用户
+		randomKey, _ := utils.GenerateRandomKey()
+		log.Printf("WARNING: 未设置加密密钥，使用临时随机密钥，重启后之前保存的 SSH 密码将无法解密")
+		log.Printf("WARNING: 请在配置文件中设置 ssh.encryption_key 或设置环境变量 TERMINAL_ENCRYPTION_KEY")
+		encryptionKey = randomKey
+	}
+	encryptionService, err := utils.NewEncryptionService(encryptionKey)
 	if err != nil {
 		log.Fatalf("创建加密服务失败: %v", err)
 	}
