@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, URL shortening, Mock API testing, and Excalidraw drawing.
+DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, URL shortening, Mock API testing, Excalidraw drawing, and SSH Terminal.
 
 **Tech Stack:**
 - Frontend: Vue 3 + Vite + Element Plus + TailwindCSS
@@ -160,6 +160,22 @@ Docker exposes the backend on port 8082.
 - `GET /api/excalidraw/admin/:id?admin_password=xxx`: Admin view any drawing
 - `DELETE /api/excalidraw/admin/:id?admin_password=xxx`: Admin delete any drawing
 - `GET /draw/:id`: Frontend view route
+
+**SSH Terminal:**
+- `POST /api/terminal`: Create new SSH session (requires `host`, `port`, `username`, `password` or `private_key`, `user_token`)
+  - Returns `id`, `creator_key`, `status`, `created_at`, `expires_at`
+- `POST /api/terminal/login`: User login to get/generate user token
+- `GET /api/terminal/list?user_token=xxx`: List all sessions for a user
+- `GET /api/terminal/:id?user_token=xxx`: Get session details
+- `GET /api/terminal/:id/creator?creator_key=xxx`: Get session for creator
+- `GET /api/terminal/:id/history?user_token=xxx`: Get command history
+- `POST /api/terminal/:id/resume`: Resume/reconnect to SSH session
+- `POST /api/terminal/:id/disconnect`: Disconnect SSH but keep session record
+- `PUT /api/terminal/:id`: Update session (actions: `rename`, `resize`, `extend`)
+- `DELETE /api/terminal/:id?creator_key=xxx`: Delete session
+- `GET /api/terminal/:id/ws?user_token=xxx`: WebSocket connection for SSH I/O
+- `GET /api/terminal/admin/list?admin_password=xxx`: Admin list all sessions
+- `DELETE /api/terminal/admin/:id?admin_password=xxx`: Admin delete any session
 
 **Health:**
 - `GET /api/health`: Health check endpoint

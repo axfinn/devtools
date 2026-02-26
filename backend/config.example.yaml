@@ -90,3 +90,27 @@ ssh:
   # 留空 = 无管理员功能
   # 设置密码 = 可通过 /api/terminal/admin/list 查看所有会话
   admin_password: ""
+
+  # 是否验证 SSH 主机密钥（推荐启用以防止中间人攻击）
+  # true = 首次连接记录主机密钥，后续连接验证
+  # false = 接受任何主机密钥（不安全，仅用于测试）
+  host_key_verification: true
+
+  # 每个用户最大会话数（防止资源滥用）
+  max_sessions_per_user: 10
+
+  # 会话空闲超时（分钟）
+  # WebSocket 断开后，如果超过此时间无活动，会自动关闭 SSH 连接
+  session_idle_timeout: 5
+
+  # 历史记录最大保存天数
+  # 超过此天数的命令历史记录会被自动清理
+  history_max_age_days: 30
+
+  # 不活跃会话最大保存天数
+  # 超过此天数未活跃的会话（包括数据库记录和历史）会被自动清理
+  session_max_age_days: 7
+
+# 加密密钥配置（通过环境变量设置）
+# export TERMINAL_ENCRYPTION_KEY="your-32-byte-secret-key"
+# 如果未设置，服务器会生成临时密钥（重启后已保存的 SSH 密码将无法解密）

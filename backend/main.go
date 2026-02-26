@@ -83,11 +83,6 @@ func main() {
 		log.Fatalf("菜谱数据库初始化失败: %v", err)
 	}
 
-	// 初始化终端数据库表
-	if err := db.InitTerminal(); err != nil {
-		log.Fatalf("终端数据库初始化失败: %v", err)
-	}
-
 	// 初始化 SSH 数据库表
 	if err := db.InitSSH(); err != nil {
 		log.Fatalf("SSH 数据库初始化失败: %v", err)
@@ -142,10 +137,20 @@ func main() {
 			if err == nil && recipeCount > 0 {
 				log.Printf("已清理 %d 个过期菜谱", recipeCount)
 			}
-			// 清理过期终端会话
-			terminalCount, err := db.CleanExpiredTerminalSessions()
-			if err == nil && terminalCount > 0 {
-				log.Printf("已清理 %d 个过期终端会话", terminalCount)
+			// 清理过期 SSH 会话
+			sshExpiredCount, err := db.CleanExpiredSSHSessions()
+			if err == nil && sshExpiredCount > 0 {
+				log.Printf("已清理 %d 个过期 SSH 会话", sshExpiredCount)
+			}
+			// 清理不活跃的 SSH 会话
+			sshInactiveCount, err := db.CleanInactiveSSHSessions(cfg.SSH.SessionMaxAgeDays)
+			if err == nil && sshInactiveCount > 0 {
+				log.Printf("已清理 %d 个不活跃 SSH 会话（超过%d天）", sshInactiveCount, cfg.SSH.SessionMaxAgeDays)
+			}
+			// 清理旧的 SSH 历史记录
+			historyCount, err := db.CleanOldSSHHistory(cfg.SSH.HistoryMaxAgeDays)
+			if err == nil && historyCount > 0 {
+				log.Printf("已清理 %d 条旧 SSH 历史记录（超过%d天）", historyCount, cfg.SSH.HistoryMaxAgeDays)
 			}
 			// 清理过期上传文件（7天）
 			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
@@ -186,7 +191,24 @@ func main() {
 	excalidrawHandler := handlers.NewExcalidrawHandler(db, cfg.Excalidraw.AdminPassword, cfg.Excalidraw.DefaultExpiresDays, cfg.Excalidraw.MaxContentSize)
 	pregnancyHandler := handlers.NewPregnancyHandler(db, cfg.Pregnancy.DefaultExpiresDays, cfg.Pregnancy.MaxDataSize)
 	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
-	terminalHandler := handlers.NewSSHHandler(db, 365, cfg.SSH.AdminPassword)
+
+	// 创建加密服务（用于 SSH 密码加密）
+	encryptionService, err := utils.NewEncryptionServiceFromEnv()
+	if err != nil {
+		log.Fatalf("创建加密服务失败: %v", err)
+	}
+
+	// 创建 SSH Handler 配置
+	sshConfig := &handlers.SSHHandlerConfig{
+		AdminPassword:       cfg.SSH.AdminPassword,
+		HostKeyVerification: cfg.SSH.HostKeyVerification,
+		MaxSessionsPerUser:  cfg.SSH.MaxSessionsPerUser,
+		SessionIdleTimeout:  time.Duration(cfg.SSH.SessionIdleTimeout) * time.Minute,
+	}
+	terminalHandler := handlers.NewSSHHandler(db, encryptionService, sshConfig)
+
+	// 启动 SSH 会话清理协程
+	terminalHandler.StartCleanupRoutine()
 
 	// API 路由
 	api := r.Group("/api")
@@ -315,6 +337,9 @@ func main() {
 			terminal.DELETE("/admin/:id", terminalHandler.AdminDelete) // 管理员删除
 			terminal.GET("/:id", terminalHandler.Get)
 			terminal.GET("/:id/creator", terminalHandler.GetByCreator)
+			terminal.GET("/:id/history", terminalHandler.GetHistory)      // 获取命令历史
+			terminal.POST("/:id/resume", terminalHandler.Resume)          // 恢复会话
+			terminal.POST("/:id/disconnect", terminalHandler.Disconnect)  // 断开连接
 			terminal.PUT("/:id", terminalHandler.Update)
 			terminal.DELETE("/:id", terminalHandler.Delete)
 			terminal.GET("/:id/ws", terminalHandler.HandleWebSocket) // WebSocket 连接

@@ -2,319 +2,241 @@ package models
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
-type TerminalSession struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Password    string     `json:"-"`
-	PasswordIndex string   `json:"-"`
-	CreatorKey  string     `json:"-"`
-	Shell       string     `json:"shell"` // shell 类型: bash, zsh, sh
-	Width       int        `json:"width"`  // 终端宽度
-	Height      int        `json:"height"` // 终端高度
-	ExpiresAt   *time.Time `json:"expires_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	CreatorIP   string     `json:"-"`
-}
-
-func (db *DB) InitTerminal() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS terminal_sessions (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL DEFAULT '终端',
-		password TEXT NOT NULL,
-		password_index TEXT NOT NULL DEFAULT '',
-		creator_key TEXT NOT NULL,
-		shell TEXT NOT NULL DEFAULT '/bin/bash',
-		width INTEGER NOT NULL DEFAULT 80,
-		height INTEGER NOT NULL DEFAULT 24,
-		expires_at DATETIME,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		creator_ip TEXT
-	);
-	CREATE INDEX IF NOT EXISTS idx_terminal_expires_at ON terminal_sessions(expires_at);
-	CREATE INDEX IF NOT EXISTS idx_terminal_creator_ip ON terminal_sessions(creator_ip);
-	CREATE INDEX IF NOT EXISTS idx_terminal_password_index ON terminal_sessions(password_index) WHERE password_index != '';
-	`
-	_, err := db.conn.Exec(query)
-	return err
-}
-
-func (db *DB) CreateTerminalSession(session *TerminalSession) error {
-	session.ID = generateID(8)
-	session.CreatedAt = time.Now()
-	session.UpdatedAt = time.Now()
-
-	_, err := db.conn.Exec(`
-		INSERT INTO terminal_sessions (id, name, password, password_index, creator_key, shell, width, height, expires_at, created_at, updated_at, creator_ip)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, session.ID, session.Name, session.Password, session.PasswordIndex, session.CreatorKey,
-		session.Shell, session.Width, session.Height, session.ExpiresAt, session.CreatedAt, session.UpdatedAt, session.CreatorIP)
-
-	return err
-}
-
-func (db *DB) GetTerminalSession(id string) (*TerminalSession, error) {
-	session := &TerminalSession{}
-	var expiresAt sql.NullTime
-
-	err := db.conn.QueryRow(`
-		SELECT id, name, password, password_index, creator_key, shell, width, height, expires_at, created_at, updated_at, creator_ip
-		FROM terminal_sessions WHERE id = ?
-	`, id).Scan(
-		&session.ID, &session.Name, &session.Password, &session.PasswordIndex, &session.CreatorKey,
-		&session.Shell, &session.Width, &session.Height, &expiresAt, &session.CreatedAt, &session.UpdatedAt, &session.CreatorIP)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if expiresAt.Valid {
-		session.ExpiresAt = &expiresAt.Time
-	}
-
-	return session, nil
-}
-
-func (db *DB) GetTerminalSessionByPasswordIndex(passwordIndex string) (*TerminalSession, error) {
-	session := &TerminalSession{}
-	var expiresAt sql.NullTime
-
-	err := db.conn.QueryRow(`
-		SELECT id, name, password, password_index, creator_key, shell, width, height, expires_at, created_at, updated_at, creator_ip
-		FROM terminal_sessions WHERE password_index = ?
-	`, passwordIndex).Scan(
-		&session.ID, &session.Name, &session.Password, &session.PasswordIndex, &session.CreatorKey,
-		&session.Shell, &session.Width, &session.Height, &expiresAt, &session.CreatedAt, &session.UpdatedAt, &session.CreatorIP)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if expiresAt.Valid {
-		session.ExpiresAt = &expiresAt.Time
-	}
-
-	return session, nil
-}
-
-func (db *DB) UpdateTerminalSession(id string, width, height int) error {
-	_, err := db.conn.Exec(
-		"UPDATE terminal_sessions SET width = ?, height = ?, updated_at = ? WHERE id = ?",
-		width, height, time.Now(), id)
-	return err
-}
-
-func (db *DB) UpdateTerminalName(id, name string) error {
-	_, err := db.conn.Exec(
-		"UPDATE terminal_sessions SET name = ?, updated_at = ? WHERE id = ?",
-		name, time.Now(), id)
-	return err
-}
-
-func (db *DB) ExtendTerminalSession(id string, expiresAt *time.Time) error {
-	_, err := db.conn.Exec(
-		"UPDATE terminal_sessions SET expires_at = ?, updated_at = ? WHERE id = ?",
-		expiresAt, time.Now(), id)
-	return err
-}
-
-func (db *DB) DeleteTerminalSession(id string) error {
-	_, err := db.conn.Exec("DELETE FROM terminal_sessions WHERE id = ?", id)
-	return err
-}
-
-func (db *DB) CleanExpiredTerminalSessions() (int64, error) {
-	result, err := db.conn.Exec(`
-		DELETE FROM terminal_sessions
-		WHERE expires_at IS NOT NULL AND expires_at < ?
-	`, time.Now())
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-func (db *DB) CountTerminalSessionsByIP(ip string, since time.Time) (int, error) {
-	var count int
-	err := db.conn.QueryRow(
-		"SELECT COUNT(*) FROM terminal_sessions WHERE creator_ip = ? AND created_at > ?",
-		ip, since,
-	).Scan(&count)
-	return count, err
-}
-
-// SSH Session 结构体
+// SSHSession SSH 会话结构体
 type SSHSession struct {
 	ID           string     `json:"id"`
 	Name         string     `json:"name"`
 	Host         string     `json:"host"`
 	Port         int        `json:"port"`
 	Username     string     `json:"username"`
-	Password     string     `json:"-"`
-	PrivateKey   string     `json:"-"`
-	ConfigIndex  string     `json:"-"`
-	CreatorKey   string     `json:"-"`
-	UserToken    string     `json:"-"` // 用户口令（用于标识用户）
-	Width        int        `json:"width"`
-	Height       int        `json:"height"`
-	KeepSession  bool       `json:"keep_session"` // 是否保持会话
+
+	// 加密存储的敏感信息（不返回给前端）
+	PasswordEncrypted    string `json:"-"` // AES加密的密码
+	PrivateKeyEncrypted  string `json:"-"` // AES加密的私钥
+
+	// 主机密钥指纹（用于验证）
+	HostKeyFingerprint   string `json:"host_key_fingerprint,omitempty"`
+
+	// 用户标识
+	UserToken    string `json:"-"` // 用户令牌（隔离会话）
+	CreatorKey   string `json:"-"` // 创建者密钥（管理权限）
+	CreatorIP    string `json:"-"` // 创建者IP
+
+	// 终端配置
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+
+	// 会话状态
+	Status       string    `json:"status"` // active（连接中）、idle（已断开）、expired（已过期）
+	KeepAlive    bool      `json:"keep_alive"` // 是否保持会话
+	LastActiveAt time.Time `json:"last_active_at"` // 最后活跃时间
+
+	// 时间信息
 	ExpiresAt    *time.Time `json:"expires_at"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
-	CreatorIP    string     `json:"-"`
 }
 
+// SSHHistory SSH 历史记录
+type SSHHistory struct {
+	ID        int64     `json:"id"`
+	SessionID string    `json:"session_id"`
+	Type      string    `json:"type"` // 'input' or 'output'
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// SSHHostKey SSH 主机密钥
+type SSHHostKey struct {
+	Host        string    `json:"host"`
+	Port        int       `json:"port"`
+	KeyType     string    `json:"key_type"`
+	Fingerprint string    `json:"fingerprint"`
+	PublicKey   string    `json:"public_key"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
+}
+
+// InitSSH 初始化 SSH 相关表
 func (db *DB) InitSSH() error {
-	// 先创建表
-	query := `
+	// 1. 创建 ssh_sessions 表
+	createSessionsTable := `
 	CREATE TABLE IF NOT EXISTS ssh_sessions (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL DEFAULT 'SSH 终端',
 		host TEXT NOT NULL,
 		port INTEGER NOT NULL DEFAULT 22,
 		username TEXT NOT NULL,
-		password TEXT NOT NULL,
-		private_key TEXT,
-		config_index TEXT NOT NULL DEFAULT '',
+		password_encrypted TEXT,
+		private_key_encrypted TEXT,
+		host_key_fingerprint TEXT,
+
+		user_token TEXT NOT NULL,
 		creator_key TEXT NOT NULL,
-		user_token TEXT NOT NULL DEFAULT '',
+		creator_ip TEXT,
+
 		width INTEGER NOT NULL DEFAULT 80,
 		height INTEGER NOT NULL DEFAULT 24,
-		keep_session INTEGER NOT NULL DEFAULT 0,
+
+		status TEXT NOT NULL DEFAULT 'idle',
+		keep_alive INTEGER NOT NULL DEFAULT 1,
+		last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
 		expires_at DATETIME,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		creator_ip TEXT
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	`
-	_, err := db.conn.Exec(query)
-	if err != nil {
-		return err
+
+	// 2. 创建 ssh_history 表
+	createHistoryTable := `
+	CREATE TABLE IF NOT EXISTS ssh_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		type TEXT NOT NULL,
+		content TEXT NOT NULL,
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+		FOREIGN KEY (session_id) REFERENCES ssh_sessions(id) ON DELETE CASCADE
+	);
+	`
+
+	// 3. 创建 ssh_host_keys 表
+	createHostKeysTable := `
+	CREATE TABLE IF NOT EXISTS ssh_host_keys (
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		key_type TEXT NOT NULL,
+		fingerprint TEXT NOT NULL,
+		public_key TEXT,
+		first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+		PRIMARY KEY (host, port)
+	);
+	`
+
+	// 执行创建表
+	if _, err := db.conn.Exec(createSessionsTable); err != nil {
+		return fmt.Errorf("failed to create ssh_sessions table: %w", err)
 	}
 
-	// 迁移数据：添加 keep_session 列（如果不存在）
-	_, err = db.conn.Exec("ALTER TABLE ssh_sessions ADD COLUMN keep_session INTEGER NOT NULL DEFAULT 0")
-	// 忽略错误，因为列可能已存在
+	if _, err := db.conn.Exec(createHistoryTable); err != nil {
+		return fmt.Errorf("failed to create ssh_history table: %w", err)
+	}
 
-	// 迁移数据：添加 user_token 列（如果不存在）
-	_, err = db.conn.Exec("ALTER TABLE ssh_sessions ADD COLUMN user_token TEXT NOT NULL DEFAULT ''")
-	// 忽略错误，因为列可能已存在
+	if _, err := db.conn.Exec(createHostKeysTable); err != nil {
+		return fmt.Errorf("failed to create ssh_host_keys table: %w", err)
+	}
 
-	// 创建索引
-	_, err = db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_ssh_expires_at ON ssh_sessions(expires_at)")
-	_, err = db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_ssh_creator_ip ON ssh_sessions(creator_ip)")
-	_, err = db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_ssh_config_index ON ssh_sessions(config_index)")
-	_, err = db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_ssh_user_token ON ssh_sessions(user_token)")
+	// 4. 创建索引
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_ssh_user_token ON ssh_sessions(user_token)",
+		"CREATE INDEX IF NOT EXISTS idx_ssh_status ON ssh_sessions(status)",
+		"CREATE INDEX IF NOT EXISTS idx_ssh_expires_at ON ssh_sessions(expires_at)",
+		"CREATE INDEX IF NOT EXISTS idx_ssh_last_active ON ssh_sessions(last_active_at)",
+		"CREATE INDEX IF NOT EXISTS idx_ssh_creator_ip ON ssh_sessions(creator_ip)",
+		"CREATE INDEX IF NOT EXISTS idx_history_session ON ssh_history(session_id, timestamp)",
+		"CREATE INDEX IF NOT EXISTS idx_history_timestamp ON ssh_history(timestamp)",
+	}
+
+	for _, idx := range indexes {
+		if _, err := db.conn.Exec(idx); err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
+		}
+	}
 
 	return nil
 }
 
+// ====================== SSH Session CRUD ======================
+
+// CreateSSHSession 创建 SSH 会话
 func (db *DB) CreateSSHSession(session *SSHSession) error {
 	session.ID = generateID(8)
 	session.CreatedAt = time.Now()
 	session.UpdatedAt = time.Now()
+	session.LastActiveAt = time.Now()
+
+	if session.Status == "" {
+		session.Status = "idle"
+	}
 
 	_, err := db.conn.Exec(`
-		INSERT INTO ssh_sessions (id, name, host, port, username, password, private_key, config_index, creator_key, user_token, width, height, expires_at, created_at, updated_at, creator_ip)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, session.ID, session.Name, session.Host, session.Port, session.Username, session.Password, session.PrivateKey, session.ConfigIndex, session.CreatorKey, session.UserToken,
-		session.Width, session.Height, session.ExpiresAt, session.CreatedAt, session.UpdatedAt, session.CreatorIP)
+		INSERT INTO ssh_sessions (
+			id, name, host, port, username,
+			password_encrypted, private_key_encrypted, host_key_fingerprint,
+			user_token, creator_key, creator_ip,
+			width, height,
+			status, keep_alive, last_active_at,
+			expires_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		session.ID, session.Name, session.Host, session.Port, session.Username,
+		session.PasswordEncrypted, session.PrivateKeyEncrypted, session.HostKeyFingerprint,
+		session.UserToken, session.CreatorKey, session.CreatorIP,
+		session.Width, session.Height,
+		session.Status, session.KeepAlive, session.LastActiveAt,
+		session.ExpiresAt, session.CreatedAt, session.UpdatedAt,
+	)
 
 	return err
 }
 
+// GetSSHSession 获取 SSH 会话
 func (db *DB) GetSSHSession(id string) (*SSHSession, error) {
 	session := &SSHSession{}
 	var expiresAt sql.NullTime
-	var privateKey sql.NullString
+	var passwordEncrypted, privateKeyEncrypted, hostKeyFingerprint sql.NullString
+	var keepAlive int
 
 	err := db.conn.QueryRow(`
-		SELECT id, name, host, port, username, password, private_key, config_index, creator_key, width, height, expires_at, created_at, updated_at, creator_ip
+		SELECT id, name, host, port, username,
+			password_encrypted, private_key_encrypted, host_key_fingerprint,
+			user_token, creator_key, creator_ip,
+			width, height,
+			status, keep_alive, last_active_at,
+			expires_at, created_at, updated_at
 		FROM ssh_sessions WHERE id = ?
 	`, id).Scan(
-		&session.ID, &session.Name, &session.Host, &session.Port, &session.Username, &session.Password, &privateKey, &session.ConfigIndex, &session.CreatorKey,
-		&session.Width, &session.Height, &expiresAt, &session.CreatedAt, &session.UpdatedAt, &session.CreatorIP)
+		&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
+		&passwordEncrypted, &privateKeyEncrypted, &hostKeyFingerprint,
+		&session.UserToken, &session.CreatorKey, &session.CreatorIP,
+		&session.Width, &session.Height,
+		&session.Status, &keepAlive, &session.LastActiveAt,
+		&expiresAt, &session.CreatedAt, &session.UpdatedAt,
+	)
 
 	if err != nil {
 		return nil, err
 	}
 
+	session.PasswordEncrypted = passwordEncrypted.String
+	session.PrivateKeyEncrypted = privateKeyEncrypted.String
+	session.HostKeyFingerprint = hostKeyFingerprint.String
+	session.KeepAlive = keepAlive != 0
+
 	if expiresAt.Valid {
 		session.ExpiresAt = &expiresAt.Time
-	}
-	if privateKey.Valid {
-		session.PrivateKey = privateKey.String
 	}
 
 	return session, nil
 }
 
-func (db *DB) GetSSHSessionByConfigIndex(configIndex string) (*SSHSession, error) {
-	session := &SSHSession{}
-	var expiresAt sql.NullTime
-	var privateKey sql.NullString
-
-	err := db.conn.QueryRow(`
-		SELECT id, name, host, port, username, password, private_key, config_index, creator_key, width, height, expires_at, created_at, updated_at, creator_ip
-		FROM ssh_sessions WHERE config_index = ?
-	`, configIndex).Scan(
-		&session.ID, &session.Name, &session.Host, &session.Port, &session.Username, &session.Password, &privateKey, &session.ConfigIndex, &session.CreatorKey,
-		&session.Width, &session.Height, &expiresAt, &session.CreatedAt, &session.UpdatedAt, &session.CreatorIP)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if expiresAt.Valid {
-		session.ExpiresAt = &expiresAt.Time
-	}
-	if privateKey.Valid {
-		session.PrivateKey = privateKey.String
-	}
-
-	return session, nil
-}
-
-func (db *DB) GetSSHSessionsByConfigIndex(configIndex string) ([]*SSHSession, error) {
-	rows, err := db.conn.Query(`
-		SELECT id, name, host, port, username, width, height, keep_session, expires_at, created_at, updated_at, creator_ip
-		FROM ssh_sessions WHERE config_index = ?
-		ORDER BY created_at DESC
-	`, configIndex)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sessions []*SSHSession
-	for rows.Next() {
-		session := &SSHSession{}
-		var expiresAt sql.NullTime
-		err := rows.Scan(
-			&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
-			&session.Width, &session.Height, &session.KeepSession, &expiresAt, &session.CreatedAt, &session.UpdatedAt, &session.CreatorIP,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if expiresAt.Valid {
-			session.ExpiresAt = &expiresAt.Time
-		}
-		sessions = append(sessions, session)
-	}
-	return sessions, nil
-}
-
+// GetSSHSessionsByUserToken 获取用户的所有 SSH 会话
 func (db *DB) GetSSHSessionsByUserToken(userToken string) ([]*SSHSession, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, host, port, username, width, height, keep_session, expires_at, created_at, updated_at
-		FROM ssh_sessions WHERE user_token = ?
-		ORDER BY created_at DESC
+		SELECT id, name, host, port, username,
+			width, height,
+			status, keep_alive, last_active_at,
+			expires_at, created_at, updated_at
+		FROM ssh_sessions
+		WHERE user_token = ?
+		ORDER BY last_active_at DESC, created_at DESC
 	`, userToken)
 	if err != nil {
 		return nil, err
@@ -325,28 +247,147 @@ func (db *DB) GetSSHSessionsByUserToken(userToken string) ([]*SSHSession, error)
 	for rows.Next() {
 		session := &SSHSession{}
 		var expiresAt sql.NullTime
+		var keepAlive int
+
 		err := rows.Scan(
 			&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
-			&session.Width, &session.Height, &session.KeepSession, &expiresAt, &session.CreatedAt, &session.UpdatedAt,
+			&session.Width, &session.Height,
+			&session.Status, &keepAlive, &session.LastActiveAt,
+			&expiresAt, &session.CreatedAt, &session.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
+
+		session.KeepAlive = keepAlive != 0
 		if expiresAt.Valid {
 			session.ExpiresAt = &expiresAt.Time
 		}
+
 		sessions = append(sessions, session)
 	}
+
 	return sessions, nil
 }
 
-func (db *DB) UpdateSSHName(id, name string) error {
+// GetSSHSessionsByCreatorKey 通过创建者密钥获取会话列表
+func (db *DB) GetSSHSessionsByCreatorKey(creatorKey string) ([]*SSHSession, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, name, host, port, username,
+			width, height,
+			status, keep_alive, last_active_at,
+			expires_at, created_at, updated_at
+		FROM ssh_sessions
+		WHERE creator_key = ?
+		ORDER BY last_active_at DESC, created_at DESC
+	`, creatorKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []*SSHSession
+	for rows.Next() {
+		session := &SSHSession{}
+		var expiresAt sql.NullTime
+		var keepAlive int
+
+		err := rows.Scan(
+			&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
+			&session.Width, &session.Height,
+			&session.Status, &keepAlive, &session.LastActiveAt,
+			&expiresAt, &session.CreatedAt, &session.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		session.KeepAlive = keepAlive != 0
+		if expiresAt.Valid {
+			session.ExpiresAt = &expiresAt.Time
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
+}
+
+// GetAllSSHSessions 获取所有 SSH 会话（管理员）
+func (db *DB) GetAllSSHSessions() ([]*SSHSession, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, name, host, port, username,
+			width, height,
+			status, keep_alive, last_active_at,
+			expires_at, created_at, updated_at, creator_ip
+		FROM ssh_sessions
+		ORDER BY last_active_at DESC, created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []*SSHSession
+	for rows.Next() {
+		session := &SSHSession{}
+		var expiresAt sql.NullTime
+		var keepAlive int
+
+		err := rows.Scan(
+			&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
+			&session.Width, &session.Height,
+			&session.Status, &keepAlive, &session.LastActiveAt,
+			&expiresAt, &session.CreatedAt, &session.UpdatedAt, &session.CreatorIP,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		session.KeepAlive = keepAlive != 0
+		if expiresAt.Valid {
+			session.ExpiresAt = &expiresAt.Time
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	return sessions, nil
+}
+
+// UpdateSSHSessionName 更新会话名称
+func (db *DB) UpdateSSHSessionName(id, name string) error {
 	_, err := db.conn.Exec(
 		"UPDATE ssh_sessions SET name = ?, updated_at = ? WHERE id = ?",
 		name, time.Now(), id)
 	return err
 }
 
+// UpdateSSHSessionSize 更新终端大小
+func (db *DB) UpdateSSHSessionSize(id string, width, height int) error {
+	_, err := db.conn.Exec(
+		"UPDATE ssh_sessions SET width = ?, height = ?, updated_at = ? WHERE id = ?",
+		width, height, time.Now(), id)
+	return err
+}
+
+// UpdateSSHSessionStatus 更新会话状态
+func (db *DB) UpdateSSHSessionStatus(id, status string) error {
+	_, err := db.conn.Exec(
+		"UPDATE ssh_sessions SET status = ?, last_active_at = ?, updated_at = ? WHERE id = ?",
+		status, time.Now(), time.Now(), id)
+	return err
+}
+
+// UpdateSSHSessionLastActive 更新最后活跃时间
+func (db *DB) UpdateSSHSessionLastActive(id string) error {
+	_, err := db.conn.Exec(
+		"UPDATE ssh_sessions SET last_active_at = ?, updated_at = ? WHERE id = ?",
+		time.Now(), time.Now(), id)
+	return err
+}
+
+// ExtendSSHSession 延长会话过期时间
 func (db *DB) ExtendSSHSession(id string, expiresAt *time.Time) error {
 	_, err := db.conn.Exec(
 		"UPDATE ssh_sessions SET expires_at = ?, updated_at = ? WHERE id = ?",
@@ -354,11 +395,113 @@ func (db *DB) ExtendSSHSession(id string, expiresAt *time.Time) error {
 	return err
 }
 
+// DeleteSSHSession 删除 SSH 会话
 func (db *DB) DeleteSSHSession(id string) error {
+	// 由于外键约束，删除会话会自动删除关联的历史记录
 	_, err := db.conn.Exec("DELETE FROM ssh_sessions WHERE id = ?", id)
 	return err
 }
 
+// ====================== History ======================
+
+// SaveSSHHistory 保存 SSH 历史记录
+func (db *DB) SaveSSHHistory(sessionID, msgType, content string) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO ssh_history (session_id, type, content, timestamp)
+		VALUES (?, ?, ?, ?)
+	`, sessionID, msgType, content, time.Now())
+	return err
+}
+
+// GetSSHHistory 获取会话历史记录
+func (db *DB) GetSSHHistory(sessionID string, limit, offset int) ([]*SSHHistory, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := db.conn.Query(`
+		SELECT id, session_id, type, content, timestamp
+		FROM ssh_history
+		WHERE session_id = ?
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?
+	`, sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []*SSHHistory
+	for rows.Next() {
+		h := &SSHHistory{}
+		if err := rows.Scan(&h.ID, &h.SessionID, &h.Type, &h.Content, &h.Timestamp); err != nil {
+			return nil, err
+		}
+		history = append(history, h)
+	}
+
+	// 反转顺序（最早的在前）
+	for i := 0; i < len(history)/2; i++ {
+		history[i], history[len(history)-1-i] = history[len(history)-1-i], history[i]
+	}
+
+	return history, nil
+}
+
+// GetSSHHistoryCount 获取历史记录数量
+func (db *DB) GetSSHHistoryCount(sessionID string) (int, error) {
+	var count int
+	err := db.conn.QueryRow(
+		"SELECT COUNT(*) FROM ssh_history WHERE session_id = ?",
+		sessionID,
+	).Scan(&count)
+	return count, err
+}
+
+// ====================== Host Keys ======================
+
+// SaveSSHHostKey 保存或更新主机密钥
+func (db *DB) SaveSSHHostKey(hostKey *SSHHostKey) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO ssh_host_keys (host, port, key_type, fingerprint, public_key, first_seen, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(host, port) DO UPDATE SET
+			last_seen = ?,
+			fingerprint = ?,
+			key_type = ?,
+			public_key = ?
+	`, hostKey.Host, hostKey.Port, hostKey.KeyType, hostKey.Fingerprint, hostKey.PublicKey,
+		hostKey.FirstSeen, hostKey.LastSeen,
+		hostKey.LastSeen, hostKey.Fingerprint, hostKey.KeyType, hostKey.PublicKey)
+	return err
+}
+
+// GetSSHHostKey 获取主机密钥
+func (db *DB) GetSSHHostKey(host string, port int) (*SSHHostKey, error) {
+	hostKey := &SSHHostKey{}
+	err := db.conn.QueryRow(`
+		SELECT host, port, key_type, fingerprint, public_key, first_seen, last_seen
+		FROM ssh_host_keys
+		WHERE host = ? AND port = ?
+	`, host, port).Scan(
+		&hostKey.Host, &hostKey.Port, &hostKey.KeyType,
+		&hostKey.Fingerprint, &hostKey.PublicKey,
+		&hostKey.FirstSeen, &hostKey.LastSeen,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return hostKey, nil
+}
+
+// ====================== Cleanup ======================
+
+// CleanExpiredSSHSessions 清理过期的 SSH 会话
 func (db *DB) CleanExpiredSSHSessions() (int64, error) {
 	result, err := db.conn.Exec(`
 		DELETE FROM ssh_sessions
@@ -370,6 +513,33 @@ func (db *DB) CleanExpiredSSHSessions() (int64, error) {
 	return result.RowsAffected()
 }
 
+// CleanInactiveSSHSessions 清理长时间未活跃的会话
+func (db *DB) CleanInactiveSSHSessions(inactiveDays int) (int64, error) {
+	result, err := db.conn.Exec(`
+		DELETE FROM ssh_sessions
+		WHERE last_active_at < ? AND status = 'idle'
+	`, time.Now().Add(-time.Duration(inactiveDays)*24*time.Hour))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// CleanOldSSHHistory 清理旧的历史记录
+func (db *DB) CleanOldSSHHistory(maxAgeDays int) (int64, error) {
+	result, err := db.conn.Exec(`
+		DELETE FROM ssh_history
+		WHERE timestamp < ?
+	`, time.Now().Add(-time.Duration(maxAgeDays)*24*time.Hour))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// ====================== Statistics ======================
+
+// CountSSHSessionsByIP 统计IP创建的会话数
 func (db *DB) CountSSHSessionsByIP(ip string, since time.Time) (int, error) {
 	var count int
 	err := db.conn.QueryRow(
@@ -377,65 +547,4 @@ func (db *DB) CountSSHSessionsByIP(ip string, since time.Time) (int, error) {
 		ip, since,
 	).Scan(&count)
 	return count, err
-}
-
-func (db *DB) GetAllSSHSessions() ([]*SSHSession, error) {
-	rows, err := db.conn.Query(`
-		SELECT id, name, host, port, username, width, height, keep_session, expires_at, created_at, updated_at, creator_ip
-		FROM ssh_sessions
-		ORDER BY created_at DESC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sessions []*SSHSession
-	for rows.Next() {
-		session := &SSHSession{}
-		var expiresAt sql.NullTime
-		err := rows.Scan(
-			&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
-			&session.Width, &session.Height, &session.KeepSession, &expiresAt, &session.CreatedAt, &session.UpdatedAt, &session.CreatorIP,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if expiresAt.Valid {
-			session.ExpiresAt = &expiresAt.Time
-		}
-		sessions = append(sessions, session)
-	}
-	return sessions, nil
-}
-
-func (db *DB) GetSSHSessionsByCreatorKey(creatorKey string) ([]*SSHSession, error) {
-	rows, err := db.conn.Query(`
-		SELECT id, name, host, port, username, width, height, keep_session, expires_at, created_at, updated_at
-		FROM ssh_sessions
-		WHERE creator_key = ?
-		ORDER BY created_at DESC
-	`, creatorKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sessions []*SSHSession
-	for rows.Next() {
-		session := &SSHSession{}
-		var expiresAt sql.NullTime
-		err := rows.Scan(
-			&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
-			&session.Width, &session.Height, &session.KeepSession, &expiresAt, &session.CreatedAt, &session.UpdatedAt,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if expiresAt.Valid {
-			session.ExpiresAt = &expiresAt.Time
-		}
-		sessions = append(sessions, session)
-	}
-	return sessions, nil
 }

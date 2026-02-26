@@ -95,7 +95,12 @@ type PregnancyConfig struct {
 
 // SSHConfig SSH 终端配置
 type SSHConfig struct {
-	AdminPassword string `yaml:"admin_password"` // 管理员密码
+	AdminPassword       string `yaml:"admin_password"`        // 管理员密码
+	HostKeyVerification bool   `yaml:"host_key_verification"` // 是否验证主机密钥（默认true）
+	MaxSessionsPerUser  int    `yaml:"max_sessions_per_user"` // 每个用户最大会话数（默认10）
+	SessionIdleTimeout  int    `yaml:"session_idle_timeout"`  // 会话空闲超时（分钟，默认5）
+	HistoryMaxAgeDays   int    `yaml:"history_max_age_days"`  // 历史记录最大保存天数（默认30）
+	SessionMaxAgeDays   int    `yaml:"session_max_age_days"`  // 不活跃会话最大保存天数（默认7）
 }
 
 var globalConfig *Config
@@ -141,6 +146,13 @@ func DefaultConfig() *Config {
 		Pregnancy: PregnancyConfig{
 			DefaultExpiresDays: 365,
 			MaxDataSize:        1024 * 1024, // 1MB
+		},
+		SSH: SSHConfig{
+			HostKeyVerification: true,
+			MaxSessionsPerUser:  10,
+			SessionIdleTimeout:  5,  // 5分钟
+			HistoryMaxAgeDays:   30, // 30天
+			SessionMaxAgeDays:   7,  // 7天
 		},
 	}
 }
