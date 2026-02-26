@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -1010,10 +1011,25 @@ func (h *SSHHandler) HandleWebSocket(c *gin.Context) {
 	// 恢复或创建 SSH 会话
 	activeSession, err := h.manager.ResumeSession(sessionID, userToken)
 	if err != nil {
-		conn.WriteJSON(map[string]interface{}{
-			"type":    "error",
-			"message": "无法连接 SSH: " + err.Error(),
-		})
+		// 检查是否是解密失败
+		errMsg := err.Error()
+		isDecryptError := strings.Contains(errMsg, "解密密码失败") ||
+			strings.Contains(errMsg, "failed to decrypt") ||
+			strings.Contains(errMsg, "message authentication failed")
+
+		if isDecryptError {
+			conn.WriteJSON(map[string]interface{}{
+				"type":         "error",
+				"message":      "无法连接 SSH: 密码解密失败，可能是服务器重启导致密钥变化",
+				"decryptError": true,
+				"sessionId":    sessionID,
+			})
+		} else {
+			conn.WriteJSON(map[string]interface{}{
+				"type":    "error",
+				"message": "无法连接 SSH: " + errMsg,
+			})
+		}
 		return
 	}
 
