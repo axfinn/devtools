@@ -163,17 +163,41 @@
             </template>
           </el-upload>
         </el-tab-pane>
-        <el-tab-pane label="云端链接" name="cloud">
-          <el-form label-width="80px">
-            <el-form-item label="画图 ID">
-              <el-input v-model="importCloudForm.id" placeholder="输入画图 ID 或短链码" />
-            </el-form-item>
-            <el-form-item label="访问密码">
-              <el-input v-model="importCloudForm.password" type="password" placeholder="输入访问密码" show-password />
-            </el-form-item>
-          </el-form>
-          <div style="text-align: right; margin-top: 16px;">
-            <el-button type="primary" @click="importFromCloud" :loading="importLoading">导入</el-button>
+        <el-tab-pane label="云端画图" name="cloud">
+          <div v-if="!importSelectedDrawing">
+            <el-table :data="importCloudList" v-loading="importLoadingCloud" max-height="300" empty-text="暂无可导入的云端画图">
+              <el-table-column prop="title" label="标题" min-width="120">
+                <template #default="{ row }">{{ row.title || '(无标题)' }}</template>
+              </el-table-column>
+              <el-table-column label="过期时间" width="150">
+                <template #default="{ row }">
+                  <span v-if="row.is_permanent" style="color: #67c23a;">永久</span>
+                  <span v-else>{{ formatDate(row.expires_at) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="80" fixed="right">
+                <template #default="{ row }">
+                  <el-button size="small" type="primary" @click="selectImportDrawing(row)">选择</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-alert type="info" :closable="false" style="margin-top: 12px;">
+              <template #title>显示您云端保存的画图，选择一个进行导入</template>
+            </el-alert>
+          </div>
+          <div v-else>
+            <el-form label-width="80px">
+              <el-form-item :label="'画图'">
+                <el-input :model-value="importSelectedDrawing.title || '(无标题)'" disabled />
+              </el-form-item>
+              <el-form-item label="访问密码" required>
+                <el-input v-model="importCloudForm.password" type="password" placeholder="输入访问密码" show-password />
+              </el-form-item>
+            </el-form>
+            <div style="text-align: right; margin-top: 16px;">
+              <el-button @click="importSelectedDrawing = null">返回列表</el-button>
+              <el-button type="primary" @click="importFromCloud" :loading="importLoading">导入</el-button>
+            </div>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -576,7 +600,46 @@ const removeCreatorKey = (id) => {
 const showImportDialog = ref(false)
 const importTab = ref('file')
 const importLoading = ref(false)
+const importLoadingCloud = ref(false)
 const importCloudForm = ref({ id: '', password: '' })
+const importSelectedDrawing = ref(null)
+const importCloudList = ref([])
+
+const loadImportCloudList = async () => {
+  importLoadingCloud.value = true
+  const keys = getCreatorKeys()
+  const drawings = []
+
+  for (const [id, data] of Object.entries(keys)) {
+    try {
+      const res = await fetch(`/api/excalidraw/${id}/creator?creator_key=${data.key}`)
+      if (res.ok) {
+        const drawing = await res.json()
+        drawings.push({ ...drawing, creator_key: data.key })
+      } else if (res.status === 404 || res.status === 410) {
+        removeCreatorKey(id)
+      }
+    } catch {
+      // Network error, skip
+    }
+  }
+
+  importCloudList.value = drawings.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  importLoadingCloud.value = false
+}
+
+const selectImportDrawing = (drawing) => {
+  importSelectedDrawing.value = drawing
+  importCloudForm.value.password = ''
+}
+
+watch(showImportDialog, async (val) => {
+  if (val && importTab.value === 'cloud') {
+    importSelectedDrawing.value = null
+    importCloudForm.value.password = ''
+    await loadImportCloudList()
+  }
+})
 
 const handleFileImport = (file) => {
   const reader = new FileReader()
@@ -603,14 +666,14 @@ const handleFileImport = (file) => {
 }
 
 const importFromCloud = async () => {
-  if (!importCloudForm.value.id || !importCloudForm.value.password) {
-    ElMessage.warning('请输入画图 ID 和密码')
+  if (!importSelectedDrawing.value || !importCloudForm.value.password) {
+    ElMessage.warning('请选择画图并输入密码')
     return
   }
 
   importLoading.value = true
   try {
-    const id = importCloudForm.value.id
+    const id = importSelectedDrawing.value.id
     const res = await fetch(`/api/excalidraw/${id}?password=${encodeURIComponent(importCloudForm.value.password)}`)
     const data = await res.json()
 
@@ -623,6 +686,7 @@ const importFromCloud = async () => {
       const sceneData = JSON.parse(data.content)
       excalidrawRef.value.loadScene(sceneData)
       showImportDialog.value = false
+      importSelectedDrawing.value = null
       importCloudForm.value = { id: '', password: '' }
       ElMessage.success('导入成功')
 
