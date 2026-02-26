@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,4 +32,11 @@ func VerifyPassword(password, hashedPassword string) bool {
 	}
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
+}
+
+// GenerateKey 生成随机密钥
+func GenerateKey() string {
+	bytes := make([]byte, 16)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
 }
