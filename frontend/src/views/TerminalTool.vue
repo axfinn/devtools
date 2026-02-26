@@ -491,7 +491,24 @@ function connectWebSocket(sessionId) {
           break
 
         case 'error':
-          ElMessage.error(msg.message || 'SSH 连接错误')
+          if (msg.decryptError) {
+            // 解密失败，提示用户删除会话
+            ElMessageBox.confirm(
+              msg.message + '。是否删除该会话？',
+              '连接失败',
+              {
+                confirmButtonText: '删除会话',
+                cancelButtonText: '取消',
+                type: 'warning',
+              }
+            ).then(async () => {
+              // 删除会话
+              await deleteSession(msg.sessionId)
+              state.activeSession = null
+            }).catch(() => {})
+          } else {
+            ElMessage.error(msg.message || 'SSH 连接错误')
+          }
           break
 
         case 'ping':
