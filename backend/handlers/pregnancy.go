@@ -114,7 +114,7 @@ func (h *PregnancyHandler) Create(c *gin.Context) {
 		return
 	}
 
-	creatorKey := utils.GenerateKey()
+	creatorKey := utils.GenerateHexKey(16)
 
 	hashedCreatorKey, err := utils.HashPassword(creatorKey)
 	if err != nil {

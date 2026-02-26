@@ -32,8 +32,10 @@ export default defineConfig({
           'vue-vendor': ['vue', 'vue-router'],
           // Element Plus UI 库
           'element-plus': ['element-plus'],
-          // React + Excalidraw 一起分包（避免加载顺序问题）
-          'react-excalidraw': ['react', 'react-dom', '@excalidraw/excalidraw'],
+          // React 核心（Excalidraw 依赖）
+          'react-vendor': ['react', 'react-dom'],
+          // Excalidraw 画图库（单独分包）
+          'excalidraw': ['@excalidraw/excalidraw'],
           // Mermaid 图表库（按需加载）
           'mermaid': ['mermaid'],
           // KaTeX 数学公式

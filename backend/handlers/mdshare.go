@@ -128,8 +128,8 @@ func (h *MDShareHandler) Create(c *gin.Context) {
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * 24 * time.Hour)
 
 	// Generate keys
-	creatorKey := utils.GenerateKey()
-	accessKey := utils.GenerateKey()
+	creatorKey := utils.GenerateHexKey(16)
+	accessKey := utils.GenerateHexKey(16)
 
 	hashedCreatorKey, err := utils.HashPassword(creatorKey)
 	if err != nil {
@@ -313,7 +313,7 @@ func (h *MDShareHandler) Update(c *gin.Context) {
 
 	case "reshare":
 		// Generate new access key and reset views
-		newAccessKey := utils.GenerateKey()
+		newAccessKey := utils.GenerateHexKey(16)
 		hashedAccessKey, err := utils.HashPassword(newAccessKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "密钥生成失败", "code": 500})

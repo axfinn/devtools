@@ -73,7 +73,7 @@
         ref="excalidrawRef"
         :initial-data="sceneData"
         :view-mode-enabled="true"
-        :theme="currentTheme"
+        :theme="'light'"
       />
     </div>
 
@@ -273,7 +273,6 @@ const formatDate = (dateStr) => {
   height: 100vh;
   padding: 20px;
   box-sizing: border-box;
-  background: #1a1a1a;
 }
 
 .share-header {
@@ -345,7 +344,7 @@ const formatDate = (dateStr) => {
   min-height: 0;
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: #121212;
+  position: relative;
 }
 
 .expiration-notice {
