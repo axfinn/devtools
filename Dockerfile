@@ -1,5 +1,5 @@
 # 阶段一：构建后端
-FROM golang:1.21-alpine AS backend-builder
+FROM golang:1.26-alpine AS backend-builder
 
 WORKDIR /app
 
