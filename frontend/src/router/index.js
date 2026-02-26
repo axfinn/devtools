@@ -118,6 +118,18 @@ const routes = [
     name: 'Pregnancy',
     component: () => import('../views/PregnancyTool.vue'),
     meta: { title: '孕期管理', icon: 'Calendar' }
+  },
+  {
+    path: '/recipe',
+    name: 'Recipe',
+    component: () => import('../views/RecipeTool.vue'),
+    meta: { title: '每日菜谱', icon: 'Food' }
+  },
+  {
+    path: '/terminal',
+    name: 'Terminal',
+    component: () => import('../views/TerminalTool.vue'),
+    meta: { title: '终端', icon: 'Monitor' }
   }
 ]
 

@@ -1,6 +1,12 @@
 services:
   devtools:
-    build: .
+    build:
+      context: .
+      args:
+        - HTTP_PROXY=
+        - HTTPS_PROXY=
+        - http_proxy=
+        - https_proxy=
     container_name: devtools
     restart: unless-stopped
     ports:

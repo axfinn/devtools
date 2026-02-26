@@ -1,16 +1,8 @@
-# 阶段一：构建前端
-FROM node:20-alpine AS frontend-builder
-
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm install
-COPY frontend/ ./
-RUN npm run build
-
-# 阶段二：构建后端
+# 阶段一：构建后端
 FROM golang:1.21-alpine AS backend-builder
 
 WORKDIR /app
+
 # 安装 SQLite 依赖
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 
@@ -20,7 +12,7 @@ RUN go mod download
 COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
-# 阶段三：生产镜像
+# 阶段二：生产镜像
 FROM alpine:latest
 
 WORKDIR /app
@@ -31,8 +23,8 @@ RUN apk add --no-cache ca-certificates tzdata
 # 复制后端二进制文件
 COPY --from=backend-builder /app/server .
 
-# 复制前端构建产物
-COPY --from=frontend-builder /app/frontend/dist ./dist
+# 复制前端构建产物（需要本地先构建好）
+COPY frontend/dist ./dist
 
 # 创建数据目录
 RUN mkdir -p /app/data

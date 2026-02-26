@@ -18,8 +18,9 @@ type Config struct {
 	Paste      PasteConfig      `yaml:"paste"`
 	Chat       ChatConfig       `yaml:"chat"`
 	MDShare    MDShareConfig    `yaml:"mdshare"`
-	Excalidraw  ExcalidrawConfig  `yaml:"excalidraw"`
-	Pregnancy   PregnancyConfig   `yaml:"pregnancy"`
+	Excalidraw ExcalidrawConfig `yaml:"excalidraw"`
+	Pregnancy  PregnancyConfig  `yaml:"pregnancy"`
+	SSH        SSHConfig        `yaml:"ssh"`
 }
 
 // ServerConfig 服务器配置
@@ -90,6 +91,11 @@ type ExcalidrawConfig struct {
 type PregnancyConfig struct {
 	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数，默认365
 	MaxDataSize        int `yaml:"max_data_size"`        // 最大数据大小，默认1MB
+}
+
+// SSHConfig SSH 终端配置
+type SSHConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 管理员密码
 }
 
 var globalConfig *Config

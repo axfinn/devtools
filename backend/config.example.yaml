@@ -83,3 +83,10 @@ pregnancy:
   default_expires_days: 365
   # 最大数据大小（字节），默认1MB
   max_data_size: 1048576
+
+# SSH 终端配置
+ssh:
+  # 管理员密码（可查看和管理所有 SSH 会话）
+  # 留空 = 无管理员功能
+  # 设置密码 = 可通过 /api/terminal/admin/list 查看所有会话
+  admin_password: ""

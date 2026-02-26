@@ -221,9 +221,25 @@ docker_deploy() {
 
     cd "$SCRIPT_DIR"
 
-    # 使用 docker-compose 构建和启动
+    # 先在本地构建前端（避免 Docker 中 npm install 失败）
+    log_info "构建前端..."
+    cd "$FRONTEND_DIR"
+    if [ ! -d "node_modules" ]; then
+        log_info "安装前端依赖..."
+        npm install
+    fi
+    npm run build
+
+    # 复制前端构建产物到后端目录（供 Docker 使用）
+    log_info "复制静态文件到后端目录..."
+    rm -rf "$BACKEND_DIR/dist"
+    cp -r "$FRONTEND_DIR/dist" "$BACKEND_DIR/"
+
+    cd "$SCRIPT_DIR"
+
+    # 使用 docker-compose 构建和启动（强制重新构建）
     log_info "构建 Docker 镜像..."
-    docker-compose build
+    docker-compose build --no-cache
 
     log_info "启动容器..."
     docker-compose up -d

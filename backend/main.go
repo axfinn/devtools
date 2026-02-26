@@ -78,6 +78,21 @@ func main() {
 		log.Fatalf("孕期管理数据库初始化失败: %v", err)
 	}
 
+	// 初始化菜谱数据库表
+	if err := db.InitRecipe(); err != nil {
+		log.Fatalf("菜谱数据库初始化失败: %v", err)
+	}
+
+	// 初始化终端数据库表
+	if err := db.InitTerminal(); err != nil {
+		log.Fatalf("终端数据库初始化失败: %v", err)
+	}
+
+	// 初始化 SSH 数据库表
+	if err := db.InitSSH(); err != nil {
+		log.Fatalf("SSH 数据库初始化失败: %v", err)
+	}
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -122,6 +137,16 @@ func main() {
 			if err == nil && pregnancyCount > 0 {
 				log.Printf("已清理 %d 个过期孕期档案", pregnancyCount)
 			}
+			// 清理过期菜谱
+			recipeCount, err := db.CleanExpiredRecipes()
+			if err == nil && recipeCount > 0 {
+				log.Printf("已清理 %d 个过期菜谱", recipeCount)
+			}
+			// 清理过期终端会话
+			terminalCount, err := db.CleanExpiredTerminalSessions()
+			if err == nil && terminalCount > 0 {
+				log.Printf("已清理 %d 个过期终端会话", terminalCount)
+			}
 			// 清理过期上传文件（7天）
 			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
 			if err == nil && uploadCount > 0 {
@@ -160,6 +185,8 @@ func main() {
 	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)
 	excalidrawHandler := handlers.NewExcalidrawHandler(db, cfg.Excalidraw.AdminPassword, cfg.Excalidraw.DefaultExpiresDays, cfg.Excalidraw.MaxContentSize)
 	pregnancyHandler := handlers.NewPregnancyHandler(db, cfg.Pregnancy.DefaultExpiresDays, cfg.Pregnancy.MaxDataSize)
+	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
+	terminalHandler := handlers.NewSSHHandler(db, 365, cfg.SSH.AdminPassword)
 
 	// API 路由
 	api := r.Group("/api")
@@ -263,6 +290,34 @@ func main() {
 			pregnancy.GET("/:id/creator", pregnancyHandler.GetByCreator)
 			pregnancy.PUT("/:id", pregnancyHandler.Update)
 			pregnancy.DELETE("/:id", pregnancyHandler.Delete)
+		}
+
+		// 菜谱 API
+		recipe := api.Group("/recipe")
+		{
+			recipe.GET("/default", recipeHandler.GetDefault)                    // 获取默认菜谱（无需登录）
+			recipe.GET("/detailed", recipeHandler.GetDetailed)                  // 获取详细步骤菜谱（无需登录）
+			recipe.POST("", createRateLimiter.Middleware(), recipeHandler.Create)
+			recipe.POST("/login", recipeHandler.Login)
+			recipe.GET("/:id", recipeHandler.Get)
+			recipe.GET("/:id/creator", recipeHandler.GetByCreator)
+			recipe.PUT("/:id", recipeHandler.Update)
+			recipe.DELETE("/:id", recipeHandler.Delete)
+		}
+
+		// 终端 API
+		terminal := api.Group("/terminal")
+		{
+			terminal.POST("", createRateLimiter.Middleware(), terminalHandler.Create)
+			terminal.POST("/login", terminalHandler.Login)
+			terminal.GET("/list", terminalHandler.List) // 列出用户所有会话
+			terminal.GET("/admin/list", terminalHandler.AdminList)   // 管理员查看所有
+			terminal.DELETE("/admin/:id", terminalHandler.AdminDelete) // 管理员删除
+			terminal.GET("/:id", terminalHandler.Get)
+			terminal.GET("/:id/creator", terminalHandler.GetByCreator)
+			terminal.PUT("/:id", terminalHandler.Update)
+			terminal.DELETE("/:id", terminalHandler.Delete)
+			terminal.GET("/:id/ws", terminalHandler.HandleWebSocket) // WebSocket 连接
 		}
 
 		// 健康检查
