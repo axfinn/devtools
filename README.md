@@ -17,19 +17,23 @@
 |------|----------|
 | **JSON 工具** | JSON 格式化、压缩、校验、转 Go Struct / TypeScript Interface、JSON Path 查询 |
 | **Diff 对比** | 文本对比，支持字符级、单词级、行级差异高亮显示 |
-| **Markdown** | Markdown 实时预览、语法高亮、导出 HTML/PDF，支持创建分享链接（限制查看次数） |
-| **共享粘贴板** | 创建临时分享，支持过期时间、访问次数限制、密码保护 |
+| **Mock API** | 创建 Mock API 端点，支持自定义响应状态码、响应体、请求日志 |
+| **正则测试** | 正则表达式实时匹配测试、常用正则模板 |
+| **SSH 终端** | 远程 SSH 连接，支持密码/密钥认证、会话管理、命令历史 |
 | **Base64** | 文本/图片 Base64 编解码 |
 | **URL 编解码** | URL Encode/Decode、URL 解析、参数构建 |
 | **时间戳转换** | Unix 时间戳与日期时间互转、时间计算 |
-| **正则测试** | 正则表达式实时匹配测试、常用正则模板 |
-| **文本转换** | 八进制/Unicode/十六进制转义编解码 |
+| **文本转换** | 文本大小写转换、排序、去重、行处理 |
+| **批量替换** | 批量文本替换，支持正则表达式、多规则同时应用 |
 | **IP/DNS** | 查看当前 IP、域名 DNS 解析（A/AAAA/CNAME/MX/NS/TXT） |
+| **Markdown** | Markdown 实时预览、语法高亮、导出 HTML/PDF，支持创建分享链接（限制查看次数） |
 | **Mermaid 图表** | Mermaid 图表实时渲染、缩放平移、导出 SVG/PNG |
-| **聊天室** | 实时聊天室，支持密码保护、图片/视频上传（WebSocket） |
+| **Excalidraw 画图** | Excalidraw 在线画图，支持云端保存、密码保护、本地存储、导出 PNG/SVG/JSON |
+| **共享粘贴板** | 创建临时分享，支持过期时间、访问次数限制、密码保护 |
 | **短链生成** | URL 短链服务，支持自定义 ID、访问次数限制、过期时间 |
-| **Mock API** | 创建 Mock API 端点，支持自定义响应状态码、响应体、请求日志 |
-| **画图工具** | Excalidraw 在线画图，支持云端保存、密码保护、本地存储、导出 PNG/SVG/JSON |
+| **聊天室** | 实时聊天室，支持密码保护、图片/视频上传（WebSocket） |
+| **孕期管理** | 孕期记录工具，孕周计算、产检提醒、宝宝发育参考 |
+| **每日菜谱** | 菜谱查询记录，每日推荐、分类浏览、收藏功能 |
 
 ### 安全与性能
 
@@ -129,7 +133,9 @@ devtools/
 │   │   ├── mockapi.go            # Mock API
 │   │   ├── mdshare.go            # Markdown 分享
 │   │   ├── excalidraw.go         # Excalidraw 画图
-│   │   └── dns.go                # IP/DNS 查询
+│   │   ├── terminal.go           # SSH 终端（WebSocket）
+│   │   ├── dns.go                # IP/DNS 查询
+│   │   └── health.go             # 健康检查
 │   ├── middleware/               # 中间件
 │   │   └── ratelimit.go          # IP 限流
 │   ├── models/                   # 数据模型（SQLite）
@@ -138,7 +144,8 @@ devtools/
 │   │   ├── shorturl.go           # 短链模型
 │   │   ├── mockapi.go            # Mock API 模型
 │   │   ├── mdshare.go            # Markdown 分享模型
-│   │   └── excalidraw.go         # Excalidraw 模型
+│   │   ├── excalidraw.go         # Excalidraw 模型
+│   │   └── terminal.go           # SSH 终端模型
 │   ├── config/                   # 配置管理
 │   │   └── config.go             # YAML 配置加载
 │   ├── utils/                    # 工具函数
@@ -164,6 +171,7 @@ devtools/
 | CONFIG_PATH | ./config.yaml | 配置文件路径 |
 | GIN_MODE | release（生产环境） | Gin 运行模式 |
 | TZ | Asia/Shanghai | 时区 |
+| TERMINAL_ENCRYPTION_KEY | 自动生成 | SSH 终端密码加密密钥（需持久化否则重启后无法解密） |
 
 ## 配置文件
 
@@ -243,6 +251,24 @@ excalidraw:
 | PUT | /api/mockapi/:id | 更新 Mock API |
 | DELETE | /api/mockapi/:id | 删除 Mock API |
 | ANY | /mock/:id | 执行 Mock API（记录请求并返回配置的响应） |
+
+### SSH 终端
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| POST | /api/terminal | 创建 SSH 会话（需 host、port、username、password 或 private_key、user_token） |
+| POST | /api/terminal/login | 用户登录获取/生成 user_token |
+| GET | /api/terminal/list?user_token=xxx | 列出用户所有会话 |
+| GET | /api/terminal/:id?user_token=xxx | 获取会话详情 |
+| GET | /api/terminal/:id/creator?creator_key=xxx | 创建者获取会话信息 |
+| GET | /api/terminal/:id/history?user_token=xxx | 获取命令历史 |
+| POST | /api/terminal/:id/resume | 恢复/重连 SSH 会话 |
+| POST | /api/terminal/:id/disconnect | 断开 SSH 连接但保留会话记录 |
+| PUT | /api/terminal/:id | 更新会话（actions: rename、resize、extend） |
+| DELETE | /api/terminal/:id?creator_key=xxx | 删除会话 |
+| GET | /api/terminal/:id/ws?user_token=xxx | WebSocket 连接（SSH I/O） |
+| GET | /api/terminal/admin/list?admin_password=xxx | 管理员列出所有会话 |
+| DELETE | /api/terminal/admin/:id?admin_password=xxx | 管理员删除任意会话 |
 
 ### Markdown 分享
 

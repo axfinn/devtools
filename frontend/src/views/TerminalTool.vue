@@ -109,6 +109,144 @@
           </div>
         </div>
         <div ref="terminalRef" class="terminal-wrapper"></div>
+
+        <!-- 虚拟键盘工具栏 -->
+        <div v-if="settings.showVirtualKeyboard" class="virtual-keyboard">
+          <!-- 收起/展开按钮 -->
+          <div class="vk-toggle" @click="vkExpanded = !vkExpanded">
+            <el-icon><ArrowUp v-if="vkExpanded" /><ArrowDown v-else /></el-icon>
+            <span>{{ vkExpanded ? '收起键盘' : '显示键盘' }}</span>
+          </div>
+
+          <!-- 键盘主体 -->
+          <div v-show="vkExpanded" class="vk-content">
+            <!-- 关键操作键 - 回车/退格放在最前面 -->
+            <div class="vk-row vk-row-critical">
+              <button class="vk-btn vk-btn-enter" @click="sendKey('\r')">
+                <el-icon><Check /></el-icon>
+                <span>回车</span>
+              </button>
+              <button class="vk-btn vk-btn-backspace" @click="sendKey('\x7f')">
+                <el-icon><Back /></el-icon>
+                <span>退格</span>
+              </button>
+              <button class="vk-btn vk-btn-space" @click="sendKey(' ')">
+                <span>空格</span>
+              </button>
+            </div>
+
+            <!-- 方向键 + Tab + Esc -->
+            <div class="vk-row vk-row-title">
+              <span class="vk-row-label">方向键</span>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-arrow vk-btn-large" @click="sendKey('\x1b[A')">↑</button>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-arrow vk-btn-large" @click="sendKey('\x1b[D')">←</button>
+              <button class="vk-btn vk-btn-arrow vk-btn-large" @click="sendKey('\x1b[B')">↓</button>
+              <button class="vk-btn vk-btn-arrow vk-btn-large" @click="sendKey('\x1b[C')">→</button>
+            </div>
+
+            <!-- 功能键 -->
+            <div class="vk-row vk-row-title">
+              <span class="vk-row-label">功能键</span>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-fn vk-btn-large" @click="sendKey('\t')">Tab</button>
+              <button class="vk-btn vk-btn-fn vk-btn-large" @click="sendKey('\x1b')">Esc</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[H')">Home</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[F')">End</button>
+            </div>
+
+            <!-- Ctrl 组合键 -->
+            <div class="vk-row vk-row-title">
+              <span class="vk-row-label">Ctrl 组合</span>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x03')">中断</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x1a')">挂起</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('l')">清屏</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('u')">清行</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('a')">行首</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('e')">行尾</button>
+            </div>
+
+            <!-- 更多符号 -->
+            <div class="vk-row vk-row-title">
+              <span class="vk-row-label">常用符号</span>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-symbol" @click="sendKey('|')">|</button>
+              <button class="vk-btn vk-btn-symbol" @click="sendKey('&')">&</button>
+              <button class="vk-btn vk-btn-symbol" @click="sendKey(';')">;</button>
+              <button class="vk-btn vk-btn-symbol" @click="sendKey(':')">:</button>
+              <button class="vk-btn vk-btn-symbol" @click="sendKey('/')">/</button>
+              <button class="vk-btn vk-btn-symbol" @click="sendKey('-')">-</button>
+              <button class="vk-btn vk-btn-symbol" @click="sendKey('_')">_</button>
+              <button class="vk-btn vk-btn-symbol" @click="sendKey('.')">.</button>
+            </div>
+
+            <!-- 操作按钮行 -->
+            <div class="vk-row vk-actions">
+              <button
+                class="vk-btn vk-btn-action"
+                :class="{ 'vk-btn-active': voiceInputActive }"
+                @click="toggleVoiceInput"
+                :disabled="!settings.voiceInputEnabled"
+              >
+                <el-icon><Microphone /></el-icon>
+                <span>{{ voiceInputActive ? '录音中...' : '语音' }}</span>
+              </button>
+              <button class="vk-btn vk-btn-action" @click="showPasteInput">
+                <el-icon><Document /></el-icon>
+                <span>粘贴</span>
+              </button>
+              <button class="vk-btn vk-btn-action" @click="showMoreOptions = true">
+                <el-icon><MoreFilled /></el-icon>
+                <span>更多</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 粘贴输入框弹窗 -->
+        <el-dialog v-model="showPasteDialog" title="粘贴内容" width="400px">
+          <el-input
+            v-model="pasteText"
+            type="textarea"
+            :rows="5"
+            placeholder="请输入或粘贴要发送的内容"
+          />
+          <template #footer>
+            <el-button @click="showPasteDialog = false">取消</el-button>
+            <el-button type="primary" @click="sendPasteText">发送</el-button>
+          </template>
+        </el-dialog>
+
+        <!-- 更多选项弹窗 -->
+        <el-dialog v-model="showMoreOptions" title="更多选项" width="400px">
+          <el-form label-width="100px">
+            <el-form-item label="快速命令">
+              <el-button size="small" @click="sendCommand('ls')">ls</el-button>
+              <el-button size="small" @click="sendCommand('cd')">cd</el-button>
+              <el-button size="small" @click="sendCommand('pwd')">pwd</el-button>
+              <el-button size="small" @click="sendCommand('clear')">clear</el-button>
+              <el-button size="small" @click="sendCommand('exit')">exit</el-button>
+            </el-form-item>
+            <el-form-item label="自定义输入">
+              <el-input
+                v-model="customCommand"
+                placeholder="输入自定义命令"
+                @keyup.enter="sendCustomCommand"
+              >
+                <template #append>
+                  <el-button @click="sendCustomCommand">发送</el-button>
+                </template>
+              </el-input>
+            </el-form-item>
+          </el-form>
+        </el-dialog>
       </div>
     </template>
 
@@ -191,6 +329,14 @@
             <el-option label="暗色" value="dark" />
           </el-select>
         </el-form-item>
+        <el-form-item label="虚拟键盘">
+          <el-switch v-model="settings.showVirtualKeyboard" />
+          <span class="form-tip">在终端底部显示虚拟键盘</span>
+        </el-form-item>
+        <el-form-item label="语音输入">
+          <el-switch v-model="settings.voiceInputEnabled" />
+          <span class="form-tip">启用语音识别输入命令</span>
+        </el-form-item>
         <el-form-item>
           <el-button type="danger" @click="clearAllSessions">清除所有会话</el-button>
         </el-form-item>
@@ -204,7 +350,8 @@ import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Monitor, Plus, Refresh, Setting, Connection, User, Clock,
-  Edit, Delete, SwitchButton
+  Edit, Delete, SwitchButton, ArrowUp, ArrowDown,
+  Microphone, Document, MoreFilled, Check, Back
 } from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -246,7 +393,9 @@ const renameForm = reactive({
 
 const settings = reactive({
   fontSize: 14,
-  theme: 'default'
+  theme: 'default',
+  showVirtualKeyboard: true,
+  voiceInputEnabled: true
 })
 
 const dialogs = reactive({
@@ -257,6 +406,15 @@ const dialogs = reactive({
 const showSettings = ref(false)
 const terminalRef = ref(null)
 const createFormRef = ref(null)
+
+// 虚拟键盘状态
+const vkExpanded = ref(true)
+const showPasteDialog = ref(false)
+const showMoreOptions = ref(false)
+const pasteText = ref('')
+const customCommand = ref('')
+const voiceInputActive = ref(false)
+let recognition = null
 
 let terminal = null
 let fitAddon = null
@@ -697,6 +855,164 @@ function updateTerminalSettings() {
   }
 }
 
+// 虚拟键盘方法
+function sendKey(key) {
+  if (terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
+    state.wsConnection.send(JSON.stringify({
+      type: 'input',
+      data: key
+    }))
+  }
+}
+
+function sendShortcut(key) {
+  // Ctrl + 字母键
+  const ctrlKey = key.toLowerCase().charCodeAt(0) - 96
+  sendKey(String.fromCharCode(ctrlKey))
+}
+
+function showPasteInput() {
+  // 尝试读取剪贴板
+  if (navigator.clipboard) {
+    navigator.clipboard.readText().then(text => {
+      pasteText.value = text || ''
+      showPasteDialog.value = true
+    }).catch(() => {
+      pasteText.value = ''
+      showPasteDialog.value = true
+    })
+  } else {
+    pasteText.value = ''
+    showPasteDialog.value = true
+  }
+}
+
+function sendPasteText() {
+  if (pasteText.value && terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
+    state.wsConnection.send(JSON.stringify({
+      type: 'input',
+      data: pasteText.value
+    }))
+  }
+  pasteText.value = ''
+  showPasteDialog.value = false
+}
+
+function sendCommand(cmd) {
+  if (terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
+    state.wsConnection.send(JSON.stringify({
+      type: 'input',
+      data: cmd + '\r'
+    }))
+  }
+  showMoreOptions.value = false
+}
+
+function sendCustomCommand() {
+  if (customCommand.value && terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
+    state.wsConnection.send(JSON.stringify({
+      type: 'input',
+      data: customCommand.value + '\r'
+    }))
+    customCommand.value = ''
+  }
+  showMoreOptions.value = false
+}
+
+// 语音输入
+function toggleVoiceInput() {
+  if (!settings.voiceInputEnabled) {
+    ElMessage.warning('请先在设置中开启语音输入')
+    return
+  }
+
+  if (voiceInputActive.value) {
+    stopVoiceInput()
+  } else {
+    startVoiceInput()
+  }
+}
+
+function startVoiceInput() {
+  // 检查浏览器是否支持语音识别
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+
+  if (!SpeechRecognition) {
+    ElMessage.error('您的浏览器不支持语音识别功能')
+    return
+  }
+
+  try {
+    recognition = new SpeechRecognition()
+    recognition.lang = 'zh-CN'
+    recognition.continuous = true
+    recognition.interimResults = true
+
+    recognition.onstart = () => {
+      voiceInputActive.value = true
+      ElMessage.success('语音识别已启动')
+    }
+
+    recognition.onresult = (event) => {
+      let finalTranscript = ''
+      let interimTranscript = ''
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript
+        } else {
+          interimTranscript += transcript
+        }
+      }
+
+      // 发送识别的文本
+      if (finalTranscript) {
+        sendVoiceText(finalTranscript)
+      }
+    }
+
+    recognition.onerror = (event) => {
+      console.error('语音识别错误:', event.error)
+      voiceInputActive.value = false
+      if (event.error === 'not-allowed') {
+        ElMessage.error('请允许麦克风权限')
+      } else if (event.error === 'no-speech') {
+        ElMessage.warning('未检测到语音')
+      } else {
+        ElMessage.error('语音识别错误: ' + event.error)
+      }
+    }
+
+    recognition.onend = () => {
+      voiceInputActive.value = false
+    }
+
+    recognition.start()
+  } catch (error) {
+    console.error('启动语音识别失败:', error)
+    ElMessage.error('启动语音识别失败')
+  }
+}
+
+function stopVoiceInput() {
+  if (recognition) {
+    recognition.stop()
+    recognition = null
+  }
+  voiceInputActive.value = false
+}
+
+function sendVoiceText(text) {
+  // 将识别的文本发送到终端
+  if (terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
+    state.wsConnection.send(JSON.stringify({
+      type: 'input',
+      data: text
+    }))
+  }
+}
+
 async function clearAllSessions() {
   try {
     await ElMessageBox.confirm('确定要清除所有会话吗？此操作不可恢复！', '警告', {
@@ -738,6 +1054,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopVoiceInput()
   disconnectSession()
   window.removeEventListener('resize', handleResize)
 })
@@ -909,10 +1226,274 @@ onBeforeUnmount(() => {
   margin-left: 8px;
 }
 
+/* 虚拟键盘 */
+.virtual-keyboard {
+  background: #2d2d2d;
+  border-top: 1px solid #444;
+  flex-shrink: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.vk-row-critical {
+  margin-bottom: 10px;
+}
+
+.vk-btn-enter {
+  flex: 1;
+  height: 48px;
+  background: #2e7d32;
+  font-size: 14px;
+  min-width: auto;
+}
+
+.vk-btn-enter:hover {
+  background: #3e8d42;
+}
+
+.vk-btn-backspace {
+  height: 48px;
+  background: #c62828;
+  font-size: 14px;
+  min-width: 80px;
+}
+
+.vk-btn-backspace:hover {
+  background: #d63838;
+}
+
+.vk-btn-space {
+  flex: 2;
+  height: 48px;
+  background: #424242;
+  font-size: 14px;
+  min-width: auto;
+}
+
+.vk-btn-space:hover {
+  background: #525252;
+}
+
+.vk-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  background: #3d3d3d;
+  transition: background 0.2s;
+}
+
+.vk-toggle:hover {
+  background: #4d4d4d;
+}
+
+.vk-content {
+  padding: 8px;
+}
+
+.vk-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.vk-row-title {
+  margin-bottom: 2px;
+}
+
+.vk-row-label {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.vk-row:last-child {
+  margin-bottom: 0;
+}
+
+.vk-btn {
+  min-width: 44px;
+  height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 4px;
+  background: #4a4a4a;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.vk-btn:hover {
+  background: #5a5a5a;
+}
+
+.vk-btn:active {
+  background: #3a3a3a;
+  transform: scale(0.95);
+}
+
+.vk-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vk-btn-large {
+  min-width: 60px;
+  height: 48px;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.vk-btn-fn {
+  min-width: 50px;
+  background: #3d5a80;
+}
+
+.vk-btn-fn:hover {
+  background: #4d6a90;
+}
+
+.vk-btn-arrow {
+  min-width: 60px;
+  height: 48px;
+  background: #1565c0;
+  font-size: 22px;
+  font-weight: bold;
+}
+
+.vk-btn-arrow:hover {
+  background: #4d6a90;
+}
+
+.vk-btn-shortcut {
+  min-width: 48px;
+  background: #5c4033;
+  font-size: 12px;
+}
+
+.vk-btn-symbol {
+  min-width: 40px;
+  height: 36px;
+  background: #37474f;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.vk-btn-shortcut:hover {
+  background: #6c5043;
+}
+
+.vk-btn-action {
+  min-width: 70px;
+  background: #2d5a3d;
+}
+
+.vk-btn-action:hover {
+  background: #3d6a4d;
+}
+
+.vk-btn-active {
+  background: #d32f2f !important;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.vk-actions {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #444;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .session-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* 虚拟键盘移动端优化 */
+  .virtual-keyboard {
+    padding: 6px;
+  }
+
+  .vk-content {
+    padding: 4px;
+  }
+
+  .vk-row {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .vk-btn {
+    min-width: 36px;
+    height: 36px;
+    font-size: 12px;
+    padding: 0 6px;
+  }
+
+  .vk-btn-large {
+    min-width: 50px;
+    height: 42px;
+    font-size: 14px;
+  }
+
+  .vk-btn-arrow {
+    min-width: 50px;
+    height: 42px;
+    font-size: 18px;
+  }
+
+  .vk-btn-enter {
+    height: 42px;
+    font-size: 12px;
+  }
+
+  .vk-btn-backspace {
+    height: 42px;
+    min-width: 60px;
+    font-size: 12px;
+  }
+
+  .vk-btn-space {
+    height: 42px;
+  }
+
+  .vk-btn-shortcut {
+    min-width: 40px;
+    font-size: 11px;
+  }
+
+  .vk-btn-symbol {
+    min-width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .vk-toggle {
+    padding: 6px;
+    font-size: 12px;
+  }
+
+  .vk-row-label {
+    font-size: 10px;
   }
 
   .tool-header {
