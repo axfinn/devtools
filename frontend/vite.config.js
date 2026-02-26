@@ -34,6 +34,8 @@ export default defineConfig({
           'element-plus': ['element-plus'],
           // React 核心（Excalidraw 依赖）
           'react-vendor': ['react', 'react-dom'],
+          // Excalidraw 画图库（单独分包）
+          'excalidraw': ['@excalidraw/excalidraw'],
           // Mermaid 图表库（按需加载）
           'mermaid': ['mermaid'],
           // KaTeX 数学公式

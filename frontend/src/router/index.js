@@ -72,6 +72,12 @@ const routes = [
     meta: { title: '文本转换', icon: 'ChatDotRound' }
   },
   {
+    path: '/replace',
+    name: 'Replace',
+    component: () => import('../views/ReplaceTool.vue'),
+    meta: { title: '批量替换', icon: 'Switch' }
+  },
+  {
     path: '/dns',
     name: 'DNS',
     component: () => import('../views/DnsTool.vue'),
