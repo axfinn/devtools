@@ -49,31 +49,69 @@
     </el-drawer>
 
     <!-- PC端侧边栏 -->
-    <el-aside v-if="!isMobile && !hideSidebar" :width="isCollapse ? '64px' : '200px'" class="sidebar">
+    <el-aside v-if="!isMobile && !hideSidebar" :width="isCollapse ? '64px' : '220px'" class="sidebar">
       <div class="sidebar-header">
         <div class="logo" @click="isCollapse = !isCollapse">
           <el-icon :size="24"><Tools /></el-icon>
           <span v-show="!isCollapse" class="logo-text">DevTools</span>
         </div>
-        <el-tooltip :content="themeModeName" placement="right">
-          <el-icon :size="20" class="theme-toggle-pc" @click="toggleTheme">
-            <component :is="themeIcon" />
-          </el-icon>
-        </el-tooltip>
       </div>
+      <!-- 搜索框 -->
+      <div v-if="!isCollapse" class="sidebar-search">
+        <el-input
+          v-model="sidebarSearch"
+          placeholder="搜索工具..."
+          clearable
+          size="small"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+      </div>
+      <!-- 分类菜单 -->
+      <div class="sidebar-content" v-if="!isCollapse">
+        <div
+          v-for="(routes, category) in groupedMenuRoutes"
+          :key="category"
+          class="sidebar-group"
+        >
+          <div class="sidebar-group-title" @click="toggleCategory(category)">
+            <el-icon>
+              <component :is="expandedCategories[category] ? ArrowDown : ArrowRight" />
+            </el-icon>
+            <span>{{ categories[category]?.name || '其他' }}</span>
+          </div>
+          <div v-show="expandedCategories[category]" class="sidebar-group-items">
+            <div
+              v-for="route in routes"
+              :key="route.path"
+              class="sidebar-item"
+              :class="{ active: $route.path === route.path }"
+              @click="$router.push(route.path)"
+            >
+              <el-icon><component :is="route.meta.icon" /></el-icon>
+              <span>{{ route.meta.title }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 折叠模式显示简单菜单 -->
       <el-menu
+        v-else
         :default-active="$route.path"
-        :collapse="isCollapse"
+        :collapse="true"
         router
         class="sidebar-menu"
       >
         <el-menu-item
-          v-for="route in menuRoutes"
+          v-for="route in filteredMenuRoutes"
           :key="route.path"
           :index="route.path"
         >
-          <el-icon><component :is="route.meta.icon" /></el-icon>
-          <template #title>{{ route.meta.title }}</template>
+          <el-tooltip :content="route.meta.title" placement="right">
+            <el-icon><component :is="route.meta.icon" /></el-icon>
+          </el-tooltip>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -132,7 +170,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Menu, Coffee, Sunny, Moon, Monitor } from '@element-plus/icons-vue'
+import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tools } from '@element-plus/icons-vue'
 import { useTheme } from './composables/useTheme'
 
 const router = useRouter()
@@ -154,11 +192,47 @@ const currentTitle = computed(() => {
   return currentRoute?.meta?.title || 'DevTools'
 })
 
+import { categories } from './router'
+
 const menuRoutes = computed(() => {
   return router.options.routes.filter(route =>
-    route.meta && route.meta.title && !route.path.includes(':')
+    route.meta && route.meta.title && !route.path.includes(':') && route.meta.category && route.meta.category !== 'home'
   )
 })
+
+// 侧边栏搜索
+const sidebarSearch = ref('')
+const filteredMenuRoutes = computed(() => {
+  if (!sidebarSearch.value) return menuRoutes.value
+  const keyword = sidebarSearch.value.toLowerCase()
+  return menuRoutes.value.filter(route =>
+    route.meta?.title?.toLowerCase().includes(keyword) ||
+    route.meta?.description?.toLowerCase().includes(keyword)
+  )
+})
+
+// 分类菜单
+const groupedMenuRoutes = computed(() => {
+  const groups = {}
+  filteredMenuRoutes.value.forEach(route => {
+    const category = route.meta?.category || 'other'
+    if (!groups[category]) {
+      groups[category] = []
+    }
+    groups[category].push(route)
+  })
+  return groups
+})
+
+// 分类展开状态
+const expandedCategories = ref(Object.keys(categories).reduce((acc, key) => {
+  acc[key] = true
+  return acc
+}, {}))
+
+const toggleCategory = (category) => {
+  expandedCategories.value[category] = !expandedCategories.value[category]
+}
 
 // 检测屏幕宽度
 const checkMobile = () => {
@@ -368,6 +442,65 @@ const themeModeName = computed(() => {
 .theme-toggle-pc:hover {
   color: var(--color-primary);
   background: rgba(64, 158, 255, 0.1);
+}
+
+/* 侧边栏搜索 */
+.sidebar-search {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-base);
+}
+
+/* 侧边栏内容 */
+.sidebar-content {
+  height: calc(100vh - 100px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.sidebar-group {
+  padding: 8px 0;
+}
+
+.sidebar-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.sidebar-group-title:hover {
+  color: var(--text-primary);
+}
+
+.sidebar-group-items {
+  padding: 0 8px;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 10px 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.sidebar-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.sidebar-item.active {
+  background: rgba(64, 158, 255, 0.1);
+  color: var(--color-primary);
 }
 
 .sidebar-menu {
