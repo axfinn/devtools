@@ -1,6 +1,9 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -30,4 +33,15 @@ func VerifyPassword(password, hashedPassword string) bool {
 	}
 	err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
 	return err == nil
+}
+
+// GenerateHexKey 生成指定长度的随机十六进制密钥（用于创建者密钥、访问密钥等）
+// length 参数指定字节数，返回的十六进制字符串长度为 length*2
+func GenerateHexKey(length int) string {
+	if length <= 0 {
+		length = 16 // 默认 16 字节（32 字符）
+	}
+	bytes := make([]byte, length)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
 }

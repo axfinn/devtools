@@ -211,6 +211,7 @@ defineExpose({
   width: 100%;
   height: 100%;
   min-height: 500px;
+  background: transparent;
 }
 
 .excalidraw-container :deep(.excalidraw) {

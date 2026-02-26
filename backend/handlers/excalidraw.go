@@ -131,7 +131,7 @@ func (h *ExcalidrawHandler) Create(c *gin.Context) {
 	}
 
 	// Generate creator key
-	creatorKey := generateKey()
+	creatorKey := utils.GenerateHexKey(16)
 
 	hashedCreatorKey, err := utils.HashPassword(creatorKey)
 	if err != nil {

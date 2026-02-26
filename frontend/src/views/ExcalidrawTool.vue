@@ -62,7 +62,7 @@
       <ExcalidrawWrapper
         ref="excalidrawRef"
         :initial-data="initialData"
-        :theme="currentTheme"
+        :theme="'light'"
         @change="onSceneChange"
         @ready="onExcalidrawReady"
       />
@@ -1062,6 +1062,7 @@ const copyToClipboard = async (text, name) => {
 .tool-container {
   display: flex;
   flex-direction: column;
+  height: calc(100vh - 40px);
   min-height: 500px;
 }
 
@@ -1092,7 +1093,7 @@ const copyToClipboard = async (text, name) => {
   min-height: 0;
   border-radius: var(--radius-md);
   overflow: hidden;
-  background: #121212;
+  position: relative;
 }
 
 .result-form {

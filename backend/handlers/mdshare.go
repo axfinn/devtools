@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"net/http"
 	"time"
 
@@ -85,12 +83,6 @@ type UpdateMDShareResponse struct {
 	Views         int        `json:"views,omitempty"`
 }
 
-func generateKey() string {
-	bytes := make([]byte, 16)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
-}
-
 func (h *MDShareHandler) Create(c *gin.Context) {
 	var req CreateMDShareRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -136,8 +128,8 @@ func (h *MDShareHandler) Create(c *gin.Context) {
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * 24 * time.Hour)
 
 	// Generate keys
-	creatorKey := generateKey()
-	accessKey := generateKey()
+	creatorKey := utils.GenerateHexKey(16)
+	accessKey := utils.GenerateHexKey(16)
 
 	hashedCreatorKey, err := utils.HashPassword(creatorKey)
 	if err != nil {
@@ -321,7 +313,7 @@ func (h *MDShareHandler) Update(c *gin.Context) {
 
 	case "reshare":
 		// Generate new access key and reset views
-		newAccessKey := generateKey()
+		newAccessKey := utils.GenerateHexKey(16)
 		hashedAccessKey, err := utils.HashPassword(newAccessKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "密钥生成失败", "code": 500})
