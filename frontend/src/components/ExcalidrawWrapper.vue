@@ -72,7 +72,12 @@ const renderExcalidraw = () => {
 }
 
 onMounted(() => {
-  renderExcalidraw()
+  // 添加错误处理
+  try {
+    renderExcalidraw()
+  } catch (e) {
+    console.error('Excalidraw render error:', e)
+  }
 })
 
 onUnmounted(() => {
