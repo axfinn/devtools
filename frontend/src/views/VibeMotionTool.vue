@@ -1,19 +1,13 @@
 <template>
   <div class="tool-container vibe-tool">
-    <div class="tool-header">
-      <h2><el-icon><VideoCamera /></el-icon> AI 动效</h2>
-      <div class="header-actions">
-        <el-button @click="refreshFrame">
-          <el-icon><Refresh /></el-icon> 刷新
-        </el-button>
-      </div>
-    </div>
     <div class="vibe-container">
       <iframe
         ref="iframeRef"
         src="/neon/index.html"
         frameborder="0"
         class="vibe-iframe"
+        sandbox="allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts"
+        allow="accelerometer; camera; encrypted-media; gyroscope; microphone; autoplay; fullscreen"
         @load="onIframeLoad"
       ></iframe>
     </div>
@@ -21,8 +15,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { VideoCamera, Refresh } from '@element-plus/icons-vue'
+import { ref, onMounted } from 'vue'
 
 const iframeRef = ref(null)
 
@@ -30,11 +23,14 @@ const onIframeLoad = () => {
   console.log('Neon Vibe Motion loaded')
 }
 
-const refreshFrame = () => {
+onMounted(() => {
+  // 确保 iframe 正确加载
   if (iframeRef.value) {
-    iframeRef.value.src = iframeRef.value.src
+    iframeRef.value.addEventListener('load', () => {
+      console.log('iframe loaded successfully')
+    })
   }
-}
+})
 </script>
 
 <style scoped>
@@ -42,34 +38,13 @@ const refreshFrame = () => {
   display: flex;
   flex-direction: column;
   height: 100%;
-}
-
-.tool-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px;
-  background: var(--el-bg-color);
-  border-bottom: 1px solid var(--el-border-color);
-  flex-shrink: 0;
-}
-
-.tool-header h2 {
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.header-actions {
-  display: flex;
-  gap: 8px;
+  margin: -16px;
 }
 
 .vibe-container {
   flex: 1;
   overflow: hidden;
-  background: #000;
+  background: #0a0a0a;
 }
 
 .vibe-iframe {
