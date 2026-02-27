@@ -172,6 +172,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/vibe',
+    name: 'VibeMotion',
+    component: () => import('../views/VibeMotionTool.vue'),
+    meta: {
+      title: 'AI 动效',
+      icon: 'VideoCamera',
+      category: 'draw',
+      description: 'AI 动效生成'
+    }
+  },
+  {
     path: '/paste',
     name: 'PasteBin',
     component: () => import('../views/PasteBin.vue'),
