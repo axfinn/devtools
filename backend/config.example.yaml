@@ -112,7 +112,6 @@ ssh:
   session_max_age_days: 7
 
   # SSH 密码加密密钥（Base64 编码的 32 字节密钥）
-  # 示例生成命令: go run -c 'import "devtools/utils"; println(utils.GenerateRandomKey())'
-  # 或: openssl rand -base64 32
-  # 如果未设置，已保存的 SSH 密码在重启后将无法解密
-  # encryption_key: ""
+  # 生成命令: openssl rand -base64 32
+  # 重要：设置后不要修改，否则之前保存的 SSH 密码将无法解密
+  encryption_key: ""

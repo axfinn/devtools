@@ -83,6 +83,9 @@
             </div>
             <div class="session-actions" @click.stop>
               <el-button-group size="small">
+                <el-button @click="createFromSession(session)" title="新建连接">
+                  <el-icon><Link /></el-icon>
+                </el-button>
                 <el-button @click="renameSession(session)">
                   <el-icon><Edit /></el-icon>
                 </el-button>
@@ -111,7 +114,11 @@
         <div ref="terminalRef" class="terminal-wrapper"></div>
 
         <!-- 虚拟键盘工具栏 -->
-        <div v-if="settings.showVirtualKeyboard" class="virtual-keyboard">
+        <div
+          v-if="settings.showVirtualKeyboard"
+          class="virtual-keyboard"
+          :class="{ 'vk-collapsed': !vkExpanded }"
+        >
           <!-- 收起/展开按钮 -->
           <div class="vk-toggle" @click="vkExpanded = !vkExpanded">
             <el-icon><ArrowUp v-if="vkExpanded" /><ArrowDown v-else /></el-icon>
@@ -272,10 +279,10 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="createForm.authType === 'password'" label="密码" prop="password">
-          <el-input v-model="createForm.password" type="password" placeholder="SSH 密码" show-password />
+          <el-input v-model="createForm.password" type="password" placeholder="留空则使用历史密码" show-password clearable />
         </el-form-item>
         <el-form-item v-else label="私钥" prop="privateKey">
-          <el-input v-model="createForm.privateKey" type="textarea" :rows="6" placeholder="-----BEGIN RSA PRIVATE KEY-----" />
+          <el-input v-model="createForm.privateKey" type="textarea" :rows="6" placeholder="留空则使用历史私钥" clearable />
         </el-form-item>
         <el-form-item label="保持连接">
           <el-switch v-model="createForm.keepAlive" />
@@ -346,12 +353,12 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Monitor, Plus, Refresh, Setting, Connection, User, Clock,
   Edit, Delete, SwitchButton, ArrowUp, ArrowDown,
-  Microphone, Document, MoreFilled, Check, Back
+  Microphone, Document, MoreFilled, Check, Back, Link
 } from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -409,6 +416,15 @@ const createFormRef = ref(null)
 
 // 虚拟键盘状态
 const vkExpanded = ref(true)
+
+// 监听键盘收起/展开，自动调整终端大小
+watch(vkExpanded, () => {
+  nextTick(() => {
+    if (fitAddon) {
+      fitAddon.fit()
+    }
+  })
+})
 const showPasteDialog = ref(false)
 const showMoreOptions = ref(false)
 const pasteText = ref('')
@@ -427,8 +443,9 @@ const createRules = {
   host: [{ required: true, message: '请输入主机地址', trigger: 'blur' }],
   port: [{ required: true, type: 'number', message: '请输入端口', trigger: 'blur' }],
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-  privateKey: [{ required: true, message: '请输入私钥', trigger: 'blur' }]
+  // 密码和私钥改为非必填，后端会自动从历史记录中查找
+  password: [{ required: false }],
+  privateKey: [{ required: false }]
 }
 
 // ==================== User Login ====================
@@ -474,6 +491,21 @@ function showCreateDialog() {
   dialogs.create = true
 }
 
+// 从历史会话创建新连接
+function createFromSession(session) {
+  // 预填充创建表单
+  createForm.name = session.name + ' (新)'
+  createForm.host = session.host
+  createForm.port = session.port
+  createForm.username = session.username
+  createForm.authType = 'password' // 默认用密码
+  createForm.password = ''
+  createForm.privateKey = ''
+  createForm.keepAlive = true
+  createForm.expiresIn = 0
+  dialogs.create = true
+}
+
 function resetCreateForm() {
   Object.assign(createForm, {
     name: '',
@@ -500,7 +532,7 @@ async function createAndConnect() {
   state.loading = true
 
   try {
-    // 创建会话
+    // 创建会话（如果没有填密码，让后端自动查找历史）
     const response = await fetch('/api/terminal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -520,6 +552,14 @@ async function createAndConnect() {
     })
 
     const data = await response.json()
+
+    // 需要密码时，提示用户输入（不关闭对话框）
+    if (data.error === 'need_password') {
+      ElMessage.warning('未找到历史密码，请输入密码或私钥')
+      state.loading = false
+      // 对话框保持打开，用户可以输入密码后重试
+      return
+    }
 
     if (!response.ok) {
       throw new Error(data.error || '创建会话失败')
@@ -569,7 +609,9 @@ function initTerminal() {
       foreground: settings.theme === 'dark' ? '#d4d4d4' : '#000000'
     },
     rows: 24,
-    cols: 80
+    cols: 80,
+    scrollback: 10000, // 允许滚动查看历史输出
+    allowProposedApi: true
   })
 
   fitAddon = new FitAddon()
@@ -769,19 +811,13 @@ async function submitRename() {
 }
 
 async function deleteSession(session) {
-  const creatorKey = localStorage.getItem(`ssh_creator_${session.id}`)
-
-  if (!creatorKey) {
-    ElMessage.error('无权删除此会话（缺少创建者密钥）')
-    return
-  }
-
   try {
     await ElMessageBox.confirm(`确定要删除会话 "${session.name}" 吗？`, '确认删除', {
       type: 'warning'
     })
 
-    const response = await fetch(`/api/terminal/${session.id}?creator_key=${creatorKey}`, {
+    // 使用 user_token 删除会话，不需要 creator_key
+    const response = await fetch(`/api/terminal/${session.id}?user_token=${state.userToken}`, {
       method: 'DELETE'
     })
 
@@ -1232,6 +1268,14 @@ onBeforeUnmount(() => {
   border-top: 1px solid #444;
   flex-shrink: 0;
   padding-bottom: env(safe-area-inset-bottom);
+  transition: max-height 0.3s ease, padding 0.3s ease, border-width 0.3s ease;
+  max-height: 400px;
+  overflow: hidden;
+}
+
+.virtual-keyboard.vk-collapsed {
+  max-height: 36px;
+  border-top-width: 1px;
 }
 
 .vk-row-critical {

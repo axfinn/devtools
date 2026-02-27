@@ -402,6 +402,49 @@ func (db *DB) DeleteSSHSession(id string) error {
 	return err
 }
 
+// GetLatestSSHSessionByHost 根据主机信息查找最近会话
+func (db *DB) GetLatestSSHSessionByHost(userToken, host string, port int, username string) (*SSHSession, error) {
+	session := &SSHSession{}
+	var expiresAt sql.NullTime
+	var passwordEncrypted, privateKeyEncrypted sql.NullString
+	var keepAlive int
+
+	err := db.conn.QueryRow(`
+		SELECT id, name, host, port, username,
+			password_encrypted, private_key_encrypted,
+			width, height,
+			status, keep_alive, last_active_at,
+			expires_at, created_at, updated_at
+		FROM ssh_sessions
+		WHERE user_token = ? AND host = ? AND port = ? AND username = ?
+		ORDER BY last_active_at DESC, created_at DESC
+		LIMIT 1
+	`, userToken, host, port, username).Scan(
+		&session.ID, &session.Name, &session.Host, &session.Port, &session.Username,
+		&passwordEncrypted, &privateKeyEncrypted,
+		&session.Width, &session.Height,
+		&session.Status, &keepAlive, &session.LastActiveAt,
+		&expiresAt, &session.CreatedAt, &session.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	session.PasswordEncrypted = passwordEncrypted.String
+	session.PrivateKeyEncrypted = privateKeyEncrypted.String
+	session.KeepAlive = keepAlive == 1
+
+	if expiresAt.Valid {
+		session.ExpiresAt = &expiresAt.Time
+	}
+
+	return session, nil
+}
+
 // ====================== History ======================
 
 // SaveSSHHistory 保存 SSH 历史记录

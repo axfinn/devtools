@@ -515,6 +515,103 @@ go mod download  # 重新下载依赖
 
 ---
 
+## 配置说明
+
+### 配置文件位置
+
+配置文件位于 `backend/config.yaml`，从 `config.example.yaml` 复制而来。
+
+### 完整配置示例
+
+```yaml
+# DevTools 配置文件
+
+# 短链配置
+shorturl:
+  password: "your_password"  # 短链管理密码
+
+# Markdown 分享配置
+mdshare:
+  admin_password: "your_password"   # 管理员密码
+  default_max_views: 5             # 默认最大查看次数
+  default_expires_days: 30         # 默认过期天数
+
+# Excalidraw 画图配置
+excalidraw:
+  admin_password: "your_password"   # 管理员密码
+  default_expires_days: 30          # 默认过期天数
+  max_content_size: 10485760        # 最大内容大小（10MB）
+
+# 粘贴板配置
+paste:
+  admin_password: "your_password"      # 管理员密码
+  default_video_max_views: 10           # 视频默认最大访问次数
+  max_file_size: 209715200             # 最大文件大小（200MB）
+
+# 聊天室配置
+chat:
+  admin_password: "your_password"  # 管理员密码
+
+# SSH 终端配置
+ssh:
+  admin_password: "your_password"  # 管理员密码（可查看/管理所有会话）
+
+  # SSH 密码加密密钥（重要！）
+  # 生成命令: openssl rand -base64 32
+  # 警告：设置后不要修改，否则之前保存的 SSH 密码将无法解密
+  encryption_key: "your_base64_encoded_key"
+
+  host_key_verification: true       # 是否验证 SSH 主机密钥
+  max_sessions_per_user: 10         # 每个用户最大会话数
+  session_idle_timeout: 5            # 会话空闲超时（分钟）
+  history_max_age_days: 30          # 历史记录保存天数
+  session_max_age_days: 7            # 不活跃会话保存天数
+```
+
+### 配置项详解
+
+#### SSH 终端配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `admin_password` | string | "" | 管理员密码，可通过 `/api/terminal/admin/list` 查看所有会话 |
+| `encryption_key` | string | "" | SSH 密码加密密钥，Base64 编码的 32 字节密钥 |
+| `host_key_verification` | bool | true | 是否验证 SSH 主机密钥，防止中间人攻击 |
+| `max_sessions_per_user` | int | 10 | 每个用户最大会话数 |
+| `session_idle_timeout` | int | 5 | 会话空闲超时时间（分钟） |
+| `history_max_age_days` | int | 30 | 命令历史记录保存天数 |
+| `session_max_age_days` | int | 7 | 不活跃会话保存天数 |
+
+#### SSH 加密密钥说明
+
+SSH 终端使用 AES-256-GCM 加密存储密码和私钥。配置 `encryption_key` 时需要注意：
+
+1. **生成密钥**：
+   ```bash
+   openssl rand -base64 32
+   ```
+
+2. **密钥用途**：
+   - 加密存储的 SSH 密码和私钥
+   - 服务器重启后需要保持密钥一致才能解密历史密码
+
+3. **注意事项**：
+   - 设置后**不要修改**，否则之前保存的 SSH 密码将无法解密
+   - 如果未设置，服务器重启后会生成随机密钥，历史密码将无法解密
+
+#### 各功能管理员密码用途
+
+| 功能 | 管理员密码用途 |
+|------|----------------|
+| `shorturl` | 创建自定义短链 ID |
+| `mdshare` | 管理所有分享、设置永久保存 |
+| `excalidraw` | 管理所有画图、设置永久保存 |
+| `paste` | 设置更多访问次数或永久访问 |
+| `chat` | 查看和删除所有聊天室 |
+| `ssh` | 查看和管理所有 SSH 会话 |
+
+---
+
 ## 部署
 
 ### Docker 部署

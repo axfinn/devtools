@@ -534,10 +534,50 @@ func (h *SSHHandler) Create(c *gin.Context) {
 		config.Name = fmt.Sprintf("%s@%s", config.Username, config.Host)
 	}
 
-	// 验证至少提供密码或私钥
+	// 如果没有提供密码或私钥，尝试从历史会话中查找
 	if config.Password == "" && config.PrivateKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "必须提供密码或私钥"})
-		return
+		log.Printf("[SSH] 尝试查找历史密码: userToken=%s, host=%s, port=%d, username=%s",
+			config.UserToken, config.Host, config.Port, config.Username)
+
+		// 查找该用户最近一次连接这个主机的会话
+		historySession, err := h.db.GetLatestSSHSessionByHost(config.UserToken, config.Host, config.Port, config.Username)
+		if err != nil {
+			log.Printf("[SSH] 查找历史会话失败: %v", err)
+		}
+
+		if historySession != nil {
+			log.Printf("[SSH] 找到历史会话: id=%s, hasPassword=%v, hasPrivateKey=%v",
+				historySession.ID, historySession.PasswordEncrypted != "", historySession.PrivateKeyEncrypted != "")
+
+			// 尝试解密历史密码
+			if historySession.PasswordEncrypted != "" {
+				password, err := h.encryption.DecryptIfNotEmpty(historySession.PasswordEncrypted)
+				if err != nil {
+					log.Printf("[SSH] 解密密码失败: %v", err)
+				} else {
+					log.Printf("[SSH] 密码解密成功, length=%d", len(password))
+					config.Password = password
+				}
+			}
+			// 尝试解密历史私钥
+			if config.Password == "" && historySession.PrivateKeyEncrypted != "" {
+				privateKey, err := h.encryption.DecryptIfNotEmpty(historySession.PrivateKeyEncrypted)
+				if err != nil {
+					log.Printf("[SSH] 解密私钥失败: %v", err)
+				} else {
+					log.Printf("[SSH] 私钥解密成功, length=%d", len(privateKey))
+					config.PrivateKey = privateKey
+				}
+			}
+		} else {
+			log.Printf("[SSH] 未找到历史会话")
+		}
+
+		// 如果还是没有找到密码或私钥，返回需要密码的错误
+		if config.Password == "" && config.PrivateKey == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "need_password", "message": "请输入密码或私钥"})
+			return
+		}
 	}
 
 	// IP 速率限制
@@ -671,6 +711,52 @@ func (h *SSHHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, session)
+}
+
+// GetCredentials 获取会话凭证（解密后的密码或私钥）
+func (h *SSHHandler) GetCredentials(c *gin.Context) {
+	sessionID := c.Param("id")
+	userToken := c.Query("user_token")
+
+	session, err := h.db.GetSSHSession(sessionID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "会话不存在"})
+		return
+	}
+
+	// 验证权限
+	if session.UserToken != userToken {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问此会话"})
+		return
+	}
+
+	// 解密密码和私钥
+	hasPassword := session.PasswordEncrypted != ""
+	hasPrivateKey := session.PrivateKeyEncrypted != ""
+
+	response := gin.H{
+		"id":           session.ID,
+		"has_password":   hasPassword,
+		"has_private_key": hasPrivateKey,
+	}
+
+	// 尝试解密密码
+	if hasPassword {
+		password, err := h.encryption.DecryptIfNotEmpty(session.PasswordEncrypted)
+		if err == nil {
+			response["password"] = password
+		}
+	}
+
+	// 尝试解密私钥
+	if hasPrivateKey {
+		privateKey, err := h.encryption.DecryptIfNotEmpty(session.PrivateKeyEncrypted)
+		if err == nil {
+			response["private_key"] = privateKey
+		}
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 // GetByCreator 通过创建者密钥获取会话
@@ -876,20 +962,24 @@ func (h *SSHHandler) Disconnect(c *gin.Context) {
 func (h *SSHHandler) Delete(c *gin.Context) {
 	sessionID := c.Param("id")
 	creatorKey := c.Query("creator_key")
+	userToken := c.Query("user_token")
 
-	if creatorKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 creator_key"})
-		return
-	}
-
-	// 验证创建者密钥
+	// 验证权限：支持 creator_key 或 user_token
 	session, err := h.db.GetSSHSession(sessionID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "会话不存在"})
 		return
 	}
 
-	if session.CreatorKey != creatorKey {
+	// 优先使用 creator_key，其次使用 user_token
+	hasPermission := false
+	if creatorKey != "" && session.CreatorKey == creatorKey {
+		hasPermission = true
+	} else if userToken != "" && session.UserToken == userToken {
+		hasPermission = true
+	}
+
+	if !hasPermission {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权删除此会话"})
 		return
 	}
