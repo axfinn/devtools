@@ -174,7 +174,7 @@ const toolRoutes = [
   {
     path: '/vibe',
     name: 'VibeMotion',
-    component: () => import('../views/VibeMotionTool.vue'),
+    component: () => import('../views/NeonApp.vue'),
     meta: {
       title: 'AI 动效',
       icon: 'VideoCamera',

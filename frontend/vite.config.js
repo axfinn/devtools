@@ -1,10 +1,17 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import react from '@vitejs/plugin-react'
+import path from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue(), react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src/neon'),
+      '@neon': path.resolve(__dirname, './src/neon')
+    }
+  },
   // 支持域名部署，base 可以通过环境变量配置
   base: process.env.VITE_BASE_URL || '/',
   server: {
