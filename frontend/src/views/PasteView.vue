@@ -96,8 +96,11 @@
               </div>
             </div>
             <!-- 视频预览 -->
-            <div v-else-if="file.type === 'video'" class="file-preview-video">
+            <div v-else-if="file.type === 'video'" class="file-preview-video" @click="openVideoPreview(file)">
               <video :src="API_BASE + file.url" controls style="width: 100%; max-height: 300px;"></video>
+              <div class="gallery-overlay">
+                <el-icon :size="24"><VideoPlay /></el-icon>
+              </div>
             </div>
             <!-- 音频预览 -->
             <div v-else-if="file.type === 'audio'" class="file-preview-audio">
@@ -161,6 +164,25 @@
         </div>
       </div>
 
+      <!-- 视频预览弹窗 -->
+      <el-dialog
+        v-model="showVideoPreview"
+        :title="currentVideoFile?.original_name || currentVideoFile?.filename || '视频预览'"
+        width="80%"
+        :close-on-click-modal="true"
+        destroy-on-close
+        @close="closeVideoPreview"
+      >
+        <div class="video-fullscreen-preview" v-if="currentVideoFile">
+          <video
+            :src="API_BASE + currentVideoFile.url"
+            controls
+            autoplay
+            class="preview-video-full"
+          ></video>
+        </div>
+      </el-dialog>
+
       <div class="back-section">
         <el-button @click="$router.push('/paste')">
           <el-icon><Back /></el-icon>
@@ -175,7 +197,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Loading, Lock, Back, Picture, Download, ZoomIn, Document, Folder, Files, Headset, View } from '@element-plus/icons-vue'
+import { Loading, Lock, Back, Picture, Download, ZoomIn, Document, Folder, Files, Headset, View, VideoPlay } from '@element-plus/icons-vue'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import { API_BASE } from '../api'
@@ -192,6 +214,8 @@ const previewImage = ref(null)
 const previewIndex = ref(0)
 const showPDFPreview = ref(false)
 const pdfUrl = ref('')
+const showVideoPreview = ref(false)
+const currentVideoFile = ref(null)
 
 const fetchPaste = async (pwd = '') => {
   const id = route.params.id
@@ -330,6 +354,17 @@ const nextImage = () => {
     previewIndex.value++
     previewImage.value = imageFiles.value[previewIndex.value]
   }
+}
+
+// 视频预览
+const openVideoPreview = (file) => {
+  currentVideoFile.value = file
+  showVideoPreview.value = true
+}
+
+const closeVideoPreview = () => {
+  showVideoPreview.value = false
+  currentVideoFile.value = null
 }
 
 // 下载文件
@@ -570,11 +605,13 @@ onMounted(() => {
 }
 
 .file-preview-video {
+  position: relative;
   width: 100%;
   background-color: #000;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
 
 .file-preview-audio {
@@ -767,5 +804,19 @@ onMounted(() => {
     padding: 15px;
     font-size: 12px;
   }
+}
+
+/* 视频全屏预览 */
+.video-fullscreen-preview {
+  display: flex;
+  justify-content: center;
+  background: #000;
+  border-radius: 8px;
+}
+
+.preview-video-full {
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
 }
 </style>

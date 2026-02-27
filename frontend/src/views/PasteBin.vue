@@ -98,9 +98,9 @@
 
         <div class="file-grid" v-if="files.length > 0">
           <div class="file-item" v-for="(file, index) in files" :key="index">
-            <div class="file-preview">
+            <div class="file-preview" @click="previewMedia(index)">
               <img v-if="file.type === 'image'" :src="file.preview" alt="预览" />
-              <video v-else-if="file.type === 'video'" :src="file.preview" controls></video>
+              <video v-else-if="file.type === 'video'" :src="file.preview" controls :poster="file.preview + '#t=0.1'"></video>
               <audio v-else-if="file.type === 'audio'" :src="file.preview" controls></audio>
               <div v-else class="file-icon">
                 <el-icon :size="48">
@@ -204,9 +204,9 @@
 
         <div class="file-grid" v-if="files.length > 0">
           <div class="file-item" v-for="(file, index) in files" :key="index">
-            <div class="file-preview">
+            <div class="file-preview" @click="previewMedia(index)">
               <img v-if="file.type === 'image'" :src="file.preview" alt="预览" />
-              <video v-else-if="file.type === 'video'" :src="file.preview" controls></video>
+              <video v-else-if="file.type === 'video'" :src="file.preview" controls :poster="file.preview + '#t=0.1'"></video>
               <audio v-else-if="file.type === 'audio'" :src="file.preview" controls></audio>
               <div v-else class="file-icon">
                 <el-icon :size="48">
@@ -445,11 +445,38 @@
         <el-button type="primary" @click="saveAdminEdit" :loading="adminLoading">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 图片预览 -->
+    <ElImageViewer
+      v-if="showImageViewer"
+      :url-list="imageViewerList.filter(m => m.type === 'image').map(m => m.url)"
+      :initial-index="imageViewerIndex"
+      @close="closeImageViewer"
+    />
+
+    <!-- 视频预览弹窗 -->
+    <el-dialog
+      v-model="showVideoViewer"
+      :title="currentVideoFile?.name || '视频预览'"
+      width="80%"
+      :close-on-click-modal="true"
+      destroy-on-close
+    >
+      <div class="video-preview-container" v-if="currentVideoFile">
+        <video
+          :src="currentVideoFile.preview"
+          controls
+          autoplay
+          class="preview-video"
+        ></video>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, nextTick, computed } from 'vue'
+import { ElImageViewer } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
@@ -476,6 +503,13 @@ const qrCanvas = ref(null)
 const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video'|'audio'|'document'|'archive'|'file', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string, uploading: boolean, uploadProgress: number }]
 const fileInput = ref(null)
 const isDragging = ref(false)
+
+// 预览功能
+const showImageViewer = ref(false)
+const showVideoViewer = ref(false)
+const imageViewerIndex = ref(0)
+const imageViewerList = ref([]) // [{ url: string, type: 'image'|'video' }]
+const currentVideoFile = ref(null) // 当前预览的视频
 
 const MAX_FILES = 10
 const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB
@@ -684,6 +718,33 @@ const addFile = async (file) => {
 const getFileExt = (filename) => {
   const ext = filename.split('.').pop()
   return ext ? `.${ext.toUpperCase()}` : ''
+}
+
+// 预览图片或视频
+const previewMedia = (index) => {
+  const file = files.value[index]
+  if (!file) return
+
+  if (file.type === 'image') {
+    // 图片预览 - 使用 ElImageViewer
+    imageViewerList.value = files.value.filter(f => f.type === 'image').map(f => ({ url: f.preview, type: 'image' }))
+    const imageIndex = files.value.filter(f => f.type === 'image').findIndex(f => f === file)
+    imageViewerIndex.value = imageIndex >= 0 ? imageIndex : 0
+    showImageViewer.value = true
+    showVideoViewer.value = false
+  } else if (file.type === 'video') {
+    // 视频预览 - 使用对话框
+    currentVideoFile.value = file
+    showVideoViewer.value = true
+    showImageViewer.value = false
+  }
+}
+
+// 关闭预览
+const closeImageViewer = () => {
+  showImageViewer.value = false
+  showVideoViewer.value = false
+  currentVideoFile.value = null
 }
 
 // 删除文件
@@ -1447,6 +1508,12 @@ restoreAdminPassword()
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.file-preview:hover {
+  opacity: 0.8;
 }
 
 .file-preview img,
@@ -1769,5 +1836,19 @@ restoreAdminPassword()
   .panel-header .el-select {
     width: 100% !important;
   }
+}
+
+/* 视频预览弹窗 */
+.video-preview-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.preview-video {
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
+  border-radius: 8px;
 }
 </style>
