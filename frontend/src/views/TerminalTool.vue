@@ -109,22 +109,25 @@
             <el-tag :type="state.connectionStatus === 'connected' ? 'success' : 'warning'" size="small">
               {{ state.connectionStatus === 'connected' ? '已连接' : '连接中...' }}
             </el-tag>
+            <el-button
+              v-if="settings.showVirtualKeyboard"
+              class="vk-header-toggle"
+              size="small"
+              :type="vkExpanded ? 'warning' : 'default'"
+              @click="vkExpanded = !vkExpanded"
+            >
+              <el-icon><Keyboard /></el-icon>
+              {{ vkExpanded ? '收起键盘' : '显示键盘' }}
+            </el-button>
           </div>
         </div>
         <div ref="terminalRef" class="terminal-wrapper"></div>
 
         <!-- 虚拟键盘工具栏 -->
         <div
-          v-if="settings.showVirtualKeyboard"
+          v-if="settings.showVirtualKeyboard && vkExpanded"
           class="virtual-keyboard"
-          :class="{ 'vk-collapsed': !vkExpanded }"
         >
-          <!-- 收起/展开按钮 -->
-          <div class="vk-toggle" @click="vkExpanded = !vkExpanded">
-            <el-icon><ArrowUp v-if="vkExpanded" /><ArrowDown v-else /></el-icon>
-            <span>{{ vkExpanded ? '收起键盘' : '显示键盘' }}</span>
-          </div>
-
           <!-- 键盘主体 -->
           <div v-show="vkExpanded" class="vk-content">
             <!-- 关键操作键 - 回车/退格放在最前面 -->
@@ -175,8 +178,64 @@
               <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x1a')">挂起</button>
               <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('l')">清屏</button>
               <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('u')">清行</button>
-              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('a')">行首</button>
-              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('e')">行尾</button>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('a')">全选</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('c')">复制</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('v')">粘贴</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('z')">撤销</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendShortcut('y')">重做</button>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x11')">Ctrl+Q</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x13')">Ctrl+S</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x12')">Ctrl+R</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x04')">Ctrl+D</button>
+              <button class="vk-btn vk-btn-shortcut" @click="sendKey('\x01')">Ctrl+A</button>
+            </div>
+
+            <!-- Alt 组合键 -->
+            <div class="vk-row vk-row-title">
+              <span class="vk-row-label">Alt 组合</span>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-alt" @click="sendKey('\x1b')">Alt</button>
+              <button class="vk-btn vk-btn-alt" @click="sendAltKey('b')">Alt+B</button>
+              <button class="vk-btn vk-btn-alt" @click="sendAltKey('d')">Alt+D</button>
+              <button class="vk-btn vk-btn-alt" @click="sendAltKey('f')">Alt+F</button>
+              <button class="vk-btn vk-btn-alt" @click="sendAltKey('.')">Alt+.</button>
+            </div>
+
+            <!-- 翻页键 -->
+            <div class="vk-row vk-row-title">
+              <span class="vk-row-label">翻页</span>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-fn vk-btn-large" @click="sendKey('\x1b[5~')">PgUp</button>
+              <button class="vk-btn vk-btn-fn vk-btn-large" @click="sendKey('\x1b[6~')">PgDn</button>
+              <button class="vk-btn vk-btn-fn vk-btn-large" @click="sendKey('\x1b[2~')">Ins</button>
+              <button class="vk-btn vk-btn-fn vk-btn-large" @click="sendKey('\x1b[3~')">Del</button>
+            </div>
+
+            <!-- F1-F12 功能键 -->
+            <div class="vk-row vk-row-title">
+              <span class="vk-row-label">功能键 (F1-F12)</span>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1bOP')">F1</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1bOQ')">F2</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1bOR')">F3</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1bOS')">F4</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[15~')">F5</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[17~')">F6</button>
+            </div>
+            <div class="vk-row">
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[18~')">F7</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[19~')">F8</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[20~')">F9</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[21~')">F10</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[23~')">F11</button>
+              <button class="vk-btn vk-btn-fn" @click="sendKey('\x1b[24~')">F12</button>
             </div>
 
             <!-- 更多符号 -->
@@ -205,9 +264,17 @@
                 <el-icon><Microphone /></el-icon>
                 <span>{{ voiceInputActive ? '录音中...' : '语音' }}</span>
               </button>
+              <button class="vk-btn vk-btn-action" @click="copyTerminalOutput">
+                <el-icon><CopyDocument /></el-icon>
+                <span>复制</span>
+              </button>
               <button class="vk-btn vk-btn-action" @click="showPasteInput">
                 <el-icon><Document /></el-icon>
                 <span>粘贴</span>
+              </button>
+              <button class="vk-btn vk-btn-action" @click="clearTerminal">
+                <el-icon><Delete /></el-icon>
+                <span>清屏</span>
               </button>
               <button class="vk-btn vk-btn-action" @click="showMoreOptions = true">
                 <el-icon><MoreFilled /></el-icon>
@@ -358,7 +425,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Monitor, Plus, Refresh, Setting, Connection, User, Clock,
   Edit, Delete, SwitchButton, ArrowUp, ArrowDown,
-  Microphone, Document, MoreFilled, Check, Back, Link
+  Microphone, Document, MoreFilled, Check, Back, Link,
+  CopyDocument
 } from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -642,8 +710,96 @@ function initTerminal() {
     }
   })
 
+  // 监听鼠标滚轮事件，实现终端历史滚动
+  terminalRef.value?.addEventListener('wheel', (e) => {
+    // 只有当不在终端底部时才允许滚动
+    const viewport = terminalRef.value?.querySelector('.xterm-viewport')
+    if (viewport) {
+      const isAtBottom = viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 10
+      if (!isAtBottom || e.deltaY < 0) {
+        // 阻止默认滚动，让 xterm 自己处理
+        e.stopPropagation()
+      }
+    }
+  }, { passive: true })
+
+  // 触摸滑动支持 - 用于移动终端视图
+  let touchStartY = 0
+  let touchStartX = 0
+  terminalRef.value?.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      touchStartY = e.touches[0].clientY
+      touchStartX = e.touches[0].clientX
+    }
+  }, { passive: true })
+
+  terminalRef.value?.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1) {
+      const deltaY = touchStartY - e.touches[0].clientY
+      const deltaX = touchStartX - e.touches[0].clientX
+
+      // 水平滑动幅度大于垂直滑动时，不处理（让终端接收字符）
+      if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50) {
+        // 水平滑动，可能是终端的光标移动，不阻止默认行为
+        return
+      }
+
+      // 垂直滑动时滚动终端历史
+      if (Math.abs(deltaY) > 30) {
+        const viewport = terminalRef.value?.querySelector('.xterm-viewport')
+        if (viewport) {
+          if (deltaY > 0) {
+            // 向上滑动，滚动到更早的历史
+            viewport.scrollTop -= 100
+          } else {
+            // 向下滑动，滚动到更近的内容
+            viewport.scrollTop += 100
+          }
+        }
+        e.preventDefault()
+      }
+
+      touchStartY = e.touches[0].clientY
+      touchStartX = e.touches[0].clientX
+    }
+  }, { passive: false })
+
   // 窗口大小变化时调整终端大小
   window.addEventListener('resize', handleResize)
+
+  // 监听虚拟键盘弹出/收起，调整终端大小
+  if (window.visualViewport) {
+    let lastHeight = window.visualViewport.height
+
+    window.visualViewport.addEventListener('resize', () => {
+      const currentHeight = window.visualViewport?.height || 0
+      const heightDiff = Math.abs(currentHeight - lastHeight)
+
+      // 只有高度变化超过 50px 才认为是键盘弹出/收起
+      if (heightDiff > 50) {
+        lastHeight = currentHeight
+        // 使用 requestAnimationFrame 确保在 DOM 更新后执行
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            if (fitAddon) {
+              fitAddon.fit()
+            }
+          }, 50)
+        })
+      }
+    })
+  }
+
+  // 监听键盘弹出事件（移动端备选方案）
+  window.addEventListener('resize', () => {
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (fitAddon) {
+          fitAddon.fit()
+        }
+      }, 100)
+    })
+  })
 
   state.terminal = terminal
 }
@@ -955,6 +1111,37 @@ function sendCustomCommand() {
   showMoreOptions.value = false
 }
 
+// Alt 组合键
+function sendAltKey(key) {
+  sendKey('\x1b' + key)
+}
+
+// 复制终端输出
+function copyTerminalOutput() {
+  if (terminal) {
+    // 使用 xterm 的 buffer 获取内容
+    const buffer = terminal.buffer.active
+    const text = buffer.getLines().map(line => line.translateToString()).join('\n')
+    if (text) {
+      navigator.clipboard.writeText(text).then(() => {
+        ElMessage.success('终端内容已复制到剪贴板')
+      }).catch(() => {
+        ElMessage.error('复制失败')
+      })
+    } else {
+      ElMessage.warning('终端内容为空')
+    }
+  }
+}
+
+// 清除终端显示
+function clearTerminal() {
+  if (terminal) {
+    terminal.clear()
+    ElMessage.success('终端已清空')
+  }
+}
+
 // 语音输入
 function toggleVoiceInput() {
   if (!settings.voiceInputEnabled) {
@@ -1221,6 +1408,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: hidden;
   background: #000;
+  min-height: 0;
 }
 
 .terminal-header {
@@ -1231,6 +1419,17 @@ onBeforeUnmount(() => {
   background: #2d2d2d;
   color: #fff;
   flex-shrink: 0;
+  gap: 12px;
+}
+
+.terminal-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vk-header-toggle {
+  color: #fff;
 }
 
 .terminal-title {
@@ -1269,13 +1468,29 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding-bottom: env(safe-area-inset-bottom);
   transition: max-height 0.3s ease, padding 0.3s ease, border-width 0.3s ease;
-  max-height: 400px;
-  overflow: hidden;
+  max-height: 500px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #555 #333;
 }
 
-.virtual-keyboard.vk-collapsed {
-  max-height: 36px;
-  border-top-width: 1px;
+.virtual-keyboard::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.virtual-keyboard::-webkit-scrollbar-track {
+  background: #333;
+}
+
+.virtual-keyboard::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 3px;
+}
+
+.virtual-keyboard::-webkit-scrollbar-thumb:hover {
+  background: #666;
 }
 
 .vk-row-critical {
@@ -1315,23 +1530,6 @@ onBeforeUnmount(() => {
 
 .vk-btn-space:hover {
   background: #525252;
-}
-
-.vk-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px;
-  color: #fff;
-  cursor: pointer;
-  font-size: 14px;
-  background: #3d3d3d;
-  transition: background 0.2s;
-}
-
-.vk-toggle:hover {
-  background: #4d4d4d;
 }
 
 .vk-content {
@@ -1401,6 +1599,13 @@ onBeforeUnmount(() => {
 .vk-btn-fn {
   min-width: 50px;
   background: #3d5a80;
+  flex: 1;
+}
+
+.vk-btn-fn-small {
+  min-width: 40px;
+  background: #3d5a80;
+  font-size: 12px;
 }
 
 .vk-btn-fn:hover {
@@ -1435,6 +1640,17 @@ onBeforeUnmount(() => {
 
 .vk-btn-shortcut:hover {
   background: #6c5043;
+}
+
+.vk-btn-alt {
+  min-width: 50px;
+  height: 36px;
+  background: #4a3b6b;
+  font-size: 13px;
+}
+
+.vk-btn-alt:hover {
+  background: #5a4b7b;
 }
 
 .vk-btn-action {
@@ -1475,6 +1691,7 @@ onBeforeUnmount(() => {
   /* 虚拟键盘移动端优化 */
   .virtual-keyboard {
     padding: 6px;
+    max-height: 45vh;
   }
 
   .vk-content {
@@ -1528,11 +1745,6 @@ onBeforeUnmount(() => {
   .vk-btn-symbol {
     min-width: 32px;
     height: 32px;
-    font-size: 12px;
-  }
-
-  .vk-toggle {
-    padding: 6px;
     font-size: 12px;
   }
 
