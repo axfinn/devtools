@@ -1,7 +1,7 @@
 <template>
   <div class="neon-app">
-    <!-- Neon 使用 #root 作为容器 -->
-    <div id="root"></div>
+    <!-- Neon 使用独立的容器 -->
+    <div id="neon-root"></div>
   </div>
 </template>
 
@@ -21,7 +21,8 @@ import { AppRouter } from '../neon/router'
 let reactRoot = null
 
 onMounted(() => {
-  const container = document.getElementById('root')
+  // 使用独立的容器 ID，避免与 Vue 根容器冲突
+  const container = document.getElementById('neon-root')
   if (container) {
     reactRoot = createRoot(container)
     reactRoot.render(
@@ -31,7 +32,7 @@ onMounted(() => {
     )
     console.log('Neon app mounted')
   } else {
-    console.error('Root container not found')
+    console.error('Neon root container not found')
   }
 })
 

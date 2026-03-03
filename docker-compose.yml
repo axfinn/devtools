@@ -18,6 +18,7 @@ services:
       - PORT=8082
       - DB_PATH=/app/data/paste.db
       - TZ=Asia/Shanghai
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/api/health"]
       interval: 30s

@@ -21,6 +21,10 @@ type Config struct {
 	Excalidraw ExcalidrawConfig `yaml:"excalidraw"`
 	Pregnancy  PregnancyConfig  `yaml:"pregnancy"`
 	SSH        SSHConfig        `yaml:"ssh"`
+	Expense    ExpenseConfig    `yaml:"expense"`
+	Glucose    GlucoseConfig    `yaml:"glucose"`
+	DeepSeek   DeepSeekConfig   `yaml:"deepseek"`
+	MiniMax    MiniMaxConfig    `yaml:"minimax"`
 }
 
 // ServerConfig 服务器配置
@@ -104,6 +108,30 @@ type SSHConfig struct {
 	EncryptionKey       string `yaml:"encryption_key"`        // 加密密钥（Base64 编码的 32 字节密钥）
 }
 
+// ExpenseConfig 生活记账配置
+type ExpenseConfig struct {
+	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数，默认365
+	MaxDataSize        int `yaml:"max_data_size"`        // 最大数据大小，默认1MB
+}
+
+// GlucoseConfig 血糖监测配置
+type GlucoseConfig struct {
+	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数，默认365
+}
+
+// DeepSeekConfig DeepSeek AI 配置
+type DeepSeekConfig struct {
+	APIKey string `yaml:"api_key"` // API Key，从 https://platform.deepseek.com 获取
+	Model  string `yaml:"model"`   // 模型名称，默认 deepseek-chat
+}
+
+// MiniMaxConfig MiniMax AI 配置
+type MiniMaxConfig struct {
+	APIKey string `yaml:"api_key"` // API Key，从 https://platform.minimax.io 获取
+	Model  string `yaml:"model"`   // 模型名称，默认 abab6.5s-chat
+}
+
+
 var globalConfig *Config
 
 // DefaultConfig 返回默认配置
@@ -155,6 +183,19 @@ func DefaultConfig() *Config {
 			HistoryMaxAgeDays:   30, // 30天
 			SessionMaxAgeDays:   7,  // 7天
 		},
+		Expense: ExpenseConfig{
+			DefaultExpiresDays: 365,
+			MaxDataSize:        1024 * 1024, // 1MB
+		},
+		Glucose: GlucoseConfig{
+			DefaultExpiresDays: 365,
+		},
+		DeepSeek: DeepSeekConfig{
+			Model: "deepseek-chat",
+		},
+		MiniMax: MiniMaxConfig{
+			Model: "abab6.5s-chat",
+		},
 	}
 }
 
@@ -185,6 +226,14 @@ func Load(path string) (*Config, error) {
 	}
 	if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
 		cfg.Database.Path = dbPath
+	}
+	// DeepSeek API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("DEEPSEEK_API_KEY"); apiKey != "" {
+		cfg.DeepSeek.APIKey = apiKey
+	}
+	// MiniMax API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("MINIMAX_API_KEY"); apiKey != "" {
+		cfg.MiniMax.APIKey = apiKey
 	}
 
 	globalConfig = cfg

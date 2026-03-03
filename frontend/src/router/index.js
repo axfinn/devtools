@@ -172,17 +172,6 @@ const toolRoutes = [
     }
   },
   {
-    path: '/vibe',
-    name: 'VibeMotion',
-    component: () => import('../views/NeonApp.vue'),
-    meta: {
-      title: 'AI 动效',
-      icon: 'VideoCamera',
-      category: 'draw',
-      description: 'AI 动效生成'
-    }
-  },
-  {
     path: '/paste',
     name: 'PasteBin',
     component: () => import('../views/PasteBin.vue'),
@@ -236,6 +225,28 @@ const toolRoutes = [
       icon: 'Food',
       category: 'life',
       description: '菜谱查询记录'
+    }
+  },
+  {
+    path: '/expense',
+    name: 'Expense',
+    component: () => import('../views/ExpenseTool.vue'),
+    meta: {
+      title: '生活记账',
+      icon: 'Money',
+      category: 'life',
+      description: '日常开支记录统计'
+    }
+  },
+  {
+    path: '/glucose',
+    name: 'Glucose',
+    component: () => import('../views/GlucoseTool.vue'),
+    meta: {
+      title: '血糖记录',
+      icon: 'FirstAidKit',
+      category: 'life',
+      description: '血糖检测记录与分析'
     }
   },
   // 分享类路由（不显示在侧边栏）

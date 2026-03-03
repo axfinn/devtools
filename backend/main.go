@@ -78,6 +78,16 @@ func main() {
 		log.Fatalf("孕期管理数据库初始化失败: %v", err)
 	}
 
+	// 初始化生活记账数据库表
+	if err := db.InitExpense(); err != nil {
+		log.Fatalf("生活记账数据库初始化失败: %v", err)
+	}
+
+	// 初始化血糖监测数据库表
+	if err := db.InitGlucose(); err != nil {
+		log.Fatalf("血糖监测数据库初始化失败: %v", err)
+	}
+
 	// 初始化菜谱数据库表
 	if err := db.InitRecipe(); err != nil {
 		log.Fatalf("菜谱数据库初始化失败: %v", err)
@@ -131,6 +141,16 @@ func main() {
 			pregnancyCount, err := db.CleanExpiredPregnancyProfiles()
 			if err == nil && pregnancyCount > 0 {
 				log.Printf("已清理 %d 个过期孕期档案", pregnancyCount)
+			}
+			// 清理过期生活记账档案
+			expenseCount, err := db.CleanExpiredExpenseProfiles()
+			if err == nil && expenseCount > 0 {
+				log.Printf("已清理 %d 个过期生活记账档案", expenseCount)
+			}
+			// 清理过期血糖档案
+			glucoseCount, err := db.CleanExpiredGlucoseProfiles()
+			if err == nil && glucoseCount > 0 {
+				log.Printf("已清理 %d 个过期血糖监测档案", glucoseCount)
 			}
 			// 清理过期菜谱
 			recipeCount, err := db.CleanExpiredRecipes()
@@ -190,6 +210,8 @@ func main() {
 	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)
 	excalidrawHandler := handlers.NewExcalidrawHandler(db, cfg.Excalidraw.AdminPassword, cfg.Excalidraw.DefaultExpiresDays, cfg.Excalidraw.MaxContentSize)
 	pregnancyHandler := handlers.NewPregnancyHandler(db, cfg.Pregnancy.DefaultExpiresDays, cfg.Pregnancy.MaxDataSize)
+	expenseHandler := handlers.NewExpenseHandler(db, cfg)
+	glucoseHandler := handlers.NewGlucoseHandler(db, cfg)
 	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
 
 	// 创建加密服务（用于 SSH 密码加密）
@@ -324,6 +346,61 @@ func main() {
 			pregnancy.GET("/:id/creator", pregnancyHandler.GetByCreator)
 			pregnancy.PUT("/:id", pregnancyHandler.Update)
 			pregnancy.DELETE("/:id", pregnancyHandler.Delete)
+		}
+
+		// 生活记账 API
+		expense := api.Group("/expense")
+		{
+			expense.POST("", createRateLimiter.Middleware(), expenseHandler.Create)
+			expense.POST("/login", expenseHandler.Login)
+			expense.GET("/:id", expenseHandler.Get)
+			expense.DELETE("/:id", expenseHandler.Delete)
+			expense.PUT("/:id/extend", expenseHandler.Extend)
+			// Accounts
+			expense.GET("/:id/accounts", expenseHandler.GetAccounts)
+			expense.POST("/:id/accounts", expenseHandler.CreateAccount)
+			expense.PUT("/:id/accounts/:accountId", expenseHandler.UpdateAccount)
+			expense.DELETE("/:id/accounts/:accountId", expenseHandler.DeleteAccount)
+			// Categories
+			expense.GET("/:id/categories", expenseHandler.GetCategories)
+			expense.POST("/:id/categories", expenseHandler.CreateCategory)
+			expense.PUT("/:id/categories/:categoryId", expenseHandler.UpdateCategory)
+			expense.DELETE("/:id/categories/:categoryId", expenseHandler.DeleteCategory)
+			// Transactions
+			expense.GET("/:id/transactions", expenseHandler.GetTransactions)
+			expense.POST("/:id/transactions", expenseHandler.CreateTransaction)
+			expense.PUT("/:id/transactions/:txId", expenseHandler.UpdateTransaction)
+			expense.DELETE("/:id/transactions/:txId", expenseHandler.DeleteTransaction)
+			// Stats
+			expense.GET("/:id/stats", expenseHandler.GetStats)
+			// AI Analyze
+			expense.POST("/:id/analyze", expenseHandler.Analyze)
+			// AI Voice Parse
+			expense.POST("/:id/voice-parse", expenseHandler.VoiceParse)
+		}
+
+		// 血糖监测 API
+		glucose := api.Group("/glucose")
+		{
+			glucose.POST("", createRateLimiter.Middleware(), glucoseHandler.Create)
+			glucose.POST("/login", glucoseHandler.Login)
+			glucose.GET("/:id", glucoseHandler.Get)
+			glucose.DELETE("/:id", glucoseHandler.Delete)
+			glucose.PUT("/:id/extend", glucoseHandler.Extend)
+			// Records
+			glucose.GET("/:id/records", glucoseHandler.GetRecords)
+			glucose.POST("/:id/records", glucoseHandler.CreateRecord)
+			glucose.PUT("/:id/records/:recordId", glucoseHandler.UpdateRecord)
+			glucose.DELETE("/:id/records/:recordId", glucoseHandler.DeleteRecord)
+			// History
+			glucose.GET("/:id/records/:recordId/history", glucoseHandler.GetRecordHistory)
+			glucose.GET("/:id/history", glucoseHandler.GetProfileHistory)
+			// Import
+			glucose.POST("/:id/import", glucoseHandler.ImportRecords)
+			// Stats
+			glucose.GET("/:id/stats", glucoseHandler.GetStats)
+			// AI Voice Parse
+			glucose.POST("/:id/voice-parse", glucoseHandler.VoiceParse)
 		}
 
 		// 菜谱 API

@@ -119,7 +119,7 @@
     <!-- 主内容区 -->
     <el-main class="main-content" :class="{ 'mobile-main': isMobile }">
       <router-view v-slot="{ Component }">
-        <keep-alive>
+        <keep-alive :exclude="['NeonApp']">
           <component :is="Component" />
         </keep-alive>
       </router-view>
