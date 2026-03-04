@@ -1,6 +1,8 @@
 import base64
 import io
 import logging
+import numpy as np
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,7 +12,22 @@ from rapidocr_onnxruntime import RapidOCR
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="OCR Service", version="1.0.0")
+engine: RapidOCR | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global engine
+    logger.info("加载 RapidOCR 模型...")
+    engine = RapidOCR()
+    # 用一张空白图预热，让 ONNX runtime 完成首次 JIT 编译
+    dummy = Image.fromarray(np.full((64, 256, 3), 255, dtype=np.uint8))
+    engine(dummy)
+    logger.info("RapidOCR 预热完成，服务就绪")
+    yield
+
+
+app = FastAPI(title="OCR Service", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,8 +35,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-engine = RapidOCR()
 
 
 class OCRRequest(BaseModel):
@@ -39,7 +54,6 @@ class OCRResponse(BaseModel):
 @app.post("/ocr", response_model=OCRResponse)
 async def ocr(request: OCRRequest):
     try:
-        # 去掉 data URL 前缀（如 data:image/png;base64,）
         image_b64 = request.image
         if "," in image_b64:
             image_b64 = image_b64.split(",", 1)[1]
@@ -64,6 +78,9 @@ async def ocr(request: OCRRequest):
 
 @app.get("/health")
 async def health():
+    # 预热完成前不对外声明就绪
+    if engine is None:
+        raise HTTPException(status_code=503, detail="warming up")
     return {"status": "ok"}
 
 

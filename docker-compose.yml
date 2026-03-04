@@ -35,6 +35,8 @@ services:
       context: ./ocr-service
     container_name: ocr-service
     restart: unless-stopped
+    volumes:
+      - ocr-model-cache:/root/.cache
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
       interval: 10s
@@ -44,4 +46,6 @@ services:
 
 volumes:
   devtools-data:
+    driver: local
+  ocr-model-cache:
     driver: local
