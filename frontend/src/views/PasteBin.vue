@@ -119,6 +119,10 @@
               <el-tag v-if="file.uploading" type="info" size="small">上传中 {{ file.uploadProgress }}%</el-tag>
             </div>
             <div class="file-actions">
+              <el-button v-if="file.type === 'image'" size="small" type="primary" plain @click="ocrImage(index)" :loading="file.ocring">
+                <el-icon><Reading /></el-icon>
+                识别
+              </el-button>
               <el-button v-if="!file.compressed && canCompress(file)" size="small" @click="compressFile(index)" :loading="file.compressing">
                 压缩
               </el-button>
@@ -225,6 +229,10 @@
               <el-tag v-if="file.uploading" type="info" size="small">上传中 {{ file.uploadProgress }}%</el-tag>
             </div>
             <div class="file-actions">
+              <el-button v-if="file.type === 'image'" size="small" type="primary" plain @click="ocrImage(index)" :loading="file.ocring">
+                <el-icon><Reading /></el-icon>
+                识别
+              </el-button>
               <el-button v-if="!file.compressed && canCompress(file)" size="small" @click="compressFile(index)" :loading="file.compressing">
                 压缩
               </el-button>
@@ -446,6 +454,24 @@
       </template>
     </el-dialog>
 
+    <!-- OCR 识别结果弹窗 -->
+    <el-dialog v-model="showOcrDialog" title="图片文字识别结果" width="600px" :close-on-click-modal="true">
+      <div class="ocr-result-area">
+        <textarea v-model="ocrText" class="ocr-textarea" placeholder="识别结果..." readonly></textarea>
+      </div>
+      <template #footer>
+        <el-button @click="showOcrDialog = false">关闭</el-button>
+        <el-button type="primary" @click="appendOcrToContent">
+          <el-icon><Plus /></el-icon>
+          追加到内容
+        </el-button>
+        <el-button type="success" @click="copyOcrText">
+          <el-icon><CopyDocument /></el-icon>
+          复制文字
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 图片预览 -->
     <ElImageViewer
       v-if="showImageViewer"
@@ -478,7 +504,7 @@
 import { ref, nextTick, computed } from 'vue'
 import { ElImageViewer } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files } from '@element-plus/icons-vue'
+import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files, Reading } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { API_BASE } from '../api'
 import { FFmpeg } from '@ffmpeg/ffmpeg'
@@ -503,6 +529,58 @@ const qrCanvas = ref(null)
 const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video'|'audio'|'document'|'archive'|'file', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string, uploading: boolean, uploadProgress: number }]
 const fileInput = ref(null)
 const isDragging = ref(false)
+
+// OCR 功能
+const showOcrDialog = ref(false)
+const ocrText = ref('')
+
+// 将图片读为 base64 并调用 OCR API
+const ocrImage = async (index) => {
+  const fileObj = files.value[index]
+  if (!fileObj || fileObj.type !== 'image') return
+  fileObj.ocring = true
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (e) => resolve(e.target.result)
+      reader.onerror = reject
+      reader.readAsDataURL(fileObj.file)
+    })
+    const response = await fetch(`${API_BASE}/api/ocr`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: base64 })
+    })
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      throw new Error(err.error || `OCR 服务错误 (${response.status})`)
+    }
+    const data = await response.json()
+    ocrText.value = data.text || '（未识别到文字）'
+    showOcrDialog.value = true
+  } catch (e) {
+    ElMessage.error(e.message || 'OCR 识别失败')
+  } finally {
+    fileObj.ocring = false
+  }
+}
+
+const appendOcrToContent = () => {
+  if (ocrText.value && ocrText.value !== '（未识别到文字）') {
+    content.value = content.value ? content.value + '\n' + ocrText.value : ocrText.value
+    ElMessage.success('已追加到内容')
+  }
+  showOcrDialog.value = false
+}
+
+const copyOcrText = async () => {
+  try {
+    await navigator.clipboard.writeText(ocrText.value)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
 
 // 预览功能
 const showImageViewer = ref(false)
@@ -1568,7 +1646,29 @@ restoreAdminPassword()
   padding: 10px;
   display: flex;
   gap: 5px;
+  flex-wrap: wrap;
   border-top: 1px solid var(--border-base);
+}
+
+.ocr-result-area {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ocr-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  background: var(--bg-secondary, #f9f9f9);
+  color: var(--text-primary);
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
 }
 
 .file-add {

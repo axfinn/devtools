@@ -240,6 +240,7 @@ func main() {
 		SessionIdleTimeout:  time.Duration(cfg.SSH.SessionIdleTimeout) * time.Minute,
 	}
 	terminalHandler := handlers.NewSSHHandler(db, encryptionService, sshConfig)
+	ocrHandler := handlers.NewOCRHandler()
 
 	// 启动 SSH 会话清理协程
 	terminalHandler.StartCleanupRoutine()
@@ -433,6 +434,9 @@ func main() {
 			terminal.DELETE("/:id", terminalHandler.Delete)
 			terminal.GET("/:id/ws", terminalHandler.HandleWebSocket) // WebSocket 连接
 		}
+
+		// OCR 文字识别
+		api.POST("/ocr", createRateLimiter.Middleware(), ocrHandler.Extract)
 
 		// 健康检查
 		api.GET("/health", func(c *gin.Context) {
