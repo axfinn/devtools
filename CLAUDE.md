@@ -180,6 +180,13 @@ Docker exposes the backend on port 8082.
 **Health:**
 - `GET /api/health`: Health check endpoint
 
+**Background Images:**
+- `GET /api/bg`: Get background images list (cached first, then external)
+- `POST /api/bg/cache`: Cache external images to local storage (max 1000)
+- `POST /api/bg/replace?count=10`: Randomly replace cached images
+- `GET /api/bg/random`: Get random background image (redirect)
+- `GET /api/bg/cached/:filename`: Serve cached image
+
 ### Docker Build Process
 The Dockerfile uses multi-stage builds:
 1. **frontend-builder**: Node 20 Alpine - builds Vue app

@@ -14,6 +14,7 @@ pnpm-debug.log*
 backend/server
 backend/devtools
 backend/data/
+backend/data/backgrounds/  # 背景图缓存
 *.exe
 *.test
 *.out

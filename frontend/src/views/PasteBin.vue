@@ -75,8 +75,9 @@
         <textarea
           v-model="content"
           class="code-editor"
-          placeholder="粘贴或输入内容,支持拖拽图片/视频..."
+          placeholder="粘贴或输入内容,支持拖拽/粘贴图片/视频..."
           spellcheck="false"
+          @paste="onPaste"
         ></textarea>
         <div v-if="isDragging" class="drop-overlay">
           <el-icon :size="48"><Upload /></el-icon>
@@ -185,8 +186,9 @@
         <textarea
           v-model="content"
           class="code-editor"
-          placeholder="在此输入要分享的内容..."
+          placeholder="在此输入要分享的内容，支持粘贴图片..."
           spellcheck="false"
+          @paste="onPaste"
         ></textarea>
         <div v-if="isDragging" class="drop-overlay">
           <el-icon :size="48"><Upload /></el-icon>
@@ -720,6 +722,23 @@ const onDrop = async (e) => {
   if (droppedFiles) {
     for (const file of droppedFiles) {
       await addFile(file)
+    }
+  }
+}
+
+// 处理粘贴事件（支持粘贴截图）
+const onPaste = async (e) => {
+  const items = e.clipboardData?.items
+  if (!items) return
+
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (file) {
+        await addFile(file)
+      }
+      break
     }
   }
 }

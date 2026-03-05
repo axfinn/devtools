@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装系统依赖（PIL 需要）
+# 安装系统依赖（PIL 和 pyzbar 需要）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
+    libzbar0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

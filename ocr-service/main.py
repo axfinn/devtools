@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
 from rapidocr_onnxruntime import RapidOCR
+import cv2
+from pyzbar.pyzbar import decode as decode_qr
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,9 +48,70 @@ class OCRLine(BaseModel):
     confidence: float
 
 
+class QRCodeResult(BaseModel):
+    data: str
+    type: str
+    rect: dict
+
+
 class OCRResponse(BaseModel):
     text: str
     lines: list[OCRLine]
+    qr_codes: list[QRCodeResult] = []
+
+
+def detect_qr_codes(pil_image: Image.Image) -> list[dict]:
+    """使用 OpenCV 和 pyzbar 检测图片中的二维码"""
+    qr_codes = []
+
+    # 转换为 OpenCV 格式
+    cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
+    # 使用 pyzbar 检测二维码
+    try:
+        decoded_objects = decode_qr(cv_image)
+        for obj in decoded_objects:
+            qr_codes.append({
+                "data": obj.data.decode('utf-8') if isinstance(obj.data, bytes) else str(obj.data),
+                "type": obj.type,
+                "rect": {
+                    "left": int(obj.rect.left),
+                    "top": int(obj.rect.top),
+                    "width": int(obj.rect.width),
+                    "height": int(obj.rect.height)
+                }
+            })
+    except Exception as e:
+        logger.warning(f"pyzbar detection failed: {e}")
+
+    # 如果 pyzbar 没检测到，尝试 OpenCV 的 QRCodeDetector
+    if not qr_codes:
+        try:
+            detector = cv2.QRCodeDetector()
+            retval, decoded_info, points, straight_qrcode = detector.detectAndDecodeMulti(cv_image)
+            if retval and decoded_info:
+                for i, data in enumerate(decoded_info):
+                    if data:
+                        pts = points[i] if points is not None else None
+                        rect = {}
+                        if pts is not None and len(pts) == 4:
+                            xs = [p[0] for p in pts]
+                            ys = [p[1] for p in pts]
+                            rect = {
+                                "left": int(min(xs)),
+                                "top": int(min(ys)),
+                                "width": int(max(xs) - min(xs)),
+                                "height": int(max(ys) - min(ys))
+                            }
+                        qr_codes.append({
+                            "data": data,
+                            "type": "QRCODE",
+                            "rect": rect
+                        })
+        except Exception as e:
+            logger.warning(f"OpenCV QR detection failed: {e}")
+
+    return qr_codes
 
 
 @app.post("/ocr", response_model=OCRResponse)
@@ -61,15 +124,26 @@ async def ocr(request: OCRRequest):
         image_data = base64.b64decode(image_b64)
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
+        # 检测二维码
+        qr_codes = detect_qr_codes(image)
+
+        # OCR 文字识别
         result, _ = engine(image)
 
-        if not result:
-            return OCRResponse(text="", lines=[])
+        if not result and not qr_codes:
+            return OCRResponse(text="", lines=[], qr_codes=[])
 
-        lines = [OCRLine(text=item[1], confidence=float(item[2])) for item in result]
+        lines = [OCRLine(text=item[1], confidence=float(item[2])) for item in result] if result else []
         full_text = "\n".join(line.text for line in lines)
 
-        return OCRResponse(text=full_text, lines=lines)
+        # 如果检测到二维码，添加到结果中
+        qr_data_list = [qr["data"] for qr in qr_codes]
+
+        return OCRResponse(
+            text=full_text,
+            lines=lines,
+            qr_codes=qr_codes
+        )
 
     except Exception as e:
         logger.error(f"OCR error: {e}")

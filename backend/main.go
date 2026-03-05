@@ -98,6 +98,15 @@ func main() {
 		log.Fatalf("SSH 数据库初始化失败: %v", err)
 	}
 
+	// 后台预加载背景图（如果缓存目录为空）
+	go func() {
+		// 等待服务器启动完成
+		time.Sleep(3 * time.Second)
+		// 初始化背景图（触发预加载）
+		handlers.InitBackgroundImages()
+		log.Println("背景图预加载完成")
+	}()
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -437,6 +446,13 @@ func main() {
 
 		// OCR 文字识别
 		api.POST("/ocr", createRateLimiter.Middleware(), ocrHandler.Extract)
+
+		// 背景图 API
+		api.GET("/bg", handlers.GetBackgroundImages)
+		api.POST("/bg/cache", handlers.CacheBackgroundImages)        // 缓存图片
+		api.POST("/bg/replace", handlers.ReplaceRandomImages)        // 随机替换图片
+		api.GET("/bg/random", handlers.GetRandomBackground)         // 随机图片
+		api.GET("/bg/cached/:filename", handlers.ServeCachedBackground)
 
 		// 健康检查
 		api.GET("/health", func(c *gin.Context) {

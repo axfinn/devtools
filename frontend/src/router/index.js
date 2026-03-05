@@ -249,6 +249,28 @@ const toolRoutes = [
       description: '血糖检测记录与分析'
     }
   },
+  {
+    path: '/qrcode',
+    name: 'QrCode',
+    component: () => import('../views/QrCodeTool.vue'),
+    meta: {
+      title: '二维码',
+      icon: 'Picture',
+      category: 'convert',
+      description: '二维码生成与解析'
+    }
+  },
+  {
+    path: '/background',
+    name: 'Background',
+    component: () => import('../views/BackgroundTool.vue'),
+    meta: {
+      title: '背景图库',
+      icon: 'PictureFilled',
+      category: 'other',
+      description: '博客动态背景图片'
+    }
+  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',
