@@ -205,6 +205,8 @@ The Dockerfile uses multi-stage builds:
 - `TZ`: Timezone (default: Asia/Shanghai)
 - `GIN_MODE`: Gin mode, set to "release" in production
 - `HOST_PORT`: Host port for Docker exposure (default: 8082)
+- `OCR_SERVICE_URL`: OCR 服务地址 (default: http://ocr-service:8000)
+- `DEEPSEEK_API_KEY`: DeepSeek API 密钥 (用于记账 AI 分析)
 
 ### Configuration File
 Copy `backend/config.example.yaml` to `backend/config.yaml`:
