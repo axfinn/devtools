@@ -187,6 +187,11 @@ Docker exposes the backend on port 8082.
 - `GET /api/bg/random`: Get random background image (redirect)
 - `GET /api/bg/cached/:filename`: Serve cached image
 
+**OCR (二维码识别):**
+- `POST /api/ocr`: 图像 OCR 识别 + 二维码检测
+  - 请求: `{ "image": "base64编码图片" }`
+  - 响应: `{ "text": "文字内容", "lines": [...], "qr_codes": [{"data": "二维码内容", "type": "QRCODE", "rect": {...}}] }`
+
 ### Docker Build Process
 The Dockerfile uses multi-stage builds:
 1. **frontend-builder**: Node 20 Alpine - builds Vue app
