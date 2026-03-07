@@ -25,6 +25,8 @@ type Config struct {
 	Glucose    GlucoseConfig    `yaml:"glucose"`
 	DeepSeek   DeepSeekConfig   `yaml:"deepseek"`
 	MiniMax    MiniMaxConfig    `yaml:"minimax"`
+	Bailian    BailianConfig    `yaml:"bailian"`
+	AIGateway  AIGatewayConfig  `yaml:"ai_gateway"`
 }
 
 // ServerConfig 服务器配置
@@ -131,6 +133,42 @@ type MiniMaxConfig struct {
 	Model  string `yaml:"model"`   // 模型名称，默认 abab6.5s-chat
 }
 
+// BailianConfig 阿里云百炼图片模型配置
+type BailianConfig struct {
+	APIKey             string               `yaml:"api_key"`              // DashScope API Key
+	AdminPassword      string               `yaml:"admin_password"`       // 调试与开放 API 管理密码
+	BaseURL            string               `yaml:"base_url"`             // API 基础地址
+	DefaultWaitSeconds int                  `yaml:"default_wait_seconds"` // 默认同步等待秒数
+	TaskRetentionDays  int                  `yaml:"task_retention_days"`  // 任务保留天数
+	Models             []BailianModelConfig `yaml:"models"`               // 模型配额配置
+}
+
+type BailianModelConfig struct {
+	Name        string `yaml:"name"`
+	Type        string `yaml:"type"`
+	Enabled     bool   `yaml:"enabled"`
+	TotalQuota  int    `yaml:"total_quota"`
+	ExpiresAt   string `yaml:"expires_at"`
+	DefaultSize string `yaml:"default_size"`
+	Description string `yaml:"description"`
+}
+
+type AIGatewayConfig struct {
+	SuperAdminPassword      string                   `yaml:"super_admin_password"`
+	DefaultKeyExpiresDays   int                      `yaml:"default_key_expires_days"`
+	DefaultRateLimitPerHour int                      `yaml:"default_rate_limit_per_hour"`
+	RequestRetentionDays    int                      `yaml:"request_retention_days"`
+	Pricing                 []AIGatewayPricingConfig `yaml:"pricing"`
+}
+
+type AIGatewayPricingConfig struct {
+	Model             string  `yaml:"model"`
+	Provider          string  `yaml:"provider"`
+	InputPer1KTokens  float64 `yaml:"input_per_1k_tokens"`
+	OutputPer1KTokens float64 `yaml:"output_per_1k_tokens"`
+	RequestCost       float64 `yaml:"request_cost"`
+	Currency          string  `yaml:"currency"`
+}
 
 var globalConfig *Config
 
@@ -155,7 +193,7 @@ func DefaultConfig() *Config {
 			Window:          time.Minute,
 		},
 		Limits: LimitsConfig{
-			PasteMaxContentSize: 100 * 1024,      // 100KB
+			PasteMaxContentSize: 100 * 1024, // 100KB
 			PasteMaxImages:      15,
 			PasteMaxTotalSize:   30 * 1024 * 1024, // 30MB
 			MaxUploadSize:       55 * 1024 * 1024, // 55MB
@@ -196,6 +234,29 @@ func DefaultConfig() *Config {
 		MiniMax: MiniMaxConfig{
 			Model: "abab6.5s-chat",
 		},
+		Bailian: BailianConfig{
+			BaseURL:            "https://dashscope.aliyuncs.com",
+			DefaultWaitSeconds: 45,
+			TaskRetentionDays:  180,
+			Models: []BailianModelConfig{
+				{Name: "qwen-image-2.0-pro", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "文生图/图像编辑，同步接口"},
+				{Name: "qwen-image-2.0", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "文生图/图像编辑，同步接口"},
+				{Name: "qwen-image-2.0-pro-2026-03-03", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "快照版本，同步接口"},
+				{Name: "qwen-image-2.0-2026-03-03", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "快照版本，同步接口"},
+				{Name: "qwen-image-plus-2026-01-09", Type: "text2image", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-04-09", DefaultSize: "1024*1024", Description: "异步文生图快照版本"},
+				{Name: "wan2.6-i2v-flash", Type: "image2video", Enabled: true, TotalQuota: 50, ExpiresAt: "2026-04-16", DefaultSize: "1280x720", Description: "图生视频 Flash"},
+				{Name: "wan2.6-i2v", Type: "image2video", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1280x720", Description: "无免费额度，默认禁用"},
+				{Name: "qwen-image-plus", Type: "text2image", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1024*1024", Description: "无免费额度，默认禁用"},
+				{Name: "qwen-image-edit-plus", Type: "multimodal", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1328x1328", Description: "无免费额度，默认禁用"},
+				{Name: "qwen-image-max", Type: "text2image", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1024*1024", Description: "无免费额度，默认禁用"},
+			},
+		},
+		AIGateway: AIGatewayConfig{
+			DefaultKeyExpiresDays:   90,
+			DefaultRateLimitPerHour: 1000,
+			RequestRetentionDays:    180,
+			Pricing:                 []AIGatewayPricingConfig{},
+		},
 	}
 }
 
@@ -234,6 +295,16 @@ func Load(path string) (*Config, error) {
 	// MiniMax API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("MINIMAX_API_KEY"); apiKey != "" {
 		cfg.MiniMax.APIKey = apiKey
+	}
+	// 百炼 API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("BAILIAN_API_KEY"); apiKey != "" {
+		cfg.Bailian.APIKey = apiKey
+	}
+	if adminPassword := os.Getenv("BAILIAN_ADMIN_PASSWORD"); adminPassword != "" {
+		cfg.Bailian.AdminPassword = adminPassword
+	}
+	if superAdmin := os.Getenv("AI_GATEWAY_SUPER_ADMIN_PASSWORD"); superAdmin != "" {
+		cfg.AIGateway.SuperAdminPassword = superAdmin
 	}
 
 	globalConfig = cfg

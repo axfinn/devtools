@@ -33,6 +33,9 @@
           </el-tag>
         </div>
         <div class="header-actions">
+          <el-button @click="logoutUser">
+            <el-icon><SwitchButton /></el-icon> 切换用户
+          </el-button>
           <el-button v-if="state.connectionStatus === 'disconnected'" type="primary" @click="showCreateDialog">
             <el-icon><Plus /></el-icon> 新建连接
           </el-button>
@@ -413,6 +416,7 @@
         </el-form-item>
         <el-form-item>
           <el-button type="danger" @click="clearAllSessions">清除所有会话</el-button>
+          <el-button @click="logoutUser">退出并切换用户</el-button>
         </el-form-item>
       </el-form>
     </el-dialog>
@@ -504,6 +508,7 @@ let terminal = null
 let fitAddon = null
 let reconnectTimer = null
 let heartbeatTimer = null
+let wsIntentionalClose = false
 
 // ==================== Validation Rules ====================
 const createRules = {
@@ -527,6 +532,7 @@ async function handleUserLogin() {
 
     // 加载会话列表
     await loadSessions()
+    loginForm.userToken = token
 
     ElMessage.success('登录成功')
   } catch (error) {
@@ -653,6 +659,7 @@ async function createAndConnect() {
 async function connectToSession(session) {
   state.activeSession = session
   state.connectionStatus = 'connecting'
+  wsIntentionalClose = false
 
   await nextTick()
 
@@ -837,6 +844,11 @@ function connectWebSocket(sessionId) {
         case 'status':
           if (msg.status === 'connected') {
             ElMessage.success(msg.message || 'SSH 连接成功')
+          } else if (msg.status === 'closed') {
+            wsIntentionalClose = true
+            ElMessage.info(msg.message || 'SSH 会话已关闭')
+            cleanupTerminalState()
+            loadSessions()
           }
           break
 
@@ -864,6 +876,8 @@ function connectWebSocket(sessionId) {
             }).catch(() => {})
           } else {
             ElMessage.error(msg.message || 'SSH 连接错误')
+            wsIntentionalClose = true
+            cleanupTerminalState()
           }
           break
 
@@ -883,14 +897,16 @@ function connectWebSocket(sessionId) {
 
   ws.onclose = () => {
     console.log('WebSocket closed')
-    state.connectionStatus = 'disconnected'
-    state.wsConnection = null
+    const shouldNotify = !wsIntentionalClose
+    const hadActiveSession = !!state.activeSession
+    cleanupTerminalState()
     stopHeartbeat()
 
-    // 尝试重连（如果是意外断开）
-    if (state.activeSession) {
+    if (shouldNotify && hadActiveSession) {
       ElMessage.warning('连接已断开')
     }
+    wsIntentionalClose = false
+    loadSessions()
   }
 }
 
@@ -910,21 +926,50 @@ function stopHeartbeat() {
   }
 }
 
-function disconnectSession() {
-  if (state.wsConnection) {
-    state.wsConnection.close()
-    state.wsConnection = null
+async function disconnectSession() {
+  if (state.activeSession?.id && state.userToken) {
+    try {
+      await fetch(`/api/terminal/${state.activeSession.id}/disconnect?user_token=${encodeURIComponent(state.userToken)}`, {
+        method: 'POST'
+      })
+    } catch (error) {
+      console.error('Disconnect request failed:', error)
+    }
   }
 
+  wsIntentionalClose = true
+  if (state.wsConnection) {
+    state.wsConnection.close()
+  }
+  cleanupTerminalState()
+  loadSessions()
+}
+
+function cleanupTerminalState(clearActiveSession = true) {
   if (terminal) {
     terminal.dispose()
     terminal = null
   }
-
-  state.activeSession = null
   state.connectionStatus = 'disconnected'
+  state.wsConnection = null
+  if (clearActiveSession) {
+    state.activeSession = null
+  }
+}
 
-  loadSessions()
+async function logoutUser() {
+  if (state.connectionStatus !== 'disconnected') {
+    await disconnectSession()
+  } else {
+    cleanupTerminalState()
+  }
+
+  localStorage.removeItem('ssh_user_token')
+  state.userToken = ''
+  state.sessions = []
+  loginForm.userToken = ''
+  showSettings.value = false
+  ElMessage.success('已退出当前用户')
 }
 
 // ==================== Session Actions ====================
@@ -1272,13 +1317,18 @@ async function clearAllSessions() {
 // ==================== Lifecycle ====================
 onMounted(() => {
   if (state.userToken) {
+    loginForm.userToken = state.userToken
     loadSessions()
   }
 })
 
 onBeforeUnmount(() => {
   stopVoiceInput()
-  disconnectSession()
+  wsIntentionalClose = true
+  if (state.wsConnection) {
+    state.wsConnection.close()
+  }
+  cleanupTerminalState()
   window.removeEventListener('resize', handleResize)
 })
 </script>

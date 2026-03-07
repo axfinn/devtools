@@ -271,6 +271,28 @@ const toolRoutes = [
       description: '博客动态背景图片'
     }
   },
+  {
+    path: '/bailian-image',
+    name: 'BailianImage',
+    component: () => import('../views/BailianImageTool.vue'),
+    meta: {
+      title: '百炼图片',
+      icon: 'Picture',
+      category: 'other',
+      description: '阿里云百炼图片/视频模型调试台'
+    }
+  },
+  {
+    path: '/ai-gateway',
+    name: 'AIGateway',
+    component: () => import('../views/AIGatewayTool.vue'),
+    meta: {
+      title: 'AI Gateway',
+      icon: 'Key',
+      category: 'other',
+      description: '统一 AI API Key 管理与对外开放'
+    }
+  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',

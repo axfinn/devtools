@@ -7,6 +7,9 @@
           <el-tag :type="saveStatus === 'saving' ? 'warning' : 'success'" size="small">
             {{ saveStatus === 'saving' ? '保存中...' : '已保存' }}
           </el-tag>
+          <el-button @click="logoutProfile">
+            退出并切换档案
+          </el-button>
           <el-button type="warning" @click="showExtendDialog = true">
             <el-icon><Timer /></el-icon>
             延期
@@ -1863,6 +1866,18 @@ async function loadProfile() {
   } finally {
     loading.value = false
   }
+}
+
+function logoutProfile() {
+  profileId.value = ''
+  creatorKey.value = ''
+  password.value = ''
+  loadForm.value.password = ''
+  createForm.value.password = ''
+  activeTab.value = 'record'
+  localStorage.removeItem('expense_profile_id')
+  localStorage.removeItem('expense_user_password')
+  ElMessage.success('已退出当前档案')
 }
 
 async function loadData() {

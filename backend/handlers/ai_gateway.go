@@ -1,0 +1,893 @@
+package handlers
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"devtools/config"
+	"devtools/models"
+	"devtools/utils"
+
+	"github.com/gin-gonic/gin"
+)
+
+type AIGatewayHandler struct {
+	db      *models.DB
+	cfg     *config.Config
+	bailian *BailianHandler
+	client  *http.Client
+}
+
+type usageSummary struct {
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+	Cost         float64
+	Currency     string
+}
+
+type CreateAIAPIKeyRequest struct {
+	SuperAdminPassword string   `json:"super_admin_password"`
+	Name               string   `json:"name" binding:"required"`
+	AllowedModels      []string `json:"allowed_models"`
+	AllowedScopes      []string `json:"allowed_scopes"`
+	ExpiresDays        int      `json:"expires_days"`
+	RateLimitPerHour   int      `json:"rate_limit_per_hour"`
+	BudgetLimit        float64  `json:"budget_limit"`
+	AlertThreshold     float64  `json:"alert_threshold"`
+	Notes              string   `json:"notes"`
+}
+
+type ChatCompletionRequest struct {
+	Model       string                   `json:"model" binding:"required"`
+	Messages    []map[string]interface{} `json:"messages" binding:"required"`
+	Temperature *float64                 `json:"temperature"`
+	MaxTokens   *int                     `json:"max_tokens"`
+	TopP        *float64                 `json:"top_p"`
+	Stream      bool                     `json:"stream"`
+	Metadata    map[string]interface{}   `json:"metadata"`
+}
+
+type MediaGenerationRequest struct {
+	Model           string                 `json:"model" binding:"required"`
+	Prompt          string                 `json:"prompt" binding:"required"`
+	NegativePrompt  string                 `json:"negative_prompt"`
+	Image           string                 `json:"image"`
+	Images          []string               `json:"images"`
+	Size            string                 `json:"size"`
+	Count           int                    `json:"count"`
+	Seed            *int                   `json:"seed"`
+	Watermark       *bool                  `json:"watermark"`
+	Duration        int                    `json:"duration"`
+	Resolution      string                 `json:"resolution"`
+	FPS             int                    `json:"fps"`
+	AutoPoll        bool                   `json:"auto_poll"`
+	WaitSeconds     int                    `json:"wait_seconds"`
+	ClientName      string                 `json:"client_name"`
+	ClientRequestID string                 `json:"client_request_id"`
+	Parameters      map[string]interface{} `json:"parameters"`
+}
+
+func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler) *AIGatewayHandler {
+	return &AIGatewayHandler{
+		db:      db,
+		cfg:     cfg,
+		bailian: bailian,
+		client:  &http.Client{Timeout: 90 * time.Second},
+	}
+}
+
+func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"title":   "AI Gateway API 文档",
+		"summary": "统一对外开放 DeepSeek、MiniMax、Bailian 模型能力，使用超级管理员签发的 API Key 访问。",
+		"auth": gin.H{
+			"admin_header": "X-Super-Admin-Password",
+			"api_key":      "Authorization: Bearer dtk_ai_xxx",
+		},
+		"billing": gin.H{
+			"fields":  []string{"input_tokens", "output_tokens", "total_tokens", "estimated_cost", "currency"},
+			"rule":    "文本模型优先读取上游 usage，缺失时后端本地估算；图片/视频按配置 request_cost 计费。",
+			"pricing": h.cfg.AIGateway.Pricing,
+		},
+		"routes": []gin.H{
+			{"method": "GET", "path": "/api/ai-gateway/docs", "description": "获取 API 文档"},
+			{"method": "GET", "path": "/api/ai-gateway/catalog", "description": "获取可用模型目录"},
+			{"method": "POST", "path": "/api/ai-gateway/admin/keys", "description": "超级管理员创建 API Key"},
+			{"method": "GET", "path": "/api/ai-gateway/admin/keys", "description": "超级管理员查看 Key 列表"},
+			{"method": "GET", "path": "/api/ai-gateway/admin/keys/:id", "description": "超级管理员查看 Key 详情和最近明细"},
+			{"method": "POST", "path": "/api/ai-gateway/admin/keys/:id/revoke", "description": "超级管理员吊销 Key"},
+			{"method": "GET", "path": "/api/ai-gateway/admin/logs", "description": "超级管理员查看请求明细"},
+			{"method": "GET", "path": "/api/ai-gateway/admin/reports", "description": "超级管理员查看按天/月聚合报表"},
+			{"method": "GET", "path": "/api/ai-gateway/admin/alerts", "description": "超级管理员查看预算阈值告警"},
+			{"method": "POST", "path": "/api/ai-gateway/v1/chat/completions", "description": "统一文本模型接口"},
+			{"method": "POST", "path": "/api/ai-gateway/v1/media/generations", "description": "统一图片/视频模型接口"},
+			{"method": "GET", "path": "/api/ai-gateway/v1/media/tasks", "description": "当前 API Key 维度的媒体任务列表"},
+			{"method": "GET", "path": "/api/ai-gateway/v1/media/tasks/:id", "description": "当前 API Key 维度的媒体任务详情"},
+		},
+		"examples": gin.H{
+			"chat": gin.H{
+				"model": "deepseek-chat",
+				"messages": []gin.H{
+					{"role": "system", "content": "你是一个专业助手"},
+					{"role": "user", "content": "请写一个 Go HTTP 服务的示例"},
+				},
+				"temperature": 0.7,
+				"max_tokens":  1024,
+			},
+			"media": gin.H{
+				"model":        "qwen-image-2.0-pro",
+				"prompt":       "一只橘猫穿宇航服，电影海报风格",
+				"images":       []string{"data:image/png;base64,..."},
+				"size":         "1328x1328",
+				"auto_poll":    true,
+				"wait_seconds": 30,
+			},
+		},
+	})
+}
+
+func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
+	catalog := make([]gin.H, 0)
+	if h.cfg.DeepSeek.APIKey != "" {
+		catalog = append(catalog, gin.H{
+			"model":       fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"),
+			"provider":    "deepseek",
+			"type":        "chat",
+			"endpoint":    "/api/ai-gateway/v1/chat/completions",
+			"description": "DeepSeek 文本模型",
+		})
+	}
+	if h.cfg.MiniMax.APIKey != "" {
+		catalog = append(catalog, gin.H{
+			"model":       fallbackString(h.cfg.MiniMax.Model, "abab6.5s-chat"),
+			"provider":    "minimax",
+			"type":        "chat",
+			"endpoint":    "/api/ai-gateway/v1/chat/completions",
+			"description": "MiniMax 文本模型",
+		})
+	}
+	for _, model := range h.cfg.Bailian.Models {
+		catalog = append(catalog, gin.H{
+			"model":       model.Name,
+			"provider":    "bailian",
+			"type":        model.Type,
+			"endpoint":    "/api/ai-gateway/v1/media/generations",
+			"enabled":     model.Enabled,
+			"description": model.Description,
+			"expires_at":  model.ExpiresAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"models": catalog})
+}
+
+func (h *AIGatewayHandler) AdminCreateKey(c *gin.Context) {
+	var req CreateAIAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整", "code": 400})
+		return
+	}
+	if !h.requireSuperAdmin(c, req.SuperAdminPassword) {
+		return
+	}
+
+	plainKey := "dtk_ai_" + utils.GenerateHexKey(20)
+	keyHash, err := utils.HashPassword(plainKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 API Key 失败", "code": 500})
+		return
+	}
+	prefix := plainKey[:18]
+	expiresDays := req.ExpiresDays
+	if expiresDays <= 0 {
+		expiresDays = h.cfg.AIGateway.DefaultKeyExpiresDays
+	}
+	rateLimit := req.RateLimitPerHour
+	if rateLimit <= 0 {
+		rateLimit = h.cfg.AIGateway.DefaultRateLimitPerHour
+	}
+	allowedModels := req.AllowedModels
+	if len(allowedModels) == 0 {
+		allowedModels = []string{"*"}
+	}
+	allowedScopes := req.AllowedScopes
+	if len(allowedScopes) == 0 {
+		allowedScopes = []string{"chat", "media"}
+	}
+
+	expiresAt := time.Now().Add(time.Duration(expiresDays) * 24 * time.Hour)
+	alertThreshold := req.AlertThreshold
+	if alertThreshold <= 0 || alertThreshold > 1 {
+		alertThreshold = 0.8
+	}
+	key := &models.AIAPIKey{
+		Name:             req.Name,
+		KeyPrefix:        prefix,
+		KeyHash:          keyHash,
+		Status:           "active",
+		AllowedModels:    models.MustJSONString(allowedModels),
+		AllowedScopes:    models.MustJSONString(allowedScopes),
+		RateLimitPerHour: rateLimit,
+		BudgetLimit:      req.BudgetLimit,
+		AlertThreshold:   alertThreshold,
+		ExpiresAt:        &expiresAt,
+		CreatorIP:        c.ClientIP(),
+		Notes:            req.Notes,
+	}
+	if err := h.db.CreateAIAPIKey(key); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 API Key 失败", "code": 500})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{
+		"key":       key,
+		"plain_key": plainKey,
+		"warning":   "明文 API Key 只会返回这一次，请立即保存。",
+	})
+}
+
+func (h *AIGatewayHandler) AdminListKeys(c *gin.Context) {
+	if !h.requireSuperAdmin(c, "") {
+		return
+	}
+	limit := boundedInt(c.Query("limit"), 20, 1, 100)
+	offset := boundedInt(c.Query("offset"), 0, 0, 100000)
+	keys, err := h.db.ListAIAPIKeys(limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取 Key 列表失败", "code": 500})
+		return
+	}
+	total, _ := h.db.CountAIAPIKeys()
+	c.JSON(http.StatusOK, gin.H{"keys": keys, "total": total, "limit": limit, "offset": offset})
+}
+
+func (h *AIGatewayHandler) AdminGetKey(c *gin.Context) {
+	if !h.requireSuperAdmin(c, "") {
+		return
+	}
+	key, err := h.db.GetAIAPIKeyByID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "API Key 不存在", "code": 404})
+		return
+	}
+	logs, _ := h.db.ListAIAPIRequestLogs(key.ID, 50, 0)
+	c.JSON(http.StatusOK, gin.H{"key": key, "logs": logs})
+}
+
+func (h *AIGatewayHandler) AdminRevokeKey(c *gin.Context) {
+	var req struct {
+		SuperAdminPassword string `json:"super_admin_password"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	if !h.requireSuperAdmin(c, req.SuperAdminPassword) {
+		return
+	}
+	key, err := h.db.GetAIAPIKeyByID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "API Key 不存在", "code": 404})
+		return
+	}
+	key.Status = "revoked"
+	if err := h.db.UpdateAIAPIKey(key); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "吊销失败", "code": 500})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "key": key})
+}
+
+func (h *AIGatewayHandler) AdminListLogs(c *gin.Context) {
+	if !h.requireSuperAdmin(c, "") {
+		return
+	}
+	logs, err := h.db.ListAIAPIRequestLogs(c.Query("api_key_id"), boundedInt(c.Query("limit"), 50, 1, 200), 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取请求日志失败", "code": 500})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"logs": logs})
+}
+
+func (h *AIGatewayHandler) AdminReports(c *gin.Context) {
+	if !h.requireSuperAdmin(c, "") {
+		return
+	}
+	groupBy := c.DefaultQuery("group_by", "day")
+	if groupBy != "day" && groupBy != "month" {
+		groupBy = "day"
+	}
+	days := boundedInt(c.Query("days"), 30, 1, 3650)
+	rows, err := h.db.GetAIUsageReport(groupBy, c.Query("api_key_id"), time.Now().Add(-time.Duration(days)*24*time.Hour))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取报表失败", "code": 500})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"rows": rows, "group_by": groupBy, "days": days})
+}
+
+func (h *AIGatewayHandler) AdminAlerts(c *gin.Context) {
+	if !h.requireSuperAdmin(c, "") {
+		return
+	}
+	keys, err := h.db.ListAIAPIKeys(500, 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取告警失败", "code": 500})
+		return
+	}
+	alerts := make([]gin.H, 0)
+	for _, key := range keys {
+		if key.BudgetLimit <= 0 {
+			continue
+		}
+		ratio := key.TotalCost / key.BudgetLimit
+		if ratio >= key.AlertThreshold {
+			level := "warning"
+			if ratio >= 1 {
+				level = "critical"
+			}
+			alerts = append(alerts, gin.H{
+				"api_key_id":      key.ID,
+				"name":            key.Name,
+				"total_cost":      key.TotalCost,
+				"budget_limit":    key.BudgetLimit,
+				"alert_threshold": key.AlertThreshold,
+				"usage_ratio":     ratio,
+				"currency":        key.BillingCurrency,
+				"level":           level,
+				"total_requests":  key.TotalRequests,
+				"total_tokens":    key.TotalTokens,
+			})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"alerts": alerts})
+}
+
+func (h *AIGatewayHandler) ChatCompletions(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "chat")
+	if !ok {
+		return
+	}
+
+	var req ChatCompletionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整", "code": 400})
+		return
+	}
+	if !h.ensureModelAllowed(c, key, req.Model) {
+		return
+	}
+
+	start := time.Now()
+	statusCode := http.StatusOK
+	rawRequest := sanitizeJSON(req)
+	var responseBody string
+	var success bool
+	var errMessage string
+	provider := h.resolveChatProvider(req.Model)
+
+	result, rawMap, err := h.executeChatRequest(req)
+	usage := h.buildChatUsage(req, rawMap, provider)
+	if err != nil {
+		statusCode = http.StatusBadGateway
+		errMessage = err.Error()
+		c.JSON(statusCode, gin.H{"error": errMessage, "code": statusCode})
+	} else {
+		success = true
+		responseBody = sanitizeJSON(rawMap)
+		result["usage_summary"] = gin.H{
+			"input_tokens":   usage.InputTokens,
+			"output_tokens":  usage.OutputTokens,
+			"total_tokens":   usage.TotalTokens,
+			"estimated_cost": usage.Cost,
+			"currency":       usage.Currency,
+		}
+		c.JSON(http.StatusOK, result)
+	}
+
+	h.logAPIRequest(key, req.Model, provider, "/api/ai-gateway/v1/chat/completions", "chat", statusCode, success, errMessage, rawRequest, responseBody, c.ClientIP(), time.Since(start), usage)
+}
+
+func (h *AIGatewayHandler) MediaGenerations(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+
+	var req MediaGenerationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整", "code": 400})
+		return
+	}
+	if !h.ensureModelAllowed(c, key, req.Model) {
+		return
+	}
+
+	start := time.Now()
+	statusCode := http.StatusOK
+	responseBody := ""
+	success := false
+	errMessage := ""
+
+	result, sc, err := h.bailian.ExecuteTask(CreateBailianTaskRequest{
+		Model:           req.Model,
+		Prompt:          req.Prompt,
+		NegativePrompt:  req.NegativePrompt,
+		Image:           req.Image,
+		Images:          req.Images,
+		Size:            req.Size,
+		Count:           req.Count,
+		Seed:            req.Seed,
+		Watermark:       req.Watermark,
+		Duration:        req.Duration,
+		Resolution:      req.Resolution,
+		FPS:             req.FPS,
+		AutoPoll:        req.AutoPoll,
+		WaitSeconds:     req.WaitSeconds,
+		ClientName:      "api-key:" + key.ID + ":" + req.ClientName,
+		ClientRequestID: req.ClientRequestID,
+		Parameters:      req.Parameters,
+	}, "ai-gateway", c.ClientIP())
+	statusCode = sc
+	usage := h.buildMediaUsage(req.Model)
+	if result != nil {
+		responseBody = sanitizeJSON(result)
+	}
+	if err != nil {
+		errMessage = err.Error()
+		c.JSON(statusCode, gin.H{"error": errMessage, "code": statusCode, "result": result})
+	} else {
+		success = true
+		c.JSON(http.StatusOK, result)
+	}
+
+	h.logAPIRequest(key, req.Model, "bailian", "/api/ai-gateway/v1/media/generations", "media", statusCode, success, errMessage, sanitizeJSON(req), responseBody, c.ClientIP(), time.Since(start), usage)
+}
+
+func (h *AIGatewayHandler) ListMediaTasks(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+	tasks, err := h.db.ListBailianTasksByClientPrefix(
+		boundedInt(c.Query("limit"), 20, 1, 100),
+		boundedInt(c.Query("offset"), 0, 0, 100000),
+		"api-key:"+key.ID+":",
+		c.Query("model"),
+		c.Query("status"),
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务失败", "code": 500})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tasks": tasks})
+}
+
+func (h *AIGatewayHandler) GetMediaTask(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+	task, err := h.db.GetBailianTask(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在", "code": 404})
+		return
+	}
+	if !strings.HasPrefix(task.ClientName, "api-key:"+key.ID+":") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该任务", "code": 403})
+		return
+	}
+	events, _ := h.db.ListBailianTaskEvents(task.ID)
+	c.JSON(http.StatusOK, gin.H{"task": task, "events": events})
+}
+
+func (h *AIGatewayHandler) executeChatRequest(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
+	provider := h.resolveChatProvider(req.Model)
+	switch provider {
+	case "deepseek":
+		return h.callDeepSeek(req)
+	case "minimax":
+		return h.callMiniMax(req)
+	default:
+		return nil, nil, fmt.Errorf("不支持的文本模型: %s", req.Model)
+	}
+}
+
+func (h *AIGatewayHandler) callDeepSeek(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
+	bodyMap := map[string]interface{}{
+		"model":    req.Model,
+		"messages": req.Messages,
+		"stream":   false,
+	}
+	if req.Temperature != nil {
+		bodyMap["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil {
+		bodyMap["max_tokens"] = *req.MaxTokens
+	}
+	if req.TopP != nil {
+		bodyMap["top_p"] = *req.TopP
+	}
+
+	raw, err := h.doJSONRequest("https://api.deepseek.com/chat/completions", h.cfg.DeepSeek.APIKey, bodyMap)
+	if err != nil {
+		return nil, raw, err
+	}
+	content := extractString(raw, "choices", "0", "message", "content")
+	if content == "" {
+		content = extractMessageContentFromChoices(raw["choices"])
+	}
+	result := gin.H{
+		"id":           fallbackString(extractString(raw, "id"), "chatcmpl-"+utils.GenerateHexKey(4)),
+		"object":       "chat.completion",
+		"created":      time.Now().Unix(),
+		"model":        req.Model,
+		"provider":     "deepseek",
+		"choices":      raw["choices"],
+		"usage":        raw["usage"],
+		"content":      content,
+		"raw_response": raw,
+	}
+	return result, raw, nil
+}
+
+func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
+	bodyMap := map[string]interface{}{
+		"model":      req.Model,
+		"messages":   req.Messages,
+		"max_tokens": valueOrDefaultInt(req.MaxTokens, 1024),
+	}
+	if req.Temperature != nil {
+		bodyMap["temperature"] = *req.Temperature
+	}
+	if req.TopP != nil {
+		bodyMap["top_p"] = *req.TopP
+	}
+
+	raw, err := h.doJSONRequest("https://api.minimaxi.com/anthropic/v1/messages", h.cfg.MiniMax.APIKey, bodyMap)
+	if err != nil {
+		return nil, raw, err
+	}
+	content := extractMiniMaxText(raw)
+	result := gin.H{
+		"id":       fallbackString(extractString(raw, "id"), "chatcmpl-"+utils.GenerateHexKey(4)),
+		"object":   "chat.completion",
+		"created":  time.Now().Unix(),
+		"model":    req.Model,
+		"provider": "minimax",
+		"choices": []gin.H{
+			{
+				"index": 0,
+				"message": gin.H{
+					"role":    "assistant",
+					"content": content,
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"content":      content,
+		"raw_response": raw,
+	}
+	return result, raw, nil
+}
+
+func (h *AIGatewayHandler) doJSONRequest(url, apiKey string, bodyMap map[string]interface{}) (map[string]interface{}, error) {
+	body, _ := json.Marshal(bodyMap)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	var payload map[string]interface{}
+	_ = json.Unmarshal(respBody, &payload)
+	if resp.StatusCode >= 400 {
+		return payload, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+	}
+	return payload, nil
+}
+
+func (h *AIGatewayHandler) authenticateAPIKey(c *gin.Context, scope string) (*models.AIAPIKey, bool) {
+	token := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+	if token == "" {
+		token = strings.TrimSpace(c.GetHeader("X-API-Key"))
+	}
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少 API Key", "code": 401})
+		return nil, false
+	}
+	if len(token) < 18 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "API Key 格式错误", "code": 401})
+		return nil, false
+	}
+
+	keys, err := h.db.GetAIAPIKeysByPrefix(token[:18])
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "校验 API Key 失败", "code": 500})
+		return nil, false
+	}
+	var matched *models.AIAPIKey
+	for _, item := range keys {
+		if utils.VerifyPassword(token, item.KeyHash) {
+			matched = item
+			break
+		}
+	}
+	if matched == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "API Key 无效", "code": 401})
+		return nil, false
+	}
+	if matched.Status != "active" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "API Key 已停用", "code": 403})
+		return nil, false
+	}
+	if matched.ExpiresAt != nil && time.Now().After(*matched.ExpiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "API Key 已过期", "code": 403})
+		return nil, false
+	}
+	if !jsonStringContains(matched.AllowedScopes, scope) && !jsonStringContains(matched.AllowedScopes, "*") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "当前 API Key 没有该接口权限", "code": 403})
+		return nil, false
+	}
+	if matched.RateLimitPerHour > 0 {
+		count, _ := h.db.CountAIAPIRequestsSince(matched.ID, time.Now().Add(-time.Hour))
+		if count >= matched.RateLimitPerHour {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "API Key 已达到每小时调用上限", "code": 429})
+			return nil, false
+		}
+	}
+	return matched, true
+}
+
+func (h *AIGatewayHandler) ensureModelAllowed(c *gin.Context, key *models.AIAPIKey, model string) bool {
+	if jsonStringContains(key.AllowedModels, "*") || jsonStringContains(key.AllowedModels, model) {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "当前 API Key 无权访问该模型", "code": 403})
+	return false
+}
+
+func (h *AIGatewayHandler) logAPIRequest(key *models.AIAPIKey, model, provider, endpoint, requestType string, statusCode int, success bool, errMessage, requestBody, responseBody, clientIP string, latency time.Duration, usage usageSummary) {
+	if key == nil {
+		return
+	}
+	_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
+		APIKeyID:      key.ID,
+		Model:         model,
+		Provider:      provider,
+		Endpoint:      endpoint,
+		RequestType:   requestType,
+		StatusCode:    statusCode,
+		Success:       success,
+		ErrorMessage:  errMessage,
+		RequestBody:   truncateString(requestBody, 10000),
+		ResponseBody:  truncateString(responseBody, 10000),
+		ClientIP:      clientIP,
+		LatencyMS:     latency.Milliseconds(),
+		InputTokens:   usage.InputTokens,
+		OutputTokens:  usage.OutputTokens,
+		TotalTokens:   usage.TotalTokens,
+		EstimatedCost: usage.Cost,
+		Currency:      usage.Currency,
+	})
+	_ = h.db.TouchAIAPIKeyUsage(key.ID, time.Now(), usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.Cost, usage.Currency)
+}
+
+func (h *AIGatewayHandler) requireSuperAdmin(c *gin.Context, bodyPassword string) bool {
+	password := bodyPassword
+	if password == "" {
+		password = c.GetHeader("X-Super-Admin-Password")
+	}
+	if password == "" {
+		password = c.Query("super_admin_password")
+	}
+	if strings.TrimSpace(h.cfg.AIGateway.SuperAdminPassword) == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "未配置 ai_gateway.super_admin_password 或 AI_GATEWAY_SUPER_ADMIN_PASSWORD", "code": 403})
+		return false
+	}
+	if password != h.cfg.AIGateway.SuperAdminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "超级管理员密码错误", "code": 401})
+		return false
+	}
+	return true
+}
+
+func (h *AIGatewayHandler) resolveChatProvider(model string) string {
+	switch model {
+	case fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"), "deepseek-chat":
+		return "deepseek"
+	case fallbackString(h.cfg.MiniMax.Model, "abab6.5s-chat"), "abab6.5s-chat", "MiniMax-M2.5":
+		return "minimax"
+	default:
+		return ""
+	}
+}
+
+func extractMiniMaxText(raw map[string]interface{}) string {
+	if raw == nil {
+		return ""
+	}
+	contentArr, ok := raw["content"].([]interface{})
+	if !ok {
+		return ""
+	}
+	for _, item := range contentArr {
+		if m, ok := item.(map[string]interface{}); ok {
+			if m["type"] == "text" {
+				if text, ok := m["text"].(string); ok {
+					return text
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func extractMessageContentFromChoices(choices interface{}) string {
+	items, ok := choices.([]interface{})
+	if !ok || len(items) == 0 {
+		return ""
+	}
+	first, ok := items[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	message, ok := first["message"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	content, _ := message["content"].(string)
+	return content
+}
+
+func jsonStringContains(raw, target string) bool {
+	var items []string
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return false
+	}
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
+func fallbackString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func boundedInt(raw string, fallback, min, max int) int {
+	value := parseInt(raw, fallback)
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func valueOrDefaultInt(value *int, fallback int) int {
+	if value == nil || *value <= 0 {
+		return fallback
+	}
+	return *value
+}
+
+func (h *AIGatewayHandler) buildChatUsage(req ChatCompletionRequest, raw map[string]interface{}, provider string) usageSummary {
+	inputTokens, outputTokens, totalTokens := extractUsageFromRaw(raw)
+	if inputTokens == 0 {
+		inputTokens = estimateMessagesTokens(req.Messages)
+	}
+	if outputTokens == 0 {
+		outputTokens = estimateTextTokens(extractMessageContentFromChoices(raw["choices"]) + extractMiniMaxText(raw))
+	}
+	if totalTokens == 0 {
+		totalTokens = inputTokens + outputTokens
+	}
+	cost, currency := h.calculateCost(req.Model, provider, inputTokens, outputTokens)
+	return usageSummary{
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		TotalTokens:  totalTokens,
+		Cost:         cost,
+		Currency:     currency,
+	}
+}
+
+func (h *AIGatewayHandler) buildMediaUsage(model string) usageSummary {
+	cost, currency := h.calculateCost(model, "bailian", 0, 0)
+	return usageSummary{Cost: cost, Currency: currency}
+}
+
+func extractUsageFromRaw(raw map[string]interface{}) (int, int, int) {
+	if raw == nil {
+		return 0, 0, 0
+	}
+	if usage, ok := raw["usage"].(map[string]interface{}); ok {
+		input := interfaceToInt(usage["prompt_tokens"])
+		if input == 0 {
+			input = interfaceToInt(usage["input_tokens"])
+		}
+		output := interfaceToInt(usage["completion_tokens"])
+		if output == 0 {
+			output = interfaceToInt(usage["output_tokens"])
+		}
+		total := interfaceToInt(usage["total_tokens"])
+		return input, output, total
+	}
+	return 0, 0, 0
+}
+
+func estimateMessagesTokens(messages []map[string]interface{}) int {
+	total := 0
+	for _, msg := range messages {
+		for _, key := range []string{"content", "role"} {
+			if value, ok := msg[key]; ok {
+				total += estimateTextTokens(interfaceToString(value))
+			}
+		}
+	}
+	return total
+}
+
+func estimateTextTokens(text string) int {
+	runes := len([]rune(strings.TrimSpace(text)))
+	if runes == 0 {
+		return 0
+	}
+	estimated := runes / 4
+	if estimated < 1 {
+		return 1
+	}
+	return estimated
+}
+
+func (h *AIGatewayHandler) calculateCost(model, provider string, inputTokens, outputTokens int) (float64, string) {
+	currency := "CNY"
+	for _, pricing := range h.cfg.AIGateway.Pricing {
+		if pricing.Model == model && (pricing.Provider == "" || pricing.Provider == provider) {
+			if pricing.Currency != "" {
+				currency = pricing.Currency
+			}
+			cost := (float64(inputTokens)/1000.0)*pricing.InputPer1KTokens + (float64(outputTokens)/1000.0)*pricing.OutputPer1KTokens + pricing.RequestCost
+			return cost, currency
+		}
+	}
+	return 0, currency
+}
+
+func interfaceToInt(value interface{}) int {
+	switch v := value.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case int64:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func interfaceToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	default:
+		data, _ := json.Marshal(v)
+		return string(data)
+	}
+}

@@ -98,6 +98,16 @@ func main() {
 		log.Fatalf("SSH 数据库初始化失败: %v", err)
 	}
 
+	// 初始化百炼图片任务数据库表
+	if err := db.InitBailian(); err != nil {
+		log.Fatalf("百炼图片任务数据库初始化失败: %v", err)
+	}
+
+	// 初始化 AI Gateway 数据库表
+	if err := db.InitAIGateway(); err != nil {
+		log.Fatalf("AI Gateway 数据库初始化失败: %v", err)
+	}
+
 	// 后台预加载背景图（如果缓存目录为空）
 	go func() {
 		// 等待服务器启动完成
@@ -186,6 +196,16 @@ func main() {
 			if err == nil && uploadCount > 0 {
 				log.Printf("已清理 %d 个过期上传文件", uploadCount)
 			}
+			// 清理旧的百炼任务
+			bailianCount, err := db.CleanOldBailianTasks(cfg.Bailian.TaskRetentionDays)
+			if err == nil && bailianCount > 0 {
+				log.Printf("已清理 %d 条旧百炼任务", bailianCount)
+			}
+			// 清理旧的 AI Gateway 请求明细
+			aiLogCount, err := db.CleanOldAIAPIRequestLogs(cfg.AIGateway.RequestRetentionDays)
+			if err == nil && aiLogCount > 0 {
+				log.Printf("已清理 %d 条旧 AI Gateway 请求明细", aiLogCount)
+			}
 		}
 	}()
 
@@ -250,6 +270,8 @@ func main() {
 	}
 	terminalHandler := handlers.NewSSHHandler(db, encryptionService, sshConfig)
 	ocrHandler := handlers.NewOCRHandler()
+	bailianHandler := handlers.NewBailianHandler(db, cfg)
+	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler)
 
 	// 启动 SSH 会话清理协程
 	terminalHandler.StartCleanupRoutine()
@@ -262,21 +284,21 @@ func main() {
 		{
 			// 只有创建操作需要限流
 			paste.POST("", createRateLimiter.Middleware(), pasteHandler.Create)
-			paste.POST("/upload", pasteHandler.UploadFile)           // 文件上传
-			paste.GET("/files/:filename", pasteHandler.ServeFile)    // 文件访问
+			paste.POST("/upload", pasteHandler.UploadFile)        // 文件上传
+			paste.GET("/files/:filename", pasteHandler.ServeFile) // 文件访问
 			paste.GET("/:id", pasteHandler.Get)
 			paste.GET("/:id/info", pasteHandler.GetInfo)
 
 			// 分片上传 API
-			paste.POST("/chunk/init", pasteHandler.InitChunkUpload)       // 初始化分片上传
-			paste.POST("/chunk/:file_id", pasteHandler.UploadChunk)       // 上传分片
-			paste.POST("/chunk/:file_id/merge", pasteHandler.MergeChunks) // 合并分片
+			paste.POST("/chunk/init", pasteHandler.InitChunkUpload)            // 初始化分片上传
+			paste.POST("/chunk/:file_id", pasteHandler.UploadChunk)            // 上传分片
+			paste.POST("/chunk/:file_id/merge", pasteHandler.MergeChunks)      // 合并分片
 			paste.GET("/chunk/:file_id/status", pasteHandler.CheckChunkStatus) // 检查上传状态
 
 			// 管理员 API
-			paste.GET("/admin/list", pasteHandler.AdminListPastes)   // 管理员列表
-			paste.GET("/admin/:id", pasteHandler.AdminGetPaste)      // 管理员查看
-			paste.PUT("/admin/:id", pasteHandler.AdminUpdatePaste)   // 管理员编辑
+			paste.GET("/admin/list", pasteHandler.AdminListPastes)    // 管理员列表
+			paste.GET("/admin/:id", pasteHandler.AdminGetPaste)       // 管理员查看
+			paste.PUT("/admin/:id", pasteHandler.AdminUpdatePaste)    // 管理员编辑
 			paste.DELETE("/admin/:id", pasteHandler.AdminDeletePaste) // 管理员删除
 		}
 
@@ -416,8 +438,8 @@ func main() {
 		// 菜谱 API
 		recipe := api.Group("/recipe")
 		{
-			recipe.GET("/default", recipeHandler.GetDefault)                    // 获取默认菜谱（无需登录）
-			recipe.GET("/detailed", recipeHandler.GetDetailed)                  // 获取详细步骤菜谱（无需登录）
+			recipe.GET("/default", recipeHandler.GetDefault)   // 获取默认菜谱（无需登录）
+			recipe.GET("/detailed", recipeHandler.GetDetailed) // 获取详细步骤菜谱（无需登录）
 			recipe.POST("", createRateLimiter.Middleware(), recipeHandler.Create)
 			recipe.POST("/login", recipeHandler.Login)
 			recipe.GET("/:id", recipeHandler.Get)
@@ -431,14 +453,14 @@ func main() {
 		{
 			terminal.POST("", createRateLimiter.Middleware(), terminalHandler.Create)
 			terminal.POST("/login", terminalHandler.Login)
-			terminal.GET("/list", terminalHandler.List) // 列出用户所有会话
-			terminal.GET("/admin/list", terminalHandler.AdminList)   // 管理员查看所有
+			terminal.GET("/list", terminalHandler.List)                // 列出用户所有会话
+			terminal.GET("/admin/list", terminalHandler.AdminList)     // 管理员查看所有
 			terminal.DELETE("/admin/:id", terminalHandler.AdminDelete) // 管理员删除
 			terminal.GET("/:id", terminalHandler.Get)
 			terminal.GET("/:id/creator", terminalHandler.GetByCreator)
-			terminal.GET("/:id/history", terminalHandler.GetHistory)      // 获取命令历史
-			terminal.POST("/:id/resume", terminalHandler.Resume)          // 恢复会话
-			terminal.POST("/:id/disconnect", terminalHandler.Disconnect)  // 断开连接
+			terminal.GET("/:id/history", terminalHandler.GetHistory)     // 获取命令历史
+			terminal.POST("/:id/resume", terminalHandler.Resume)         // 恢复会话
+			terminal.POST("/:id/disconnect", terminalHandler.Disconnect) // 断开连接
 			terminal.PUT("/:id", terminalHandler.Update)
 			terminal.DELETE("/:id", terminalHandler.Delete)
 			terminal.GET("/:id/ws", terminalHandler.HandleWebSocket) // WebSocket 连接
@@ -447,11 +469,42 @@ func main() {
 		// OCR 文字识别
 		api.POST("/ocr", createRateLimiter.Middleware(), ocrHandler.Extract)
 
+		// 百炼图片模型
+		bailian := api.Group("/bailian")
+		{
+			bailian.GET("/docs", bailianHandler.GetDocs)
+			bailian.GET("/models", bailianHandler.GetModels)
+			bailian.POST("/tasks", createRateLimiter.Middleware(), bailianHandler.CreateTask)
+			bailian.GET("/tasks", bailianHandler.ListTasks)
+			bailian.GET("/tasks/:id/events", bailianHandler.GetTaskEvents)
+			bailian.POST("/tasks/:id/poll", bailianHandler.PollTask)
+			bailian.GET("/tasks/:id", bailianHandler.GetTask)
+			bailian.POST("/generate", createRateLimiter.Middleware(), bailianHandler.OpenAPICreateTask)
+		}
+
+		// AI Gateway
+		aigw := api.Group("/ai-gateway")
+		{
+			aigw.GET("/docs", aiGatewayHandler.GetDocs)
+			aigw.GET("/catalog", aiGatewayHandler.GetCatalog)
+			aigw.POST("/admin/keys", aiGatewayHandler.AdminCreateKey)
+			aigw.GET("/admin/keys", aiGatewayHandler.AdminListKeys)
+			aigw.GET("/admin/keys/:id", aiGatewayHandler.AdminGetKey)
+			aigw.POST("/admin/keys/:id/revoke", aiGatewayHandler.AdminRevokeKey)
+			aigw.GET("/admin/logs", aiGatewayHandler.AdminListLogs)
+			aigw.GET("/admin/reports", aiGatewayHandler.AdminReports)
+			aigw.GET("/admin/alerts", aiGatewayHandler.AdminAlerts)
+			aigw.POST("/v1/chat/completions", aiGatewayHandler.ChatCompletions)
+			aigw.POST("/v1/media/generations", aiGatewayHandler.MediaGenerations)
+			aigw.GET("/v1/media/tasks", aiGatewayHandler.ListMediaTasks)
+			aigw.GET("/v1/media/tasks/:id", aiGatewayHandler.GetMediaTask)
+		}
+
 		// 背景图 API
 		api.GET("/bg", handlers.GetBackgroundImages)
-		api.POST("/bg/cache", handlers.CacheBackgroundImages)        // 缓存图片
-		api.POST("/bg/replace", handlers.ReplaceRandomImages)        // 随机替换图片
-		api.GET("/bg/random", handlers.GetRandomBackground)         // 随机图片
+		api.POST("/bg/cache", handlers.CacheBackgroundImages) // 缓存图片
+		api.POST("/bg/replace", handlers.ReplaceRandomImages) // 随机替换图片
+		api.GET("/bg/random", handlers.GetRandomBackground)   // 随机图片
 		api.GET("/bg/cached/:filename", handlers.ServeCachedBackground)
 
 		// 健康检查

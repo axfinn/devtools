@@ -36,11 +36,11 @@ var sshUpgrader = websocket.Upgrader{
 
 // ActiveSSHSession 活跃的 SSH 会话
 type ActiveSSHSession struct {
-	ID          string
-	Client      *ssh.Client
-	Session     *ssh.Session
-	Stdin       io.WriteCloser
-	Stdout      io.Reader
+	ID      string
+	Client  *ssh.Client
+	Session *ssh.Session
+	Stdin   io.WriteCloser
+	Stdout  io.Reader
 
 	// 通道管理
 	InputChan   chan []byte
@@ -48,23 +48,24 @@ type ActiveSSHSession struct {
 	ControlChan chan ControlMessage
 
 	// 状态
-	Status      string
-	LastActive  time.Time
-	Width       int
-	Height      int
+	Status     string
+	LastActive time.Time
+	Width      int
+	Height     int
 
 	// 上下文和取消
-	ctx         context.Context
-	cancel      context.CancelFunc
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// 同步
-	mu          sync.RWMutex
+	mu        sync.RWMutex
+	closeOnce sync.Once
 }
 
 // ControlMessage 控制消息
 type ControlMessage struct {
-	Type  string // resize, close, ping
-	Data  interface{}
+	Type string // resize, close, ping
+	Data interface{}
 }
 
 // ResizeData 调整大小数据
@@ -267,35 +268,35 @@ func (m *SSHSessionManager) ResumeSession(sessionID, userToken string) (*ActiveS
 
 // CloseSession 关闭会话
 func (m *SSHSessionManager) CloseSession(sessionID string) error {
-	m.mu.Lock()
+	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
 	if !ok {
-		m.mu.Unlock()
 		return fmt.Errorf("会话不存在")
 	}
-	delete(m.sessions, sessionID)
-	m.mu.Unlock()
 
-	// 取消上下文
-	session.cancel()
+	session.closeOnce.Do(func() {
+		m.mu.Lock()
+		delete(m.sessions, sessionID)
+		m.mu.Unlock()
 
-	// 关闭 SSH 连接
-	if session.Session != nil {
-		session.Session.Close()
-	}
-	if session.Client != nil {
-		session.Client.Close()
-	}
+		session.cancel()
 
-	// 关闭通道
-	close(session.InputChan)
-	close(session.OutputChan)
-	close(session.ControlChan)
+		if session.Session != nil {
+			session.Session.Close()
+		}
+		if session.Client != nil {
+			session.Client.Close()
+		}
 
-	// 更新数据库状态
-	if err := m.db.UpdateSSHSessionStatus(sessionID, "idle"); err != nil {
-		log.Printf("Failed to update session status: %v", err)
-	}
+		close(session.InputChan)
+		close(session.OutputChan)
+		close(session.ControlChan)
+
+		if err := m.db.UpdateSSHSessionStatus(sessionID, "idle"); err != nil {
+			log.Printf("Failed to update session status: %v", err)
+		}
+	})
 
 	return nil
 }
@@ -335,6 +336,11 @@ func (m *SSHSessionManager) handleInput(session *ActiveSSHSession) {
 // handleOutput 处理输出（SSH Stdout → OutputChan）
 func (m *SSHSessionManager) handleOutput(session *ActiveSSHSession) {
 	buffer := make([]byte, 8192)
+	defer func() {
+		if err := m.CloseSession(session.ID); err != nil && !strings.Contains(err.Error(), "会话不存在") {
+			log.Printf("Failed to close session after output loop: %v", err)
+		}
+	}()
 
 	for {
 		select {
@@ -641,6 +647,26 @@ func (h *SSHHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// 在持久化前校验 SSH 凭证，避免错误密码写入后续异常
+	validationConfig := &SSHConnectConfig{
+		Host:       config.Host,
+		Port:       config.Port,
+		Username:   config.Username,
+		Password:   config.Password,
+		PrivateKey: config.PrivateKey,
+	}
+	validationSession, err := h.manager.CreateSession(dbSession.ID, validationConfig, config.Width, config.Height)
+	if err != nil {
+		h.db.DeleteSSHSession(dbSession.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "SSH 连接失败: " + err.Error()})
+		return
+	}
+	if validationSession != nil {
+		if err := h.manager.CloseSession(dbSession.ID); err != nil && !strings.Contains(err.Error(), "会话不存在") {
+			log.Printf("Close validation session warning: %v", err)
+		}
+	}
+
 	// 返回会话信息（不包含敏感信息）
 	c.JSON(http.StatusOK, gin.H{
 		"id":          dbSession.ID,
@@ -735,8 +761,8 @@ func (h *SSHHandler) GetCredentials(c *gin.Context) {
 	hasPrivateKey := session.PrivateKeyEncrypted != ""
 
 	response := gin.H{
-		"id":           session.ID,
-		"has_password":   hasPassword,
+		"id":              session.ID,
+		"has_password":    hasPassword,
 		"has_private_key": hasPrivateKey,
 	}
 
@@ -1148,6 +1174,24 @@ func (h *SSHHandler) HandleWebSocket(c *gin.Context) {
 	// 创建上下文
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-activeSession.ctx.Done():
+			_ = conn.WriteJSON(map[string]interface{}{
+				"type":    "status",
+				"status":  "closed",
+				"message": "SSH 会话已关闭",
+			})
+			_ = conn.WriteControl(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "session closed"),
+				time.Now().Add(2*time.Second),
+			)
+			_ = conn.Close()
+		}
+	}()
 
 	// 启动输出协程（OutputChan → WebSocket）
 	go func() {

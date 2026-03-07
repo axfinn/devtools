@@ -7,6 +7,9 @@
           <el-tag :type="saveStatus === 'saving' ? 'warning' : 'success'" size="small">
             {{ saveStatus === 'saving' ? '保存中...' : '已保存' }}
           </el-tag>
+          <el-button @click="logoutProfile">
+            退出并切换档案
+          </el-button>
           <el-button type="warning" @click="showExtendDialog = true">
             <el-icon><Timer /></el-icon>
             延期
@@ -431,6 +434,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus, Folder, Timer } from '@element-plus/icons-vue'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:8080' : ''
+const PREGNANCY_SKIP_AUTOLOAD_KEY = 'pregnancy_skip_autoload'
 
 // State
 const profileId = ref('')
@@ -1179,6 +1183,7 @@ async function createProfile() {
     creatorKey.value = data.creator_key
     profileEDD.value = createForm.edd
     saveLocalProfile(data.id, data.creator_key)
+    sessionStorage.removeItem(PREGNANCY_SKIP_AUTOLOAD_KEY)
 
     // Load the full profile data from server
     await loadByCreatorKey(data.id, data.creator_key)
@@ -1208,6 +1213,7 @@ async function loadProfile() {
     profileId.value = data.id
     profileEDD.value = data.edd
     applyData(data.data)
+    sessionStorage.removeItem(PREGNANCY_SKIP_AUTOLOAD_KEY)
     ElMessage.success('档案加载成功')
   } catch (e) {
     ElMessage.error(e.message || '加载失败')
@@ -1226,6 +1232,7 @@ async function loadByCreatorKey(id, key) {
     creatorKey.value = key
     profileEDD.value = data.edd
     applyData(data.data)
+    sessionStorage.removeItem(PREGNANCY_SKIP_AUTOLOAD_KEY)
     showMyProfiles.value = false
     ElMessage.success('档案加载成功')
   } catch (e) {
@@ -1319,13 +1326,37 @@ async function confirmDelete() {
   }
 }
 
+function resetProfileState() {
+  profileId.value = ''
+  creatorKey.value = ''
+  profileEDD.value = ''
+  activeTab.value = 'hospitalBag'
+  saveStatus.value = 'saved'
+  loadForm.password = ''
+  Object.assign(profileData.hospital_bag, { mom: [], baby: [], documents: [], other: [] })
+  Object.assign(profileData.baby_essentials, { feeding: [], diaper: [], clothing: [], bathing: [], bedding: [], outdoor: [] })
+  profileData.prenatal_checks = []
+  profileData.weight_records = []
+  profileData.fetal_movements = []
+}
+
+function logoutProfile() {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+    autoSaveTimer = null
+  }
+  sessionStorage.setItem(PREGNANCY_SKIP_AUTOLOAD_KEY, '1')
+  resetProfileState()
+  ElMessage.success('已退出当前档案')
+}
+
 // Lifecycle
 onMounted(() => {
   loadLocalProfiles()
   // Auto-load first local profile
   const profiles = localProfiles.value
   const ids = Object.keys(profiles)
-  if (ids.length > 0) {
+  if (ids.length > 0 && sessionStorage.getItem(PREGNANCY_SKIP_AUTOLOAD_KEY) !== '1') {
     loadByCreatorKey(ids[0], profiles[ids[0]])
   }
 

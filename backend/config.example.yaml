@@ -143,3 +143,176 @@ minimax:
   api_key: ""
   # 模型名称，默认 abab6.5s-chat
   model: "abab6.5s-chat"
+
+# 阿里云百炼图片模型配置
+bailian:
+  # DashScope / 百炼 API Key
+  # 也可通过环境变量 BAILIAN_API_KEY 设置
+  api_key: ""
+  # 调试台与开放 API 的管理密码
+  # 也可通过环境变量 BAILIAN_ADMIN_PASSWORD 设置
+  admin_password: ""
+  # 百炼基础地址，一般无需修改
+  base_url: "https://dashscope.aliyuncs.com"
+  # 创建异步任务时，默认最多等待的秒数
+  default_wait_seconds: 45
+  # 任务和流水保留天数
+  task_retention_days: 180
+  # 本地额度保护配置。total_quota 用于本地计数防超额，expires_at 到期后自动拒绝调用。
+  models:
+    - name: "qwen-image-2.0-pro"
+      type: "multimodal"
+      enabled: true
+      total_quota: 100
+      expires_at: "2026-06-01"
+      default_size: "1328x1328"
+      description: "文生图/图像编辑，同步接口"
+    - name: "qwen-image-2.0"
+      type: "multimodal"
+      enabled: true
+      total_quota: 100
+      expires_at: "2026-06-01"
+      default_size: "1328x1328"
+      description: "文生图/图像编辑，同步接口"
+    - name: "qwen-image-2.0-pro-2026-03-03"
+      type: "multimodal"
+      enabled: true
+      total_quota: 100
+      expires_at: "2026-06-01"
+      default_size: "1328x1328"
+      description: "快照版本"
+    - name: "qwen-image-2.0-2026-03-03"
+      type: "multimodal"
+      enabled: true
+      total_quota: 100
+      expires_at: "2026-06-01"
+      default_size: "1328x1328"
+      description: "快照版本"
+    - name: "qwen-image-plus-2026-01-09"
+      type: "text2image"
+      enabled: true
+      total_quota: 100
+      expires_at: "2026-04-09"
+      default_size: "1024*1024"
+      description: "异步文生图"
+    - name: "wan2.6-i2v-flash"
+      type: "image2video"
+      enabled: true
+      total_quota: 50
+      expires_at: "2026-04-16"
+      default_size: "1280x720"
+      description: "图生视频 Flash"
+    - name: "wan2.6-i2v"
+      type: "image2video"
+      enabled: false
+      total_quota: 0
+      expires_at: ""
+      default_size: "1280x720"
+      description: "无免费额度，默认禁用"
+    - name: "qwen-image-plus"
+      type: "text2image"
+      enabled: false
+      total_quota: 0
+      expires_at: ""
+      default_size: "1024*1024"
+      description: "无免费额度，默认禁用"
+    - name: "qwen-image-edit-plus"
+      type: "multimodal"
+      enabled: false
+      total_quota: 0
+      expires_at: ""
+      default_size: "1328x1328"
+      description: "无免费额度，默认禁用"
+    - name: "qwen-image-max"
+      type: "text2image"
+      enabled: false
+      total_quota: 0
+      expires_at: ""
+      default_size: "1024*1024"
+      description: "无免费额度，默认禁用"
+
+# AI Gateway 配置
+ai_gateway:
+  # 超级管理员密码，用于签发和吊销对外 API Key
+  # 也可通过环境变量 AI_GATEWAY_SUPER_ADMIN_PASSWORD 设置
+  super_admin_password: ""
+  # 新建 API Key 默认有效期（天）
+  default_key_expires_days: 90
+  # 新建 API Key 默认每小时请求限制
+  default_rate_limit_per_hour: 1000
+  # 请求明细保留天数
+  request_retention_days: 180
+  # 计费配置。input/output 单位是每 1000 token 价格；request_cost 用于图片/视频按次计费
+  pricing:
+    - model: "deepseek-chat"
+      provider: "deepseek"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "abab6.5s-chat"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-2.0-pro"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-2.0"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-2.0-pro-2026-03-03"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-2.0-2026-03-03"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-plus-2026-01-09"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "wan2.6-i2v-flash"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "wan2.6-i2v"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-plus"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-edit-plus"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen-image-max"
+      provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
