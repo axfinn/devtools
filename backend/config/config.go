@@ -23,6 +23,7 @@ type Config struct {
 	SSH        SSHConfig        `yaml:"ssh"`
 	Expense    ExpenseConfig    `yaml:"expense"`
 	Glucose    GlucoseConfig    `yaml:"glucose"`
+	Household HouseholdConfig   `yaml:"household"`
 	DeepSeek   DeepSeekConfig   `yaml:"deepseek"`
 	MiniMax    MiniMaxConfig    `yaml:"minimax"`
 	Bailian    BailianConfig    `yaml:"bailian"`
@@ -133,6 +134,11 @@ type MiniMaxConfig struct {
 	Model  string `yaml:"model"`   // 模型名称，默认 abab6.5s-chat
 }
 
+// HouseholdConfig 家庭物品整理模块配置
+type HouseholdConfig struct {
+	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数
+}
+
 // BailianConfig 阿里云百炼图片模型配置
 type BailianConfig struct {
 	APIKey             string               `yaml:"api_key"`              // DashScope API Key
@@ -226,6 +232,9 @@ func DefaultConfig() *Config {
 			MaxDataSize:        1024 * 1024, // 1MB
 		},
 		Glucose: GlucoseConfig{
+			DefaultExpiresDays: 365,
+		},
+		Household: HouseholdConfig{
 			DefaultExpiresDays: 365,
 		},
 		DeepSeek: DeepSeekConfig{

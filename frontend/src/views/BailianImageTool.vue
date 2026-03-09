@@ -162,11 +162,32 @@
             <span>{{ formatTime(currentTask.created_at) }}</span>
           </div>
           <p class="task-prompt">{{ currentTask.prompt }}</p>
+          <div v-if="currentInputImages.length" class="detail-block compact-block">
+            <h4>输入图片</h4>
+            <div class="asset-grid">
+              <div v-for="(asset, index) in currentInputImages" :key="`current-input-${index}`" class="asset-card">
+                <img :src="asset.value" :alt="asset.label || `input-${index}`" @click="openMediaPreview(asset)" />
+                <div class="asset-toolbar">
+                  <el-button size="small" @click="openMediaPreview(asset)">预览</el-button>
+                  <el-button size="small" @click="downloadAsset(asset)">下载</el-button>
+                </div>
+              </div>
+            </div>
+          </div>
           <div class="asset-grid" v-if="currentAssets.length">
-            <template v-for="(asset, index) in currentAssets" :key="index">
-              <img v-if="asset.type !== 'video'" :src="asset.value" :alt="`asset-${index}`" />
+            <div v-for="(asset, index) in currentAssets" :key="`current-result-${index}`" class="asset-card">
+              <img
+                v-if="asset.type !== 'video'"
+                :src="asset.value"
+                :alt="`asset-${index}`"
+                @click="openMediaPreview(asset)"
+              />
               <video v-else :src="asset.value" controls />
-            </template>
+              <div class="asset-toolbar">
+                <el-button size="small" @click="openMediaPreview(asset)">预览</el-button>
+                <el-button size="small" @click="downloadAsset(asset)">下载</el-button>
+              </div>
+            </div>
           </div>
           <el-alert v-else title="当前任务还没有返回媒体结果" type="info" :closable="false" />
 
@@ -357,13 +378,35 @@
           <pre class="json-box">{{ taskDetail.prompt }}</pre>
         </div>
 
+        <div class="detail-block" v-if="taskInputImages.length">
+          <h4>输入图片</h4>
+          <div class="asset-grid">
+            <div v-for="(asset, index) in taskInputImages" :key="`detail-input-${index}`" class="asset-card">
+              <img :src="asset.value" :alt="asset.label || `input-${index}`" @click="openMediaPreview(asset)" />
+              <div class="asset-toolbar">
+                <el-button size="small" @click="openMediaPreview(asset)">预览</el-button>
+                <el-button size="small" @click="downloadAsset(asset)">下载</el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="detail-block" v-if="taskAssets.length">
           <h4>结果媒体</h4>
           <div class="asset-grid">
-            <template v-for="(asset, index) in taskAssets" :key="index">
-              <img v-if="asset.type !== 'video'" :src="asset.value" :alt="`asset-${index}`" />
+            <div v-for="(asset, index) in taskAssets" :key="`detail-result-${index}`" class="asset-card">
+              <img
+                v-if="asset.type !== 'video'"
+                :src="asset.value"
+                :alt="`asset-${index}`"
+                @click="openMediaPreview(asset)"
+              />
               <video v-else :src="asset.value" controls />
-            </template>
+              <div class="asset-toolbar">
+                <el-button size="small" @click="openMediaPreview(asset)">预览</el-button>
+                <el-button size="small" @click="downloadAsset(asset)">下载</el-button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -429,6 +472,22 @@
         </div>
       </div>
     </el-dialog>
+
+    <el-dialog v-model="mediaPreviewVisible" :title="mediaPreviewTitle" width="min(92vw, 1180px)" destroy-on-close>
+      <div v-if="mediaPreviewAsset" class="media-preview-body">
+        <img
+          v-if="mediaPreviewAsset.type !== 'video'"
+          class="media-preview-image"
+          :src="mediaPreviewAsset.value"
+          :alt="mediaPreviewTitle"
+        />
+        <video v-else class="media-preview-video" :src="mediaPreviewAsset.value" controls autoplay />
+      </div>
+      <template #footer>
+        <el-button @click="mediaPreviewVisible = false">关闭</el-button>
+        <el-button type="primary" @click="downloadAsset(mediaPreviewAsset)">下载</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -453,6 +512,9 @@ const taskDialogVisible = ref(false)
 const loadingTasks = ref(false)
 const submitting = ref(false)
 const fileInputRef = ref(null)
+const mediaPreviewVisible = ref(false)
+const mediaPreviewAsset = ref(null)
+const mediaPreviewTitle = ref('媒体预览')
 const imagePreviews = ref([])
 const parametersText = ref('{\n  "watermark": false\n}')
 
@@ -480,6 +542,8 @@ const form = ref({
 const selectedModel = computed(() => models.value.find(item => item.name === form.value.model) || null)
 const currentAssets = computed(() => parseAssets(currentTask.value?.result_json))
 const taskAssets = computed(() => parseAssets(taskDetail.value?.result_json))
+const currentInputImages = computed(() => parseTaskInputImages(currentTask.value))
+const taskInputImages = computed(() => parseTaskInputImages(taskDetail.value))
 const origin = typeof window !== 'undefined' ? window.location.origin : ''
 const curlExample = computed(() => {
   const body = {
@@ -780,6 +844,58 @@ const parseAssets = (raw) => {
   }
 }
 
+const parseTaskInputImages = (task) => {
+  if (!task) return []
+  const images = []
+  const seen = new Set()
+  const addImage = (value, fallbackLabel = '输入图片') => {
+    if (typeof value !== 'string') return
+    const trimmed = value.trim()
+    if (!trimmed) return
+    if (!(trimmed.startsWith('data:image') || trimmed.startsWith('http://') || trimmed.startsWith('https://'))) return
+    if (seen.has(trimmed)) return
+    seen.add(trimmed)
+    images.push({
+      type: 'image',
+      value: trimmed,
+      label: fallbackLabel
+    })
+  }
+
+  try {
+    const parsed = typeof task.input_images === 'string' ? JSON.parse(task.input_images || '[]') : task.input_images
+    if (Array.isArray(parsed)) {
+      parsed.forEach((item, index) => {
+        if (typeof item === 'string') {
+          addImage(item, `输入图片 ${index + 1}`)
+          return
+        }
+        if (item && typeof item === 'object') {
+          addImage(item.value || item.url || item.image, item.label || `输入图片 ${index + 1}`)
+        }
+      })
+    }
+  } catch (err) {
+    // ignore invalid historic payloads
+  }
+
+  try {
+    const request = typeof task.request_body === 'string' ? JSON.parse(task.request_body || '{}') : task.request_body
+    const messages = request?.input?.messages
+    if (Array.isArray(messages)) {
+      messages.forEach((message) => {
+        if (!Array.isArray(message?.content)) return
+        message.content.forEach((item, index) => addImage(item?.image, `输入图片 ${index + 1}`))
+      })
+    }
+    addImage(request?.input?.img_url, '输入图片 1')
+  } catch (err) {
+    // request snapshot may be truncated
+  }
+
+  return images
+}
+
 const prettyJSON = (value) => {
   if (!value) return '{}'
   try {
@@ -788,6 +904,69 @@ const prettyJSON = (value) => {
   } catch (err) {
     return String(value)
   }
+}
+
+const openMediaPreview = (asset) => {
+  if (!asset?.value) return
+  mediaPreviewAsset.value = asset
+  mediaPreviewTitle.value = asset.label || (asset.type === 'video' ? '视频预览' : '图片预览')
+  mediaPreviewVisible.value = true
+}
+
+const downloadAsset = async (asset) => {
+  if (!asset?.value) return
+  try {
+    const url = asset.value
+    const filename = buildAssetFilename(asset)
+    if (url.startsWith('data:')) {
+      triggerDownload(url, filename)
+      return
+    }
+    const res = await fetch(url)
+    if (!res.ok) {
+      throw new Error('下载失败')
+    }
+    const blob = await res.blob()
+    const blobUrl = URL.createObjectURL(blob)
+    triggerDownload(blobUrl, filename)
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
+  } catch (err) {
+    window.open(asset.value, '_blank', 'noopener')
+  }
+}
+
+const buildAssetFilename = (asset) => {
+  const extension = asset?.type === 'video' ? 'mp4' : detectImageExtension(asset?.value)
+  const taskId = taskDetail.value?.id || currentTask.value?.id || 'bailian'
+  return `${taskId}.${extension}`
+}
+
+const detectImageExtension = (value) => {
+  if (typeof value !== 'string') return 'png'
+  const mimeMatch = value.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,/)
+  if (mimeMatch?.[1]) {
+    return mimeMatch[1] === 'jpeg' ? 'jpg' : mimeMatch[1]
+  }
+  try {
+    const pathname = new URL(value).pathname
+    const extension = pathname.split('.').pop()
+    if (extension && extension.length <= 5) {
+      return extension
+    }
+  } catch (err) {
+    // ignore invalid URLs
+  }
+  return 'png'
+}
+
+const triggerDownload = (href, filename) => {
+  const link = document.createElement('a')
+  link.href = href
+  link.download = filename
+  link.target = '_blank'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 
 const formatTime = (value) => {
@@ -936,6 +1115,7 @@ onMounted(async () => {
 }
 
 .preview-card,
+.asset-card,
 .asset-grid img,
 .asset-grid video {
   border-radius: 16px;
@@ -956,6 +1136,40 @@ onMounted(async () => {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.asset-card {
+  position: relative;
+  min-height: 150px;
+}
+
+.asset-card img,
+.asset-card video {
+  cursor: zoom-in;
+}
+
+.asset-toolbar {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.asset-card:hover .asset-toolbar,
+.asset-card:focus-within .asset-toolbar {
+  opacity: 1;
+}
+
+.asset-toolbar :deep(.el-button) {
+  backdrop-filter: blur(8px);
+  background: rgba(15, 23, 36, 0.72);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
 }
 
 .preview-remove {
@@ -1056,6 +1270,10 @@ onMounted(async () => {
   gap: 18px;
 }
 
+.compact-block h4 {
+  margin-bottom: 0;
+}
+
 .detail-block h4 {
   margin: 0 0 10px;
   color: #1f2a3a;
@@ -1090,6 +1308,23 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.media-preview-body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 320px;
+  background: #0f1724;
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.media-preview-image,
+.media-preview-video {
+  max-width: 100%;
+  max-height: min(72vh, 860px);
+  border-radius: 12px;
 }
 
 .docs-page-card {
@@ -1170,6 +1405,13 @@ onMounted(async () => {
   .model-hint {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .asset-toolbar {
+    opacity: 1;
+    position: static;
+    padding: 10px;
+    background: linear-gradient(180deg, transparent 0%, rgba(15, 23, 36, 0.72) 100%);
   }
 }
 </style>

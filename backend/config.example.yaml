@@ -128,6 +128,11 @@ glucose:
   # 默认过期天数（默认365天）
   default_expires_days: 365
 
+# 家庭物品整理模块配置
+household:
+  # 默认过期天数（默认365天）
+  default_expires_days: 365
+
 # DeepSeek AI 配置（用于记账分析）
 deepseek:
   # API Key，从 https://platform.deepseek.com 获取

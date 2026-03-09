@@ -239,6 +239,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/household',
+    name: 'Household',
+    component: () => import('../views/HouseholdTool.vue'),
+    meta: {
+      title: '整理模块',
+      icon: 'Box',
+      category: 'life',
+      description: '家庭物品管理与库存整理'
+    }
+  },
+  {
     path: '/glucose',
     name: 'Glucose',
     component: () => import('../views/GlucoseTool.vue'),

@@ -194,6 +194,8 @@ func (h *BailianHandler) ExecuteTask(req CreateBailianTaskRequest, source, clien
 	if err != nil {
 		task.Status = "failed"
 		task.ErrorMessage = err.Error()
+		task.QuotaCounted = false
+		task.QuotaUsed = quotaUsed
 		now := time.Now()
 		task.CompletedAt = &now
 		_ = h.db.UpdateBailianTask(task)
@@ -209,6 +211,8 @@ func (h *BailianHandler) ExecuteTask(req CreateBailianTaskRequest, source, clien
 		task.Status = "failed"
 		task.ErrorMessage = err.Error()
 		task.ResponseBody = truncateString(responseBody, 20000)
+		task.QuotaCounted = false
+		task.QuotaUsed = quotaUsed
 		now := time.Now()
 		task.CompletedAt = &now
 		_ = h.db.UpdateBailianTask(task)
@@ -449,12 +453,6 @@ func (h *BailianHandler) buildVendorRequest(req CreateBailianTaskRequest, modelC
 			"model": modelCfg.Name,
 			"input": map[string]interface{}{
 				"messages": []map[string]interface{}{
-					{
-						"role": "system",
-						"content": []map[string]string{
-							{"text": "You are a professional image generation assistant."},
-						},
-					},
 					{
 						"role":    "user",
 						"content": content,
@@ -742,9 +740,11 @@ func normalizeImages(single string, many []string) []string {
 
 func summarizeImages(images []string) []gin.H {
 	summaries := make([]gin.H, 0, len(images))
-	for _, image := range images {
+	for index, image := range images {
 		summaries = append(summaries, gin.H{
+			"label":   fmt.Sprintf("输入图片 %d", index+1),
 			"kind":    detectImageKind(image),
+			"value":   image,
 			"preview": truncateString(image, 160),
 			"length":  len(image),
 		})
