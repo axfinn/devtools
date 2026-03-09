@@ -206,6 +206,18 @@ func (h *BailianHandler) ExecuteTask(req CreateBailianTaskRequest, source, clien
 	task.RequestBody = sanitizeJSON(body)
 	_ = h.db.UpdateBailianTask(task)
 
+	// 对于同步模型（multimodal），当客户端不要求 auto_poll 时，
+	// 在后台 goroutine 执行阻塞调用，立即返回 task_id，避免 Cloudflare 524 超时。
+	// 客户端通过轮询 GET /v1/media/tasks/:id 获取最终结果。
+	if !async && !req.AutoPoll {
+		task.Status = "submitted"
+		_ = h.db.UpdateBailianTask(task)
+		h.addEvent(task.ID, "task.submitted", "submitted", "同步任务已提交，后台异步执行中", gin.H{"endpoint": endpoint})
+		go h.runSyncTaskBackground(task.ID, quotaUsed, endpoint, body)
+		events, _ := h.db.ListBailianTaskEvents(task.ID)
+		return &bailianCreateResult{Task: task, Events: events, Waited: false, Completed: false}, http.StatusOK, nil
+	}
+
 	responseMap, responseBody, err := h.callBailianAPI(endpoint, body, async)
 	if err != nil {
 		task.Status = "failed"
@@ -723,6 +735,61 @@ func (h *BailianHandler) extractVendorError(payload map[string]interface{}) stri
 		}
 	}
 	return ""
+}
+
+// runSyncTaskBackground 在后台 goroutine 中调用同步百炼接口（如 multimodal），
+// 避免因 HTTP 连接长时间阻塞而触发 Cloudflare 524。
+// 执行完成后更新数据库任务状态，客户端通过轮询接口获取结果。
+func (h *BailianHandler) runSyncTaskBackground(taskID string, originalQuotaUsed int, endpoint string, body map[string]interface{}) {
+	task, err := h.db.GetBailianTask(taskID)
+	if err != nil {
+		return
+	}
+
+	h.addEvent(taskID, "vendor.request_start", "running", "开始调用百炼同步接口（后台）", gin.H{"endpoint": endpoint})
+	task.Status = "running"
+	_ = h.db.UpdateBailianTask(task)
+
+	responseMap, responseBody, err := h.callBailianAPI(endpoint, body, false)
+	if err != nil {
+		task.Status = "failed"
+		task.ErrorMessage = err.Error()
+		task.ResponseBody = truncateString(responseBody, 20000)
+		task.QuotaCounted = false
+		task.QuotaUsed = originalQuotaUsed
+		now := time.Now()
+		task.CompletedAt = &now
+		_ = h.db.UpdateBailianTask(task)
+		h.addEvent(taskID, "vendor.request_failed", "failed", err.Error(), gin.H{
+			"endpoint": endpoint,
+			"response": tryParseJSON(responseBody),
+		})
+		return
+	}
+
+	task.ResponseBody = truncateString(responseBody, 50000)
+	task.VendorStatus = h.extractVendorStatus(responseMap)
+	task.Status = "succeeded"
+	now := time.Now()
+	task.CompletedAt = &now
+
+	assets := extractAssets(responseMap)
+	task.ResultJSON = models.MustJSONString(gin.H{
+		"assets":     assets,
+		"raw_output": responseMap["output"],
+	})
+
+	if errMsg := h.extractVendorError(responseMap); errMsg != "" {
+		task.ErrorMessage = errMsg
+		task.Status = "failed"
+	}
+
+	_ = h.db.UpdateBailianTask(task)
+	h.addEvent(taskID, "vendor.response", task.Status, "百炼同步接口（后台）已返回", gin.H{
+		"vendor_status": task.VendorStatus,
+		"assets":        assets,
+		"raw_response":  tryParseJSON(responseBody),
+	})
 }
 
 func normalizeImages(single string, many []string) []string {
