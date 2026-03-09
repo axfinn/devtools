@@ -113,6 +113,11 @@ func main() {
 		log.Fatalf("AI Gateway 数据库初始化失败: %v", err)
 	}
 
+	// 初始化 LLM 异步任务表
+	if err := db.InitLLMTasks(); err != nil {
+		log.Fatalf("LLM Tasks 数据库初始化失败: %v", err)
+	}
+
 	// 后台预加载背景图（如果缓存目录为空）
 	go func() {
 		// 等待服务器启动完成
@@ -576,6 +581,8 @@ func main() {
 			aigw.GET("/admin/reports", aiGatewayHandler.AdminReports)
 			aigw.GET("/admin/alerts", aiGatewayHandler.AdminAlerts)
 			aigw.POST("/v1/chat/completions", aiGatewayHandler.ChatCompletions)
+			aigw.POST("/v1/chat/tasks", aiGatewayHandler.AsyncChatCompletions)
+			aigw.GET("/v1/chat/tasks/:id", aiGatewayHandler.GetChatTask)
 			aigw.POST("/v1/media/generations", aiGatewayHandler.MediaGenerations)
 			aigw.GET("/v1/media/tasks", aiGatewayHandler.ListMediaTasks)
 			aigw.GET("/v1/media/tasks/:id", aiGatewayHandler.GetMediaTask)

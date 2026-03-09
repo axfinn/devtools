@@ -66,6 +66,69 @@ type AIUsageReportRow struct {
 	Currency     string  `json:"currency"`
 }
 
+// LLMTask 异步 LLM 任务（用于避免 Cloudflare 524 长连接超时）
+type LLMTask struct {
+	ID           string     `json:"id"`
+	APIKeyID     string     `json:"api_key_id"`
+	Model        string     `json:"model"`
+	Provider     string     `json:"provider"`
+	Status       string     `json:"status"` // pending/running/succeeded/failed
+	RequestBody  string     `json:"request_body"`
+	ResultJSON   string     `json:"result_json,omitempty"`
+	ErrorMessage string     `json:"error_message,omitempty"`
+	ClientIP     string     `json:"client_ip"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+func (db *DB) InitLLMTasks() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS llm_tasks (
+			id TEXT PRIMARY KEY,
+			api_key_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			status TEXT DEFAULT 'pending',
+			request_body TEXT DEFAULT '',
+			result_json TEXT DEFAULT '',
+			error_message TEXT DEFAULT '',
+			client_ip TEXT DEFAULT '',
+			completed_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_llm_tasks_status ON llm_tasks(status, created_at DESC);
+	`)
+	return err
+}
+
+func (db *DB) CreateLLMTask(task *LLMTask) error {
+	task.CreatedAt = time.Now()
+	_, err := db.conn.Exec(`
+		INSERT INTO llm_tasks (id, api_key_id, model, provider, status, request_body, result_json, error_message, client_ip, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, task.ID, task.APIKeyID, task.Model, task.Provider, task.Status, task.RequestBody, task.ResultJSON, task.ErrorMessage, task.ClientIP, task.CreatedAt)
+	return err
+}
+
+func (db *DB) GetLLMTask(id string) (*LLMTask, error) {
+	task := &LLMTask{}
+	err := db.conn.QueryRow(`
+		SELECT id, api_key_id, model, provider, status, request_body, result_json, error_message, client_ip, completed_at, created_at
+		FROM llm_tasks WHERE id = ?
+	`, id).Scan(&task.ID, &task.APIKeyID, &task.Model, &task.Provider, &task.Status, &task.RequestBody, &task.ResultJSON, &task.ErrorMessage, &task.ClientIP, &task.CompletedAt, &task.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func (db *DB) UpdateLLMTask(task *LLMTask) error {
+	_, err := db.conn.Exec(`
+		UPDATE llm_tasks SET status=?, result_json=?, error_message=?, completed_at=? WHERE id=?
+	`, task.Status, task.ResultJSON, task.ErrorMessage, task.CompletedAt, task.ID)
+	return err
+}
+
 func (db *DB) InitAIGateway() error {
 	_, err := db.conn.Exec(`
 		CREATE TABLE IF NOT EXISTS ai_api_keys (

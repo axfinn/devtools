@@ -495,6 +495,112 @@ func (h *AIGatewayHandler) GetMediaTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"task": task, "events": events})
 }
 
+// AsyncChatCompletions 异步聊天接口：立即返回 task_id，后台调用 LLM，避免 Cloudflare 524
+// POST /api/ai-gateway/v1/chat/tasks
+func (h *AIGatewayHandler) AsyncChatCompletions(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "chat")
+	if !ok {
+		return
+	}
+	var req ChatCompletionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整", "code": 400})
+		return
+	}
+	if !h.ensureModelAllowed(c, key, req.Model) {
+		return
+	}
+
+	provider := h.resolveChatProvider(req.Model)
+	taskID := "ltask_" + utils.GenerateHexKey(12)
+	reqJSON, _ := json.Marshal(req)
+
+	task := &models.LLMTask{
+		ID:          taskID,
+		APIKeyID:    key.ID,
+		Model:       req.Model,
+		Provider:    provider,
+		Status:      "pending",
+		RequestBody: truncateString(string(reqJSON), 50000),
+		ClientIP:    c.ClientIP(),
+	}
+	if err := h.db.CreateLLMTask(task); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "任务创建失败", "code": 500})
+		return
+	}
+
+	go h.runAsyncChatTask(taskID, req)
+
+	c.JSON(http.StatusOK, gin.H{
+		"task_id": taskID,
+		"status":  "pending",
+		"model":   req.Model,
+	})
+}
+
+// GetChatTask 查询异步聊天任务状态
+// GET /api/ai-gateway/v1/chat/tasks/:id
+func (h *AIGatewayHandler) GetChatTask(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "chat")
+	if !ok {
+		return
+	}
+	task, err := h.db.GetLLMTask(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在", "code": 404})
+		return
+	}
+	if task.APIKeyID != key.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该任务", "code": 403})
+		return
+	}
+
+	resp := gin.H{
+		"task_id":    task.ID,
+		"status":     task.Status,
+		"model":      task.Model,
+		"provider":   task.Provider,
+		"created_at": task.CreatedAt,
+	}
+	if task.CompletedAt != nil {
+		resp["completed_at"] = task.CompletedAt
+	}
+	if task.Status == "succeeded" && task.ResultJSON != "" {
+		var result interface{}
+		if json.Unmarshal([]byte(task.ResultJSON), &result) == nil {
+			resp["result"] = result
+		}
+	}
+	if task.Status == "failed" {
+		resp["error"] = task.ErrorMessage
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// runAsyncChatTask 后台执行 LLM 调用，更新任务状态
+func (h *AIGatewayHandler) runAsyncChatTask(taskID string, req ChatCompletionRequest) {
+	task, err := h.db.GetLLMTask(taskID)
+	if err != nil {
+		return
+	}
+	task.Status = "running"
+	_ = h.db.UpdateLLMTask(task)
+
+	result, _, err := h.executeChatRequest(req)
+	now := time.Now()
+	task.CompletedAt = &now
+	if err != nil {
+		task.Status = "failed"
+		task.ErrorMessage = err.Error()
+	} else {
+		task.Status = "succeeded"
+		if data, jsonErr := json.Marshal(result); jsonErr == nil {
+			task.ResultJSON = string(data)
+		}
+	}
+	_ = h.db.UpdateLLMTask(task)
+}
+
 func (h *AIGatewayHandler) executeChatRequest(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
 	provider := h.resolveChatProvider(req.Model)
 	switch provider {
