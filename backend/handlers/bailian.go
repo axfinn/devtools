@@ -460,7 +460,7 @@ func (h *BailianHandler) buildVendorRequest(req CreateBailianTaskRequest, modelC
 				},
 			},
 			"parameters": parameters,
-		}, h.cfg.BaseURL + "/api/v1/services/aigc/multimodal-generation/generation", false, nil
+		}, h.cfg.BaseURL + "/api/v1/services/aigc/multimodal-generation/generation", true, nil
 	case "text2image":
 		parameters := map[string]interface{}{
 			"size": normalizeBailianSize(nonEmpty(req.Size, modelCfg.DefaultSize)),
