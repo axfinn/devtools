@@ -66,6 +66,34 @@
               </div>
               <div class="message-content">
                 <div class="message-text" v-html="formatMessage(msg.content)"></div>
+                <div v-if="msg.actions && msg.actions.length > 0" class="message-actions">
+                  <el-tag
+                    v-for="(action, aIdx) in msg.actions"
+                    :key="aIdx"
+                    size="small"
+                    :type="actionTagType(action)"
+                  >
+                    {{ formatChatAction(action) }}
+                  </el-tag>
+                </div>
+                <div
+                  v-for="(action, aIdx) in msg.actions"
+                  :key="`loc-${aIdx}`"
+                  v-if="action.type === 'suggest_location' && action.candidates && action.candidates.length > 0"
+                  class="location-candidates"
+                >
+                  <div class="location-candidates-title">为「{{ action.name || '该物品' }}」选择位置：</div>
+                  <div class="location-candidates-actions">
+                    <el-button
+                      v-for="(loc, lIdx) in action.candidates"
+                      :key="lIdx"
+                      size="small"
+                      @click="applyLocationCandidate(action, loc)"
+                    >
+                      {{ loc }}
+                    </el-button>
+                  </div>
+                </div>
               </div>
             </div>
             <div v-if="chatLoading" class="chat-message assistant">
@@ -79,11 +107,18 @@
               </div>
             </div>
           </div>
+          <div class="chat-quick-actions">
+            <el-button size="small" @click="sendQuickPrompt('查看库存')" :disabled="chatLoading">查看库存</el-button>
+            <el-button size="small" @click="sendQuickPrompt('有什么要买的？')" :disabled="chatLoading">看看缺什么</el-button>
+            <el-button size="small" @click="sendQuickPrompt('删除过期的物品')" :disabled="chatLoading">清理过期</el-button>
+          </div>
           <div class="chat-input-area">
             <el-input
               v-model="chatInput"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
               placeholder="输入消息或点击麦克风说话..."
-              @keyup.enter="sendChatMessage"
+              @keydown.enter.exact.prevent="sendChatMessage"
               :disabled="chatLoading"
             >
               <template #append>
@@ -174,6 +209,10 @@
             <el-icon><Document /></el-icon>
             模板库
           </el-button>
+          <el-button @click="openLocationLibrary">
+            <el-icon><Location /></el-icon>
+            位置库
+          </el-button>
           <el-button @click="showScanDialog = true">
             <el-icon><Camera /></el-icon>
             扫码
@@ -259,6 +298,9 @@
                 <el-button size="small" @click.stop="showItemQR(row)" title="生成二维码">
                   <el-icon><Picture /></el-icon>
                 </el-button>
+                <el-button size="small" @click.stop="openSpaceForItem(row)" title="定位到3D空间">
+                  <el-icon><Location /></el-icon>
+                </el-button>
                 <el-button size="small" type="danger" text @click.stop="confirmDelete(row)">
                   <el-icon><Delete /></el-icon>
                 </el-button>
@@ -298,7 +340,12 @@
           <el-input-number v-model="addForm.min_quantity" :min="1" style="width: 100%;" />
         </el-form-item>
         <el-form-item label="位置">
-          <el-input v-model="addForm.location" placeholder="如：厨房、冰箱" />
+          <el-autocomplete
+            v-model="addForm.location"
+            :fetch-suggestions="queryLocationSuggestions"
+            placeholder="如：厨房、冰箱"
+            style="width: 100%;"
+          />
         </el-form-item>
         <el-row :gutter="20">
           <el-col :span="12">
@@ -382,6 +429,88 @@
               </el-card>
             </div>
             <el-empty v-else-if="!loadingRestock" description="库存充足，无需补充" />
+          </div>
+        </el-tab-pane>
+        <el-tab-pane label="批量整理" name="batch">
+          <div class="ai-batch-section">
+            <el-input
+              v-model="aiBatchText"
+              type="textarea"
+              :rows="5"
+              placeholder="粘贴或输入清单，例如：&#10;洗衣液 2 瓶&#10;抽纸 3 包&#10;香皂 1 块"
+            />
+            <el-button type="primary" style="margin-top: 12px;" :loading="aiBatchLoading" @click="handleAIBatchParse">
+              <el-icon><MagicStick /></el-icon>
+              AI 解析清单
+            </el-button>
+            <div v-if="aiBatchItems.length > 0" class="ai-batch-result">
+              <div class="ai-batch-title">解析结果：</div>
+              <div class="ai-batch-tags">
+                <el-tag
+                  v-for="(item, idx) in aiBatchItems"
+                  :key="idx"
+                  closable
+                  class="ai-batch-tag"
+                  @close="removeBatchItem(idx)"
+                >
+                  {{ item.name }} x {{ item.quantity }}{{ item.unit }} <span v-if="item.category">({{ item.category }})</span>
+                </el-tag>
+              </div>
+              <div class="ai-batch-actions">
+                <el-button type="success" @click="addBatchItems">
+                  批量加入物品库
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+        <el-tab-pane label="库存分析" name="analyze">
+          <div class="ai-analyze-section">
+            <el-button type="primary" :loading="aiAnalyzeLoading" @click="handleAIAnalyze">
+              <el-icon><MagicStick /></el-icon>
+              AI 分析库存
+            </el-button>
+            <div v-if="aiAnalyzeResult" class="ai-analyze-result">
+              <el-card class="ai-analyze-card" shadow="never">
+                <div class="ai-analyze-title">分析结论</div>
+                <div class="ai-analyze-text">{{ aiAnalyzeResult.analysis }}</div>
+              </el-card>
+
+              <div v-if="aiAnalyzeResult.shopping_list && aiAnalyzeResult.shopping_list.length > 0" class="ai-shopping-list">
+                <div class="ai-section-title">建议购物清单</div>
+                <div class="ai-shopping-tags">
+                  <el-tag v-for="(item, idx) in aiAnalyzeResult.shopping_list" :key="idx" class="ai-shopping-tag">
+                    {{ item }}
+                  </el-tag>
+                </div>
+              </div>
+
+              <div v-if="aiAnalyzeResult.suggestions && aiAnalyzeResult.suggestions.length > 0" class="ai-suggestion-list">
+                <div class="ai-section-title">补充建议</div>
+                <el-card v-for="(item, idx) in aiAnalyzeResult.suggestions" :key="idx" class="ai-suggestion-item">
+                  <div class="ai-suggestion-info">
+                    <div class="ai-suggestion-name">{{ item.name }}</div>
+                    <div class="ai-suggestion-reason">{{ item.reason }}</div>
+                  </div>
+                  <div class="ai-suggestion-actions-inline">
+                    <el-button size="small" type="primary" @click="addSuggestionToTodos(item)">
+                      加入待购买任务
+                    </el-button>
+                    <el-button size="small" @click="addSuggestionToShoppingList(item)">
+                      加入购物清单
+                    </el-button>
+                  </div>
+                </el-card>
+                <div class="ai-suggestion-actions">
+                  <el-button size="small" type="primary" @click="addAllSuggestionsToTodos">
+                    全部加入待购买任务
+                  </el-button>
+                  <el-button size="small" @click="addAllSuggestionsToShoppingList">
+                    全部加入购物清单
+                  </el-button>
+                </div>
+              </div>
+            </div>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -482,6 +611,40 @@
           />
         </div>
 
+        <div class="todo-section">
+          <el-divider>待购买任务</el-divider>
+          <el-table :data="todos" style="width: 100%" max-height="220" v-loading="todosLoading">
+            <el-table-column prop="name" label="物品名称" />
+            <el-table-column prop="category" label="分类" width="100" />
+            <el-table-column prop="reason" label="原因" />
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }">
+                <el-tag v-if="row.status === 'done'" type="success" size="small">已完成</el-tag>
+                <el-tag v-else type="warning" size="small">待购买</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120">
+              <template #default="{ row }">
+                <el-button size="small" type="success" text @click="updateTodoStatus(row, row.status === 'done' ? 'open' : 'done')">
+                  {{ row.status === 'done' ? '重开' : '完成' }}
+                </el-button>
+                <el-button size="small" type="danger" text @click="deleteTodo(row)">
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!todosLoading && todos.length === 0" description="暂无待购买任务" />
+          <div class="todo-actions">
+            <el-button size="small" @click="createTodosFromShoppingList">
+              从购物清单生成任务
+            </el-button>
+            <el-button size="small" type="primary" :loading="aiTodoMergeLoading" @click="mergeTodosWithAI">
+              AI 去重合并
+            </el-button>
+          </div>
+        </div>
+
         <div v-if="shoppingList.length > 0" class="shopping-list-content">
           <el-table :data="shoppingList" style="width: 100%" max-height="400">
             <el-table-column prop="name" label="物品名称" />
@@ -571,6 +734,29 @@
         <el-button type="primary" @click="handleExtend">确定延期</el-button>
       </template>
     </el-dialog>
+
+    <!-- 位置库对话框 -->
+    <el-dialog v-model="showLocationDialog" title="位置库" width="500px">
+      <div class="location-library">
+        <div class="location-form">
+          <el-input v-model="locationForm.name" placeholder="输入位置名称，例如：厨房水槽下" />
+          <el-button type="primary" @click="saveLocation">
+            {{ locationForm.id ? '更新' : '新增' }}
+          </el-button>
+          <el-button v-if="locationForm.id" @click="resetLocationForm">取消</el-button>
+        </div>
+        <el-table :data="locationLibrary" style="width: 100%" max-height="320">
+          <el-table-column prop="name" label="位置名称" />
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button size="small" text @click="editLocation(row)">编辑</el-button>
+              <el-button size="small" type="danger" text @click="deleteLocation(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="locationLibrary.length === 0" description="暂无位置记录" />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -579,7 +765,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Minus, Delete, Search, Box, Warning, Timer, CircleClose,
-  Document, MagicStick, ShoppingCart, ChatDotRound, User, Service, Microphone, Camera, Download, Picture, Ticket, Tickets, CopyDocument, Share
+  Document, MagicStick, ShoppingCart, ChatDotRound, User, Service, Microphone, Camera, Download, Picture, Ticket, Tickets, CopyDocument, Share, Location
 } from '@element-plus/icons-vue'
 
 const API_BASE = '/api'
@@ -596,9 +782,13 @@ const loading = ref(false)
 // 状态变量
 const items = ref([])
 const categories = ref([])
+const locations = ref([])
 const templates = ref([])
 const templatesByCategory = ref({})
 const stats = ref({ total: 0, low_stock: 0, expiring: 0, expired: 0 })
+const locationLibrary = ref([])
+const showLocationDialog = ref(false)
+const locationForm = ref({ id: '', name: '' })
 
 // 筛选状态
 const searchText = ref('')
@@ -633,8 +823,16 @@ const aiTab = ref('add')
 const aiText = ref('')
 const aiLoading = ref(false)
 const aiResult = ref([])
+const aiBatchText = ref('')
+const aiBatchLoading = ref(false)
+const aiBatchItems = ref([])
+const aiAnalyzeLoading = ref(false)
+const aiAnalyzeResult = ref(null)
 const restockSuggestions = ref([])
 const loadingRestock = ref(false)
+const todos = ref([])
+const todosLoading = ref(false)
+const aiTodoMergeLoading = ref(false)
 
 // 对话状态
 const showChatDrawer = ref(false)
@@ -865,9 +1063,23 @@ async function loadItems() {
     if (data.code === 0) {
       items.value = data.data || []
       stats.value = data.stats || { total: 0, low_stock: 0, expiring: 0, expired: 0 }
+      loadLocations()
     }
   } catch (e) {
     console.error('加载物品失败:', e)
+  }
+}
+
+async function loadLocations() {
+  if (!profileId.value) return
+  try {
+    const res = await fetch(`${API_BASE}/household/profile/${profileId.value}/locations?${profileQuery()}`)
+    const data = await res.json()
+    if (data.code === 0) {
+      locations.value = data.data || []
+    }
+  } catch (e) {
+    console.error('加载位置失败:', e)
   }
 }
 
@@ -895,6 +1107,107 @@ async function checkAI() {
 }
 
 function handleSearch() {}
+
+function queryLocationSuggestions(query, cb) {
+  const source = locations.value || []
+  const normalized = query.trim().toLowerCase()
+  const results = source
+    .filter(loc => !normalized || loc.toLowerCase().includes(normalized))
+    .map(loc => ({ value: loc }))
+  cb(results)
+}
+
+async function openLocationLibrary() {
+  if (!profileId.value) {
+    ElMessage.warning('请先登录档案')
+    return
+  }
+  showLocationDialog.value = true
+  await loadLocationLibrary()
+}
+
+async function loadLocationLibrary() {
+  if (!profileId.value) return
+  try {
+    const res = await fetch(`${API_BASE}/household/profile/${profileId.value}/locations/library?${profileQuery()}`)
+    const data = await res.json()
+    if (data.code === 0) {
+      locationLibrary.value = data.data || []
+    }
+  } catch (e) {
+    console.error('加载位置库失败:', e)
+  }
+}
+
+function editLocation(row) {
+  locationForm.value = { id: row.id, name: row.name }
+}
+
+function resetLocationForm() {
+  locationForm.value = { id: '', name: '' }
+}
+
+async function saveLocation() {
+  const name = locationForm.value.name.trim()
+  if (!name) {
+    ElMessage.warning('请输入位置名称')
+    return
+  }
+  try {
+    if (locationForm.value.id) {
+      const res = await fetch(`${API_BASE}/household/profile/${profileId.value}/locations/library/${locationForm.value.id}?${profileQuery()}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      })
+      const data = await res.json()
+      if (data.code === 0) {
+        ElMessage.success('更新成功')
+        resetLocationForm()
+        await loadLocationLibrary()
+        await loadLocations()
+      } else {
+        ElMessage.error(data.error || '更新失败')
+      }
+      return
+    }
+
+    const res = await fetch(`${API_BASE}/household/profile/${profileId.value}/locations/library?${profileQuery()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      ElMessage.success('新增成功')
+      resetLocationForm()
+      await loadLocationLibrary()
+      await loadLocations()
+    } else {
+      ElMessage.error(data.error || '新增失败')
+    }
+  } catch (e) {
+    ElMessage.error('操作失败')
+  }
+}
+
+async function deleteLocation(row) {
+  try {
+    const res = await fetch(`${API_BASE}/household/profile/${profileId.value}/locations/library/${row.id}?${profileQuery()}`, {
+      method: 'DELETE'
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      ElMessage.success('删除成功')
+      await loadLocationLibrary()
+      await loadLocations()
+    } else {
+      ElMessage.error(data.error || '删除失败')
+    }
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
 
 function isLowStock(item) {
   return item.quantity <= item.min_quantity
@@ -1077,6 +1390,188 @@ async function handleAIAdd() {
   }
 }
 
+async function handleAIBatchParse() {
+  if (!aiBatchText.value.trim()) {
+    ElMessage.warning('请输入或粘贴清单内容')
+    return
+  }
+
+  aiBatchLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/household/ai/parse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: aiBatchText.value,
+        profile_id: profileId.value,
+        creator_key: creatorKey.value
+      })
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      aiBatchItems.value = data.items || []
+      if (aiBatchItems.value.length === 0) {
+        ElMessage.warning('未识别到可添加的物品')
+      }
+    } else {
+      ElMessage.error(data.error || 'AI 解析失败')
+    }
+  } catch (e) {
+    ElMessage.error('AI 解析失败')
+  } finally {
+    aiBatchLoading.value = false
+  }
+}
+
+function removeBatchItem(index) {
+  aiBatchItems.value.splice(index, 1)
+}
+
+async function addBatchItems() {
+  if (aiBatchItems.value.length === 0) return
+
+  let addedCount = 0
+  for (const item of aiBatchItems.value) {
+    try {
+      const url = profileId.value
+        ? `${API_BASE}/household/profile/${profileId.value}/items?${profileQuery()}`
+        : `${API_BASE}/household/items`
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: item.name,
+          category: item.category || '其他',
+          quantity: item.quantity || 1,
+          unit: item.unit || '个',
+          min_quantity: item.min_quantity || 1,
+          expiry_days: item.expiry_days || 0,
+          location: item.location || ''
+        })
+      })
+      const data = await res.json()
+      if (data.code === 0) {
+        addedCount++
+      }
+    } catch (e) {
+      console.error('批量添加失败:', e)
+    }
+  }
+
+  if (addedCount > 0) {
+    ElMessage.success(`成功添加 ${addedCount} 个物品`)
+    aiBatchItems.value = []
+    aiBatchText.value = ''
+    await loadItems()
+  } else {
+    ElMessage.error('添加失败')
+  }
+}
+
+async function handleAIAnalyze() {
+  aiAnalyzeLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/household/ai/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile_id: profileId.value,
+        creator_key: creatorKey.value
+      })
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      aiAnalyzeResult.value = {
+        analysis: data.analysis || '',
+        shopping_list: data.shopping_list || [],
+        suggestions: data.suggestions || []
+      }
+    } else {
+      ElMessage.error(data.error || 'AI 分析失败')
+    }
+  } catch (e) {
+    ElMessage.error('AI 分析失败')
+  } finally {
+    aiAnalyzeLoading.value = false
+  }
+}
+
+function addSuggestionToShoppingList(item) {
+  if (!item || !item.name) return
+
+  const exists = shoppingList.value.some(i => i.name === item.name)
+  if (exists) {
+    ElMessage.info('该物品已在购物清单中')
+    return
+  }
+
+  shoppingList.value.push({
+    id: item.id || `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name: item.name,
+    category: item.category || '其他',
+    reason: item.reason || 'AI 建议补充'
+  })
+  ElMessage.success('已加入购物清单')
+}
+
+function addAllSuggestionsToShoppingList() {
+  if (!aiAnalyzeResult.value || !aiAnalyzeResult.value.suggestions) return
+
+  let added = 0
+  aiAnalyzeResult.value.suggestions.forEach(item => {
+    if (!shoppingList.value.some(i => i.name === item.name)) {
+      shoppingList.value.push({
+        id: item.id || `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name: item.name,
+        category: item.category || '其他',
+        reason: item.reason || 'AI 建议补充'
+      })
+      added++
+    }
+  })
+  if (added > 0) {
+    ElMessage.success(`已加入 ${added} 项到购物清单`)
+  } else {
+    ElMessage.info('购物清单已包含全部建议')
+  }
+}
+
+async function addSuggestionToTodos(item) {
+  await createTodoFromSuggestion(item)
+}
+
+async function addAllSuggestionsToTodos() {
+  if (!aiAnalyzeResult.value || !aiAnalyzeResult.value.suggestions) return
+  let added = 0
+  for (const item of aiAnalyzeResult.value.suggestions) {
+    try {
+      const res = await fetch(`${API_BASE}/household/todos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile_id: profileId.value,
+          creator_key: creatorKey.value,
+          name: item.name,
+          category: item.category || '其他',
+          reason: item.reason || 'AI 建议补充'
+        })
+      })
+      const data = await res.json()
+      if (data.code === 0) {
+        added++
+      }
+    } catch (e) {
+      console.error('批量创建待办失败:', e)
+    }
+  }
+  if (added > 0) {
+    ElMessage.success(`已加入 ${added} 项待购买任务`)
+    await loadTodos()
+  } else {
+    ElMessage.info('没有新增待购买任务')
+  }
+}
+
 async function loadRestockSuggestions() {
   loadingRestock.value = true
   try {
@@ -1140,11 +1635,14 @@ async function sendChatMessage() {
       }
 
       // 添加助手回复
-      chatHistory.value.push({ role: 'assistant', content: replyContent })
+      chatHistory.value.push({ role: 'assistant', content: replyContent, actions: data.actions || [] })
 
-      // 如果有物品变更，刷新列表
-      if (data.items_added && data.items_added.length > 0) {
+      // 如果有动作执行，刷新列表
+      if ((data.actions && data.actions.length > 0) || (data.items_added && data.items_added.length > 0)) {
         await loadItems()
+        if (data.actions && data.actions.some(action => action.type === 'todo')) {
+          await loadTodos()
+        }
       }
     } else {
       chatHistory.value.push({ role: 'assistant', content: '抱歉，出了点问题：' + (data.error || '未知错误') })
@@ -1155,6 +1653,12 @@ async function sendChatMessage() {
     chatLoading.value = false
     scrollToBottom()
   }
+}
+
+function sendQuickPrompt(text) {
+  if (!text || chatLoading.value) return
+  chatInput.value = text
+  sendChatMessage()
 }
 
 function scrollToBottom() {
@@ -1168,6 +1672,86 @@ function scrollToBottom() {
 function formatMessage(text) {
   // 简单处理换行
   return text.replace(/\n/g, '<br>')
+}
+
+function formatChatAction(action) {
+  if (!action || !action.type) return '操作'
+  const name = action.name || action.target || action.item_id || '物品'
+  const quantity = action.quantity ? ` x${action.quantity}` : ''
+  switch (action.type) {
+    case 'add':
+      return `添加 ${name}${quantity}`
+    case 'restock':
+      return `补充 ${name}${quantity}`
+    case 'use':
+      return `使用 ${name}${quantity}`
+    case 'update':
+      return `更新 ${name}`
+    case 'todo':
+      return `待购 ${name}`
+    case 'suggest_location':
+      return `位置候选 ${name}`
+    case 'delete':
+      return `删除 ${name}`
+    case 'query':
+      return `查询 ${name}`
+    default:
+      return `操作 ${name}`
+  }
+}
+
+function actionTagType(action) {
+  if (!action || !action.type) return 'info'
+  switch (action.type) {
+    case 'add':
+      return 'success'
+    case 'restock':
+      return 'warning'
+    case 'use':
+      return 'info'
+    case 'update':
+      return 'primary'
+    case 'todo':
+      return 'success'
+    case 'suggest_location':
+      return 'warning'
+    case 'delete':
+      return 'danger'
+    default:
+      return 'info'
+  }
+}
+
+async function applyLocationCandidate(action, location) {
+  if (!action || !location || !profileId.value) return
+  const name = action.name || action.target
+  if (!name) {
+    ElMessage.warning('未找到物品名称')
+    return
+  }
+
+  const item = items.value.find(i => i.name === name)
+  if (!item) {
+    ElMessage.warning('未找到匹配物品，请先添加或改名')
+    return
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/household/profile/${profileId.value}/items/${item.id}?${profileQuery()}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location })
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      ElMessage.success(`已更新位置：${location}`)
+      await loadItems()
+    } else {
+      ElMessage.error(data.error || '更新失败')
+    }
+  } catch (e) {
+    ElMessage.error('更新失败')
+  }
 }
 
 async function loadChatHistory() {
@@ -1450,6 +2034,15 @@ function downloadQR() {
   ElMessage.success('二维码已下载')
 }
 
+function openSpaceForItem(item) {
+  if (!item || !item.location) {
+    ElMessage.info('该物品未设置位置')
+    return
+  }
+  const url = `/household/space?highlight=${encodeURIComponent(item.location)}`
+  window.open(url, '_blank')
+}
+
 // 小票 OCR 识别
 function handleReceiptFileChange(file) {
   const reader = new FileReader()
@@ -1574,6 +2167,150 @@ function generateShoppingList() {
 
 function removeFromShoppingList(index) {
   shoppingList.value.splice(index, 1)
+}
+
+async function loadTodos() {
+  if (!profileId.value) return
+  todosLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/household/todos?profile_id=${profileId.value}&creator_key=${creatorKey.value}`)
+    const data = await res.json()
+    if (data.code === 0) {
+      todos.value = data.data || []
+    }
+  } catch (e) {
+    console.error('加载待办失败:', e)
+  } finally {
+    todosLoading.value = false
+  }
+}
+
+async function createTodoFromSuggestion(item) {
+  if (!item || !item.name || !profileId.value) return
+  try {
+    const res = await fetch(`${API_BASE}/household/todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile_id: profileId.value,
+        creator_key: creatorKey.value,
+        name: item.name,
+        category: item.category || '其他',
+        reason: item.reason || 'AI 建议补充'
+      })
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      ElMessage.success('已加入待购买任务')
+      await loadTodos()
+    } else {
+      ElMessage.error(data.error || '创建失败')
+    }
+  } catch (e) {
+    ElMessage.error('创建失败')
+  }
+}
+
+async function createTodosFromShoppingList() {
+  if (shoppingList.value.length === 0) return
+  let added = 0
+  for (const item of shoppingList.value) {
+    try {
+      const res = await fetch(`${API_BASE}/household/todos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile_id: profileId.value,
+          creator_key: creatorKey.value,
+          name: item.name,
+          category: item.category || '其他',
+          reason: item.reason || '从购物清单生成'
+        })
+      })
+      const data = await res.json()
+      if (data.code === 0) {
+        added++
+      }
+    } catch (e) {
+      console.error('创建待办失败:', e)
+    }
+  }
+  if (added > 0) {
+    ElMessage.success(`已创建 ${added} 个待购买任务`)
+    await loadTodos()
+  } else {
+    ElMessage.error('创建失败')
+  }
+}
+
+async function updateTodoStatus(todo, status) {
+  if (!todo || !profileId.value) return
+  try {
+    const res = await fetch(`${API_BASE}/household/todos/${todo.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile_id: profileId.value,
+        creator_key: creatorKey.value,
+        status
+      })
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      await loadTodos()
+    } else {
+      ElMessage.error(data.error || '更新失败')
+    }
+  } catch (e) {
+    ElMessage.error('更新失败')
+  }
+}
+
+async function deleteTodo(todo) {
+  if (!todo || !profileId.value) return
+  try {
+    const res = await fetch(`${API_BASE}/household/todos/${todo.id}?profile_id=${profileId.value}&creator_key=${creatorKey.value}`, {
+      method: 'DELETE'
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      await loadTodos()
+    } else {
+      ElMessage.error(data.error || '删除失败')
+    }
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
+async function mergeTodosWithAI() {
+  if (!profileId.value || todos.value.length < 2) return
+  aiTodoMergeLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/household/ai/todos/merge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profile_id: profileId.value,
+        creator_key: creatorKey.value
+      })
+    })
+    const data = await res.json()
+    if (data.code === 0) {
+      if (data.merged > 0) {
+        ElMessage.success(`已合并 ${data.merged} 项任务`)
+      } else {
+        ElMessage.info(data.message || '没有可合并任务')
+      }
+      await loadTodos()
+    } else {
+      ElMessage.error(data.error || 'AI 合并失败')
+    }
+  } catch (e) {
+    ElMessage.error('AI 合并失败')
+  } finally {
+    aiTodoMergeLoading.value = false
+  }
 }
 
 function copyShoppingList() {
@@ -1737,6 +2474,7 @@ watch(showScanDialog, (val) => {
 watch(showShoppingListDialog, (val) => {
   if (val) {
     generateShoppingList()
+    loadTodos()
   }
 })
 </script>
@@ -1978,6 +2716,100 @@ watch(showShoppingListDialog, (val) => {
   color: #909399;
 }
 
+.ai-batch-section, .ai-analyze-section {
+  padding: 10px 0;
+}
+
+.ai-batch-result {
+  margin-top: 16px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 4px;
+}
+
+.ai-batch-title {
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+
+.ai-batch-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-batch-tag {
+  margin-bottom: 4px;
+}
+
+.ai-batch-actions {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.ai-analyze-result {
+  margin-top: 16px;
+}
+
+.ai-analyze-card {
+  margin-bottom: 12px;
+}
+
+.ai-analyze-title {
+  font-weight: bold;
+  margin-bottom: 6px;
+}
+
+.ai-analyze-text {
+  color: #606266;
+  line-height: 1.6;
+}
+
+.ai-section-title {
+  font-weight: bold;
+  margin: 12px 0 8px;
+}
+
+.ai-shopping-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-suggestion-list {
+  margin-top: 8px;
+}
+
+.ai-suggestion-item {
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ai-suggestion-actions-inline {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-suggestion-info {
+  flex: 1;
+}
+
+.ai-suggestion-name {
+  font-weight: bold;
+}
+
+.ai-suggestion-reason {
+  font-size: 12px;
+  color: #909399;
+}
+
+.ai-suggestion-actions {
+  text-align: center;
+  margin-top: 8px;
+}
+
 /* AI 对话助手样式 */
 .ai-chat-fab {
   position: fixed;
@@ -2072,6 +2904,32 @@ watch(showShoppingListDialog, (val) => {
   margin: 0 10px;
 }
 
+.message-actions {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.location-candidates {
+  margin-top: 8px;
+  padding: 8px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.location-candidates-title {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 6px;
+}
+
+.location-candidates-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .message-text {
   padding: 10px 14px;
   border-radius: 8px;
@@ -2113,6 +2971,15 @@ watch(showShoppingListDialog, (val) => {
   gap: 10px;
   padding: 12px;
   background: white;
+  border-top: 1px solid #ebeef5;
+}
+
+.chat-quick-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px 0;
+  background: #f5f7fa;
   border-top: 1px solid #ebeef5;
 }
 
@@ -2251,6 +3118,25 @@ watch(showShoppingListDialog, (val) => {
   display: flex;
   justify-content: center;
   gap: 12px;
+}
+
+.todo-section {
+  margin-bottom: 16px;
+}
+
+.todo-actions {
+  margin-top: 8px;
+  text-align: right;
+}
+
+.location-library {
+  min-height: 300px;
+}
+
+.location-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
 /* 导出样式 */

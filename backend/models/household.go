@@ -43,6 +43,43 @@ type Notification struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// HouseholdTodo 待购买/提醒任务
+type HouseholdTodo struct {
+	ID        string    `json:"id"`
+	ProfileID string    `json:"profile_id"`
+	Name      string    `json:"name"`
+	Category  string    `json:"category"`
+	Reason    string    `json:"reason"`
+	Status    string    `json:"status"` // open, done
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// HouseholdLocation 档案位置库
+type HouseholdLocation struct {
+	ID        string    `json:"id"`
+	ProfileID string    `json:"profile_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// HouseholdSpaceLayout 3D 空间布局
+type HouseholdSpaceLayout struct {
+	ID        string    `json:"id"`
+	ProfileID string    `json:"profile_id"`
+	Content   string    `json:"content"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// HouseholdSpaceShare 3D 空间分享
+type HouseholdSpaceShare struct {
+	ID        string    `json:"id"`
+	ProfileID string    `json:"profile_id"`
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // HouseholdProfile 家庭物品档案
 type HouseholdProfile struct {
 	ID              string     `json:"id"`
@@ -131,6 +168,45 @@ func (db *DB) InitHousehold() error {
 		type TEXT NOT NULL,
 		message TEXT NOT NULL,
 		is_read INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (profile_id) REFERENCES household_profiles(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS household_todos (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		category TEXT NOT NULL,
+		reason TEXT,
+		status TEXT DEFAULT 'open',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (profile_id) REFERENCES household_profiles(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_household_todos_profile ON household_todos(profile_id, status, created_at);
+
+	CREATE TABLE IF NOT EXISTS household_locations (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (profile_id) REFERENCES household_profiles(id) ON DELETE CASCADE
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_household_locations_unique ON household_locations(profile_id, name);
+
+	CREATE TABLE IF NOT EXISTS household_space_layouts (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL UNIQUE,
+		content TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (profile_id) REFERENCES household_profiles(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS household_space_shares (
+		id TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL,
+		content TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (profile_id) REFERENCES household_profiles(id) ON DELETE CASCADE
 	);
@@ -576,6 +652,139 @@ func (db *DB) GetHouseholdLocations() ([]string, error) {
 	return locations, nil
 }
 
+// GetProfileLocations 获取档案物品位置
+func (db *DB) GetProfileLocations(profileID string) ([]string, error) {
+	rows, err := db.conn.Query(`
+		SELECT DISTINCT location
+		FROM household_profile_items
+		WHERE profile_id = ? AND location != ''
+		ORDER BY location
+	`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var locations []string
+	for rows.Next() {
+		var loc string
+		if err := rows.Scan(&loc); err != nil {
+			continue
+		}
+		locations = append(locations, loc)
+	}
+	return locations, nil
+}
+
+// CreateHouseholdLocation 添加位置
+func (db *DB) CreateHouseholdLocation(loc *HouseholdLocation) error {
+	loc.ID = generateID(8)
+	loc.CreatedAt = time.Now()
+	_, err := db.conn.Exec(`
+		INSERT OR IGNORE INTO household_locations (id, profile_id, name, created_at)
+		VALUES (?, ?, ?, ?)
+	`, loc.ID, loc.ProfileID, loc.Name, loc.CreatedAt)
+	return err
+}
+
+// GetHouseholdLocationsLibrary 获取位置库
+func (db *DB) GetHouseholdLocationsLibrary(profileID string) ([]*HouseholdLocation, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, profile_id, name, created_at
+		FROM household_locations
+		WHERE profile_id = ?
+		ORDER BY name
+	`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var locations []*HouseholdLocation
+	for rows.Next() {
+		loc := &HouseholdLocation{}
+		if err := rows.Scan(&loc.ID, &loc.ProfileID, &loc.Name, &loc.CreatedAt); err != nil {
+			continue
+		}
+		locations = append(locations, loc)
+	}
+	return locations, nil
+}
+
+// UpdateHouseholdLocation 更新位置
+func (db *DB) UpdateHouseholdLocation(id, name string) error {
+	_, err := db.conn.Exec(`
+		UPDATE household_locations SET name = ?
+		WHERE id = ?
+	`, name, id)
+	return err
+}
+
+// DeleteHouseholdLocation 删除位置
+func (db *DB) DeleteHouseholdLocation(id string) error {
+	_, err := db.conn.Exec("DELETE FROM household_locations WHERE id = ?", id)
+	return err
+}
+
+// GetHouseholdSpaceLayout 获取空间布局
+func (db *DB) GetHouseholdSpaceLayout(profileID string) (*HouseholdSpaceLayout, error) {
+	layout := &HouseholdSpaceLayout{}
+	err := db.conn.QueryRow(`
+		SELECT id, profile_id, content, created_at, updated_at
+		FROM household_space_layouts WHERE profile_id = ?
+	`, profileID).Scan(&layout.ID, &layout.ProfileID, &layout.Content, &layout.CreatedAt, &layout.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return layout, nil
+}
+
+// UpsertHouseholdSpaceLayout 保存空间布局
+func (db *DB) UpsertHouseholdSpaceLayout(layout *HouseholdSpaceLayout) error {
+	if layout.ID == "" {
+		layout.ID = generateID(8)
+	}
+	now := time.Now()
+	if layout.CreatedAt.IsZero() {
+		layout.CreatedAt = now
+	}
+	layout.UpdatedAt = now
+	_, err := db.conn.Exec(`
+		INSERT INTO household_space_layouts (id, profile_id, content, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(profile_id) DO UPDATE SET
+		  content = excluded.content,
+		  updated_at = excluded.updated_at
+	`, layout.ID, layout.ProfileID, layout.Content, layout.CreatedAt, layout.UpdatedAt)
+	return err
+}
+
+// CreateHouseholdSpaceShare 创建空间分享
+func (db *DB) CreateHouseholdSpaceShare(share *HouseholdSpaceShare) error {
+	if share.ID == "" {
+		share.ID = generateID(8)
+	}
+	share.CreatedAt = time.Now()
+	_, err := db.conn.Exec(`
+		INSERT INTO household_space_shares (id, profile_id, content, created_at)
+		VALUES (?, ?, ?, ?)
+	`, share.ID, share.ProfileID, share.Content, share.CreatedAt)
+	return err
+}
+
+// GetHouseholdSpaceShare 获取空间分享
+func (db *DB) GetHouseholdSpaceShare(id string) (*HouseholdSpaceShare, error) {
+	share := &HouseholdSpaceShare{}
+	err := db.conn.QueryRow(`
+		SELECT id, profile_id, content, created_at
+		FROM household_space_shares WHERE id = ?
+	`, id).Scan(&share.ID, &share.ProfileID, &share.Content, &share.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return share, nil
+}
+
 // CreateItemTemplate 创建物品模板
 func (db *DB) CreateItemTemplate(tpl *ItemTemplate) error {
 	tpl.ID = generateID(8)
@@ -667,6 +876,94 @@ func (db *DB) CleanExpiredHouseholdProfiles() (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+// ========== 待购买/提醒任务 ==========
+
+// CreateHouseholdTodo 创建待办
+func (db *DB) CreateHouseholdTodo(todo *HouseholdTodo) error {
+	if todo.ID == "" {
+		todo.ID = generateID(8)
+	}
+	if todo.Status == "" {
+		todo.Status = "open"
+	}
+	now := time.Now()
+	todo.CreatedAt = now
+	todo.UpdatedAt = now
+	_, err := db.conn.Exec(`
+		INSERT INTO household_todos (id, profile_id, name, category, reason, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, todo.ID, todo.ProfileID, todo.Name, todo.Category, todo.Reason, todo.Status, todo.CreatedAt, todo.UpdatedAt)
+	return err
+}
+
+// GetHouseholdTodo 获取单个待办
+func (db *DB) GetHouseholdTodo(id string) (*HouseholdTodo, error) {
+	todo := &HouseholdTodo{}
+	err := db.conn.QueryRow(`
+		SELECT id, profile_id, name, category, reason, status, created_at, updated_at
+		FROM household_todos WHERE id = ?
+	`, id).Scan(&todo.ID, &todo.ProfileID, &todo.Name, &todo.Category, &todo.Reason, &todo.Status, &todo.CreatedAt, &todo.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return todo, nil
+}
+
+// GetHouseholdTodos 获取待办列表
+func (db *DB) GetHouseholdTodos(profileID, status string) ([]*HouseholdTodo, error) {
+	args := []interface{}{profileID}
+	query := `
+		SELECT id, profile_id, name, category, reason, status, created_at, updated_at
+		FROM household_todos
+		WHERE profile_id = ?
+	`
+	if status != "" {
+		query += " AND status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var todos []*HouseholdTodo
+	for rows.Next() {
+		todo := &HouseholdTodo{}
+		if err := rows.Scan(&todo.ID, &todo.ProfileID, &todo.Name, &todo.Category, &todo.Reason, &todo.Status, &todo.CreatedAt, &todo.UpdatedAt); err != nil {
+			continue
+		}
+		todos = append(todos, todo)
+	}
+	return todos, nil
+}
+
+// UpdateHouseholdTodoStatus 更新待办状态
+func (db *DB) UpdateHouseholdTodoStatus(id, status string) error {
+	_, err := db.conn.Exec(`
+		UPDATE household_todos SET status = ?, updated_at = ?
+		WHERE id = ?
+	`, status, time.Now(), id)
+	return err
+}
+
+// UpdateHouseholdTodo 更新待办内容
+func (db *DB) UpdateHouseholdTodo(todo *HouseholdTodo) error {
+	_, err := db.conn.Exec(`
+		UPDATE household_todos SET name = ?, category = ?, reason = ?, updated_at = ?
+		WHERE id = ?
+	`, todo.Name, todo.Category, todo.Reason, time.Now(), todo.ID)
+	return err
+}
+
+// DeleteHouseholdTodo 删除待办
+func (db *DB) DeleteHouseholdTodo(id string) error {
+	_, err := db.conn.Exec("DELETE FROM household_todos WHERE id = ?", id)
+	return err
 }
 
 // ========== 档案物品操作 ==========

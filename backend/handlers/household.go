@@ -368,6 +368,246 @@ func (h *HouseholdHandler) GetProfileItems(c *gin.Context) {
 	})
 }
 
+// GetProfileLocations 获取档案位置列表
+func (h *HouseholdHandler) GetProfileLocations(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	itemLocations, err := h.db.GetProfileLocations(profileID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取失败", "code": 500})
+		return
+	}
+
+	library, libErr := h.db.GetHouseholdLocationsLibrary(profileID)
+	if libErr != nil {
+		library = []*models.HouseholdLocation{}
+	}
+
+	seen := make(map[string]bool)
+	merged := make([]string, 0, len(itemLocations)+len(library))
+	for _, loc := range itemLocations {
+		if loc == "" || seen[loc] {
+			continue
+		}
+		seen[loc] = true
+		merged = append(merged, loc)
+	}
+	for _, loc := range library {
+		if loc.Name == "" || seen[loc.Name] {
+			continue
+		}
+		seen[loc.Name] = true
+		merged = append(merged, loc.Name)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": merged,
+	})
+}
+
+// GetLocationLibrary 获取位置库
+func (h *HouseholdHandler) GetLocationLibrary(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	locations, err := h.db.GetHouseholdLocationsLibrary(profileID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": locations,
+	})
+}
+
+// CreateLocation 添加位置
+func (h *HouseholdHandler) CreateLocation(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供位置名称", "code": 400})
+		return
+	}
+
+	loc := &models.HouseholdLocation{
+		ProfileID: profileID,
+		Name:      strings.TrimSpace(req.Name),
+	}
+	if loc.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供位置名称", "code": 400})
+		return
+	}
+
+	if err := h.db.CreateHouseholdLocation(loc); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": loc,
+	})
+}
+
+// UpdateLocation 更新位置
+func (h *HouseholdHandler) UpdateLocation(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	locID := c.Param("locId")
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供位置名称", "code": 400})
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供位置名称", "code": 400})
+		return
+	}
+
+	if err := h.db.UpdateHouseholdLocation(locID, name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+	})
+}
+
+// DeleteLocation 删除位置
+func (h *HouseholdHandler) DeleteLocation(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	locID := c.Param("locId")
+	if err := h.db.DeleteHouseholdLocation(locID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+	})
+}
+
+// GetSpaceLayout 获取空间布局
+func (h *HouseholdHandler) GetSpaceLayout(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	layout, err := h.db.GetHouseholdSpaceLayout(profileID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"data": nil,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": layout,
+	})
+}
+
+// SaveSpaceLayout 保存空间布局
+func (h *HouseholdHandler) SaveSpaceLayout(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	var req struct {
+		Content string `json:"content" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供布局内容", "code": 400})
+		return
+	}
+
+	layout := &models.HouseholdSpaceLayout{
+		ProfileID: profileID,
+		Content:   req.Content,
+	}
+	if err := h.db.UpsertHouseholdSpaceLayout(layout); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+	})
+}
+
+// CreateSpaceShare 创建空间分享
+func (h *HouseholdHandler) CreateSpaceShare(c *gin.Context) {
+	profileID := c.Param("id")
+	if _, ok := h.requireProfileAccess(c, profileID); !ok {
+		return
+	}
+
+	layout, err := h.db.GetHouseholdSpaceLayout(profileID)
+	if err != nil || layout.Content == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "暂无可分享布局", "code": 400})
+		return
+	}
+
+	share := &models.HouseholdSpaceShare{
+		ProfileID: profileID,
+		Content:   layout.Content,
+	}
+	if err := h.db.CreateHouseholdSpaceShare(share); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建分享失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":     0,
+		"share_id": share.ID,
+		"share_url": fmt.Sprintf("/household/space?share=%s", share.ID),
+	})
+}
+
+// GetSpaceShare 获取空间分享内容
+func (h *HouseholdHandler) GetSpaceShare(c *gin.Context) {
+	shareID := c.Param("shareId")
+	share, err := h.db.GetHouseholdSpaceShare(shareID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在", "code": 404})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": share,
+	})
+}
+
 // UpdateProfileItem 更新档案物品
 func (h *HouseholdHandler) UpdateProfileItem(c *gin.Context) {
 	profileID := c.Param("id")
@@ -1022,6 +1262,159 @@ func (h *HouseholdHandler) GetStats(c *gin.Context) {
 	})
 }
 
+// ========== 待购买/提醒任务 API ==========
+
+// CreateTodo 创建待办
+func (h *HouseholdHandler) CreateTodo(c *gin.Context) {
+	var req struct {
+		ProfileID  string `json:"profile_id" binding:"required"`
+		CreatorKey string `json:"creator_key"`
+		Name       string `json:"name" binding:"required"`
+		Category   string `json:"category"`
+		Reason     string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供物品名称", "code": 400})
+		return
+	}
+
+	profileID := strings.TrimSpace(req.ProfileID)
+	creatorKey := strings.TrimSpace(req.CreatorKey)
+	if creatorKey == "" {
+		creatorKey = h.profileCreatorKey(c)
+	}
+	if _, ok := h.requireProfileAccessWithKey(c, profileID, creatorKey); !ok {
+		return
+	}
+
+	category := strings.TrimSpace(req.Category)
+	if category == "" {
+		category = "其他"
+	}
+
+	todo := &models.HouseholdTodo{
+		ProfileID: profileID,
+		Name:      strings.TrimSpace(req.Name),
+		Category:  category,
+		Reason:    strings.TrimSpace(req.Reason),
+		Status:    "open",
+	}
+
+	if err := h.db.CreateHouseholdTodo(todo); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": todo,
+	})
+}
+
+// GetTodos 获取待办列表
+func (h *HouseholdHandler) GetTodos(c *gin.Context) {
+	profileID := strings.TrimSpace(c.Query("profile_id"))
+	if profileID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少档案ID", "code": 400})
+		return
+	}
+	creatorKey := strings.TrimSpace(c.Query("creator_key"))
+	if creatorKey == "" {
+		creatorKey = h.profileCreatorKey(c)
+	}
+	if _, ok := h.requireProfileAccessWithKey(c, profileID, creatorKey); !ok {
+		return
+	}
+
+	status := strings.TrimSpace(c.Query("status"))
+	todos, err := h.db.GetHouseholdTodos(profileID, status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": todos,
+	})
+}
+
+// UpdateTodo 更新待办状态
+func (h *HouseholdHandler) UpdateTodo(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		ProfileID  string `json:"profile_id" binding:"required"`
+		CreatorKey string `json:"creator_key"`
+		Status     string `json:"status" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误", "code": 400})
+		return
+	}
+
+	profileID := strings.TrimSpace(req.ProfileID)
+	creatorKey := strings.TrimSpace(req.CreatorKey)
+	if creatorKey == "" {
+		creatorKey = h.profileCreatorKey(c)
+	}
+	if _, ok := h.requireProfileAccessWithKey(c, profileID, creatorKey); !ok {
+		return
+	}
+
+	todo, err := h.db.GetHouseholdTodo(id)
+	if err != nil || todo.ProfileID != profileID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "待办不存在", "code": 404})
+		return
+	}
+
+	status := strings.TrimSpace(req.Status)
+	if status != "open" && status != "done" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "状态无效", "code": 400})
+		return
+	}
+
+	if err := h.db.UpdateHouseholdTodoStatus(id, status); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+	})
+}
+
+// DeleteTodo 删除待办
+func (h *HouseholdHandler) DeleteTodo(c *gin.Context) {
+	id := c.Param("id")
+	profileID := strings.TrimSpace(c.Query("profile_id"))
+	if profileID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少档案ID", "code": 400})
+		return
+	}
+	creatorKey := strings.TrimSpace(c.Query("creator_key"))
+	if creatorKey == "" {
+		creatorKey = h.profileCreatorKey(c)
+	}
+	if _, ok := h.requireProfileAccessWithKey(c, profileID, creatorKey); !ok {
+		return
+	}
+
+	todo, err := h.db.GetHouseholdTodo(id)
+	if err != nil || todo.ProfileID != profileID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "待办不存在", "code": 404})
+		return
+	}
+
+	if err := h.db.DeleteHouseholdTodo(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败", "code": 500})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+	})
+}
+
 // 初始化 household 数据库
 func (h *HouseholdHandler) Init(c *gin.Context) {
 	if err := h.db.InitHousehold(); err != nil {
@@ -1081,6 +1474,14 @@ type ChatAction struct {
 	ItemID string `json:"item_id,omitempty"`
 	Name   string `json:"name,omitempty"`
 	Target string `json:"target,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Candidates []string `json:"candidates,omitempty"`
+	Quantity    int    `json:"quantity,omitempty"`
+	Category    string `json:"category,omitempty"`
+	Unit        string `json:"unit,omitempty"`
+	MinQuantity int    `json:"min_quantity,omitempty"`
+	ExpiryDays  int    `json:"expiry_days,omitempty"`
+	Location    string `json:"location,omitempty"`
 }
 
 // BarcodeLookupRequest 条码查询请求
@@ -1177,6 +1578,27 @@ type ReceiptItem struct {
 	Category string `json:"category,omitempty"`
 	Unit     string `json:"unit"`
 	Matched  bool   `json:"matched"`
+}
+
+// AITodoMergeRequest AI 去重合并待办请求
+type AITodoMergeRequest struct {
+	ProfileID  string `json:"profile_id" binding:"required"`
+	CreatorKey string `json:"creator_key"`
+}
+
+// AITodoMergeResponse AI 去重合并待办响应
+type AITodoMergeResponse struct {
+	Merges []AITodoMerge `json:"merges"`
+	Notes  string        `json:"notes"`
+}
+
+// AITodoMerge AI 合并项
+type AITodoMerge struct {
+	KeepID   string   `json:"keep_id"`
+	MergeIDs []string `json:"merge_ids"`
+	Name     string   `json:"name"`
+	Category string   `json:"category"`
+	Reason   string   `json:"reason"`
 }
 
 // ReceiptOCR 小票 OCR 识别
@@ -1422,6 +1844,130 @@ func (h *HouseholdHandler) AIFeatureCheck(c *gin.Context) {
 	})
 }
 
+// AIMergeTodos AI 去重合并待购买任务
+func (h *HouseholdHandler) AIMergeTodos(c *gin.Context) {
+	if h.cfg.DeepSeek.APIKey == "" && h.cfg.MiniMax.APIKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 AI，请配置 DeepSeek 或 MiniMax API Key", "code": 400})
+		return
+	}
+
+	var req AITodoMergeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少档案ID", "code": 400})
+		return
+	}
+
+	profileID := strings.TrimSpace(req.ProfileID)
+	creatorKey := strings.TrimSpace(req.CreatorKey)
+	if creatorKey == "" {
+		creatorKey = h.profileCreatorKey(c)
+	}
+	if _, ok := h.requireProfileAccessWithKey(c, profileID, creatorKey); !ok {
+		return
+	}
+
+	todos, err := h.db.GetHouseholdTodos(profileID, "open")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取待办失败", "code": 500})
+		return
+	}
+	if len(todos) < 2 {
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"merged":  0,
+			"message": "无可合并任务",
+		})
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("你是一个家庭物品待购买任务去重助手。请识别重复或可合并的任务，并给出合并建议。\n")
+	sb.WriteString("只合并高度相似或明显重复的项；不要合并无关物品。\n")
+	sb.WriteString("输出 JSON 格式：\n")
+	sb.WriteString(`{
+  "notes": "简短说明",
+  "merges": [
+    {"keep_id": "保留的任务ID", "merge_ids": ["需要合并的任务ID1", "任务ID2"], "name": "合并后的名称", "category": "分类", "reason": "合并后的原因"}
+  ]
+}`)
+	sb.WriteString("\n\n任务列表：\n")
+	for _, t := range todos {
+		sb.WriteString(fmt.Sprintf("- id:%s | name:%s | category:%s | reason:%s\n", t.ID, t.Name, t.Category, t.Reason))
+	}
+
+	var result string
+	var aiErr error
+	if h.cfg.MiniMax.APIKey != "" {
+		result, aiErr = h.callMiniMaxAPI(sb.String())
+	} else {
+		result, aiErr = h.callDeepSeekAPI(sb.String())
+	}
+	if aiErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "AI 合并失败: " + aiErr.Error(), "code": 500})
+		return
+	}
+
+	candidate, ok := extractJSONPayload(result)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "AI 返回格式错误", "code": 400, "raw": result})
+		return
+	}
+
+	var resp AITodoMergeResponse
+	if err := json.Unmarshal([]byte(candidate), &resp); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "AI 返回格式错误", "code": 400, "raw": result})
+		return
+	}
+
+	todoMap := make(map[string]*models.HouseholdTodo, len(todos))
+	for _, t := range todos {
+		todoMap[t.ID] = t
+	}
+
+	mergedCount := 0
+	updated := 0
+	for _, merge := range resp.Merges {
+		if merge.KeepID == "" || len(merge.MergeIDs) == 0 {
+			continue
+		}
+		keep, ok := todoMap[merge.KeepID]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(merge.Name) != "" {
+			keep.Name = strings.TrimSpace(merge.Name)
+		}
+		if strings.TrimSpace(merge.Category) != "" {
+			keep.Category = strings.TrimSpace(merge.Category)
+		}
+		if strings.TrimSpace(merge.Reason) != "" {
+			keep.Reason = strings.TrimSpace(merge.Reason)
+		}
+		if err := h.db.UpdateHouseholdTodo(keep); err == nil {
+			updated++
+		}
+
+		for _, id := range merge.MergeIDs {
+			if id == keep.ID {
+				continue
+			}
+			if todo, exists := todoMap[id]; !exists || todo.ProfileID != profileID {
+				continue
+			}
+			if err := h.db.DeleteHouseholdTodo(id); err == nil {
+				mergedCount++
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"merged":  mergedCount,
+		"updated": updated,
+		"notes":   resp.Notes,
+	})
+}
+
 // AIAnalyze 智能分析库存并给出建议
 func (h *HouseholdHandler) AIAnalyze(c *gin.Context) {
 	if h.cfg.DeepSeek.APIKey == "" && h.cfg.MiniMax.APIKey == "" {
@@ -1604,6 +2150,79 @@ func (h *HouseholdHandler) AIAddItem(c *gin.Context) {
 		"data":      created,
 		"count":     len(created),
 		"raw_ai":    result,
+	})
+}
+
+// AIParseItems AI 解析物品清单（不直接写入）
+func (h *HouseholdHandler) AIParseItems(c *gin.Context) {
+	if h.cfg.DeepSeek.APIKey == "" && h.cfg.MiniMax.APIKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未配置 AI，请配置 DeepSeek 或 MiniMax API Key", "code": 400})
+		return
+	}
+
+	var req AIAnalyzeRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Text) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供物品描述", "code": 400})
+		return
+	}
+
+	if strings.TrimSpace(req.ProfileID) != "" {
+		if _, ok := h.requireProfileAccessWithKey(c, strings.TrimSpace(req.ProfileID), strings.TrimSpace(req.CreatorKey)); !ok {
+			return
+		}
+	}
+
+	templates, _ := h.db.GetItemTemplates()
+	prompt := h.buildParsePrompt(req.Text, templates)
+
+	var result string
+	var aiErr error
+	if h.cfg.MiniMax.APIKey != "" {
+		result, aiErr = h.callMiniMaxAPI(prompt)
+	} else {
+		result, aiErr = h.callDeepSeekAPI(prompt)
+	}
+	if aiErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "AI 解析失败: " + aiErr.Error(), "code": 500})
+		return
+	}
+
+	var items []map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &items); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "AI 返回格式错误", "code": 400, "raw": result})
+		return
+	}
+
+	normalized := make([]map[string]interface{}, 0, len(items))
+	for _, itemData := range items {
+		name := getString(itemData, "name")
+		if name == "" {
+			continue
+		}
+		category := getString(itemData, "category")
+		if category == "" {
+			category = "其他"
+		}
+		unit := getString(itemData, "unit")
+		if unit == "" {
+			unit = "个"
+		}
+		normalized = append(normalized, map[string]interface{}{
+			"name":         name,
+			"category":     category,
+			"quantity":     getInt(itemData, "quantity", 1),
+			"unit":         unit,
+			"min_quantity": getInt(itemData, "min_quantity", 1),
+			"expiry_days":  getInt(itemData, "expiry_days", 0),
+			"location":     getString(itemData, "location"),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":   0,
+		"items":  normalized,
+		"count":  len(normalized),
+		"raw_ai": result,
 	})
 }
 
@@ -1987,8 +2606,30 @@ func (h *HouseholdHandler) Chat(c *gin.Context) {
 		}
 	}
 
+	// 获取可用位置列表
+	var locations []string
+	if profileID != "" {
+		itemLocations, _ := h.db.GetProfileLocations(profileID)
+		library, _ := h.db.GetHouseholdLocationsLibrary(profileID)
+		seen := make(map[string]bool)
+		for _, loc := range itemLocations {
+			if loc == "" || seen[loc] {
+				continue
+			}
+			seen[loc] = true
+			locations = append(locations, loc)
+		}
+		for _, loc := range library {
+			if loc.Name == "" || seen[loc.Name] {
+				continue
+			}
+			seen[loc.Name] = true
+			locations = append(locations, loc.Name)
+		}
+	}
+
 	// 构建对话提示词
-	prompt := h.buildChatPrompt(req.Message, items, history)
+	prompt := h.buildChatPrompt(req.Message, items, history, locations)
 
 	var result string
 	var aiErr error
@@ -2005,12 +2646,9 @@ func (h *HouseholdHandler) Chat(c *gin.Context) {
 	}
 
 	// 解析 AI 返回的 JSON
-	var resp ChatResponse
-	if err := json.Unmarshal([]byte(result), &resp); err != nil {
-		// 如果解析失败，直接返回文本
-		resp = ChatResponse{
-			Reply: result,
-		}
+	resp, ok := parseChatResponse(result)
+	if !ok {
+		resp = ChatResponse{Reply: result}
 	}
 
 	// 保存助手回复
@@ -2063,7 +2701,7 @@ func (h *HouseholdHandler) ClearChatHistory(c *gin.Context) {
 }
 
 // 构建对话提示词
-func (h *HouseholdHandler) buildChatPrompt(message string, items []*models.HouseholdItem, history []*models.HouseholdConversation) string {
+func (h *HouseholdHandler) buildChatPrompt(message string, items []*models.HouseholdItem, history []*models.HouseholdConversation, locations []string) string {
 	var sb strings.Builder
 
 	sb.WriteString("你是一个智能家庭物品管理助手。你可以帮用户：\n")
@@ -2072,7 +2710,9 @@ func (h *HouseholdHandler) buildChatPrompt(message string, items []*models.House
 	sb.WriteString("3. 推荐补货 - 用户说\"有什么要买的/缺什么\"时\n")
 	sb.WriteString("4. 删除物品 - 用户说\"不要xx/删除xx\"时\n")
 	sb.WriteString("5. 修改物品 - 用户说\"xx改成yy/把xx数量改一下\"时\n")
-	sb.WriteString("6. 日常问答 - 用户问其他问题\n\n")
+	sb.WriteString("6. 使用/消耗物品 - 用户说\"用掉/消耗\"时\n")
+	sb.WriteString("7. 创建待购买任务 - 用户说\"加入待购/加入清单\"时\n")
+	sb.WriteString("8. 日常问答 - 用户问其他问题\n\n")
 
 	sb.WriteString("## 当前物品清单：\n")
 	if len(items) == 0 {
@@ -2096,6 +2736,13 @@ func (h *HouseholdHandler) buildChatPrompt(message string, items []*models.House
 		}
 	}
 
+	if len(locations) > 0 {
+		sb.WriteString("\n## 可用位置候选：\n")
+		for _, loc := range locations {
+			sb.WriteString(fmt.Sprintf("- %s\n", loc))
+		}
+	}
+
 	sb.WriteString(fmt.Sprintf("\n## 用户消息：%s\n\n", message))
 
 	sb.WriteString("请以 JSON 格式返回，格式如下：\n")
@@ -2104,7 +2751,11 @@ func (h *HouseholdHandler) buildChatPrompt(message string, items []*models.House
   "actions": [
     {"type": "add", "name": "物品名", "quantity": 1, "category": "分类", "unit": "个"},
     {"type": "query", "target": "物品名"},
-    {"type": "restock", "item_id": "物品ID"},
+    {"type": "restock", "item_id": "物品ID", "quantity": 1},
+    {"type": "use", "item_id": "物品ID", "quantity": 1},
+    {"type": "update", "item_id": "物品ID", "quantity": 1, "min_quantity": 1},
+    {"type": "suggest_location", "name": "物品名", "candidates": ["位置1", "位置2"]},
+    {"type": "todo", "name": "物品名", "category": "分类", "reason": "原因"},
     {"type": "delete", "item_id": "物品ID"},
     {"type": "delete", "name": "物品名"}
   ]
@@ -2114,6 +2765,8 @@ func (h *HouseholdHandler) buildChatPrompt(message string, items []*models.House
 	sb.WriteString("- actions 为空数组表示仅回复用户问题\n")
 	sb.WriteString("- 如果是添加物品，请提供合适的分类（厨房/卫生间/卧室/客厅/玄关/阳台/其他）、单位（瓶/袋/盒/个/包/卷等）\n")
 	sb.WriteString("- 如果是删除/修改，请先查找对应物品\n")
+	sb.WriteString("- 如果位置不确定，可返回 suggest_location 动作，候选要简短清晰\n")
+	sb.WriteString("- 如果用户要加入待购/清单，请使用 todo 动作\n")
 	sb.WriteString("- reply 应该friendly，根据用户意图给出合适回复\n")
 
 	return sb.String()
@@ -2126,39 +2779,59 @@ func (h *HouseholdHandler) executeChatActions(actions []ChatAction, profileID st
 	for _, action := range actions {
 		switch action.Type {
 		case "add":
-			item := &models.HouseholdItem{
-				Name:     action.Name,
-				Category: "其他",
-				Quantity: 1,
-				Unit:     "个",
-			}
-			// 尝试从 action 中获取更多信息
 			if action.Name == "" {
 				continue
+			}
+
+			category := action.Category
+			if category == "" {
+				category = "其他"
+			}
+			unit := action.Unit
+			if unit == "" {
+				unit = "个"
+			}
+			quantity := action.Quantity
+			if quantity <= 0 {
+				quantity = 1
+			}
+			minQuantity := action.MinQuantity
+			if minQuantity <= 0 {
+				minQuantity = 1
 			}
 
 			if profileID != "" {
 				profileItem := &models.ProfileItem{
 					ProfileID: profileID,
 					Name:      action.Name,
-					Category:  "其他",
-					Quantity:  1,
-					Unit:      "个",
+					Category:  category,
+					Quantity:  quantity,
+					Unit:      unit,
+					MinQuantity: minQuantity,
+					ExpiryDays: action.ExpiryDays,
+					Location: action.Location,
 				}
 				_ = h.db.CreateProfileItem(profileItem)
 			} else {
+				item := &models.HouseholdItem{
+					Name:        action.Name,
+					Category:    category,
+					Quantity:    quantity,
+					Unit:        unit,
+					MinQuantity: minQuantity,
+					ExpiryDays:  action.ExpiryDays,
+					Location:    action.Location,
+				}
 				_ = h.db.CreateHouseholdItem(item)
 			}
 			itemsAdded = append(itemsAdded, action.Name)
 
 		case "restock":
-			if action.ItemID != "" {
-				if profileID != "" {
-					_ = h.db.RestockProfileItem(action.ItemID, 1)
-				} else {
-					_ = h.db.RestockHouseholdItem(action.ItemID, 1)
-				}
+			amount := action.Quantity
+			if amount <= 0 {
+				amount = 1
 			}
+			h.applyStockChange(profileID, action.ItemID, action.Name, amount, true)
 
 		case "delete":
 			if action.ItemID != "" {
@@ -2187,6 +2860,32 @@ func (h *HouseholdHandler) executeChatActions(actions []ChatAction, profileID st
 					}
 				}
 			}
+		case "use":
+			amount := action.Quantity
+			if amount <= 0 {
+				amount = 1
+			}
+			h.applyStockChange(profileID, action.ItemID, action.Name, amount, false)
+		case "update":
+			h.applyItemUpdate(profileID, action)
+		case "todo":
+			if profileID == "" || action.Name == "" {
+				continue
+			}
+			category := action.Category
+			if category == "" {
+				category = "其他"
+			}
+			todo := &models.HouseholdTodo{
+				ProfileID: profileID,
+				Name:      action.Name,
+				Category:  category,
+				Reason:    action.Reason,
+				Status:    "open",
+			}
+			_ = h.db.CreateHouseholdTodo(todo)
+		case "suggest_location":
+			continue
 		}
 	}
 
@@ -2194,6 +2893,166 @@ func (h *HouseholdHandler) executeChatActions(actions []ChatAction, profileID st
 	_ = h.db.GenerateHouseholdNotifications()
 
 	return itemsAdded
+}
+
+func parseChatResponse(content string) (ChatResponse, bool) {
+	candidate, ok := extractJSONPayload(content)
+	if !ok {
+		return ChatResponse{}, false
+	}
+	var resp ChatResponse
+	if err := json.Unmarshal([]byte(candidate), &resp); err != nil {
+		return ChatResponse{}, false
+	}
+	if strings.TrimSpace(resp.Reply) == "" {
+		resp.Reply = strings.TrimSpace(content)
+	}
+	return resp, true
+}
+
+func extractJSONPayload(content string) (string, bool) {
+	clean := strings.TrimSpace(content)
+	clean = strings.ReplaceAll(clean, "```json", "")
+	clean = strings.ReplaceAll(clean, "```", "")
+	clean = strings.TrimSpace(clean)
+
+	startObj := strings.Index(clean, "{")
+	endObj := strings.LastIndex(clean, "}")
+	if startObj != -1 && endObj != -1 && endObj > startObj {
+		return clean[startObj : endObj+1], true
+	}
+
+	startArr := strings.Index(clean, "[")
+	endArr := strings.LastIndex(clean, "]")
+	if startArr != -1 && endArr != -1 && endArr > startArr {
+		return clean[startArr : endArr+1], true
+	}
+
+	return "", false
+}
+
+func (h *HouseholdHandler) applyStockChange(profileID, itemID, name string, amount int, restock bool) {
+	if itemID == "" && name != "" {
+		if profileID != "" {
+			items, _ := h.db.GetProfileItems(profileID)
+			for _, item := range items {
+				if strings.EqualFold(item.Name, name) {
+					itemID = item.ID
+					break
+				}
+			}
+		} else {
+			items, _ := h.db.GetAllHouseholdItems()
+			for _, item := range items {
+				if strings.EqualFold(item.Name, name) {
+					itemID = item.ID
+					break
+				}
+			}
+		}
+	}
+
+	if itemID == "" {
+		return
+	}
+
+	if profileID != "" {
+		if restock {
+			_ = h.db.RestockProfileItem(itemID, amount)
+		} else {
+			_ = h.db.UseProfileItem(itemID, amount)
+		}
+		return
+	}
+
+	if restock {
+		_ = h.db.RestockHouseholdItem(itemID, amount)
+	} else {
+		_ = h.db.UseHouseholdItem(itemID, amount)
+	}
+}
+
+func (h *HouseholdHandler) applyItemUpdate(profileID string, action ChatAction) {
+	if action.ItemID == "" && action.Name == "" {
+		return
+	}
+
+	if profileID != "" {
+		item, err := h.db.GetProfileItem(action.ItemID)
+		if err != nil && action.ItemID == "" {
+			items, _ := h.db.GetProfileItems(profileID)
+			for _, it := range items {
+				if strings.EqualFold(it.Name, action.Name) {
+					item = it
+					err = nil
+					break
+				}
+			}
+		}
+		if err != nil || item == nil {
+			return
+		}
+		if action.Name != "" {
+			item.Name = action.Name
+		}
+		if action.Category != "" {
+			item.Category = action.Category
+		}
+		if action.Quantity > 0 {
+			item.Quantity = action.Quantity
+		}
+		if action.Unit != "" {
+			item.Unit = action.Unit
+		}
+		if action.MinQuantity > 0 {
+			item.MinQuantity = action.MinQuantity
+		}
+		if action.ExpiryDays > 0 {
+			item.ExpiryDays = action.ExpiryDays
+		}
+		if action.Location != "" {
+			item.Location = action.Location
+		}
+		_ = h.db.UpdateProfileItem(item)
+		return
+	}
+
+	item, err := h.db.GetHouseholdItem(action.ItemID)
+	if err != nil && action.ItemID == "" {
+		items, _ := h.db.GetAllHouseholdItems()
+		for _, it := range items {
+			if strings.EqualFold(it.Name, action.Name) {
+				item = it
+				err = nil
+				break
+			}
+		}
+	}
+	if err != nil || item == nil {
+		return
+	}
+	if action.Name != "" {
+		item.Name = action.Name
+	}
+	if action.Category != "" {
+		item.Category = action.Category
+	}
+	if action.Quantity > 0 {
+		item.Quantity = action.Quantity
+	}
+	if action.Unit != "" {
+		item.Unit = action.Unit
+	}
+	if action.MinQuantity > 0 {
+		item.MinQuantity = action.MinQuantity
+	}
+	if action.ExpiryDays > 0 {
+		item.ExpiryDays = action.ExpiryDays
+	}
+	if action.Location != "" {
+		item.Location = action.Location
+	}
+	_ = h.db.UpdateHouseholdItem(item)
 }
 
 // 调用 DeepSeek 聊天 API

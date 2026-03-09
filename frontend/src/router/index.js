@@ -250,6 +250,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/household/space',
+    name: 'HouseholdSpace',
+    component: () => import('../views/HouseholdSpace3D.vue'),
+    meta: {
+      title: '整理空间3D',
+      icon: 'Location',
+      category: 'life',
+      description: '位置标注与空间规划'
+    }
+  },
+  {
     path: '/glucose',
     name: 'Glucose',
     component: () => import('../views/GlucoseTool.vue'),

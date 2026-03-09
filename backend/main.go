@@ -475,12 +475,20 @@ func main() {
 			household.POST("/notifications/:id/read", householdHandler.MarkNotificationAsRead) // 标记已读
 			household.POST("/notifications/read-all", householdHandler.MarkAllNotificationsAsRead) // 全部已读
 
+			// 待购买/提醒任务
+			household.GET("/todos", householdHandler.GetTodos)
+			household.POST("/todos", householdHandler.CreateTodo)
+			household.PUT("/todos/:id", householdHandler.UpdateTodo)
+			household.DELETE("/todos/:id", householdHandler.DeleteTodo)
+
 			household.GET("/stats", householdHandler.GetStats) // 统计信息
 
 			// AI 智能功能
 			household.GET("/ai/check", householdHandler.AIFeatureCheck)   // 检查 AI 功能
 			household.POST("/ai/analyze", householdHandler.AIAnalyze)    // AI 分析库存
 			household.POST("/ai/add", householdHandler.AIAddItem)         // AI 智能添加物品
+			household.POST("/ai/parse", householdHandler.AIParseItems)     // AI 解析物品清单
+			household.POST("/ai/todos/merge", householdHandler.AIMergeTodos) // AI 合并待办
 			household.GET("/ai/restock", householdHandler.AISuggestRestock) // AI 推荐补充
 
 			// 对话功能
@@ -504,6 +512,15 @@ func main() {
 			// 档案物品管理 API
 			household.POST("/profile/:id/items", householdHandler.CreateProfileItem)       // 创建档案物品
 			household.GET("/profile/:id/items", householdHandler.GetProfileItems)          // 获取档案物品列表
+			household.GET("/profile/:id/locations", householdHandler.GetProfileLocations) // 获取档案位置列表
+			household.GET("/profile/:id/locations/library", householdHandler.GetLocationLibrary)
+			household.POST("/profile/:id/locations/library", householdHandler.CreateLocation)
+			household.PUT("/profile/:id/locations/library/:locId", householdHandler.UpdateLocation)
+			household.DELETE("/profile/:id/locations/library/:locId", householdHandler.DeleteLocation)
+			household.GET("/profile/:id/space", householdHandler.GetSpaceLayout)
+			household.POST("/profile/:id/space", householdHandler.SaveSpaceLayout)
+			household.POST("/profile/:id/space/share", householdHandler.CreateSpaceShare)
+			household.GET("/space/share/:shareId", householdHandler.GetSpaceShare)
 			household.PUT("/profile/:id/items/:itemId", householdHandler.UpdateProfileItem) // 更新档案物品
 			household.DELETE("/profile/:id/items/:itemId", householdHandler.DeleteProfileItem) // 删除档案物品
 			household.POST("/profile/:id/items/:itemId/use", householdHandler.UseProfileItem)   // 使用档案物品
