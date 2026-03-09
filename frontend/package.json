@@ -23,7 +23,7 @@
     "element-plus": "^2.13.0",
     "highlight.js": "^11.11.1",
     "html5-qrcode": "^2.3.8",
-    "i18next": "^25.8.4",
+    "i18next": "^25.8.14",
     "katex": "^0.16.27",
     "markdown-it": "^14.1.0",
     "markdown-it-footnote": "^4.0.0",
