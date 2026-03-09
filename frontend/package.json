@@ -24,7 +24,7 @@
     "highlight.js": "^11.11.1",
     "html5-qrcode": "^2.3.8",
     "i18next": "^25.8.4",
-    "katex": "^0.16.27",
+    "katex": "^0.16.38",
     "markdown-it": "^14.1.0",
     "markdown-it-footnote": "^4.0.0",
     "markdown-it-mark": "^4.0.0",
