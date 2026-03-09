@@ -294,11 +294,33 @@
     <el-dialog v-model="docsVisible" width="920px" title="AI Gateway 接入文档">
       <div v-if="docs" class="docs-content">
         <el-alert :title="docs.summary" type="info" :closable="false" />
-        <el-descriptions :column="1" border style="margin-top: 16px;">
+
+        <!-- 可用模型列表 -->
+        <div v-if="docs.billing && docs.billing.pricing" style="margin-top: 16px;">
+          <h4>可用模型</h4>
+          <el-table :data="docs.billing.pricing" size="small" max-height="300">
+            <el-table-column prop="Model" label="模型" />
+            <el-table-column prop="Provider" label="提供商" width="100">
+              <template #default="{ row }">
+                <el-tag size="small">{{ row.Provider }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="InputPer1KTokens" label="输入/千token" width="100" />
+            <el-table-column prop="OutputPer1KTokens" label="输出/千token" width="100" />
+            <el-table-column prop="Currency" label="货币" width="80" />
+          </el-table>
+        </div>
+
+        <el-divider />
+
+        <h4>API 路由</h4>
+        <el-descriptions :column="1" border>
           <el-descriptions-item v-for="route in docs.routes" :key="route.path" :label="`${route.method} ${route.path}`">
             {{ route.description }}
           </el-descriptions-item>
         </el-descriptions>
+
+        <h4 style="margin-top: 16px;">调用示例</h4>
         <pre class="doc-json">{{ prettyJSON(docs.examples) }}</pre>
       </div>
     </el-dialog>
@@ -388,7 +410,7 @@ const loadReports = async () => {
     days: String(reportDays.value)
   })
   const res = await fetch(`${API_BASE}/admin/reports?${params.toString()}`, {
-    headers: { 'X-Super-Admin-Password': superAdminPassword.value }
+    headers: authHeaders()
   })
   const data = await res.json()
   if (res.ok) reports.value = data.rows || []
@@ -406,7 +428,7 @@ const loadKeys = async () => {
   loadingKeys.value = true
   try {
     const res = await fetch(`${API_BASE}/admin/keys`, {
-      headers: { 'X-Super-Admin-Password': superAdminPassword.value }
+      headers: authHeaders()
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || '加载失败')
