@@ -278,6 +278,7 @@ func main() {
 	ocrHandler := handlers.NewOCRHandler()
 	bailianHandler := handlers.NewBailianHandler(db, cfg)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler)
+	apiGatewayHandler := handlers.NewAPIGatewayHandler()
 
 	// 启动 SSH 会话清理协程
 	terminalHandler.StartCleanupRoutine()
@@ -457,22 +458,22 @@ func main() {
 		// 家庭物品整理 API
 		household := api.Group("/household")
 		{
-			household.POST("/init", householdHandler.Init)               // 初始化
-			household.GET("/items", householdHandler.GetItems)           // 获取物品列表
-			household.POST("/items", householdHandler.CreateItem)         // 创建物品
-			household.GET("/items/:id", householdHandler.GetItem)         // 获取物品
-			household.PUT("/items/:id", householdHandler.UpdateItem)     // 更新物品
-			household.DELETE("/items/:id", householdHandler.DeleteItem)  // 删除物品
-			household.POST("/items/:id/use", householdHandler.UseItem)   // 使用物品
+			household.POST("/init", householdHandler.Init)                     // 初始化
+			household.GET("/items", householdHandler.GetItems)                 // 获取物品列表
+			household.POST("/items", householdHandler.CreateItem)              // 创建物品
+			household.GET("/items/:id", householdHandler.GetItem)              // 获取物品
+			household.PUT("/items/:id", householdHandler.UpdateItem)           // 更新物品
+			household.DELETE("/items/:id", householdHandler.DeleteItem)        // 删除物品
+			household.POST("/items/:id/use", householdHandler.UseItem)         // 使用物品
 			household.POST("/items/:id/restock", householdHandler.RestockItem) // 补充物品
-			household.POST("/items/:id/open", householdHandler.OpenItem) // 重新开封
+			household.POST("/items/:id/open", householdHandler.OpenItem)       // 重新开封
 
-			household.GET("/templates", householdHandler.GetTemplates)   // 获取模板
-			household.POST("/templates", householdHandler.CreateTemplate) // 创建模板
+			household.GET("/templates", householdHandler.GetTemplates)          // 获取模板
+			household.POST("/templates", householdHandler.CreateTemplate)       // 创建模板
 			household.DELETE("/templates/:id", householdHandler.DeleteTemplate) // 删除模板
 
-			household.GET("/notifications", householdHandler.GetNotifications)     // 获取通知
-			household.POST("/notifications/:id/read", householdHandler.MarkNotificationAsRead) // 标记已读
+			household.GET("/notifications", householdHandler.GetNotifications)                     // 获取通知
+			household.POST("/notifications/:id/read", householdHandler.MarkNotificationAsRead)     // 标记已读
 			household.POST("/notifications/read-all", householdHandler.MarkAllNotificationsAsRead) // 全部已读
 
 			// 待购买/提醒任务
@@ -484,16 +485,16 @@ func main() {
 			household.GET("/stats", householdHandler.GetStats) // 统计信息
 
 			// AI 智能功能
-			household.GET("/ai/check", householdHandler.AIFeatureCheck)   // 检查 AI 功能
-			household.POST("/ai/analyze", householdHandler.AIAnalyze)    // AI 分析库存
-			household.POST("/ai/add", householdHandler.AIAddItem)         // AI 智能添加物品
-			household.POST("/ai/parse", householdHandler.AIParseItems)     // AI 解析物品清单
+			household.GET("/ai/check", householdHandler.AIFeatureCheck)      // 检查 AI 功能
+			household.POST("/ai/analyze", householdHandler.AIAnalyze)        // AI 分析库存
+			household.POST("/ai/add", householdHandler.AIAddItem)            // AI 智能添加物品
+			household.POST("/ai/parse", householdHandler.AIParseItems)       // AI 解析物品清单
 			household.POST("/ai/todos/merge", householdHandler.AIMergeTodos) // AI 合并待办
-			household.GET("/ai/restock", householdHandler.AISuggestRestock) // AI 推荐补充
+			household.GET("/ai/restock", householdHandler.AISuggestRestock)  // AI 推荐补充
 
 			// 对话功能
-			household.POST("/chat", householdHandler.Chat)                 // 对话
-			household.GET("/chat/history", householdHandler.GetChatHistory) // 获取对话历史
+			household.POST("/chat", householdHandler.Chat)                       // 对话
+			household.GET("/chat/history", householdHandler.GetChatHistory)      // 获取对话历史
 			household.DELETE("/chat/history", householdHandler.ClearChatHistory) // 清除对话历史
 
 			// 条码查询
@@ -503,15 +504,15 @@ func main() {
 			household.POST("/ocr/receipt", householdHandler.ReceiptOCR) // 小票识别
 
 			// 档案管理 API
-			household.POST("/profile", householdHandler.CreateProfile)          // 创建档案
-			household.POST("/profile/login", householdHandler.LoginProfile)   // 登录档案
-			household.GET("/profile/:id", householdHandler.GetProfile)        // 获取档案
+			household.POST("/profile", householdHandler.CreateProfile)           // 创建档案
+			household.POST("/profile/login", householdHandler.LoginProfile)      // 登录档案
+			household.GET("/profile/:id", householdHandler.GetProfile)           // 获取档案
 			household.PUT("/profile/:id/extend", householdHandler.ExtendProfile) // 延长档案
-			household.DELETE("/profile/:id", householdHandler.DeleteProfile)  // 删除档案
+			household.DELETE("/profile/:id", householdHandler.DeleteProfile)     // 删除档案
 
 			// 档案物品管理 API
-			household.POST("/profile/:id/items", householdHandler.CreateProfileItem)       // 创建档案物品
-			household.GET("/profile/:id/items", householdHandler.GetProfileItems)          // 获取档案物品列表
+			household.POST("/profile/:id/items", householdHandler.CreateProfileItem)      // 创建档案物品
+			household.GET("/profile/:id/items", householdHandler.GetProfileItems)         // 获取档案物品列表
 			household.GET("/profile/:id/locations", householdHandler.GetProfileLocations) // 获取档案位置列表
 			household.GET("/profile/:id/locations/library", householdHandler.GetLocationLibrary)
 			household.POST("/profile/:id/locations/library", householdHandler.CreateLocation)
@@ -521,11 +522,11 @@ func main() {
 			household.POST("/profile/:id/space", householdHandler.SaveSpaceLayout)
 			household.POST("/profile/:id/space/share", householdHandler.CreateSpaceShare)
 			household.GET("/space/share/:shareId", householdHandler.GetSpaceShare)
-			household.PUT("/profile/:id/items/:itemId", householdHandler.UpdateProfileItem) // 更新档案物品
-			household.DELETE("/profile/:id/items/:itemId", householdHandler.DeleteProfileItem) // 删除档案物品
-			household.POST("/profile/:id/items/:itemId/use", householdHandler.UseProfileItem)   // 使用档案物品
+			household.PUT("/profile/:id/items/:itemId", householdHandler.UpdateProfileItem)           // 更新档案物品
+			household.DELETE("/profile/:id/items/:itemId", householdHandler.DeleteProfileItem)        // 删除档案物品
+			household.POST("/profile/:id/items/:itemId/use", householdHandler.UseProfileItem)         // 使用档案物品
 			household.POST("/profile/:id/items/:itemId/restock", householdHandler.RestockProfileItem) // 补充档案物品
-			household.POST("/profile/:id/items/:itemId/open", householdHandler.OpenProfileItem) // 重新开封
+			household.POST("/profile/:id/items/:itemId/open", householdHandler.OpenProfileItem)       // 重新开封
 		}
 
 		// 终端 API
@@ -578,6 +579,13 @@ func main() {
 			aigw.POST("/v1/media/generations", aiGatewayHandler.MediaGenerations)
 			aigw.GET("/v1/media/tasks", aiGatewayHandler.ListMediaTasks)
 			aigw.GET("/v1/media/tasks/:id", aiGatewayHandler.GetMediaTask)
+		}
+
+		// 通用 API Gateway 代理
+		apigw := api.Group("/api-gateway")
+		{
+			apigw.Any("/cpa/v1", apiGatewayHandler.ProxyCPA)
+			apigw.Any("/cpa/v1/*proxyPath", apiGatewayHandler.ProxyCPA)
 		}
 
 		// 背景图 API

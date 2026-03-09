@@ -247,6 +247,17 @@ ai_gateway:
   default_rate_limit_per_hour: 1000
   # 请求明细保留天数
   request_retention_days: 180
+  # OpenAI 兼容代理模型配置
+  # 也可通过环境变量 AI_GATEWAY_PROXY_API_URL / AI_GATEWAY_PROXY_API_KEY / AI_GATEWAY_PROXY_MODEL / AI_GATEWAY_PROXY_UPSTREAM_MODEL 设置
+  proxy:
+    # 对外暴露的模型名
+    model: "proxy-chat"
+    # 上游真实模型名；留空时透传请求里的 model
+    upstream_model: ""
+    # 代理服务基础地址，通常以 /v1 结尾
+    api_url: ""
+    # 代理服务 API Key
+    api_key: ""
   # 计费配置。input/output 单位是每 1000 token 价格；request_cost 用于图片/视频按次计费
   pricing:
     - model: "deepseek-chat"
@@ -257,6 +268,12 @@ ai_gateway:
       currency: "CNY"
     - model: "abab6.5s-chat"
       provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "proxy-chat"
+      provider: "proxy"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0

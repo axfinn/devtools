@@ -35,12 +35,19 @@
     <!-- 已登录：显示主界面 -->
     <template v-else>
       <!-- AI 对话助手按钮 -->
-      <div v-if="aiEnabled" class="ai-chat-fab" @click="showChatDrawer = true">
+      <div v-if="aiEnabled" class="ai-chat-fab" @click.stop="openChatDrawer">
         <el-icon :size="28"><ChatDotRound /></el-icon>
       </div>
 
       <!-- 对话抽屉 -->
-      <el-drawer v-model="showChatDrawer" title="AI 助手" direction="rtl" size="400px">
+      <el-drawer
+        v-model="showChatDrawer"
+        title="AI 助手"
+        direction="rtl"
+        size="400px"
+        :close-on-click-modal="false"
+        :destroy-on-close="false"
+      >
         <div class="chat-container">
           <div class="chat-messages" ref="chatMessagesRef">
             <div v-if="chatHistory.length === 0" class="chat-welcome">
@@ -98,7 +105,7 @@
             </div>
             <div v-if="chatLoading" class="chat-message assistant">
               <div class="message-avatar">
-                <el-icon><Robot /></el-icon>
+                <el-icon><Service /></el-icon>
               </div>
               <div class="message-content">
                 <div class="message-text typing">
@@ -221,7 +228,7 @@
             <el-icon><Ticket /></el-icon>
             小票识别
           </el-button>
-          <el-button v-if="aiEnabled" type="success" @click="showAIDialog = true">
+          <el-button v-if="aiEnabled" type="success" @click="openChatDrawer">
             <el-icon><MagicStick /></el-icon>
             AI 助手
           </el-button>
@@ -386,134 +393,6 @@
           </div>
         </div>
       </div>
-    </el-dialog>
-
-    <!-- AI 助手对话框 -->
-    <el-dialog v-model="showAIDialog" title="AI 智能助手" width="600px">
-      <el-tabs v-model="aiTab">
-        <el-tab-pane label="智能添加" name="add">
-          <div class="ai-add-section">
-            <el-input
-              v-model="aiText"
-              type="textarea"
-              :rows="4"
-              placeholder="用自然语言描述要添加的物品，例如：&#10;• 家里洗衣液快用完了，买一瓶&#10;• 冰箱里的鸡蛋只剩6个了"
-            />
-            <el-button type="primary" style="margin-top: 12px;" :loading="aiLoading" @click="handleAIAdd">
-              <el-icon><MagicStick /></el-icon>
-              AI 智能识别添加
-            </el-button>
-            <div v-if="aiResult.length > 0" class="ai-result">
-              <div class="ai-result-title">识别到的物品：</div>
-              <el-tag v-for="item in aiResult" :key="item.id" type="success" style="margin-right: 8px; margin-bottom: 8px;">
-                {{ item.name }} x {{ item.quantity }}{{ item.unit }}
-              </el-tag>
-            </div>
-          </div>
-        </el-tab-pane>
-        <el-tab-pane label="推荐补充" name="restock">
-          <div class="ai-restock-section">
-            <el-button type="warning" :loading="loadingRestock" @click="loadRestockSuggestions">
-              <el-icon><ShoppingCart /></el-icon>
-              查看需要补充的物品
-            </el-button>
-            <div v-if="restockSuggestions.length > 0" class="restock-list">
-              <el-card v-for="item in restockSuggestions" :key="item.id" class="restock-item">
-                <div class="restock-info">
-                  <div class="restock-name">{{ item.name }}</div>
-                  <div class="restock-reason">{{ item.reason }}</div>
-                </div>
-                <el-button size="small" type="primary" @click="quickRestock(item)">
-                  立即补充
-                </el-button>
-              </el-card>
-            </div>
-            <el-empty v-else-if="!loadingRestock" description="库存充足，无需补充" />
-          </div>
-        </el-tab-pane>
-        <el-tab-pane label="批量整理" name="batch">
-          <div class="ai-batch-section">
-            <el-input
-              v-model="aiBatchText"
-              type="textarea"
-              :rows="5"
-              placeholder="粘贴或输入清单，例如：&#10;洗衣液 2 瓶&#10;抽纸 3 包&#10;香皂 1 块"
-            />
-            <el-button type="primary" style="margin-top: 12px;" :loading="aiBatchLoading" @click="handleAIBatchParse">
-              <el-icon><MagicStick /></el-icon>
-              AI 解析清单
-            </el-button>
-            <div v-if="aiBatchItems.length > 0" class="ai-batch-result">
-              <div class="ai-batch-title">解析结果：</div>
-              <div class="ai-batch-tags">
-                <el-tag
-                  v-for="(item, idx) in aiBatchItems"
-                  :key="idx"
-                  closable
-                  class="ai-batch-tag"
-                  @close="removeBatchItem(idx)"
-                >
-                  {{ item.name }} x {{ item.quantity }}{{ item.unit }} <span v-if="item.category">({{ item.category }})</span>
-                </el-tag>
-              </div>
-              <div class="ai-batch-actions">
-                <el-button type="success" @click="addBatchItems">
-                  批量加入物品库
-                </el-button>
-              </div>
-            </div>
-          </div>
-        </el-tab-pane>
-        <el-tab-pane label="库存分析" name="analyze">
-          <div class="ai-analyze-section">
-            <el-button type="primary" :loading="aiAnalyzeLoading" @click="handleAIAnalyze">
-              <el-icon><MagicStick /></el-icon>
-              AI 分析库存
-            </el-button>
-            <div v-if="aiAnalyzeResult" class="ai-analyze-result">
-              <el-card class="ai-analyze-card" shadow="never">
-                <div class="ai-analyze-title">分析结论</div>
-                <div class="ai-analyze-text">{{ aiAnalyzeResult.analysis }}</div>
-              </el-card>
-
-              <div v-if="aiAnalyzeResult.shopping_list && aiAnalyzeResult.shopping_list.length > 0" class="ai-shopping-list">
-                <div class="ai-section-title">建议购物清单</div>
-                <div class="ai-shopping-tags">
-                  <el-tag v-for="(item, idx) in aiAnalyzeResult.shopping_list" :key="idx" class="ai-shopping-tag">
-                    {{ item }}
-                  </el-tag>
-                </div>
-              </div>
-
-              <div v-if="aiAnalyzeResult.suggestions && aiAnalyzeResult.suggestions.length > 0" class="ai-suggestion-list">
-                <div class="ai-section-title">补充建议</div>
-                <el-card v-for="(item, idx) in aiAnalyzeResult.suggestions" :key="idx" class="ai-suggestion-item">
-                  <div class="ai-suggestion-info">
-                    <div class="ai-suggestion-name">{{ item.name }}</div>
-                    <div class="ai-suggestion-reason">{{ item.reason }}</div>
-                  </div>
-                  <div class="ai-suggestion-actions-inline">
-                    <el-button size="small" type="primary" @click="addSuggestionToTodos(item)">
-                      加入待购买任务
-                    </el-button>
-                    <el-button size="small" @click="addSuggestionToShoppingList(item)">
-                      加入购物清单
-                    </el-button>
-                  </div>
-                </el-card>
-                <div class="ai-suggestion-actions">
-                  <el-button size="small" type="primary" @click="addAllSuggestionsToTodos">
-                    全部加入待购买任务
-                  </el-button>
-                  <el-button size="small" @click="addAllSuggestionsToShoppingList">
-                    全部加入购物清单
-                  </el-button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
     </el-dialog>
 
     <!-- 扫码对话框 -->
@@ -798,7 +677,6 @@ const showAlertsOnly = ref(false)
 // 对话框状态
 const showAddDialog = ref(false)
 const showTemplateDialog = ref(false)
-const showAIDialog = ref(false)
 const showExtendDialog = ref(false)
 const extendDays = ref(90)
 
@@ -1592,6 +1470,11 @@ async function quickRestock(item) {
   restockSuggestions.value = restockSuggestions.value.filter(i => i.id !== item.id)
 }
 
+function openChatDrawer() {
+  if (!aiEnabled.value) return
+  showChatDrawer.value = true
+}
+
 // 对话功能
 async function sendChatMessage() {
   if (!chatInput.value.trim() || chatLoading.value) return
@@ -1670,7 +1553,7 @@ function scrollToBottom() {
 }
 
 function formatMessage(text) {
-  // 简单处理换行
+  if (typeof text !== 'string') return ''
   return text.replace(/\n/g, '<br>')
 }
 
@@ -1763,7 +1646,8 @@ async function loadChatHistory() {
     if (data.code === 0 && data.history) {
       chatHistory.value = data.history.map(h => ({
         role: h.role,
-        content: h.content
+        content: typeof h.content === 'string' ? h.content : '',
+        actions: Array.isArray(h.actions) ? h.actions : []
       }))
     }
   } catch (e) {

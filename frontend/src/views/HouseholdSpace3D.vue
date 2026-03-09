@@ -61,6 +61,14 @@
             </el-button>
             <el-button @click="stopPlacing" :disabled="!placing">取消标注</el-button>
           </div>
+          <div v-if="selectedTemplateZones.length" class="zone-actions">
+            <el-select v-model="selectedZone" placeholder="选择房间快速放置" style="width: 100%;">
+              <el-option v-for="zone in selectedTemplateZones" :key="zone.name" :label="zone.name" :value="zone.name" />
+            </el-select>
+            <el-button type="primary" plain :disabled="!selectedLocation || !selectedZone" @click="addMarkerToSelectedZone">
+              放到房间中心
+            </el-button>
+          </div>
         </div>
 
         <div class="sidebar-card">
@@ -121,6 +129,7 @@
           </div>
           <div class="canvas-actions">
             <el-button size="small" @click="resetCamera">重置视角</el-button>
+            <el-button size="small" @click="setTopView">俯视视角</el-button>
             <el-button v-if="!readOnly" size="small" @click="exportLayout">导出布局</el-button>
             <el-button v-if="!readOnly" size="small" @click="importLayout">导入布局</el-button>
             <el-button size="small" @click="captureSnapshot">截图</el-button>
@@ -150,6 +159,7 @@ const readOnly = computed(() => !profileId.value && !!shareId.value)
 const locationLibrary = ref([])
 const newLocationName = ref('')
 const selectedLocation = ref('')
+const selectedZone = ref('')
 const placing = ref(false)
 const markers = ref([])
 const items = ref([])
@@ -158,9 +168,29 @@ const backupBeforeImport = ref(true)
 const templates = [
   { value: 'studio', label: '单间工作室' },
   { value: 'one-bedroom', label: '一室一厅' },
-  { value: 'kitchen-living', label: '开放式客厅+厨房' }
+  { value: 'kitchen-living', label: '开放式客厅+厨房' },
+  { value: 'two-bedroom-family', label: '两室两厅一厨一卫南北阳台' }
 ]
 const selectedTemplate = ref('')
+
+const templateZones = {
+  studio: [],
+  'one-bedroom': [],
+  'kitchen-living': [],
+  'two-bedroom-family': [
+    { name: '次卧', x: -8, z: -5 },
+    { name: '主卧', x: -8, z: 5 },
+    { name: '北阳台', x: 0, z: -8 },
+    { name: '卫生间', x: 0, z: -3.5 },
+    { name: '客厅', x: 0, z: 3 },
+    { name: '南阳台', x: 0, z: 8.5 },
+    { name: '厨房', x: 8, z: -7.5 },
+    { name: '餐厅', x: 8, z: -2.5 },
+    { name: '入户门', x: 8, z: 2.5 },
+    { name: '玄关过道', x: 8, z: 7.5 }
+  ]
+}
+const selectedTemplateZones = computed(() => templateZones[selectedTemplate.value] || [])
 
 let scene = null
 let camera = null
@@ -184,7 +214,7 @@ function initScene() {
   scene.background = new THREE.Color('#f6f8fb')
 
   camera = new THREE.PerspectiveCamera(45, canvasRef.value.clientWidth / canvasRef.value.clientHeight, 0.1, 1000)
-  camera.position.set(12, 12, 12)
+  camera.position.set(0, 18, 14)
 
   renderer = new THREE.WebGLRenderer({ antialias: true })
   renderer.setSize(canvasRef.value.clientWidth, canvasRef.value.clientHeight)
@@ -193,6 +223,11 @@ function initScene() {
 
   controls = new OrbitControls(camera, renderer.domElement)
   controls.enableDamping = true
+  controls.enablePan = true
+  controls.minDistance = 8
+  controls.maxDistance = 32
+  controls.maxPolarAngle = Math.PI / 2.05
+  controls.target.set(0, 0, 0)
 
   const ambient = new THREE.AmbientLight(0xffffff, 0.7)
   scene.add(ambient)
@@ -326,7 +361,14 @@ function stopPlacing() {
 
 function resetCamera() {
   if (!camera || !controls) return
-  camera.position.set(12, 12, 12)
+  camera.position.set(0, 18, 14)
+  controls.target.set(0, 0, 0)
+  controls.update()
+}
+
+function setTopView() {
+  if (!camera || !controls) return
+  camera.position.set(0, 24, 0.01)
   controls.target.set(0, 0, 0)
   controls.update()
 }
@@ -557,8 +599,18 @@ function templateWalls(segments) {
   saveLayout()
 }
 
+function addZoneLabels(zones) {
+  zones.forEach(zone => {
+    const label = makeTextSprite(zone.name)
+    label.position.set(zone.x, 1.6, zone.z)
+    label.userData = { isZoneLabel: true, zone: zone.name }
+    templateGroup.add(label)
+  })
+}
+
 function applyTemplate() {
   if (!selectedTemplate.value) return
+  selectedZone.value = ''
   if (selectedTemplate.value === 'studio') {
     templateWalls([
       { x: 0, z: -7, w: 12, h: 2.4, d: 0.2 },
@@ -585,11 +637,31 @@ function applyTemplate() {
       { x: -2.5, z: 0, w: 0.2, h: 2.4, d: 12 }
     ])
   }
+  if (selectedTemplate.value === 'two-bedroom-family') {
+    templateWalls([
+      { x: 0, z: -10, w: 24, h: 2.4, d: 0.2 },
+      { x: 0, z: 10, w: 24, h: 2.4, d: 0.2 },
+      { x: -12, z: 0, w: 0.2, h: 2.4, d: 20 },
+      { x: 12, z: 0, w: 0.2, h: 2.4, d: 20 },
+      { x: -4, z: 0, w: 0.2, h: 2.4, d: 20 },
+      { x: 4, z: 0, w: 0.2, h: 2.4, d: 20 },
+      { x: -8, z: 0, w: 8, h: 2.4, d: 0.2 },
+      { x: 0, z: -6, w: 8, h: 2.4, d: 0.2 },
+      { x: 0, z: -1, w: 8, h: 2.4, d: 0.2 },
+      { x: 0, z: 7, w: 8, h: 2.4, d: 0.2 },
+      { x: 8, z: -5, w: 8, h: 2.4, d: 0.2 },
+      { x: 8, z: 0, w: 8, h: 2.4, d: 0.2 },
+      { x: 8, z: 5, w: 8, h: 2.4, d: 0.2 }
+    ])
+    addZoneLabels(templateZones['two-bedroom-family'])
+    setTopView()
+  }
 }
 
 function clearTemplate() {
   templateGroup.clear()
   selectedTemplate.value = ''
+  selectedZone.value = ''
   saveLayout()
 }
 
@@ -743,6 +815,13 @@ async function createLocation() {
   } catch (e) {
     ElMessage.error('添加失败')
   }
+}
+
+function addMarkerToSelectedZone() {
+  if (!selectedLocation.value || !selectedZone.value) return
+  const zone = selectedTemplateZones.value.find(item => item.name === selectedZone.value)
+  if (!zone) return
+  addMarker(selectedLocation.value, zone.x, zone.z)
 }
 
 onMounted(async () => {

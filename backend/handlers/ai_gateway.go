@@ -152,6 +152,18 @@ func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
 			"description": "MiniMax 文本模型",
 		})
 	}
+	if h.hasProxyConfig() {
+		proxyModels := h.getProxyModels()
+		for _, model := range proxyModels {
+			catalog = append(catalog, gin.H{
+				"model":       model.Model,
+				"provider":    "proxy",
+				"type":        "chat",
+				"endpoint":    "/api/ai-gateway/v1/chat/completions",
+				"description": fallbackString(model.Description, "OpenAI 兼容代理文本模型"),
+			})
+		}
+	}
 	for _, model := range h.cfg.Bailian.Models {
 		catalog = append(catalog, gin.H{
 			"model":       model.Name,
@@ -490,6 +502,8 @@ func (h *AIGatewayHandler) executeChatRequest(req ChatCompletionRequest) (gin.H,
 		return h.callDeepSeek(req)
 	case "minimax":
 		return h.callMiniMax(req)
+	case "proxy":
+		return h.callProxyChat(req)
 	default:
 		return nil, nil, fmt.Errorf("不支持的文本模型: %s", req.Model)
 	}
@@ -567,6 +581,49 @@ func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[st
 				"finish_reason": "stop",
 			},
 		},
+		"content":      content,
+		"raw_response": raw,
+	}
+	return result, raw, nil
+}
+
+func (h *AIGatewayHandler) callProxyChat(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
+	if strings.TrimSpace(h.cfg.AIGateway.Proxy.APIURL) == "" || strings.TrimSpace(h.cfg.AIGateway.Proxy.APIKey) == "" {
+		return nil, nil, fmt.Errorf("未配置 ai_gateway.proxy.api_url 或 ai_gateway.proxy.api_key")
+	}
+
+	bodyMap := map[string]interface{}{
+		"model":    h.proxyUpstreamModel(req.Model),
+		"messages": req.Messages,
+		"stream":   false,
+	}
+	if req.Temperature != nil {
+		bodyMap["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil {
+		bodyMap["max_tokens"] = *req.MaxTokens
+	}
+	if req.TopP != nil {
+		bodyMap["top_p"] = *req.TopP
+	}
+
+	endpoint := strings.TrimRight(h.cfg.AIGateway.Proxy.APIURL, "/") + "/chat/completions"
+	raw, err := h.doJSONRequest(endpoint, h.cfg.AIGateway.Proxy.APIKey, bodyMap)
+	if err != nil {
+		return nil, raw, err
+	}
+	content := extractString(raw, "choices", "0", "message", "content")
+	if content == "" {
+		content = extractMessageContentFromChoices(raw["choices"])
+	}
+	result := gin.H{
+		"id":           fallbackString(extractString(raw, "id"), "chatcmpl-"+utils.GenerateHexKey(4)),
+		"object":       "chat.completion",
+		"created":      time.Now().Unix(),
+		"model":        req.Model,
+		"provider":     "proxy",
+		"choices":      raw["choices"],
+		"usage":        raw["usage"],
 		"content":      content,
 		"raw_response": raw,
 	}
@@ -707,7 +764,58 @@ func (h *AIGatewayHandler) resolveChatProvider(model string) string {
 	case fallbackString(h.cfg.MiniMax.Model, "abab6.5s-chat"), "abab6.5s-chat", "MiniMax-M2.5":
 		return "minimax"
 	default:
+		if h.hasProxyConfig() && h.isProxyModel(model) {
+			return "proxy"
+		}
 		return ""
+	}
+	return ""
+}
+
+func (h *AIGatewayHandler) proxyUpstreamModel(requestModel string) string {
+	for _, model := range h.cfg.AIGateway.Proxy.Models {
+		if strings.TrimSpace(model.Model) == requestModel && strings.TrimSpace(model.UpstreamModel) != "" {
+			return model.UpstreamModel
+		}
+	}
+	if strings.TrimSpace(h.cfg.AIGateway.Proxy.UpstreamModel) != "" {
+		return h.cfg.AIGateway.Proxy.UpstreamModel
+	}
+	return requestModel
+}
+
+func (h *AIGatewayHandler) hasProxyConfig() bool {
+	return strings.TrimSpace(h.cfg.AIGateway.Proxy.APIURL) != "" && strings.TrimSpace(h.cfg.AIGateway.Proxy.APIKey) != ""
+}
+
+func (h *AIGatewayHandler) isProxyModel(model string) bool {
+	for _, item := range h.getProxyModels() {
+		if strings.TrimSpace(item.Model) == model {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *AIGatewayHandler) getProxyModels() []config.AIGatewayProxyModelConfig {
+	if len(h.cfg.AIGateway.Proxy.Models) > 0 {
+		models := make([]config.AIGatewayProxyModelConfig, 0, len(h.cfg.AIGateway.Proxy.Models))
+		for _, item := range h.cfg.AIGateway.Proxy.Models {
+			if strings.TrimSpace(item.Model) == "" {
+				continue
+			}
+			models = append(models, item)
+		}
+		if len(models) > 0 {
+			return models
+		}
+	}
+	return []config.AIGatewayProxyModelConfig{
+		{
+			Model:         fallbackString(h.cfg.AIGateway.Proxy.Model, "proxy-chat"),
+			UpstreamModel: h.cfg.AIGateway.Proxy.UpstreamModel,
+			Description:   "OpenAI 兼容代理文本模型",
+		},
 	}
 }
 

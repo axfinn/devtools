@@ -23,7 +23,7 @@ type Config struct {
 	SSH        SSHConfig        `yaml:"ssh"`
 	Expense    ExpenseConfig    `yaml:"expense"`
 	Glucose    GlucoseConfig    `yaml:"glucose"`
-	Household HouseholdConfig   `yaml:"household"`
+	Household  HouseholdConfig  `yaml:"household"`
 	DeepSeek   DeepSeekConfig   `yaml:"deepseek"`
 	MiniMax    MiniMaxConfig    `yaml:"minimax"`
 	Bailian    BailianConfig    `yaml:"bailian"`
@@ -164,7 +164,23 @@ type AIGatewayConfig struct {
 	DefaultKeyExpiresDays   int                      `yaml:"default_key_expires_days"`
 	DefaultRateLimitPerHour int                      `yaml:"default_rate_limit_per_hour"`
 	RequestRetentionDays    int                      `yaml:"request_retention_days"`
+	UpstreamTimeoutSeconds  int                      `yaml:"upstream_timeout_seconds"`
+	Proxy                   AIGatewayProxyConfig     `yaml:"proxy"`
 	Pricing                 []AIGatewayPricingConfig `yaml:"pricing"`
+}
+
+type AIGatewayProxyConfig struct {
+	Model         string                      `yaml:"model"`
+	UpstreamModel string                      `yaml:"upstream_model"`
+	APIURL        string                      `yaml:"api_url"`
+	APIKey        string                      `yaml:"api_key"`
+	Models        []AIGatewayProxyModelConfig `yaml:"models"`
+}
+
+type AIGatewayProxyModelConfig struct {
+	Model         string `yaml:"model"`
+	UpstreamModel string `yaml:"upstream_model"`
+	Description   string `yaml:"description"`
 }
 
 type AIGatewayPricingConfig struct {
@@ -264,7 +280,11 @@ func DefaultConfig() *Config {
 			DefaultKeyExpiresDays:   90,
 			DefaultRateLimitPerHour: 1000,
 			RequestRetentionDays:    180,
-			Pricing:                 []AIGatewayPricingConfig{},
+			UpstreamTimeoutSeconds:  180,
+			Proxy: AIGatewayProxyConfig{
+				Model: "proxy-chat",
+			},
+			Pricing: []AIGatewayPricingConfig{},
 		},
 	}
 }
@@ -314,6 +334,18 @@ func Load(path string) (*Config, error) {
 	}
 	if superAdmin := os.Getenv("AI_GATEWAY_SUPER_ADMIN_PASSWORD"); superAdmin != "" {
 		cfg.AIGateway.SuperAdminPassword = superAdmin
+	}
+	if proxyAPIURL := os.Getenv("AI_GATEWAY_PROXY_API_URL"); proxyAPIURL != "" {
+		cfg.AIGateway.Proxy.APIURL = proxyAPIURL
+	}
+	if proxyAPIKey := os.Getenv("AI_GATEWAY_PROXY_API_KEY"); proxyAPIKey != "" {
+		cfg.AIGateway.Proxy.APIKey = proxyAPIKey
+	}
+	if proxyModel := os.Getenv("AI_GATEWAY_PROXY_MODEL"); proxyModel != "" {
+		cfg.AIGateway.Proxy.Model = proxyModel
+	}
+	if upstreamModel := os.Getenv("AI_GATEWAY_PROXY_UPSTREAM_MODEL"); upstreamModel != "" {
+		cfg.AIGateway.Proxy.UpstreamModel = upstreamModel
 	}
 
 	globalConfig = cfg

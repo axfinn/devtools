@@ -11,7 +11,7 @@
 #   logs     - 查看日志
 #   deploy   - 完整部署 (构建 + 启动)
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
@@ -19,6 +19,7 @@ BACKEND_DIR="$SCRIPT_DIR/backend"
 LOG_FILE="/tmp/devtools.log"
 PID_FILE="/tmp/devtools.pid"
 PORT="${PORT:-8080}"
+HOST_PORT="${HOST_PORT:-8082}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,6 +41,30 @@ log_warn() {
 
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+compose() {
+    if command -v docker-compose &> /dev/null; then
+        docker-compose "$@"
+    else
+        docker compose "$@"
+    fi
+}
+
+wait_for_health() {
+    local url="$1"
+    local retries="${2:-20}"
+    local delay="${3:-3}"
+    local i
+
+    for ((i=1; i<=retries; i++)); do
+        if curl -fsS "$url" > /dev/null 2>&1; then
+            return 0
+        fi
+        sleep "$delay"
+    done
+
+    return 1
 }
 
 build_frontend() {
@@ -198,25 +223,22 @@ docker_deploy() {
 
     cd "$SCRIPT_DIR"
 
-    log_info "构建 Docker 镜像..."
+    log_info "构建并重建 Docker 容器..."
     if [ "${NO_CACHE:-0}" = "1" ]; then
-        docker-compose build --no-cache
+        compose build --no-cache
+        compose up -d --force-recreate --remove-orphans
     else
-        docker-compose build
+        compose up -d --build --force-recreate --remove-orphans
     fi
 
-    log_info "启动容器..."
-    docker-compose up -d
-
-    sleep 3
-
-    if curl -s "http://localhost:${HOST_PORT:-8082}/api/health" > /dev/null 2>&1; then
+    if wait_for_health "http://localhost:${HOST_PORT}/api/health" 30 2; then
         log_success "Docker 部署完成！"
-        log_info "访问地址: http://localhost:${HOST_PORT:-8082}"
-        docker-compose ps
+        log_info "访问地址: http://localhost:${HOST_PORT}"
+        compose ps
     else
         log_error "服务启动失败，请检查日志"
-        docker-compose logs --tail=50
+        compose ps || true
+        compose logs --tail=100 devtools || true
         exit 1
     fi
 }
@@ -224,27 +246,27 @@ docker_deploy() {
 docker_stop() {
     log_info "停止 Docker 容器..."
     cd "$SCRIPT_DIR"
-    docker-compose down
+    compose down
     log_success "Docker 容器已停止"
 }
 
 docker_restart() {
     log_info "重启 Docker 容器..."
     cd "$SCRIPT_DIR"
-    docker-compose restart
+    compose restart
     log_success "Docker 容器已重启"
 }
 
 docker_logs() {
     cd "$SCRIPT_DIR"
-    docker-compose logs -f
+    compose logs -f
 }
 
 docker_status() {
     cd "$SCRIPT_DIR"
-    docker-compose ps
+    compose ps
     echo ""
-    if curl -s "http://localhost:${HOST_PORT:-8082}/api/health" > /dev/null 2>&1; then
+    if curl -s "http://localhost:${HOST_PORT}/api/health" > /dev/null 2>&1; then
         log_success "健康检查通过"
     else
         log_warn "健康检查失败"
