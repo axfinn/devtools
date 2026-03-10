@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"mime/multipart"
 	"net/http"
@@ -1041,6 +1042,7 @@ func (h *ImageUnderstandingHandler) CreateSseTask(c *gin.Context) {
 			task.Tool = toolName
 			task.Text = text
 			task.Result, _ = json.Marshal(result)
+			log.Printf("[SSE] Task %s completed, text length: %d", task.ID, len(text))
 		}
 		_ = payload // 忽略
 	}()
@@ -1122,6 +1124,7 @@ func (h *ImageUnderstandingHandler) CreateSseTaskFromFile(c *gin.Context) {
 			task.Tool = toolName
 			task.Text = text
 			task.Result, _ = json.Marshal(result)
+			log.Printf("[SSE] Task %s completed, text length: %d", task.ID, len(text))
 		}
 		_ = payload
 	}()
@@ -1175,10 +1178,13 @@ func (h *ImageUnderstandingHandler) GetSseTask(c *gin.Context) {
 // StreamSseTask SSE 事件流
 func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 	taskID := c.Param("id")
+	log.Printf("[SSE] Stream started for task: %s", taskID)
 
 	imageTaskMu.RLock()
 	task, ok := imageTaskStore[taskID]
 	imageTaskMu.RUnlock()
+
+	log.Printf("[SSE] Task found: %v, status: %s", ok, task.Status)
 
 	if !ok {
 		c.Header("Content-Type", "text/event-stream")
@@ -1215,6 +1221,7 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 	}
 
 	sendEvent := func(event, data string) {
+		log.Printf("[SSE] Sending event: %s, data: %s", event, data)
 		fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
 		flusher.Flush()
 	}
