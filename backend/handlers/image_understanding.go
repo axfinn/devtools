@@ -1184,6 +1184,7 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
+		c.Header("Access-Control-Allow-Origin", "*")
 		c.Status(http.StatusOK)
 		flusher, _ := c.Writer.(http.Flusher)
 		if flusher != nil {
@@ -1193,10 +1194,20 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 		return
 	}
 
+	// SSE 需要这些头
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	// CORS 支持
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Headers", "Content-Type")
+	c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+
+	// 处理 OPTIONS 预检请求
+	if c.Request.Method == "OPTIONS" {
+		return
+	}
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {

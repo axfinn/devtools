@@ -363,6 +363,7 @@ func (h *APIGatewayHandler) ImageUnderstandingStream(c *gin.Context) {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
 		c.Header("Connection", "keep-alive")
+		c.Header("Access-Control-Allow-Origin", "*")
 		c.Status(http.StatusOK)
 		flusher, _ := c.Writer.(http.Flusher)
 		if flusher != nil {
@@ -376,6 +377,13 @@ func (h *APIGatewayHandler) ImageUnderstandingStream(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("Access-Control-Allow-Headers", "Content-Type")
+	c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+
+	if c.Request.Method == "OPTIONS" {
+		return
+	}
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
