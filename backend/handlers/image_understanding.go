@@ -9,10 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"devtools/config"
@@ -21,6 +25,36 @@ import (
 )
 
 const imageUnderstandingMaxSize = 10 * 1024 * 1024 // 10MB
+
+// 图像理解任务状态
+type imageTask struct {
+	ID        string
+	Status    string // pending, processing, completed, failed
+	Tool      string
+	Text      string
+	Result    []byte
+	Args      map[string]interface{}
+	Error     string
+	CreatedAt time.Time
+}
+
+// imageTaskStore 任务存储（内存）
+var imageTaskStore = make(map[string]*imageTask)
+var imageTaskMu sync.RWMutex
+
+func newImageTask() *imageTask {
+	return &imageTask{
+		ID:        generateTaskID(),
+		Status:    "pending",
+		CreatedAt: time.Now(),
+	}
+}
+
+func generateTaskID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
 
 type ImageUnderstandingHandler struct {
 	cfg config.MiniMaxMCPConfig
@@ -945,4 +979,293 @@ func logMCPArgs(tool string, args map[string]interface{}) {
 		return
 	}
 	fmt.Printf("MCP args (%s): %s\n", tool, sanitizeArgs(args))
+}
+
+// ===== SSE 图像理解接口 =====
+
+// CreateSseTask 创建任务并返回 task_id
+func (h *ImageUnderstandingHandler) CreateSseTask(c *gin.Context) {
+	if strings.TrimSpace(h.cfg.APIKey) == "" {
+		c.JSON(503, gin.H{"error": "未配置 minimax_mcp.api_key"})
+		return
+	}
+
+	var req imageUnderstandingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "缺少 image 字段"})
+		return
+	}
+
+	if err := validateImageSize(req.Image); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	imagePath, err := writeTempImage(req.Image)
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	scheduleDelete(imagePath, 10*time.Minute)
+
+	// 创建任务
+	task := newImageTask()
+	task.Tool = req.Tool
+	task.Args = req.Args
+	task.Status = "processing"
+
+	imageTaskMu.Lock()
+	imageTaskStore[task.ID] = task
+	imageTaskMu.Unlock()
+
+	// 后台执行
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.Timeout())
+		defer cancel()
+
+		toolName, text, result, payload, err := h.ExecuteWithPath(ctx, req.Tool, req.Prompt, req.Args, imagePath)
+
+		imageTaskMu.Lock()
+		defer imageTaskMu.Unlock()
+
+		task := imageTaskStore[task.ID]
+		if task == nil {
+			return
+		}
+
+		if err != nil {
+			task.Status = "failed"
+			task.Error = err.Error()
+		} else {
+			task.Status = "completed"
+			task.Tool = toolName
+			task.Text = text
+			task.Result, _ = json.Marshal(result)
+		}
+		_ = payload // 忽略
+	}()
+
+	c.JSON(200, gin.H{
+		"task_id": task.ID,
+		"status":  "processing",
+	})
+}
+
+// CreateSseTaskFromFile 从文件创建 SSE 任务
+func (h *ImageUnderstandingHandler) CreateSseTaskFromFile(c *gin.Context) {
+	if strings.TrimSpace(h.cfg.APIKey) == "" {
+		c.JSON(503, gin.H{"error": "未配置 minimax_mcp.api_key"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(400, gin.H{"error": "缺少 file"})
+		return
+	}
+	if file.Size > imageUnderstandingMaxSize {
+		c.JSON(400, gin.H{"error": "图片大小不能超过 10MB"})
+		return
+	}
+
+	prompt := strings.TrimSpace(c.PostForm("prompt"))
+	tool := strings.TrimSpace(c.PostForm("tool"))
+	argsText := strings.TrimSpace(c.PostForm("args"))
+	args := map[string]interface{}{}
+	if argsText != "" {
+		if err := json.Unmarshal([]byte(argsText), &args); err != nil {
+			c.JSON(400, gin.H{"error": "args JSON 解析失败"})
+			return
+		}
+	}
+	if prompt == "" {
+		prompt = "请简洁描述图片内容，提取关键对象、场景和文字信息。"
+	}
+
+	imagePath, err := saveMultipartToTempFile(file)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	scheduleDelete(imagePath, 10*time.Minute)
+
+	// 创建任务
+	task := newImageTask()
+	task.Tool = tool
+	task.Args = args
+	task.Status = "processing"
+
+	imageTaskMu.Lock()
+	imageTaskStore[task.ID] = task
+	imageTaskMu.Unlock()
+
+	// 后台执行
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.Timeout())
+		defer cancel()
+
+		toolName, text, result, payload, err := h.ExecuteWithPath(ctx, tool, prompt, args, imagePath)
+
+		imageTaskMu.Lock()
+		defer imageTaskMu.Unlock()
+
+		task := imageTaskStore[task.ID]
+		if task == nil {
+			return
+		}
+
+		if err != nil {
+			task.Status = "failed"
+			task.Error = err.Error()
+		} else {
+			task.Status = "completed"
+			task.Tool = toolName
+			task.Text = text
+			task.Result, _ = json.Marshal(result)
+		}
+		_ = payload
+	}()
+
+	c.JSON(200, gin.H{
+		"task_id": task.ID,
+		"status":  "processing",
+	})
+}
+
+// GetSseTask 获取任务状态（用于 SSE 轮询）
+func (h *ImageUnderstandingHandler) GetSseTask(c *gin.Context) {
+	taskID := c.Param("id")
+
+	imageTaskMu.RLock()
+	task, ok := imageTaskStore[taskID]
+	imageTaskMu.RUnlock()
+
+	if !ok {
+		c.JSON(404, gin.H{"error": "任务不存在"})
+		return
+	}
+
+	if task.Status == "completed" {
+		c.JSON(200, gin.H{
+			"task_id": task.ID,
+			"status":  task.Status,
+			"tool":    task.Tool,
+			"text":    task.Text,
+			"result":  task.Result,
+		})
+		return
+	}
+
+	if task.Status == "failed" {
+		c.JSON(200, gin.H{
+			"task_id": task.ID,
+			"status":  task.Status,
+			"error":   task.Error,
+		})
+		return
+	}
+
+	// processing 或 pending
+	c.JSON(200, gin.H{
+		"task_id": task.ID,
+		"status":  task.Status,
+	})
+}
+
+// StreamSseTask SSE 事件流
+func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
+	taskID := c.Param("id")
+
+	imageTaskMu.RLock()
+	task, ok := imageTaskStore[taskID]
+	imageTaskMu.RUnlock()
+
+	if !ok {
+		c.JSON(404, gin.H{"error": "任务不存在"})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(500, gin.H{"error": "SSE 不支持"})
+		return
+	}
+
+	sendEvent := func(event, data string) {
+		fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
+		flusher.Flush()
+	}
+
+	// 立即发送初始状态
+	sendEvent("status", `{"task_id":"`+taskID+`","status":"`+task.Status+`"}`)
+
+	// 轮询任务状态
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ticker.C:
+			imageTaskMu.RLock()
+			t := imageTaskStore[taskID]
+			imageTaskMu.RUnlock()
+
+			if t == nil {
+				sendEvent("error", `{"error":"任务不存在"}`)
+				return
+			}
+
+			if t.Status == "completed" {
+				sendEvent("completed", fmt.Sprintf(`{"task_id":"%s","tool":"%s","text":%s,"result":%s}`,
+					t.ID, t.Tool, jsonStr(t.Text), jsonStr(t.Result)))
+				return
+			}
+
+			if t.Status == "failed" {
+				sendEvent("error", fmt.Sprintf(`{"task_id":"%s","error":%s}`, t.ID, jsonStr(t.Error)))
+				return
+			}
+
+			// 继续等待
+			sendEvent("status", `{"task_id":"`+taskID+`","status":"`+t.Status+`"}`)
+		}
+	}
+}
+
+func jsonStr(v interface{}) string {
+	if v == nil {
+		return `""`
+	}
+	switch val := v.(type) {
+	case string:
+		if val == "" {
+			return `""`
+		}
+		b, _ := json.Marshal(val)
+		return string(b)
+	case []byte:
+		if len(val) == 0 {
+			return `""`
+		}
+		return string(val)
+	default:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
+}
+
+func saveMultipartToTempFile(fileHeader *multipart.FileHeader) (string, error) {
+	file, err := fileHeader.Open()
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	return writeMultipartToTemp(fileHeader.Filename, file)
 }

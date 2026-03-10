@@ -66,7 +66,10 @@
           <el-form-item>
             <div class="action-row">
               <el-button type="primary" :loading="submitting" :disabled="!imageBase64" @click="submit">
-                开始识别
+                开始识别（同步）
+              </el-button>
+              <el-button type="success" :loading="sseLoading" :disabled="!imageBase64" @click="submitSse">
+                开始识别（SSE）
               </el-button>
               <el-button @click="resetAll">清空</el-button>
             </div>
@@ -118,6 +121,8 @@ const imagePreview = ref('')
 const imageFile = ref(null)
 const argsText = ref('')
 const submitting = ref(false)
+const sseLoading = ref(false)
+let eventSource = null
 const resultText = ref('')
 const rawResult = ref('')
 const resultTab = ref('render')
@@ -279,6 +284,107 @@ const submit = async () => {
     ElMessage.error(err.message || '识别失败')
   } finally {
     submitting.value = false
+  }
+}
+
+const submitSse = async () => {
+  if (!imageBase64.value) {
+    ElMessage.warning('请先上传图片')
+    return
+  }
+  let args = undefined
+  if (argsText.value.trim()) {
+    try {
+      args = JSON.parse(argsText.value)
+    } catch (err) {
+      ElMessage.error('自定义参数 JSON 解析失败')
+      return
+    }
+  }
+
+  // 关闭之前的连接
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
+
+  sseLoading.value = true
+  resultText.value = ''
+  rawResult.value = ''
+
+  try {
+    // 1. 创建任务
+    let resp
+    if (imageFile.value) {
+      const formData = new FormData()
+      formData.append('file', imageFile.value)
+      if (prompt.value) formData.append('prompt', prompt.value)
+      if (selectedTool.value) formData.append('tool', selectedTool.value)
+      if (args) formData.append('args', JSON.stringify(args))
+      resp = await fetch('/api/image-understanding/sse/create-file', {
+        method: 'POST',
+        body: formData
+      })
+    } else {
+      resp = await fetch('/api/image-understanding/sse/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageBase64.value,
+          prompt: prompt.value,
+          tool: selectedTool.value || undefined,
+          args
+        })
+      })
+    }
+    const data = await parseJsonSafe(resp)
+    if (!resp.ok) {
+      throw new Error(data.error || '创建任务失败')
+    }
+
+    const taskId = data.task_id
+    ElMessage.info('任务已创建，ID: ' + taskId + '，正在处理...')
+
+    // 2. 建立 SSE 连接
+    eventSource = new EventSource('/api/image-understanding/sse/stream/' + taskId)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        if (msg.status === 'completed') {
+          resultText.value = msg.text || ''
+          rawResult.value = JSON.stringify(msg.result || {}, null, 2)
+          ElMessage.success('识别完成')
+          sseLoading.value = false
+          if (eventSource) {
+            eventSource.close()
+            eventSource = null
+          }
+        } else if (msg.status === 'failed') {
+          ElMessage.error(msg.error || '识别失败')
+          sseLoading.value = false
+          if (eventSource) {
+            eventSource.close()
+            eventSource = null
+          }
+        }
+      } catch (err) {
+        console.error('SSE 消息解析失败:', err)
+      }
+    }
+
+    eventSource.onerror = () => {
+      ElMessage.error('SSE 连接失败，请稍后重试')
+      sseLoading.value = false
+      if (eventSource) {
+        eventSource.close()
+        eventSource = null
+      }
+    }
+
+  } catch (err) {
+    ElMessage.error(err.message || 'SSE 模式启动失败')
+    sseLoading.value = false
   }
 }
 

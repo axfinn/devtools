@@ -563,6 +563,11 @@ func main() {
 			imageUnderstanding.GET("/tools", imageUnderstandingHandler.ListTools)
 			imageUnderstanding.POST("/describe", createRateLimiter.Middleware(), imageUnderstandingHandler.Describe)
 			imageUnderstanding.POST("/describe-file", createRateLimiter.Middleware(), imageUnderstandingHandler.DescribeFromUpload)
+			// SSE 模式（任务队列）
+			imageUnderstanding.POST("/sse/create", createRateLimiter.Middleware(), imageUnderstandingHandler.CreateSseTask)
+			imageUnderstanding.POST("/sse/create-file", createRateLimiter.Middleware(), imageUnderstandingHandler.CreateSseTaskFromFile)
+			imageUnderstanding.GET("/sse/task/:id", imageUnderstandingHandler.GetSseTask)
+			imageUnderstanding.GET("/sse/stream/:id", imageUnderstandingHandler.StreamSseTask)
 		}
 
 		// 百炼图片模型
@@ -605,6 +610,10 @@ func main() {
 			apigw.Any("/cpa/v1/*proxyPath", apiGatewayHandler.ProxyCPA)
 			apigw.POST("/v1/image/understanding", apiGatewayHandler.ImageUnderstanding)
 			apigw.POST("/v1/image/understanding/file", apiGatewayHandler.ImageUnderstandingFile)
+			// SSE 模式
+			apigw.POST("/v1/image/understanding/sse", apiGatewayHandler.ImageUnderstandingSSE)
+			apigw.POST("/v1/image/understanding/sse/file", apiGatewayHandler.ImageUnderstandingSSEFile)
+			apigw.GET("/v1/image/understanding/stream/:id", apiGatewayHandler.ImageUnderstandingStream)
 		}
 
 		// 背景图 API
