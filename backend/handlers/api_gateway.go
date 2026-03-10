@@ -409,12 +409,16 @@ func (h *APIGatewayHandler) ImageUnderstandingStream(c *gin.Context) {
 	sendEvent("status", fmt.Sprintf(`{"task_id":"%s","status":"%s"}`, taskID, task.Status))
 
 	ticker := time.NewTicker(500 * time.Millisecond)
+	pingTicker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
+	defer pingTicker.Stop()
 
 	for {
 		select {
 		case <-c.Request.Context().Done():
 			return
+		case <-pingTicker.C:
+			sendEvent("ping", `{"time":"`+time.Now().Format(time.RFC3339)+`"}`)
 		case <-ticker.C:
 			imageTaskMu.RLock()
 			t := imageTaskStore[taskID]

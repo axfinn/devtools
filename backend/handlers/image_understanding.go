@@ -1233,14 +1233,19 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 	// 立即发送初始状态
 	sendEvent("status", fmt.Sprintf(`{"task_id":"%s","status":"%s"}`, taskID, task.Status))
 
-	// 轮询任务状态
+	// 轮询任务状态，增加 ping 心跳保持连接
 	ticker := time.NewTicker(500 * time.Millisecond)
+	pingTicker := time.NewTicker(25 * time.Second) // 每 25 秒发送一次 ping
 	defer ticker.Stop()
+	defer pingTicker.Stop()
 
 	for {
 		select {
 		case <-c.Request.Context().Done():
 			return
+		case <-pingTicker.C:
+			// 发送 ping 保持连接活跃
+			sendEvent("ping", `{"time":"`+time.Now().Format(time.RFC3339)+`"}`)
 		case <-ticker.C:
 			imageTaskMu.RLock()
 			t := imageTaskStore[taskID]
