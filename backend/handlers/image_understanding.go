@@ -1181,7 +1181,15 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 	imageTaskMu.RUnlock()
 
 	if !ok {
-		c.JSON(404, gin.H{"error": "任务不存在"})
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Status(http.StatusOK)
+		flusher, _ := c.Writer.(http.Flusher)
+		if flusher != nil {
+			fmt.Fprintf(c.Writer, "event: error\ndata: {\"error\":\"任务不存在\"}\n\n")
+			flusher.Flush()
+		}
 		return
 	}
 
@@ -1192,7 +1200,6 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
-		c.JSON(500, gin.H{"error": "SSE 不支持"})
 		return
 	}
 
@@ -1201,8 +1208,19 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 		flusher.Flush()
 	}
 
+	// 如果任务已完成，直接返回结果
+	if task.Status == "completed" {
+		sendEvent("completed", fmt.Sprintf(`{"task_id":"%s","tool":"%s","text":%s,"result":%s}`,
+			task.ID, task.Tool, jsonStr(task.Text), jsonStr(task.Result)))
+		return
+	}
+	if task.Status == "failed" {
+		sendEvent("error", fmt.Sprintf(`{"task_id":"%s","error":%s}`, task.ID, jsonStr(task.Error)))
+		return
+	}
+
 	// 立即发送初始状态
-	sendEvent("status", `{"task_id":"`+taskID+`","status":"`+task.Status+`"}`)
+	sendEvent("status", fmt.Sprintf(`{"task_id":"%s","status":"%s"}`, taskID, task.Status))
 
 	// 轮询任务状态
 	ticker := time.NewTicker(500 * time.Millisecond)
