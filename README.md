@@ -198,6 +198,11 @@ excalidraw:
   admin_password: ""         # 管理员密码，用于永久保存和管理所有画图
   default_expires_days: 30   # 默认过期天数（1-365）
   max_content_size: 10485760 # 最大内容大小（10MB）
+
+# MiniMax MCP 图像理解配置
+minimax_mcp:
+  api_key: ""                 # MCP API Key（建议仅放在配置文件或环境变量）
+  api_host: "https://api.minimaxi.com"
 ```
 
 **配置说明：**

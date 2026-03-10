@@ -26,7 +26,16 @@ FROM alpine:latest
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata curl python3 coreutils
+
+# Install uv (provides uvx) for MCP runtime
+RUN curl -Ls https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
+ENV UV_PYTHON=python3
+ENV UV_CACHE_DIR=/root/.cache/uv
+
+# Warm up uvx tool cache to avoid runtime downloads
+RUN uvx minimax-coding-plan-mcp -y --help >/dev/null 2>&1 || true
 
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=frontend-builder /app/frontend/dist ./dist

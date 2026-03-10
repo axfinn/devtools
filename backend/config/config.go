@@ -26,6 +26,7 @@ type Config struct {
 	Household  HouseholdConfig  `yaml:"household"`
 	DeepSeek   DeepSeekConfig   `yaml:"deepseek"`
 	MiniMax    MiniMaxConfig    `yaml:"minimax"`
+	MiniMaxMCP MiniMaxMCPConfig `yaml:"minimax_mcp"`
 	Bailian    BailianConfig    `yaml:"bailian"`
 	AIGateway  AIGatewayConfig  `yaml:"ai_gateway"`
 }
@@ -132,6 +133,23 @@ type DeepSeekConfig struct {
 type MiniMaxConfig struct {
 	APIKey string `yaml:"api_key"` // API Key，从 https://platform.minimax.io 获取
 	Model  string `yaml:"model"`   // 模型名称，默认 abab6.5s-chat
+}
+
+// MiniMaxMCPConfig MiniMax MCP 图像理解配置
+type MiniMaxMCPConfig struct {
+	APIKey         string   `yaml:"api_key"`          // MCP API Key
+	APIHost        string   `yaml:"api_host"`         // MCP API Host
+	Command        string   `yaml:"command"`          // MCP Server 启动命令
+	Args           []string `yaml:"args"`             // MCP Server 启动参数
+	TimeoutSeconds int      `yaml:"timeout_seconds"`  // 请求超时
+	Transport      string   `yaml:"transport"`        // 传输协议: line 或 header
+}
+
+func (cfg MiniMaxMCPConfig) Timeout() time.Duration {
+	if cfg.TimeoutSeconds <= 0 {
+		return 120 * time.Second
+	}
+	return time.Duration(cfg.TimeoutSeconds) * time.Second
 }
 
 // HouseholdConfig 家庭物品整理模块配置
@@ -259,6 +277,13 @@ func DefaultConfig() *Config {
 		MiniMax: MiniMaxConfig{
 			Model: "abab6.5s-chat",
 		},
+		MiniMaxMCP: MiniMaxMCPConfig{
+			APIHost:        "https://api.minimaxi.com",
+			Command:        "uvx",
+			Args:           []string{"minimax-coding-plan-mcp"},
+			TimeoutSeconds: 300,
+			Transport:      "line",
+		},
 		Bailian: BailianConfig{
 			BaseURL:            "https://dashscope.aliyuncs.com",
 			DefaultWaitSeconds: 45,
@@ -324,6 +349,13 @@ func Load(path string) (*Config, error) {
 	// MiniMax API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("MINIMAX_API_KEY"); apiKey != "" {
 		cfg.MiniMax.APIKey = apiKey
+	}
+	// MiniMax MCP API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("MINIMAX_MCP_API_KEY"); apiKey != "" {
+		cfg.MiniMaxMCP.APIKey = apiKey
+	}
+	if apiHost := os.Getenv("MINIMAX_MCP_API_HOST"); apiHost != "" {
+		cfg.MiniMaxMCP.APIHost = apiHost
 	}
 	// 百炼 API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("BAILIAN_API_KEY"); apiKey != "" {

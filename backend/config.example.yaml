@@ -149,6 +149,22 @@ minimax:
   # 模型名称，默认 abab6.5s-chat
   model: "abab6.5s-chat"
 
+# MiniMax MCP 配置（图像理解）
+minimax_mcp:
+  # MCP API Key（支持环境变量 MINIMAX_MCP_API_KEY）
+  api_key: ""
+  # MCP API Host
+  api_host: "https://api.minimaxi.com"
+  # MCP Server 启动命令
+  command: "uvx"
+  # MCP Server 启动参数
+  args:
+    - "minimax-coding-plan-mcp"
+  # 请求超时（秒）
+  timeout_seconds: 300
+  # 传输协议: line（JSON 行） 或 header（Content-Length）
+  transport: "line"
+
 # 阿里云百炼图片模型配置
 bailian:
   # DashScope / 百炼 API Key

@@ -305,6 +305,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/image-understanding',
+    name: 'ImageUnderstanding',
+    component: () => import('../views/ImageUnderstandingTool.vue'),
+    meta: {
+      title: '图像理解',
+      icon: 'Picture',
+      category: 'other',
+      description: 'MiniMax MCP 图像理解'
+    }
+  },
+  {
     path: '/ai-gateway',
     name: 'AIGateway',
     component: () => import('../views/AIGatewayTool.vue'),

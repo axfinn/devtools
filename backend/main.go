@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"devtools/config"
@@ -283,7 +284,8 @@ func main() {
 	ocrHandler := handlers.NewOCRHandler()
 	bailianHandler := handlers.NewBailianHandler(db, cfg)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler)
-	apiGatewayHandler := handlers.NewAPIGatewayHandler()
+	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg)
+	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 
 	// 启动 SSH 会话清理协程
 	terminalHandler.StartCleanupRoutine()
@@ -555,6 +557,14 @@ func main() {
 		// OCR 文字识别
 		api.POST("/ocr", createRateLimiter.Middleware(), ocrHandler.Extract)
 
+		// MiniMax MCP 图像理解
+		imageUnderstanding := api.Group("/image-understanding")
+		{
+			imageUnderstanding.GET("/tools", imageUnderstandingHandler.ListTools)
+			imageUnderstanding.POST("/describe", createRateLimiter.Middleware(), imageUnderstandingHandler.Describe)
+			imageUnderstanding.POST("/describe-file", createRateLimiter.Middleware(), imageUnderstandingHandler.DescribeFromUpload)
+		}
+
 		// 百炼图片模型
 		bailian := api.Group("/bailian")
 		{
@@ -593,6 +603,8 @@ func main() {
 		{
 			apigw.Any("/cpa/v1", apiGatewayHandler.ProxyCPA)
 			apigw.Any("/cpa/v1/*proxyPath", apiGatewayHandler.ProxyCPA)
+			apigw.POST("/v1/image/understanding", apiGatewayHandler.ImageUnderstanding)
+			apigw.POST("/v1/image/understanding/file", apiGatewayHandler.ImageUnderstandingFile)
 		}
 
 		// 背景图 API
@@ -620,6 +632,11 @@ func main() {
 	r.StaticFile("/alipay.jpeg", "./dist/alipay.jpeg")
 	r.StaticFile("/wxpay.jpeg", "./dist/wxpay.jpeg")
 	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		if path == "/api" || strings.HasPrefix(path, "/api/") {
+			c.JSON(404, gin.H{"error": "接口不存在", "path": path})
+			return
+		}
 		c.File("./dist/index.html")
 	})
 

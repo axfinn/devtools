@@ -542,6 +542,11 @@ excalidraw:
   default_expires_days: 30          # 默认过期天数
   max_content_size: 10485760        # 最大内容大小（10MB）
 
+# MiniMax MCP 图像理解配置
+minimax_mcp:
+  api_key: "your_mcp_key"           # MCP API Key
+  api_host: "https://api.minimaxi.com"
+
 # 粘贴板配置
 paste:
   admin_password: "your_password"      # 管理员密码

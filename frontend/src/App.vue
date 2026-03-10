@@ -55,6 +55,11 @@
           <el-icon :size="24"><Tools /></el-icon>
           <span v-show="!isCollapse" class="logo-text">DevTools</span>
         </div>
+        <el-tooltip :content="themeModeName" placement="bottom">
+          <el-icon :size="18" class="theme-toggle-pc" @click.stop="toggleTheme">
+            <component :is="themeIcon" />
+          </el-icon>
+        </el-tooltip>
       </div>
       <!-- 搜索框 -->
       <div v-if="!isCollapse" class="sidebar-search">

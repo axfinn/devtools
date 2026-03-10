@@ -457,9 +457,16 @@
     </el-dialog>
 
     <!-- OCR 识别结果弹窗 -->
-    <el-dialog v-model="showOcrDialog" title="图片文字识别结果" width="600px" :close-on-click-modal="true">
+    <el-dialog v-model="showOcrDialog" title="图片识别结果" width="680px" :close-on-click-modal="true">
       <div class="ocr-result-area">
-        <textarea v-model="ocrText" class="ocr-textarea" placeholder="识别结果..." readonly></textarea>
+        <div class="ocr-block">
+          <div class="ocr-block-title">OCR 文字</div>
+          <textarea v-model="ocrText" class="ocr-textarea" placeholder="识别结果..." readonly></textarea>
+        </div>
+        <div class="ocr-block">
+          <div class="ocr-block-title">图像理解</div>
+          <textarea v-model="imageUnderstandingText" class="ocr-textarea" placeholder="点击“图像理解”获取描述..." readonly></textarea>
+        </div>
       </div>
       <template #footer>
         <el-button @click="showOcrDialog = false">关闭</el-button>
@@ -467,9 +474,17 @@
           <el-icon><Plus /></el-icon>
           追加到内容
         </el-button>
+        <el-button type="warning" :loading="imageUnderstandingLoading" :disabled="!lastOcrImage" @click="understandImage">
+          <el-icon><Reading /></el-icon>
+          图像理解
+        </el-button>
         <el-button type="success" @click="copyOcrText">
           <el-icon><CopyDocument /></el-icon>
           复制文字
+        </el-button>
+        <el-button type="success" :disabled="!imageUnderstandingText" @click="copyImageUnderstanding">
+          <el-icon><CopyDocument /></el-icon>
+          复制理解
         </el-button>
       </template>
     </el-dialog>
@@ -535,12 +550,17 @@ const isDragging = ref(false)
 // OCR 功能
 const showOcrDialog = ref(false)
 const ocrText = ref('')
+const imageUnderstandingText = ref('')
+const imageUnderstandingLoading = ref(false)
+const lastOcrImage = ref('')
 
 // 将图片读为 base64 并调用 OCR API
 const ocrImage = async (index) => {
   const fileObj = files.value[index]
   if (!fileObj || fileObj.type !== 'image') return
   fileObj.ocring = true
+  imageUnderstandingText.value = ''
+  lastOcrImage.value = ''
   try {
     const base64 = await new Promise((resolve, reject) => {
       const reader = new FileReader()
@@ -548,6 +568,7 @@ const ocrImage = async (index) => {
       reader.onerror = reject
       reader.readAsDataURL(fileObj.file)
     })
+    lastOcrImage.value = base64
     const response = await fetch(`${API_BASE}/api/ocr`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -578,6 +599,65 @@ const appendOcrToContent = () => {
 const copyOcrText = async () => {
   try {
     await navigator.clipboard.writeText(ocrText.value)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
+const parseJsonSafe = async (resp) => {
+  const text = await resp.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text)
+  } catch (err) {
+    throw new Error(`JSON 解析失败: ${text.slice(0, 200)}`)
+  }
+}
+
+const understandImage = async () => {
+  if (!lastOcrImage.value) return
+  imageUnderstandingLoading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', dataUrlToBlob(lastOcrImage.value), 'clipboard.png')
+    formData.append('prompt', '请简洁描述图片内容，提取关键对象、场景和文字信息。')
+    const response = await fetch(`${API_BASE}/api/image-understanding/describe-file`, {
+      method: 'POST',
+      body: formData
+    })
+    if (!response.ok) {
+      const err = await parseJsonSafe(response)
+      throw new Error(err.error || `图像理解服务错误 (${response.status})`)
+    }
+    const data = await parseJsonSafe(response)
+    imageUnderstandingText.value = data.text || '（未返回描述）'
+  } catch (e) {
+    ElMessage.error(e.message || '图像理解失败')
+  } finally {
+    imageUnderstandingLoading.value = false
+  }
+}
+
+const dataUrlToBlob = (dataUrl) => {
+  const parts = dataUrl.split(',')
+  if (parts.length < 2) {
+    return new Blob()
+  }
+  const mimeMatch = parts[0].match(/data:(.*?);base64/)
+  const mime = mimeMatch ? mimeMatch[1] : 'image/png'
+  const binary = atob(parts[1])
+  const len = binary.length
+  const bytes = new Uint8Array(len)
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return new Blob([bytes], { type: mime })
+}
+
+const copyImageUnderstanding = async () => {
+  try {
+    await navigator.clipboard.writeText(imageUnderstandingText.value)
     ElMessage.success('已复制到剪贴板')
   } catch {
     ElMessage.error('复制失败')
@@ -1672,12 +1752,24 @@ restoreAdminPassword()
 .ocr-result-area {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
+}
+
+.ocr-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ocr-block-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
 }
 
 .ocr-textarea {
   width: 100%;
-  min-height: 200px;
+  min-height: 150px;
   padding: 12px;
   font-size: 14px;
   line-height: 1.6;
