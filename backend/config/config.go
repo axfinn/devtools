@@ -281,7 +281,7 @@ func DefaultConfig() *Config {
 			APIHost:        "https://api.minimaxi.com",
 			Command:        "uvx",
 			Args:           []string{"minimax-coding-plan-mcp"},
-			TimeoutSeconds: 300,
+			TimeoutSeconds: 600,
 			Transport:      "line",
 		},
 		Bailian: BailianConfig{

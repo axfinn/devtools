@@ -161,7 +161,7 @@ minimax_mcp:
   args:
     - "minimax-coding-plan-mcp"
   # 请求超时（秒）
-  timeout_seconds: 300
+  timeout_seconds: 600
   # 传输协议: line（JSON 行） 或 header（Content-Length）
   transport: "line"
 
