@@ -348,34 +348,59 @@ const submitSse = async () => {
     // 2. 建立 SSE 连接
     eventSource = new EventSource('/api/image-understanding/sse/stream/' + taskId)
 
+    // 处理自定义事件 completed
+    eventSource.addEventListener('completed', (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        resultText.value = msg.text || ''
+        rawResult.value = JSON.stringify(msg.result || {}, null, 2)
+        ElMessage.success('识别完成')
+        sseLoading.value = false
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+      } catch (err) {
+        console.error('SSE completed 解析失败:', err)
+      }
+    })
+
+    // 处理自定义事件 error
+    eventSource.addEventListener('error', (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        ElMessage.error(msg.error || '识别失败')
+        sseLoading.value = false
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+      } catch (err) {
+        ElMessage.error('SSE 连接失败，请稍后重试')
+        sseLoading.value = false
+        if (eventSource) {
+          eventSource.close()
+          eventSource = null
+        }
+      }
+    })
+
+    // 处理默认消息事件 (status, ping)
     eventSource.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data)
-        if (msg.status === 'completed') {
-          resultText.value = msg.text || ''
-          rawResult.value = JSON.stringify(msg.result || {}, null, 2)
-          ElMessage.success('识别完成')
-          sseLoading.value = false
-          if (eventSource) {
-            eventSource.close()
-            eventSource = null
-          }
-        } else if (msg.status === 'failed') {
-          ElMessage.error(msg.error || '识别失败')
-          sseLoading.value = false
-          if (eventSource) {
-            eventSource.close()
-            eventSource = null
-          }
-        }
+        console.log('SSE message:', msg)
       } catch (err) {
         console.error('SSE 消息解析失败:', err)
       }
     }
 
     eventSource.onerror = () => {
-      ElMessage.error('SSE 连接失败，请稍后重试')
-      sseLoading.value = false
+      // 只有当没有自定义事件处理时才报错
+      if (sseLoading.value) {
+        ElMessage.error('SSE 连接失败，请稍后重试')
+        sseLoading.value = false
+      }
       if (eventSource) {
         eventSource.close()
         eventSource = null
