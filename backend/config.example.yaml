@@ -166,12 +166,14 @@ minimax_mcp:
   transport: "line"
 
 # DashScope 文本模型配置（coding 端点，多品牌聚合）
-# 支持: 千问(qwen3.5-plus/qwen3-max-2026-01-23/qwen3-coder-next/qwen3-coder-plus)
-#       智谱(glm-5/glm-4.7)  Kimi(kimi-k2.5)
+# 支持模型（通过 /api/ai-gateway/v1/chat/completions 统一调用）：
+#   千问: qwen3.5-plus | qwen3-max-2026-01-23 | qwen3-coder-next | qwen3-coder-plus
+#   智谱: glm-5 | glm-4.7
+#   Kimi: kimi-k2.5
+# 注意: 此 API Key 独立于百炼(bailian)，从 https://coding.dashscope.aliyuncs.com 申请
+# 也可通过环境变量 DASHSCOPE_API_KEY 设置
 dashscope:
-  # DashScope Coding API Key（从 https://coding.dashscope.aliyuncs.com 获取，独立于百炼）
-  # 也可通过环境变量 DASHSCOPE_API_KEY 设置
-  api_key: ""
+  api_key: "sk-sp-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
   # API 基础地址，一般无需修改
   base_url: "https://coding.dashscope.aliyuncs.com/v1"
 
@@ -304,6 +306,50 @@ ai_gateway:
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
+    # DashScope 文本模型计费（按实际价格填写，单位：元/1000 token）
+    - model: "qwen3.5-plus"
+      provider: "dashscope"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen3-max-2026-01-23"
+      provider: "dashscope"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen3-coder-next"
+      provider: "dashscope"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "qwen3-coder-plus"
+      provider: "dashscope"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "glm-5"
+      provider: "dashscope"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "glm-4.7"
+      provider: "dashscope"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "kimi-k2.5"
+      provider: "dashscope"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    # 百炼图片/视频模型计费
     - model: "qwen-image-2.0-pro"
       provider: "bailian"
       input_per_1k_tokens: 0
