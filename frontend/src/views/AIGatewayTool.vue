@@ -156,6 +156,68 @@
       </el-col>
     </el-row>
 
+    <!-- 模型快速测试 -->
+    <el-card class="test-card">
+      <template #header>
+        <div class="card-header">
+          <span>模型快速测试</span>
+          <div class="card-header">
+            <el-input
+              v-model="testPrompt"
+              placeholder="自定义测试问题（可选）"
+              style="width: 280px"
+            />
+            <el-button @click="loadCatalog">刷新模型</el-button>
+            <el-button type="primary" :loading="testingAll" @click="testAllModels">全部测试</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-table :data="catalogChat" v-loading="loadingCatalog" stripe size="small">
+        <el-table-column prop="model" label="模型" min-width="200" />
+        <el-table-column prop="brand" label="品牌" width="80">
+          <template #default="{ row }">{{ row.brand || row.provider }}</template>
+        </el-table-column>
+        <el-table-column prop="description" label="能力" min-width="200" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag
+              :type="testResults[row.model]?.status === 'ok' ? 'success' : testResults[row.model]?.status === 'err' ? 'danger' : testResults[row.model]?.status === 'running' ? 'warning' : 'info'"
+              size="small"
+            >
+              {{ testResults[row.model]?.status === 'ok' ? '✓ 成功' : testResults[row.model]?.status === 'err' ? '✗ 失败' : testResults[row.model]?.status === 'running' ? '测试中' : '待测' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="耗时" width="90">
+          <template #default="{ row }">
+            <span v-if="testResults[row.model]?.latency">{{ testResults[row.model].latency }}ms</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Tokens" width="80">
+          <template #default="{ row }">{{ testResults[row.model]?.tokens ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="回复" min-width="260">
+          <template #default="{ row }">
+            <span v-if="testResults[row.model]?.status === 'err'" class="test-err">{{ testResults[row.model].error }}</span>
+            <span v-else class="test-reply">{{ testResults[row.model]?.reply || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              text
+              type="primary"
+              size="small"
+              :loading="testResults[row.model]?.status === 'running'"
+              @click="testModel(row.model)"
+            >测试</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <el-card class="docs-card">
       <template #header>
         <div class="card-header">
@@ -360,6 +422,52 @@ const form = ref({
 const reportGroupBy = ref('day')
 const reportDays = ref(30)
 const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
+// 模型快速测试
+const testPrompt = ref('')
+const testResults = ref({})    // { [model]: { status, reply, error, latency, tokens } }
+const loadingCatalog = ref(false)
+const catalogChat = ref([])
+const testingAll = ref(false)
+
+const loadCatalog = async () => {
+  loadingCatalog.value = true
+  try {
+    const res = await fetch(`${API_BASE}/catalog`)
+    const data = await res.json()
+    catalogChat.value = (data.models || []).filter(m => m.type === 'chat')
+  } finally {
+    loadingCatalog.value = false
+  }
+}
+
+const testModel = async (model) => {
+  testResults.value = { ...testResults.value, [model]: { status: 'running' } }
+  try {
+    const res = await fetch(`${API_BASE}/admin/test-model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, prompt: testPrompt.value || undefined })
+    })
+    const data = await res.json()
+    if (data.status === 'ok') {
+      testResults.value = { ...testResults.value, [model]: { status: 'ok', reply: data.reply, latency: data.latency, tokens: data.tokens } }
+    } else {
+      testResults.value = { ...testResults.value, [model]: { status: 'err', error: data.error || '未知错误', latency: data.latency } }
+    }
+  } catch (err) {
+    testResults.value = { ...testResults.value, [model]: { status: 'err', error: err.message } }
+  }
+}
+
+const testAllModels = async () => {
+  testingAll.value = true
+  try {
+    await Promise.allSettled(catalogChat.value.map(m => testModel(m.model)))
+  } finally {
+    testingAll.value = false
+  }
+}
 
 const authHeaders = () => ({
   'Content-Type': 'application/json',
@@ -601,6 +709,7 @@ const formatCost = (value, currency = 'CNY') => `${currency} ${Number(value || 0
 
 onMounted(() => {
   loadDocs(false)
+  loadCatalog()
 })
 </script>
 
@@ -718,6 +827,23 @@ onMounted(() => {
   margin: 0;
   color: #475569;
   line-height: 1.8;
+}
+
+.test-card {
+  border-radius: 22px;
+}
+
+.test-reply {
+  color: #334155;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.test-err {
+  color: #dc2626;
+  font-size: 12px;
 }
 
 @media (max-width: 900px) {

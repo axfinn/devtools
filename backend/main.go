@@ -595,6 +595,7 @@ func main() {
 			aigw.GET("/admin/logs", aiGatewayHandler.AdminListLogs)
 			aigw.GET("/admin/reports", aiGatewayHandler.AdminReports)
 			aigw.GET("/admin/alerts", aiGatewayHandler.AdminAlerts)
+			aigw.POST("/admin/test-model", aiGatewayHandler.AdminTestModel)
 			aigw.POST("/v1/chat/completions", aiGatewayHandler.ChatCompletions)
 			aigw.POST("/v1/chat/tasks", aiGatewayHandler.AsyncChatCompletions)
 			aigw.GET("/v1/chat/tasks/:id", aiGatewayHandler.GetChatTask)

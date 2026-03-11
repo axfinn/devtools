@@ -341,6 +341,54 @@ func (h *AIGatewayHandler) AdminReports(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"rows": rows, "group_by": groupBy, "days": days})
 }
 
+// AdminTestModel 使用服务端配置直连上游，测试指定模型可用性（内部接口，无需 API Key）
+// POST /api/ai-gateway/admin/test-model
+func (h *AIGatewayHandler) AdminTestModel(c *gin.Context) {
+	var req struct {
+		Model  string `json:"model" binding:"required"`
+		Prompt string `json:"prompt"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 model 字段"})
+		return
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		prompt = "你好，请用一句话介绍你自己（包含你的模型名）。"
+	}
+	chatReq := ChatCompletionRequest{
+		Model:    req.Model,
+		Messages: []map[string]interface{}{{"role": "user", "content": prompt}},
+	}
+	start := time.Now()
+	result, _, err := h.executeChatRequest(chatReq)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"model":   req.Model,
+			"status":  "error",
+			"error":   err.Error(),
+			"latency": latency,
+		})
+		return
+	}
+	content, _ := result["content"].(string)
+	usage, _ := result["usage_summary"].(gin.H)
+	tokens := 0
+	if usage != nil {
+		if t, ok := usage["total_tokens"].(int); ok {
+			tokens = t
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"model":   req.Model,
+		"status":  "ok",
+		"reply":   content,
+		"latency": latency,
+		"tokens":  tokens,
+	})
+}
+
 func (h *AIGatewayHandler) AdminAlerts(c *gin.Context) {
 	if !h.requireSuperAdmin(c, "") {
 		return
