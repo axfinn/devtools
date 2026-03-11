@@ -341,15 +341,19 @@ func (h *AIGatewayHandler) AdminReports(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"rows": rows, "group_by": groupBy, "days": days})
 }
 
-// AdminTestModel 使用服务端配置直连上游，测试指定模型可用性（内部接口，无需 API Key）
+// AdminTestModel 使用服务端配置直连上游，测试指定模型可用性（需要超级管理员密码）
 // POST /api/ai-gateway/admin/test-model
 func (h *AIGatewayHandler) AdminTestModel(c *gin.Context) {
 	var req struct {
-		Model  string `json:"model" binding:"required"`
-		Prompt string `json:"prompt"`
+		SuperAdminPassword string `json:"super_admin_password"`
+		Model              string `json:"model" binding:"required"`
+		Prompt             string `json:"prompt"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 model 字段"})
+		return
+	}
+	if !h.requireSuperAdmin(c, req.SuperAdminPassword) {
 		return
 	}
 	prompt := strings.TrimSpace(req.Prompt)

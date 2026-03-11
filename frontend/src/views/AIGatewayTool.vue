@@ -442,12 +442,16 @@ const loadCatalog = async () => {
 }
 
 const testModel = async (model) => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
   testResults.value = { ...testResults.value, [model]: { status: 'running' } }
   try {
     const res = await fetch(`${API_BASE}/admin/test-model`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt: testPrompt.value || undefined })
+      headers: { 'Content-Type': 'application/json', 'X-Super-Admin-Password': superAdminPassword.value },
+      body: JSON.stringify({ super_admin_password: superAdminPassword.value, model, prompt: testPrompt.value || undefined })
     })
     const data = await res.json()
     if (data.status === 'ok') {
@@ -461,6 +465,10 @@ const testModel = async (model) => {
 }
 
 const testAllModels = async () => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
   testingAll.value = true
   try {
     await Promise.allSettled(catalogChat.value.map(m => testModel(m.model)))
