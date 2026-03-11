@@ -152,6 +152,27 @@ func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
 			"description": "MiniMax 文本模型",
 		})
 	}
+	if h.cfg.DashScope.APIKey != "" {
+		dashscopeModels := []struct{ model, brand, caps string }{
+			{"qwen3.5-plus", "千问", "文本生成、深度思考、视觉理解"},
+			{"qwen3-max-2026-01-23", "千问", "文本生成、深度思考"},
+			{"qwen3-coder-next", "千问", "文本生成"},
+			{"qwen3-coder-plus", "千问", "文本生成"},
+			{"glm-5", "智谱", "文本生成、深度思考"},
+			{"glm-4.7", "智谱", "文本生成、深度思考"},
+			{"kimi-k2.5", "Kimi", "文本生成、深度思考、视觉理解"},
+		}
+		for _, m := range dashscopeModels {
+			catalog = append(catalog, gin.H{
+				"model":       m.model,
+				"provider":    "dashscope",
+				"brand":       m.brand,
+				"type":        "chat",
+				"endpoint":    "/api/ai-gateway/v1/chat/completions",
+				"description": m.brand + " · " + m.caps,
+			})
+		}
+	}
 	if h.hasProxyConfig() {
 		proxyModels := h.getProxyModels()
 		for _, model := range proxyModels {
@@ -604,6 +625,8 @@ func (h *AIGatewayHandler) runAsyncChatTask(taskID string, req ChatCompletionReq
 func (h *AIGatewayHandler) executeChatRequest(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
 	provider := h.resolveChatProvider(req.Model)
 	switch provider {
+	case "dashscope":
+		return h.callDashScope(req)
 	case "deepseek":
 		return h.callDeepSeek(req)
 	case "minimax":
@@ -613,6 +636,49 @@ func (h *AIGatewayHandler) executeChatRequest(req ChatCompletionRequest) (gin.H,
 	default:
 		return nil, nil, fmt.Errorf("不支持的文本模型: %s", req.Model)
 	}
+}
+
+func (h *AIGatewayHandler) callDashScope(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
+	if strings.TrimSpace(h.cfg.DashScope.APIKey) == "" {
+		return nil, nil, fmt.Errorf("未配置 dashscope.api_key 或 DASHSCOPE_API_KEY")
+	}
+	bodyMap := map[string]interface{}{
+		"model":    req.Model,
+		"messages": req.Messages,
+		"stream":   false,
+	}
+	if req.Temperature != nil {
+		bodyMap["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil {
+		bodyMap["max_tokens"] = *req.MaxTokens
+	}
+	if req.TopP != nil {
+		bodyMap["top_p"] = *req.TopP
+	}
+
+	baseURL := fallbackString(h.cfg.DashScope.BaseURL, "https://coding.dashscope.aliyuncs.com/v1")
+	endpoint := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	raw, err := h.doJSONRequest(endpoint, h.cfg.DashScope.APIKey, bodyMap)
+	if err != nil {
+		return nil, raw, err
+	}
+	content := extractString(raw, "choices", "0", "message", "content")
+	if content == "" {
+		content = extractMessageContentFromChoices(raw["choices"])
+	}
+	result := gin.H{
+		"id":           fallbackString(extractString(raw, "id"), "chatcmpl-"+utils.GenerateHexKey(4)),
+		"object":       "chat.completion",
+		"created":      time.Now().Unix(),
+		"model":        req.Model,
+		"provider":     "dashscope",
+		"choices":      raw["choices"],
+		"usage":        raw["usage"],
+		"content":      content,
+		"raw_response": raw,
+	}
+	return result, raw, nil
 }
 
 func (h *AIGatewayHandler) callDeepSeek(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
@@ -863,7 +929,21 @@ func (h *AIGatewayHandler) requireSuperAdmin(c *gin.Context, bodyPassword string
 	return true
 }
 
+var dashscopeModels = map[string]bool{
+	"qwen3.5-plus":         true,
+	"qwen3-max-2026-01-23": true,
+	"qwen3-coder-next":     true,
+	"qwen3-coder-plus":     true,
+	"glm-5":               true,
+	"glm-4.7":             true,
+	"kimi-k2.5":           true,
+}
+
 func (h *AIGatewayHandler) resolveChatProvider(model string) string {
+	// DashScope 优先（若配置了 API Key）
+	if h.cfg.DashScope.APIKey != "" && dashscopeModels[model] {
+		return "dashscope"
+	}
 	switch model {
 	case fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"), "deepseek-chat":
 		return "deepseek"
@@ -875,7 +955,6 @@ func (h *AIGatewayHandler) resolveChatProvider(model string) string {
 		}
 		return ""
 	}
-	return ""
 }
 
 func (h *AIGatewayHandler) proxyUpstreamModel(requestModel string) string {

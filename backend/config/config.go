@@ -27,6 +27,7 @@ type Config struct {
 	DeepSeek   DeepSeekConfig   `yaml:"deepseek"`
 	MiniMax    MiniMaxConfig    `yaml:"minimax"`
 	MiniMaxMCP MiniMaxMCPConfig `yaml:"minimax_mcp"`
+	DashScope  DashScopeConfig  `yaml:"dashscope"`
 	Bailian    BailianConfig    `yaml:"bailian"`
 	AIGateway  AIGatewayConfig  `yaml:"ai_gateway"`
 }
@@ -157,6 +158,12 @@ type HouseholdConfig struct {
 	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数
 }
 
+// DashScopeConfig 阿里云 DashScope 文本模型配置（coding 端点，支持多品牌模型）
+type DashScopeConfig struct {
+	APIKey  string `yaml:"api_key"`  // DashScope API Key（可共用百炼 APIKey）
+	BaseURL string `yaml:"base_url"` // API 基础地址，默认 https://coding.dashscope.aliyuncs.com/v1
+}
+
 // BailianConfig 阿里云百炼图片模型配置
 type BailianConfig struct {
 	APIKey             string               `yaml:"api_key"`              // DashScope API Key
@@ -284,6 +291,9 @@ func DefaultConfig() *Config {
 			TimeoutSeconds: 600,
 			Transport:      "line",
 		},
+		DashScope: DashScopeConfig{
+			BaseURL: "https://coding.dashscope.aliyuncs.com/v1",
+		},
 		Bailian: BailianConfig{
 			BaseURL:            "https://dashscope.aliyuncs.com",
 			DefaultWaitSeconds: 45,
@@ -356,6 +366,10 @@ func Load(path string) (*Config, error) {
 	}
 	if apiHost := os.Getenv("MINIMAX_MCP_API_HOST"); apiHost != "" {
 		cfg.MiniMaxMCP.APIHost = apiHost
+	}
+	// DashScope API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("DASHSCOPE_API_KEY"); apiKey != "" {
+		cfg.DashScope.APIKey = apiKey
 	}
 	// 百炼 API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("BAILIAN_API_KEY"); apiKey != "" {

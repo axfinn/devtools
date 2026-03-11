@@ -165,6 +165,16 @@ minimax_mcp:
   # 传输协议: line（JSON 行） 或 header（Content-Length）
   transport: "line"
 
+# DashScope 文本模型配置（coding 端点，多品牌聚合）
+# 支持: 千问(qwen3.5-plus/qwen3-max-2026-01-23/qwen3-coder-next/qwen3-coder-plus)
+#       智谱(glm-5/glm-4.7)  Kimi(kimi-k2.5)
+dashscope:
+  # DashScope Coding API Key（从 https://coding.dashscope.aliyuncs.com 获取，独立于百炼）
+  # 也可通过环境变量 DASHSCOPE_API_KEY 设置
+  api_key: ""
+  # API 基础地址，一般无需修改
+  base_url: "https://coding.dashscope.aliyuncs.com/v1"
+
 # 阿里云百炼图片模型配置
 bailian:
   # DashScope / 百炼 API Key
