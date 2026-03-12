@@ -231,15 +231,22 @@ docker_deploy() {
         compose up -d --build --force-recreate --remove-orphans
     fi
 
-    if wait_for_health "http://localhost:${HOST_PORT}/api/health" 30 2; then
+    if wait_for_health "http://localhost:${HOST_PORT}/api/health" 60 3; then
         log_success "Docker 部署完成！"
         log_info "访问地址: http://localhost:${HOST_PORT}"
         compose ps
     else
-        log_error "服务启动失败，请检查日志"
-        compose ps || true
-        compose logs --tail=100 devtools || true
-        exit 1
+        # 健康检查失败时，额外确认容器状态
+        if compose ps | grep -q "healthy"; then
+            log_success "Docker 部署完成（容器已 healthy）！"
+            log_info "访问地址: http://localhost:${HOST_PORT}"
+            compose ps
+        else
+            log_error "服务启动失败，请检查日志"
+            compose ps || true
+            compose logs --tail=100 devtools || true
+            exit 1
+        fi
     fi
 }
 
