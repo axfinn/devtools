@@ -37,9 +37,8 @@
                 {{ formatChatAction(action) }}
               </el-tag>
             </div>
+            <template v-for="(action, aIdx) in msg.actions" :key="`loc-${aIdx}`">
             <div
-              v-for="(action, aIdx) in msg.actions"
-              :key="`loc-${aIdx}`"
               v-if="action.type === 'suggest_location' && action.candidates && action.candidates.length > 0"
               class="location-candidates"
             >
@@ -55,6 +54,7 @@
                 </el-button>
               </div>
             </div>
+            </template>
           </div>
         </div>
         <div v-if="chatLoading" class="chat-message assistant">
