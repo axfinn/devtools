@@ -309,11 +309,37 @@ func main() {
 			paste.POST("/chunk/:file_id/merge", pasteHandler.MergeChunks)      // 合并分片
 			paste.GET("/chunk/:file_id/status", pasteHandler.CheckChunkStatus) // 检查上传状态
 
+			// 代码分析 API
+			paste.POST("/analyze", pasteHandler.AnalyzeCode)             // 分析文本代码
+			paste.GET("/analyze/:file_id", pasteHandler.AnalyzeFile)    // 分析上传的文件
+
+			// 安全扫描 API
+			paste.POST("/scan", pasteHandler.ScanContent)                   // 扫描内容安全
+			paste.GET("/validate/:file_id", pasteHandler.ValidateFile)    // 验证文件安全
+
+			// 信息 API
+			paste.GET("/languages", pasteHandler.GetSupportedLanguages)    // 支持的语言
+			paste.GET("/content-types", pasteHandler.GetSupportedContentTypes) // 支持的内容类型
+			paste.GET("/stats", pasteHandler.GetStats)                    // 统计信息
+
+			// 搜索 API
+			paste.GET("/search", pasteHandler.SearchPastes)               // 搜索粘贴板
+
 			// 管理员 API
 			paste.GET("/admin/list", pasteHandler.AdminListPastes)    // 管理员列表
 			paste.GET("/admin/:id", pasteHandler.AdminGetPaste)       // 管理员查看
 			paste.PUT("/admin/:id", pasteHandler.AdminUpdatePaste)    // 管理员编辑
 			paste.DELETE("/admin/:id", pasteHandler.AdminDeletePaste) // 管理员删除
+		}
+
+		// 代码分析 API
+		analysisHandler := handlers.NewAnalysisHandler()
+		analysis := api.Group("/analysis")
+		{
+			analysis.POST("/code", analysisHandler.AnalyzeCode)     // 代码分析
+			analysis.POST("/scan", analysisHandler.ScanContent)    // 内容安全扫描
+			analysis.POST("/validate", analysisHandler.ValidateFile) // 文件验证
+			analysis.GET("/languages", analysisHandler.GetSupportedLanguages) // 支持的语言列表
 		}
 
 		// IP/DNS API

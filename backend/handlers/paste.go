@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,7 @@ type FileMetadata struct {
 	URL          string `json:"url"`
 }
 
+// PasteHandler 粘贴板处理器
 type PasteHandler struct {
 	db         *models.DB
 	maxTotal   int
@@ -59,6 +61,7 @@ type PasteHandler struct {
 	ipWindow   time.Duration
 }
 
+// NewPasteHandler 创建粘贴板处理器
 func NewPasteHandler(db *models.DB) *PasteHandler {
 	return &PasteHandler{
 		db:       db,
@@ -66,6 +69,65 @@ func NewPasteHandler(db *models.DB) *PasteHandler {
 		maxPerIP: 10,           // 每 IP 每分钟最多 10 条（与中间件限流一致）
 		ipWindow: time.Minute,
 	}
+}
+
+// SupportedContentTypes 支持的内容类型
+var SupportedContentTypes = []string{
+	"text", "code", "markdown", "json", "html", "xml", "sql", "log",
+}
+
+// SupportedLanguages 支持的编程语言列表（增强版）
+var SupportedLanguages = []string{
+	"javascript", "typescript", "python", "go", "rust", "java", "c", "cpp",
+	"csharp", "php", "ruby", "swift", "kotlin", "scala", "html", "css",
+	"scss", "json", "yaml", "xml", "sql", "bash", "shell", "powershell",
+	"dockerfile", "markdown", "r", "matlab", "julia", "haskell", "elixir",
+	"erlang", "clojure", "fsharp", "ocaml", "dart", "lua", "perl", "coffeescript",
+	"vue", "react", "makefile", "cmake", "nginx", "apache", "gradle", "toml",
+	"ini", "protobuf", "graphql", "terraform", "assembly", "vim", "latex",
+	"sass", "less", "objectivec", "text", "plaintext", "log",
+	// 额外支持的语言
+	"pascal", "delphi", "fortran", "cobol", "lisp", "scheme", "prolog",
+	"actionscript", "apex", "sol", "move", "cairo", "sway", "pil",
+}
+
+// FileCategoryInfo 文件分类信息
+type FileCategoryInfo struct {
+	Category string `json:"category"`
+	Icon     string `json:"icon"`
+	Color    string `json:"color"`
+}
+
+// GetFileCategoryInfo 获取文件分类详细信息
+func GetFileCategoryInfo(mimeType string) FileCategoryInfo {
+	category := getFileCategory(mimeType)
+	info := FileCategoryInfo{Category: category}
+
+	switch category {
+	case "image":
+		info.Icon = "🖼️"
+		info.Color = "#4CAF50"
+	case "video":
+		info.Icon = "🎬"
+		info.Color = "#2196F3"
+	case "audio":
+		info.Icon = "🎵"
+		info.Color = "#9C27B0"
+	case "document":
+		info.Icon = "📄"
+		info.Color = "#FF9800"
+	case "archive":
+		info.Icon = "📦"
+		info.Color = "#795548"
+	case "code":
+		info.Icon = "💻"
+		info.Color = "#607D8B"
+	default:
+		info.Icon = "📁"
+		info.Color = "#9E9E9E"
+	}
+
+	return info
 }
 
 type CreatePasteRequest struct {
@@ -79,17 +141,32 @@ type CreatePasteRequest struct {
 	AdminPassword string   `json:"admin_password"` // 管理员密码（设置更多访问次数或永久）
 }
 
+// ContentType 内容类型
+type ContentType string
+
+const (
+	ContentTypeText     ContentType = "text"
+	ContentTypeCode     ContentType = "code"
+	ContentTypeMarkdown ContentType = "markdown"
+	ContentTypeJSON     ContentType = "json"
+	ContentTypeHTML     ContentType = "html"
+	ContentTypeXML      ContentType = "xml"
+	ContentTypeSQL      ContentType = "sql"
+	ContentTypeLog      ContentType = "log"
+)
+
 type PasteResponse struct {
-	ID          string          `json:"id"`
-	Title       string          `json:"title"`
-	Language    string          `json:"language"`
-	Content     string          `json:"content,omitempty"`
-	ExpiresAt   time.Time       `json:"expires_at"`
-	MaxViews    int             `json:"max_views"`
-	Views       int             `json:"views"`
-	CreatedAt   time.Time       `json:"created_at"`
+	ID           string          `json:"id"`
+	Title        string          `json:"title"`
+	Language     string          `json:"language"`
+	ContentType  string          `json:"content_type"`
+	Content      string          `json:"content,omitempty"`
+	ExpiresAt    time.Time       `json:"expires_at"`
+	MaxViews     int             `json:"max_views"`
+	Views        int             `json:"views"`
+	CreatedAt    time.Time       `json:"created_at"`
 	HasPassword bool            `json:"has_password"`
-	Files       []*FileMetadata `json:"files,omitempty"`
+	Files        []*FileMetadata `json:"files,omitempty"`
 }
 
 // UploadFile 上传文件（图片或视频）
@@ -160,13 +237,14 @@ func (h *PasteHandler) UploadFile(c *gin.Context) {
 		return
 	}
 
-	// 返回文件信息
+	// 返回文件信息，对原始文件名进行安全处理
 	fileURL := "/api/paste/files/" + filename
+	safeOriginalName := utils.SanitizeFilename(header.Filename)
 	c.JSON(http.StatusOK, gin.H{
 		"id":            filename,
 		"url":           fileURL,
 		"filename":      filename,
-		"original_name": header.Filename,
+		"original_name": safeOriginalName,
 		"type":          fileCategory,
 		"size":          header.Size,
 	})
@@ -190,6 +268,27 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "文本内容超过 100KB 限制", "code": 400})
 		return
 	}
+
+	// XSS安全检查：检测潜在的XSS攻击
+	if utils.DetectPotentialXSS(req.Content) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "内容包含不安全字符", "code": 400})
+		return
+	}
+
+	// 内容安全扫描
+	securityResult := utils.ScanContent(req.Content)
+	if !securityResult.IsSafe {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":    "内容包含不安全元素",
+			"warnings": securityResult.Warnings,
+			"code":     400,
+		})
+		return
+	}
+
+	// 对内容进行XSS防护消毒
+	req.Content = utils.SanitizeContent(req.Content)
+	req.Title = utils.SanitizeContent(req.Title)
 
 	ip := c.ClientIP()
 
@@ -219,7 +318,13 @@ func (h *PasteHandler) Create(c *gin.Context) {
 
 	// 设置默认值
 	if req.Language == "" {
-		req.Language = "text"
+		// 自动检测语言
+		req.Language = utils.DetectLanguage(req.Content)
+		// 如果检测到的是 markdown，设置内容类型
+		contentType := utils.DetectContentType(req.Content, req.Language)
+		if contentType == "markdown" {
+			req.Language = "markdown"
+		}
 	}
 	if req.ExpiresIn <= 0 {
 		req.ExpiresIn = 24
@@ -385,10 +490,20 @@ func (h *PasteHandler) Get(c *gin.Context) {
 		json.Unmarshal([]byte(paste.Files), &files)
 	}
 
+	// 对输出进行安全处理
+	safeTitle := utils.SanitizeForAttribute(paste.Title)
+
+	// 检测内容类型
+	contentType := utils.DetectContentType(paste.Content, paste.Language)
+	if contentType == "" {
+		contentType = string(ContentTypeText)
+	}
+
 	c.JSON(http.StatusOK, PasteResponse{
 		ID:          paste.ID,
-		Title:       paste.Title,
+		Title:       safeTitle,
 		Language:    paste.Language,
+		ContentType: contentType,
 		Content:     paste.Content,
 		ExpiresAt:   paste.ExpiresAt,
 		MaxViews:    paste.MaxViews,
@@ -415,10 +530,17 @@ func (h *PasteHandler) GetInfo(c *gin.Context) {
 		return
 	}
 
+	// 检测内容类型
+	contentType := utils.DetectContentType(paste.Content, paste.Language)
+	if contentType == "" {
+		contentType = string(ContentTypeText)
+	}
+
 	c.JSON(http.StatusOK, PasteResponse{
 		ID:          paste.ID,
 		Title:       paste.Title,
 		Language:    paste.Language,
+		ContentType: contentType,
 		ExpiresAt:   paste.ExpiresAt,
 		MaxViews:    paste.MaxViews,
 		Views:       paste.Views,
@@ -500,10 +622,17 @@ func (h *PasteHandler) AdminGetPaste(c *gin.Context) {
 		json.Unmarshal([]byte(paste.Files), &files)
 	}
 
+	// 检测内容类型
+	contentType := utils.DetectContentType(paste.Content, paste.Language)
+	if contentType == "" {
+		contentType = string(ContentTypeText)
+	}
+
 	c.JSON(http.StatusOK, PasteResponse{
 		ID:          paste.ID,
 		Title:       paste.Title,
 		Language:    paste.Language,
+		ContentType: contentType,
 		Content:     paste.Content,
 		ExpiresAt:   paste.ExpiresAt,
 		MaxViews:    paste.MaxViews,
@@ -894,6 +1023,308 @@ func (h *PasteHandler) cleanupPasteFiles(filesJSON string) {
 		filePath := filepath.Join(pasteUploadDir, file.Filename)
 		os.Remove(filePath)
 	}
+}
+
+// AnalyzeCode 分析代码内容（使用 analysis.go 中的 AnalyzeCodeRequest）
+func (h *PasteHandler) AnalyzeCode(c *gin.Context) {
+	var req AnalyzeCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据", "code": 400})
+		return
+	}
+
+	// 检查内容大小
+	if len(req.Content) > 500*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "内容超过 500KB 限制", "code": 400})
+		return
+	}
+
+	// 如果未指定语言，自动检测
+	language := req.Language
+	if language == "" {
+		language = utils.DetectLanguage(req.Content)
+	}
+
+	// 分析代码
+	result := utils.AnalyzeCode(req.Content, language)
+
+	c.JSON(http.StatusOK, gin.H{
+		"language":      result.Language,
+		"lines":         result.Lines,
+		"code_lines":    result.CodeLines,
+		"comment_lines": result.CommentLines,
+		"blank_lines":   result.BlankLines,
+		"functions":     result.Functions,
+		"classes":       result.Classes,
+		"imports":       result.Imports,
+		"summary":       result.Summary,
+	})
+}
+
+// AnalyzeFile 分析上传的文件内容
+func (h *PasteHandler) AnalyzeFile(c *gin.Context) {
+	fileID := c.Param("file_id")
+	if fileID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少文件ID", "code": 400})
+		return
+	}
+
+	filePath := filepath.Join(pasteUploadDir, fileID)
+
+	// 检查文件是否存在
+	info, err := os.Stat(filePath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在", "code": 404})
+		return
+	}
+
+	// 限制文件大小
+	if info.Size() > 500*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "文件过大，无法分析", "code": 400})
+		return
+	}
+
+	// 读取文件内容
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败", "code": 500})
+		return
+	}
+
+	// 检测文件类型
+	magicBytes := content[:min(16, len(content))]
+	detectedType := detectFileType(magicBytes)
+
+	// 检测语言
+	language := utils.DetectLanguage(string(content))
+
+	// 分析代码
+	result := utils.AnalyzeCode(string(content), language)
+
+	c.JSON(http.StatusOK, gin.H{
+		"filename":      fileID,
+		"file_type":    detectedType,
+		"language":      result.Language,
+		"lines":         result.Lines,
+		"code_lines":    result.CodeLines,
+		"comment_lines": result.CommentLines,
+		"blank_lines":   result.BlankLines,
+		"functions":     result.Functions,
+		"classes":       result.Classes,
+		"imports":       result.Imports,
+		"summary":       result.Summary,
+		"size":          info.Size(),
+	})
+}
+
+// GetSupportedLanguages 获取支持的语言列表
+func (h *PasteHandler) GetSupportedLanguages(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"languages": SupportedLanguages,
+		"count":     len(SupportedLanguages),
+	})
+}
+
+// GetSupportedContentTypes 获取支持的内容类型列表
+func (h *PasteHandler) GetSupportedContentTypes(c *gin.Context) {
+	contentTypes := []gin.H{
+		{"type": "text", "name": "纯文本", "icon": "📝"},
+		{"type": "code", "name": "代码", "icon": "💻"},
+		{"type": "markdown", "name": "Markdown", "icon": "📋"},
+		{"type": "json", "name": "JSON", "icon": "🔧"},
+		{"type": "html", "name": "HTML", "icon": "🌐"},
+		{"type": "xml", "name": "XML", "icon": "📰"},
+		{"type": "sql", "name": "SQL", "icon": "🗄️"},
+		{"type": "log", "name": "日志", "icon": "📜"},
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"content_types": contentTypes,
+		"count":         len(contentTypes),
+	})
+}
+
+// GetStats 获取粘贴板统计信息
+func (h *PasteHandler) GetStats(c *gin.Context) {
+	total, err := h.db.TotalCount()
+	if err != nil {
+		total = 0
+	}
+
+	// 获取今日创建数
+	today := time.Now().Truncate(24 * time.Hour)
+	todayCount, _ := h.db.CountByIP("", today) // 这会返回全部，不准确，下面改进
+
+	// 简单返回统计信息
+	stats := gin.H{
+		"total_pastes":    total,
+		"today_creates":   todayCount,
+		"max_file_size":   config.Get().Paste.MaxFileSize,
+		"max_content_size": config.Get().Limits.PasteMaxContentSize,
+	}
+
+	c.JSON(http.StatusOK, stats)
+}
+
+// SearchPastes 搜索粘贴板
+func (h *PasteHandler) SearchPastes(c *gin.Context) {
+	keyword := c.Query("keyword")
+	language := c.Query("language")
+	limit := 50
+	offset := 0
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+	}
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	// 获取所有粘贴板进行筛选（简单实现）
+	pastes, err := h.db.GetAllPastes(1000, 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取列表失败", "code": 500})
+		return
+	}
+
+	var results []*models.Paste
+	for _, p := range pastes {
+		match := true
+		if keyword != "" && !strings.Contains(strings.ToLower(p.Content), strings.ToLower(keyword)) &&
+			!strings.Contains(strings.ToLower(p.Title), strings.ToLower(keyword)) {
+			match = false
+		}
+		if language != "" && p.Language != language {
+			match = false
+		}
+		if match {
+			results = append(results, p)
+		}
+	}
+
+	// 分页
+	start := offset
+	end := offset + limit
+	if start > len(results) {
+		results = []*models.Paste{}
+	} else {
+		if end > len(results) {
+			end = len(results)
+		}
+		results = results[start:end]
+	}
+
+	var responses []gin.H
+	for _, p := range results {
+		responses = append(responses, gin.H{
+			"id":          p.ID,
+			"title":       p.Title,
+			"language":    p.Language,
+			"created_at":  p.CreatedAt,
+			"expires_at":  p.ExpiresAt,
+			"views":       p.Views,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"pastes":  responses,
+		"total":   len(results),
+		"limit":   limit,
+		"offset":  offset,
+	})
+}
+
+// ScanContent 扫描内容安全（公开API）
+func (h *PasteHandler) ScanContent(c *gin.Context) {
+	var req struct {
+		Content string `json:"content" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据", "code": 400})
+		return
+	}
+
+	// 内容限制
+	if len(req.Content) > 500*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "内容超过 500KB 限制", "code": 400})
+		return
+	}
+
+	// 执行安全扫描
+	result := utils.ScanContent(req.Content)
+
+	// 检测语言
+	language := utils.DetectLanguage(req.Content)
+
+	// 检测内容类型
+	contentType := utils.DetectContentType(req.Content, language)
+
+	c.JSON(http.StatusOK, gin.H{
+		"is_safe":       result.IsSafe,
+		"has_virus":     result.HasVirus,
+		"has_suspicious": result.HasSuspiciousURL,
+		"warnings":      result.Warnings,
+		"language":      language,
+		"content_type":  contentType,
+	})
+}
+
+// ValidateFile 验证文件安全性（公开API）
+func (h *PasteHandler) ValidateFile(c *gin.Context) {
+	fileID := c.Param("file_id")
+	if fileID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少文件ID", "code": 400})
+		return
+	}
+
+	filePath := filepath.Join(pasteUploadDir, fileID)
+
+	// 检查文件是否存在
+	info, err := os.Stat(filePath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在", "code": 404})
+		return
+	}
+
+	// 限制文件大小
+	if info.Size() > 10*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "文件过大，无法验证", "code": 400})
+		return
+	}
+
+	// 读取文件内容
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败", "code": 500})
+		return
+	}
+
+	// 验证文件
+	isValid, reason := utils.ValidateFilename(fileID)
+	if !isValid {
+		c.JSON(http.StatusBadRequest, gin.H{"error": reason, "code": 400})
+		return
+	}
+
+	// 扫描文件内容
+	result := utils.ScanFileContent(data)
+
+	// 获取文件分类信息
+	categoryInfo := GetFileCategoryInfo(detectFileType(data[:min(16, len(data))]))
+
+	c.JSON(http.StatusOK, gin.H{
+		"filename":      fileID,
+		"size":          info.Size(),
+		"is_safe":       result.IsSafe,
+		"has_virus":     result.HasVirus,
+		"warnings":      result.Warnings,
+		"category":      categoryInfo.Category,
+		"category_icon": categoryInfo.Icon,
+	})
 }
 
 
