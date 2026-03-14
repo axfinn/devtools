@@ -173,13 +173,60 @@
             style="width: 200px"
             size="small"
           />
-          <el-select v-model="language" placeholder="语言" style="width: 120px" size="small">
+          <el-select v-model="language" placeholder="语言" style="width: 160px" size="small">
             <el-option label="纯文本" value="text" />
+            <el-option label="Markdown" value="markdown" />
             <el-option label="JSON" value="json" />
             <el-option label="JavaScript" value="javascript" />
+            <el-option label="TypeScript" value="typescript" />
             <el-option label="Python" value="python" />
             <el-option label="Go" value="go" />
-            <el-option label="Markdown" value="markdown" />
+            <el-option label="Rust" value="rust" />
+            <el-option label="Java" value="java" />
+            <el-option label="C" value="c" />
+            <el-option label="C++" value="cpp" />
+            <el-option label="C#" value="csharp" />
+            <el-option label="PHP" value="php" />
+            <el-option label="Ruby" value="ruby" />
+            <el-option label="Swift" value="swift" />
+            <el-option label="Kotlin" value="kotlin" />
+            <el-option label="Scala" value="scala" />
+            <el-option label="HTML" value="html" />
+            <el-option label="CSS" value="css" />
+            <el-option label="SCSS/SASS" value="scss" />
+            <el-option label="Less" value="less" />
+            <el-option label="SQL" value="sql" />
+            <el-option label="Shell/Bash" value="bash" />
+            <el-option label="PowerShell" value="powershell" />
+            <el-option label="YAML" value="yaml" />
+            <el-option label="XML" value="xml" />
+            <el-option label="Dockerfile" value="dockerfile" />
+            <el-option label="Vue" value="vue" />
+            <el-option label="React" value="react" />
+            <el-option label="R" value="r" />
+            <el-option label="MATLAB" value="matlab" />
+            <el-option label="Julia" value="julia" />
+            <el-option label="Haskell" value="haskell" />
+            <el-option label="Elixir" value="elixir" />
+            <el-option label="Erlang" value="erlang" />
+            <el-option label="Clojure" value="clojure" />
+            <el-option label="F#" value="fsharp" />
+            <el-option label="OCaml" value="ocaml" />
+            <el-option label="Dart" value="dart" />
+            <el-option label="Lua" value="lua" />
+            <el-option label="Perl" value="perl" />
+            <el-option label="CoffeeScript" value="coffeescript" />
+            <el-option label="Makefile" value="makefile" />
+            <el-option label="CMake" value="cmake" />
+            <el-option label="Nginx" value="nginx" />
+            <el-option label="Apache" value="apache" />
+            <el-option label="Gradle" value="gradle" />
+            <el-option label="GraphQL" value="graphql" />
+            <el-option label="Terraform" value="terraform" />
+            <el-option label="Assembly" value="x86asm" />
+            <el-option label="LaTeX" value="latex" />
+            <el-option label="INI/TOML" value="ini" />
+            <el-option label="Protobuf" value="protobuf" />
           </el-select>
           <el-button size="small" text @click="showAdvanced = false">简洁模式</el-button>
         </div>

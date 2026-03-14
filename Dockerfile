@@ -1,4 +1,4 @@
-FROM node:20-alpine AS frontend-builder
+FROM docker.m.daocloud.io/library/node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -10,11 +10,14 @@ RUN pnpm install --frozen-lockfile
 COPY frontend/ ./
 RUN pnpm build
 
-FROM golang:1.21-alpine AS backend-builder
+FROM docker.m.daocloud.io/library/golang:1.21-alpine AS backend-builder
 
 WORKDIR /app/backend
 
 RUN apk add --no-cache gcc musl-dev sqlite-dev
+
+# 配置 Go 模块代理
+ENV GOPROXY=https://goproxy.cn,direct
 
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
@@ -22,7 +25,7 @@ RUN go mod download
 COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
-FROM alpine:latest
+FROM docker.m.daocloud.io/library/alpine:latest
 
 WORKDIR /app
 
