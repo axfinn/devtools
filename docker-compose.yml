@@ -23,7 +23,7 @@ services:
       - OCR_SERVICE_URL=http://ocr-service:8000
       - no_proxy=ocr-service,devtools
       - NO_PROXY=ocr-service,devtools
-      - AUTODEV_PATH=/usr/local/bin/autodev
+      - AUTODEV_PATH=/opt/clawtest/autodev/autodev
       - AUTODEV_DATA_DIR=/app/data/autodev
     depends_on:
       ocr-service:
