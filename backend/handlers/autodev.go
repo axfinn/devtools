@@ -465,12 +465,13 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
 	os.Chmod(logDir, 0777)
 
-	logFile, _ := os.OpenFile(filepath.Join(logDir, "driver.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if logFile != nil {
-		defer logFile.Close()
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
+	// Pre-create driver.log and chmod 0666 so the non-root autodev user can open it for append.
+	// The Python script opens this file directly, not through stdout/stderr redirection.
+	logFilePath := filepath.Join(logDir, "driver.log")
+	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+		f.Close()
 	}
+	os.Chmod(logFilePath, 0666) // explicitly bypass umask so autodev user (uid 1001) can write
 
 	// Run as non-root user (uid 1001) so Claude Code allows --dangerously-skip-permissions.
 	// Replace HOME so Claude Code finds the non-root user's config.
