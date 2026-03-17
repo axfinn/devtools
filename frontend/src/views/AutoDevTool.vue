@@ -39,8 +39,113 @@
           <el-icon class="text-purple-500 text-2xl"><MagicStick /></el-icon>
           <h1 class="text-2xl font-bold">AutoDev AI 任务助手</h1>
         </div>
-        <el-button size="small" @click="logout" plain>退出登录</el-button>
+        <div class="flex items-center gap-2">
+          <!-- Claude 版本管理入口 -->
+          <el-button size="small" @click="claudeDrawerVisible = true" plain>
+            <el-icon><SetUp /></el-icon>
+            Claude 管理
+          </el-button>
+          <el-button size="small" @click="logout" plain>退出登录</el-button>
+        </div>
       </div>
+
+      <!-- Claude 版本管理抽屉 -->
+      <el-drawer
+        v-model="claudeDrawerVisible"
+        title="Claude CLI 版本管理"
+        direction="rtl"
+        size="480px"
+        @open="onClaudeDrawerOpen"
+      >
+        <div class="space-y-4 p-2">
+          <!-- 版本信息 -->
+          <el-card shadow="never">
+            <template #header>
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-sm">当前环境</span>
+                <el-button size="small" :loading="loadingClaudeInfo" @click="loadClaudeVersion" circle plain>
+                  <el-icon><Refresh /></el-icon>
+                </el-button>
+              </div>
+            </template>
+            <div v-if="loadingClaudeInfo" class="text-center py-4">
+              <el-icon class="is-loading text-purple-500 text-xl"><Loading /></el-icon>
+            </div>
+            <div v-else-if="claudeInfo" class="space-y-2">
+              <div class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">Claude CLI</span>
+                <div class="flex items-center gap-2">
+                  <el-tag v-if="claudeInfo.available" type="success" size="small" effect="dark">已安装</el-tag>
+                  <el-tag v-else type="danger" size="small" effect="dark">未安装</el-tag>
+                  <span class="text-sm font-mono font-semibold text-purple-600">{{ claudeInfo.version || '—' }}</span>
+                </div>
+              </div>
+              <div class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">安装路径</span>
+                <span class="text-xs font-mono text-gray-600 truncate max-w-[240px]">{{ claudeInfo.path || '—' }}</span>
+              </div>
+              <div class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">Node.js</span>
+                <span class="text-sm font-mono">{{ claudeInfo.node_version || '—' }}</span>
+              </div>
+              <div class="flex items-center justify-between py-1.5">
+                <span class="text-sm text-gray-500">npm</span>
+                <span class="text-sm font-mono">{{ claudeInfo.npm_version || '—' }}</span>
+              </div>
+            </div>
+            <div v-else class="text-center text-gray-400 py-4 text-sm">
+              点击刷新按钮获取版本信息
+            </div>
+          </el-card>
+
+          <!-- 更新操作 -->
+          <el-card shadow="never">
+            <template #header>
+              <span class="font-semibold text-sm">更新 Claude Code CLI</span>
+            </template>
+            <div class="space-y-3">
+              <div class="bg-gray-50 rounded p-3 text-xs text-gray-600">
+                <p>执行命令：</p>
+                <code class="font-mono text-purple-700">npm install -g @anthropic-ai/claude-code@latest</code>
+              </div>
+              <el-button
+                type="primary"
+                class="w-full"
+                :loading="updating"
+                :disabled="updating"
+                @click="startUpdate"
+              >
+                <el-icon><Upload /></el-icon>
+                <span class="ml-1">{{ updating ? '更新中…' : '立即更新到最新版本' }}</span>
+              </el-button>
+
+              <!-- 更新输出日志 -->
+              <div v-if="updateLogs.length">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs text-gray-500">更新输出</span>
+                  <el-button size="small" text @click="updateLogs = []">清空</el-button>
+                </div>
+                <pre
+                  ref="updateLogEl"
+                  class="text-xs bg-gray-900 text-green-400 p-3 rounded overflow-auto max-h-[300px] whitespace-pre-wrap break-all font-mono leading-5"
+                >{{ updateLogs.join('\n') }}</pre>
+              </div>
+
+              <!-- 更新结果 -->
+              <el-result
+                v-if="updateResult"
+                :icon="updateResult.success ? 'success' : 'error'"
+                :title="updateResult.success ? '更新成功' : '更新失败'"
+                :sub-title="updateResult.message"
+              >
+                <template #extra>
+                  <el-button size="small" @click="loadClaudeVersion">刷新版本信息</el-button>
+                </template>
+              </el-result>
+            </div>
+          </el-card>
+        </div>
+      </el-drawer>
 
       <el-row :gutter="16">
         <!-- Left Panel: Submit + Task List -->
@@ -338,7 +443,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Lock, MagicStick, VideoPlay, VideoPause, Refresh, RefreshRight,
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
-  FolderOpened, Bottom
+  FolderOpened, Bottom, SetUp, Upload
 } from '@element-plus/icons-vue'
 
 const SESSION_KEY = 'autodev_password'
@@ -724,6 +829,73 @@ function parseOptions(str) {
 function formatTime(t) {
   if (!t) return ''
   return new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+// ---- Claude version management ----
+const claudeDrawerVisible = ref(false)
+const claudeInfo = ref(null)
+const loadingClaudeInfo = ref(false)
+const updating = ref(false)
+const updateLogs = ref([])
+const updateResult = ref(null)
+const updateLogEl = ref(null)
+
+function onClaudeDrawerOpen() {
+  if (!claudeInfo.value) loadClaudeVersion()
+}
+
+async function loadClaudeVersion() {
+  loadingClaudeInfo.value = true
+  try {
+    const res = await fetch(`${API_BASE}/claude/version?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) claudeInfo.value = await res.json()
+  } catch { ElMessage.error('获取版本信息失败') }
+  finally { loadingClaudeInfo.value = false }
+}
+
+function startUpdate() {
+  if (updating.value) return
+  updating.value = true
+  updateLogs.value = []
+  updateResult.value = null
+
+  const url = `${API_BASE}/claude/update/stream?password=${encodeURIComponent(savedPassword)}`
+  const es = new EventSource(url)
+
+  es.addEventListener('log', (e) => {
+    try {
+      const data = JSON.parse(e.data)
+      updateLogs.value.push(data.line)
+      nextTick(() => {
+        if (updateLogEl.value) updateLogEl.value.scrollTop = updateLogEl.value.scrollHeight
+      })
+    } catch { /* ignore */ }
+  })
+
+  es.addEventListener('done', (e) => {
+    es.close()
+    updating.value = false
+    try {
+      const data = JSON.parse(e.data)
+      if (data.error) {
+        updateResult.value = { success: false, message: data.error }
+      } else {
+        const msg = data.new_version && data.new_version !== data.old_version
+          ? `${data.old_version} → ${data.new_version}`
+          : `当前版本: ${data.new_version || '未知'}`
+        updateResult.value = { success: true, message: msg }
+        claudeInfo.value = null // force reload
+      }
+    } catch { updateResult.value = { success: true, message: '完成' } }
+  })
+
+  es.onerror = () => {
+    es.close()
+    updating.value = false
+    if (!updateResult.value) {
+      updateResult.value = { success: false, message: '连接中断' }
+    }
+  }
 }
 
 // ---- auto-refresh ----

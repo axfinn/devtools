@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"archive/zip"
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -567,4 +568,170 @@ func sanitizeTaskName(s string) string {
 		name = "task"
 	}
 	return strings.Trim(name, "-")
+}
+
+// ============================================================
+// Claude CLI 版本管理
+// ============================================================
+
+// ClaudeVersion holds claude CLI version info
+type ClaudeVersion struct {
+	Version     string `json:"version"`
+	Path        string `json:"path"`
+	NpmVersion  string `json:"npm_version"`
+	NodeVersion string `json:"node_version"`
+	Available   bool   `json:"available"`
+}
+
+// GetClaudeVersion handles GET /api/autodev/claude/version?password=xxx
+func (h *AutoDevHandler) GetClaudeVersion(c *gin.Context) {
+	if !h.checkPassword(c) {
+		return
+	}
+
+	info := ClaudeVersion{}
+
+	// get claude version
+	if out, err := exec.Command("claude", "--version").Output(); err == nil {
+		info.Version = strings.TrimSpace(string(out))
+		info.Available = true
+	} else {
+		info.Available = false
+	}
+
+	// get claude path
+	if out, err := exec.Command("which", "claude").Output(); err == nil {
+		info.Path = strings.TrimSpace(string(out))
+	}
+
+	// npm version
+	if out, err := exec.Command("npm", "--version").Output(); err == nil {
+		info.NpmVersion = strings.TrimSpace(string(out))
+	}
+
+	// node version
+	if out, err := exec.Command("node", "--version").Output(); err == nil {
+		info.NodeVersion = strings.TrimSpace(string(out))
+	}
+
+	c.JSON(http.StatusOK, info)
+}
+
+// UpdateClaude handles GET /api/autodev/claude/update/stream?password=xxx
+// Streams npm install output via SSE
+func (h *AutoDevHandler) UpdateClaude(c *gin.Context) {
+	if !h.checkPasswordQuery(c) {
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式输出"})
+		return
+	}
+
+	sendEvent := func(event, data string) {
+		fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
+		flusher.Flush()
+	}
+
+	sendLine := func(line string) {
+		b, _ := json.Marshal(map[string]string{"line": line})
+		sendEvent("log", string(b))
+	}
+
+	sendLine("🚀 开始更新 Claude Code CLI...")
+	sendLine("执行: npm install -g @anthropic-ai/claude-code@latest")
+
+	// record version before update
+	oldVersion := ""
+	if out, err := exec.Command("claude", "--version").Output(); err == nil {
+		oldVersion = strings.TrimSpace(string(out))
+		sendLine(fmt.Sprintf("当前版本: %s", oldVersion))
+	} else {
+		sendLine("⚠️  当前未安装 Claude Code")
+	}
+
+	sendLine("")
+
+	// run npm install
+	cmd := exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code@latest", "--unsafe-perm")
+	cmd.Env = os.Environ()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		sendLine("❌ 启动更新失败: " + err.Error())
+		sendEvent("done", `{"success":false}`)
+		return
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		sendLine("❌ 启动更新失败: " + err.Error())
+		sendEvent("done", `{"success":false}`)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		sendLine("❌ 启动 npm 失败: " + err.Error())
+		sendEvent("done", `{"success":false}`)
+		return
+	}
+
+	// stream stdout and stderr concurrently
+	done := make(chan struct{}, 2)
+	stream := func(r io.Reader) {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			sendLine(scanner.Text())
+		}
+		done <- struct{}{}
+	}
+	go stream(stdout)
+	go stream(stderr)
+	<-done
+	<-done
+
+	err = cmd.Wait()
+	sendLine("")
+
+	if err != nil {
+		sendLine("❌ 更新失败: " + err.Error())
+		sendEvent("done", `{"success":false,"error":"update failed"}`)
+		return
+	}
+
+	// get new version
+	newVersion := ""
+	if out, err2 := exec.Command("claude", "--version").Output(); err2 == nil {
+		newVersion = strings.TrimSpace(string(out))
+	}
+
+	if newVersion != "" && newVersion != oldVersion {
+		sendLine(fmt.Sprintf("✅ 更新成功！%s → %s", oldVersion, newVersion))
+	} else if newVersion != "" {
+		sendLine(fmt.Sprintf("✅ 已是最新版本: %s", newVersion))
+	} else {
+		sendLine("✅ 更新完成")
+	}
+
+	b, _ := json.Marshal(map[string]string{
+		"old_version": oldVersion,
+		"new_version": newVersion,
+	})
+	sendEvent("done", string(b))
+}
+
+// checkPasswordQuery checks password from query param (for GET/SSE endpoints)
+func (h *AutoDevHandler) checkPasswordQuery(c *gin.Context) bool {
+	password := c.Query("password")
+	if h.adminPassword == "" || password != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return false
+	}
+	return true
 }

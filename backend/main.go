@@ -716,6 +716,9 @@ func main() {
 			autodev.GET("/tasks/:id/download", autoDevHandler.Download)
 			autodev.POST("/tasks/:id/stop", autoDevHandler.StopTask)
 			autodev.DELETE("/tasks/:id", autoDevHandler.DeleteTask)
+			// Claude CLI 版本管理
+			autodev.GET("/claude/version", autoDevHandler.GetClaudeVersion)
+			autodev.GET("/claude/update/stream", autoDevHandler.UpdateClaude)
 		}
 
 		// 背景图 API
