@@ -36,10 +36,11 @@ type Config struct {
 
 // NFSShareConfig NFS/SMB 文件分享配置
 type NFSShareConfig struct {
-	Enabled       bool          `yaml:"enabled"`          // 是否启用
-	AdminPassword string        `yaml:"admin_password"`   // 超管密码，为空则禁用
-	MaxFileSizeMB int64         `yaml:"max_file_size_mb"` // 单文件最大大小（MB），0 不限
-	Mounts        []MountConfig `yaml:"mounts"`           // 挂载点列表
+	Enabled              bool          `yaml:"enabled"`               // 是否启用
+	AdminPassword        string        `yaml:"admin_password"`        // 超管密码，为空则禁用
+	MaxFileSizeMB        int64         `yaml:"max_file_size_mb"`      // 单文件最大大小（MB），0 不限
+	DisableVideoDownload bool          `yaml:"disable_video_download"` // 禁止视频直接下载，只允许 HLS 播放
+	Mounts               []MountConfig `yaml:"mounts"`                // 挂载点列表
 }
 
 // MountConfig 单个挂载点配置
@@ -352,9 +353,10 @@ func DefaultConfig() *Config {
 			Pricing: []AIGatewayPricingConfig{},
 		},
 		NFSShare: NFSShareConfig{
-			Enabled:       false,
-			MaxFileSizeMB: 0,
-			Mounts:        []MountConfig{},
+			Enabled:              false,
+			MaxFileSizeMB:        0,
+			DisableVideoDownload: true,
+			Mounts:               []MountConfig{},
 		},
 	}
 }

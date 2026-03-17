@@ -29,7 +29,7 @@ FROM docker.m.daocloud.io/library/alpine:latest
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata curl python3 coreutils
+RUN apk add --no-cache ca-certificates tzdata curl python3 coreutils ffmpeg
 
 # Install uv (provides uvx) for MCP runtime
 RUN curl -Ls https://astral.sh/uv/install.sh | sh

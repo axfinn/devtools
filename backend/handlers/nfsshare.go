@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 	"devtools/models"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	smb2 "github.com/hirochachacha/go-smb2"
 )
 
@@ -161,12 +164,20 @@ type MountInfo struct {
 
 // -------- Handler --------
 
+// hlsJob 表示一个 HLS 转码任务
+type hlsJob struct {
+	done chan struct{} // 关闭表示完成
+	err  error
+}
+
 // NFSShareHandler NFS/SMB 文件分享处理器
 type NFSShareHandler struct {
-	db     *models.DB
-	cfg    config.NFSShareConfig
-	mounts map[string]*MountStatus
-	mu     sync.RWMutex
+	db         *models.DB
+	cfg        config.NFSShareConfig
+	mounts     map[string]*MountStatus
+	mu         sync.RWMutex
+	hlsJobs    sync.Map // key: shareID, value: *hlsJob
+	watchRooms sync.Map // key: shareID, value: *watchRoom
 }
 
 // NewNFSShareHandler 创建 Handler 并初始化所有挂载点
@@ -661,6 +672,12 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 		return
 	}
 
+	// 禁止视频直接下载（可通过配置关闭）
+	if h.cfg.DisableVideoDownload && strings.HasPrefix(share.MimeType, "video/") {
+		c.JSON(http.StatusForbidden, gin.H{"error": "视频文件不允许直接下载，请通过播放页面访问"})
+		return
+	}
+
 	pp, err := h.parsePath(share.FilePath)
 	if err != nil {
 		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "error", 0)
@@ -715,18 +732,21 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 	if remaining < 0 {
 		remaining = 0
 	}
+	isVideo := strings.HasPrefix(share.MimeType, "video/")
 	c.JSON(http.StatusOK, gin.H{
-		"id":              share.ID,
-		"name":            share.Name,
-		"file_size":       share.FileSize,
-		"mime_type":       share.MimeType,
-		"max_views":       share.MaxViews,
-		"views":           share.Views,
-		"remaining_views": remaining,
-		"expires_at":      share.ExpiresAt,
-		"created_at":      share.CreatedAt,
-		"expired":         share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt),
-		"exhausted":       share.MaxViews > 0 && share.Views >= share.MaxViews,
+		"id":                     share.ID,
+		"name":                   share.Name,
+		"file_size":              share.FileSize,
+		"mime_type":              share.MimeType,
+		"max_views":              share.MaxViews,
+		"views":                  share.Views,
+		"remaining_views":        remaining,
+		"expires_at":             share.ExpiresAt,
+		"created_at":             share.CreatedAt,
+		"expired":                share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt),
+		"exhausted":              share.MaxViews > 0 && share.Views >= share.MaxViews,
+		"is_video":               isVideo,
+		"disable_video_download": h.cfg.DisableVideoDownload && isVideo,
 	})
 }
 
@@ -858,5 +878,370 @@ func (h *NFSShareHandler) AdminDelete(c *gin.Context) {
 
 // Status 返回功能是否启用（公开）
 func (h *NFSShareHandler) Status(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"enabled": h.cfg.Enabled})
+	c.JSON(http.StatusOK, gin.H{
+		"enabled":                h.cfg.Enabled,
+		"disable_video_download": h.cfg.DisableVideoDownload,
+	})
+}
+
+// -------- HLS 转码播放 --------
+
+const transcodDir = "./data/transcode"
+
+// HLSPlaylist 触发 HLS 转码并返回 m3u8（公开，消耗1次view）
+func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	id := c.Param("id")
+	share, err := h.db.GetNFSShare(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
+		return
+	}
+	if share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "分享已过期"})
+		return
+	}
+	if share.MaxViews > 0 && share.Views >= share.MaxViews {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("分享次数已用完（最大 %d 次）", share.MaxViews)})
+		return
+	}
+	if !strings.HasPrefix(share.MimeType, "video/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该分享不是视频文件"})
+		return
+	}
+
+	outDir := filepath.Join(transcodDir, id)
+	m3u8Path := filepath.Join(outDir, "index.m3u8")
+
+	// 已转码缓存命中
+	if _, err := os.Stat(m3u8Path); err == nil {
+		h.db.IncrementNFSShareViews(id)
+		c.Header("Content-Type", "application/vnd.apple.mpegurl")
+		c.File(m3u8Path)
+		return
+	}
+
+	// 检查是否有进行中的转码 job
+	jobVal, loaded := h.hlsJobs.LoadOrStore(id, &hlsJob{done: make(chan struct{})})
+	job := jobVal.(*hlsJob)
+
+	if !loaded {
+		// 本次请求负责启动转码
+		go func() {
+			defer h.hlsJobs.Delete(id)
+			job.err = h.doTranscode(id, share, outDir, m3u8Path)
+			close(job.done)
+		}()
+	}
+
+	// 等待转码完成（最多 30 分钟）
+	select {
+	case <-job.done:
+	case <-time.After(30 * time.Minute):
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "转码超时"})
+		return
+	}
+
+	if job.err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "转码失败: " + job.err.Error()})
+		return
+	}
+
+	h.db.IncrementNFSShareViews(id)
+	c.Header("Content-Type", "application/vnd.apple.mpegurl")
+	c.File(m3u8Path)
+}
+
+// doTranscode 执行 FFmpeg 转码，将源文件转为 HLS
+func (h *NFSShareHandler) doTranscode(id string, share *models.NFSShare, outDir, m3u8Path string) error {
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		return fmt.Errorf("创建输出目录失败: %v", err)
+	}
+
+	pp, err := h.parsePath(share.FilePath)
+	if err != nil {
+		return fmt.Errorf("挂载点不可用: %v", err)
+	}
+
+	var sourceFile string
+	isSMB := strings.ToLower(pp.ms.Config.Type) == "smb"
+
+	if isSMB {
+		// SMB：先把文件复制到本地临时文件
+		ext := filepath.Ext(share.FilePath)
+		sourceFile = filepath.Join(outDir, "source"+ext)
+		if err := h.copyFromSMB(pp, sourceFile); err != nil {
+			return fmt.Errorf("复制 SMB 文件失败: %v", err)
+		}
+		defer os.Remove(sourceFile)
+	} else {
+		sourceFile = pp.absPath
+	}
+
+	segPattern := filepath.Join(outDir, "%03d.ts")
+	cmd := exec.Command("ffmpeg", "-y",
+		"-i", sourceFile,
+		"-c:v", "libx264", "-preset", "fast", "-crf", "23",
+		"-c:a", "aac", "-b:a", "128k",
+		"-f", "hls",
+		"-hls_time", "10",
+		"-hls_playlist_type", "vod",
+		"-hls_segment_filename", segPattern,
+		m3u8Path,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("[NFSShare] HLS 转码失败 %s: %v\n%s", id, err, string(out))
+		// 清理不完整的输出
+		os.RemoveAll(outDir)
+		return fmt.Errorf("ffmpeg 退出错误: %v", err)
+	}
+	log.Printf("[NFSShare] HLS 转码完成 %s", id)
+	return nil
+}
+
+// copyFromSMB 把 SMB 文件流式复制到本地路径
+func (h *NFSShareHandler) copyFromSMB(pp *parsedPath, dst string) error {
+	f, _, err := pp.ms.smb.Open(pp.relPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, f)
+	return err
+}
+
+// HLSSegment 返回 HLS 分片文件（公开，不消耗 view）
+func (h *NFSShareHandler) HLSSegment(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	id := c.Param("id")
+	segment := c.Param("segment")
+	// 防路径穿越
+	if strings.Contains(segment, "..") || strings.Contains(segment, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法路径"})
+		return
+	}
+	segPath := filepath.Join(transcodDir, id, segment)
+	if _, err := os.Stat(segPath); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分片不存在"})
+		return
+	}
+	c.Header("Content-Type", "video/mp2t")
+	c.File(segPath)
+}
+
+// CleanHLSCache 删除指定分享的 HLS 转码缓存（删除分享时调用）
+func CleanHLSCache(id string) {
+	os.RemoveAll(filepath.Join(transcodDir, id))
+}
+
+// -------- 一起看 Watch Party --------
+
+var watchUpgrader = websocket.Upgrader{
+	CheckOrigin:     func(r *http.Request) bool { return true },
+	ReadBufferSize:  1024,
+	WriteBufferSize: 4096,
+}
+
+// watchMsg 客户端 → 服务器 消息
+type watchMsg struct {
+	Type     string  `json:"type"`     // join | chat | danmaku | sync
+	Nickname string  `json:"nickname"` // join 时设置
+	Text     string  `json:"text"`     // chat / danmaku 内容
+	Action   string  `json:"action"`   // sync: play | pause | seek
+	Time     float64 `json:"time"`     // sync: 当前播放时间（秒）
+}
+
+// watchBroadcast 服务器 → 所有客户端 消息
+type watchBroadcast struct {
+	Type     string  `json:"type"`               // joined | left | chat | danmaku | sync | viewers
+	Nickname string  `json:"nickname,omitempty"` // 消息来源
+	Text     string  `json:"text,omitempty"`
+	Action   string  `json:"action,omitempty"`
+	Time     float64 `json:"time,omitempty"`
+	Count    int     `json:"count,omitempty"`    // viewers 类型：当前人数
+	IsHost   bool    `json:"is_host,omitempty"`  // 是否房主
+}
+
+// watchClient 单个 WebSocket 连接
+type watchClient struct {
+	conn     *websocket.Conn
+	nickname string
+	isHost   bool
+	send     chan []byte
+}
+
+// watchRoom 一个视频分享对应的观看室
+type watchRoom struct {
+	mu      sync.RWMutex
+	clients map[*watchClient]bool
+}
+
+func newWatchRoom() *watchRoom {
+	return &watchRoom{clients: make(map[*watchClient]bool)}
+}
+
+func (r *watchRoom) add(c *watchClient) {
+	r.mu.Lock()
+	r.clients[c] = true
+	r.mu.Unlock()
+}
+
+func (r *watchRoom) remove(c *watchClient) {
+	r.mu.Lock()
+	delete(r.clients, c)
+	r.mu.Unlock()
+}
+
+func (r *watchRoom) count() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.clients)
+}
+
+func (r *watchRoom) broadcast(msg watchBroadcast, exclude *watchClient) {
+	data, _ := json.Marshal(msg)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for c := range r.clients {
+		if c == exclude {
+			continue
+		}
+		select {
+		case c.send <- data:
+		default:
+		}
+	}
+}
+
+func (r *watchRoom) broadcastAll(msg watchBroadcast) {
+	r.broadcast(msg, nil)
+}
+
+// WatchWS 处理一起看 WebSocket 连接
+func (h *NFSShareHandler) WatchWS(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	id := c.Param("id")
+	share, err := h.db.GetNFSShare(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
+		return
+	}
+	if share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "分享已过期"})
+		return
+	}
+
+	nickname := strings.TrimSpace(c.Query("nickname"))
+	if nickname == "" {
+		nickname = "匿名用户"
+	}
+	isHost := c.Query("admin_password") != "" && h.verifyAdmin(c.Query("admin_password"))
+
+	conn, err := watchUpgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+
+	// 获取或创建 watchRoom
+	roomVal, _ := h.watchRooms.LoadOrStore(id, newWatchRoom())
+	room := roomVal.(*watchRoom)
+
+	client := &watchClient{
+		conn:     conn,
+		nickname: nickname,
+		isHost:   isHost,
+		send:     make(chan []byte, 64),
+	}
+	room.add(client)
+
+	// 广播：有人加入
+	room.broadcastAll(watchBroadcast{
+		Type:     "joined",
+		Nickname: nickname,
+		IsHost:   isHost,
+		Count:    room.count(),
+	})
+
+	// 写 goroutine
+	go func() {
+		defer conn.Close()
+		for data := range client.send {
+			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				break
+			}
+		}
+	}()
+
+	// 读循环（主 goroutine）
+	defer func() {
+		room.remove(client)
+		close(client.send)
+		// 广播：有人离开
+		room.broadcastAll(watchBroadcast{
+			Type:     "left",
+			Nickname: nickname,
+			Count:    room.count(),
+		})
+		// 房间空了就清理
+		if room.count() == 0 {
+			h.watchRooms.Delete(id)
+		}
+	}()
+
+	conn.SetReadLimit(4096)
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		var msg watchMsg
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+		switch msg.Type {
+		case "chat":
+			text := strings.TrimSpace(msg.Text)
+			if text == "" {
+				continue
+			}
+			room.broadcastAll(watchBroadcast{
+				Type:     "chat",
+				Nickname: nickname,
+				Text:     text,
+				IsHost:   isHost,
+			})
+		case "danmaku":
+			text := strings.TrimSpace(msg.Text)
+			if text == "" {
+				continue
+			}
+			room.broadcastAll(watchBroadcast{
+				Type:     "danmaku",
+				Nickname: nickname,
+				Text:     text,
+			})
+		case "sync":
+			// 只有房主可以同步播放状态
+			if !isHost {
+				continue
+			}
+			room.broadcast(watchBroadcast{
+				Type:   "sync",
+				Action: msg.Action,
+				Time:   msg.Time,
+			}, client) // 不发给自己
+		}
+	}
 }

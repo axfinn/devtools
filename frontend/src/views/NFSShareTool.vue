@@ -594,7 +594,7 @@ async function createShare() {
       ElMessage.error(data.error || '创建失败')
       return
     }
-    const link = `${location.origin}/api/nfsshare/${data.id}`
+    const link = `${location.origin}/nfs/${data.id}`
     await navigator.clipboard.writeText(link).catch(() => {})
     ElMessage.success(`创建成功！链接已复制：${link}`)
     createForm.filePath = ''
@@ -722,7 +722,7 @@ async function loadShareList() {
 }
 
 function copyShareLink(row) {
-  const link = `${location.origin}/api/nfsshare/${row.id}`
+  const link = `${location.origin}/nfs/${row.id}`
   navigator.clipboard.writeText(link)
     .then(() => ElMessage.success('链接已复制'))
     .catch(() => ElMessage.info(`链接：${link}`))

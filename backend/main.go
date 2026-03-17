@@ -227,6 +227,17 @@ func main() {
 			if err == nil && nfsCount > 0 {
 				log.Printf("已清理 %d 个过期 NFS 分享", nfsCount)
 			}
+			// 清理孤立的 HLS 转码缓存（分享已删除但目录残留）
+			if entries, err := os.ReadDir("./data/transcode"); err == nil {
+				for _, e := range entries {
+					if !e.IsDir() {
+						continue
+					}
+					if _, err := db.GetNFSShare(e.Name()); err != nil {
+						handlers.CleanHLSCache(e.Name())
+					}
+				}
+			}
 		}
 	}()
 
@@ -597,6 +608,14 @@ func main() {
 			nfsshare.GET("/status", nfsShareHandler.Status)                      // 功能状态（公开）
 			nfsshare.GET("/:id/info", nfsShareHandler.Info)                      // 分享信息（公开，不消耗次数）
 			nfsshare.GET("/:id", nfsShareHandler.Access)                         // 访问/下载文件（公开，消耗次数）
+			nfsshare.GET("/:id/hls/:segment", func(c *gin.Context) {             // HLS 转码播放（公开）
+				if c.Param("segment") == "index.m3u8" {
+					nfsShareHandler.HLSPlaylist(c)
+				} else {
+					nfsShareHandler.HLSSegment(c)
+				}
+			})
+			nfsshare.GET("/:id/watch/ws", nfsShareHandler.WatchWS)              // 一起看 WebSocket（公开）
 			nfsshare.POST("", nfsShareHandler.Create)                            // 创建分享（超管）
 			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)                // 浏览目录（超管）
 			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)               // 分享列表（超管）

@@ -281,6 +281,8 @@ nfs_share:
   admin_password: ""
   # 单文件最大分享大小（MB），0 = 不限制
   max_file_size_mb: 0
+  # 禁止视频文件直接下载（true = 只允许通过 HLS 播放页访问，false = 允许下载）
+  disable_video_download: true
 
   # 挂载点列表（启动时自动挂载，需要系统已安装 nfs-common / cifs-utils）
   mounts:

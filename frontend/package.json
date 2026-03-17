@@ -22,6 +22,7 @@
     "echarts": "^6.0.0",
     "element-plus": "^2.13.0",
     "highlight.js": "^11.11.1",
+    "hls.js": "^1.6.15",
     "html5-qrcode": "^2.3.8",
     "i18next": "^25.8.4",
     "katex": "^0.16.27",

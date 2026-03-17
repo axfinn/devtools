@@ -355,6 +355,12 @@ const toolRoutes = [
     name: 'ExcalidrawShare',
     component: () => import('../views/ExcalidrawShareView.vue'),
     meta: { title: '查看画图', icon: 'Edit', hideSidebar: true }
+  },
+  {
+    path: '/nfs/:id',
+    name: 'NFSShareView',
+    component: () => import('../views/NFSShareView.vue'),
+    meta: { title: '文件分享', icon: 'FolderOpened', hideSidebar: true }
   }
 ]
 
