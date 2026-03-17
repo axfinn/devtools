@@ -98,6 +98,61 @@
             </div>
           </el-card>
 
+          <!-- 模型健康检测 -->
+          <el-card shadow="never">
+            <template #header>
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-sm">模型连通性测试</span>
+                <el-button size="small" :loading="testingModel" @click="testModel" plain>
+                  <el-icon><Connection /></el-icon> 测试
+                </el-button>
+              </div>
+            </template>
+            <div v-if="!modelHealth && !testingModel" class="text-center text-gray-400 py-4 text-sm">
+              点击测试按钮检查 API 连通性
+            </div>
+            <div v-else-if="testingModel" class="text-center py-4">
+              <el-icon class="is-loading text-purple-500 text-xl"><Loading /></el-icon>
+              <p class="text-xs text-gray-400 mt-2">正在发送测试请求…</p>
+            </div>
+            <div v-else-if="modelHealth" class="space-y-2">
+              <div class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">状态</span>
+                <el-tag :type="modelHealth.ok ? 'success' : 'danger'" size="small" effect="dark">
+                  {{ modelHealth.ok ? '✅ 连通' : '❌ 不可用' }}
+                </el-tag>
+              </div>
+              <div class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">模型</span>
+                <span class="text-xs font-mono text-purple-600">{{ modelHealth.model }}</span>
+              </div>
+              <div class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">API 地址</span>
+                <span class="text-xs font-mono text-gray-600 truncate max-w-[220px]" :title="modelHealth.base_url">{{ modelHealth.base_url }}</span>
+              </div>
+              <div class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">Token</span>
+                <el-tag :type="modelHealth.has_token ? 'success' : 'danger'" size="small">
+                  {{ modelHealth.has_token ? '已配置' : '未配置' }}
+                </el-tag>
+              </div>
+              <div v-if="modelHealth.ok" class="flex items-center justify-between py-1.5 border-b">
+                <span class="text-sm text-gray-500">响应延迟</span>
+                <span class="text-sm font-mono" :class="modelHealth.latency_ms < 3000 ? 'text-green-600' : 'text-yellow-600'">
+                  {{ modelHealth.latency_ms }} ms
+                </span>
+              </div>
+              <div v-if="modelHealth.response" class="py-1.5 border-b">
+                <span class="text-xs text-gray-500 block mb-1">模型回复</span>
+                <span class="text-xs font-mono text-green-700 bg-green-50 px-2 py-1 rounded block">{{ modelHealth.response }}</span>
+              </div>
+              <div v-if="modelHealth.error" class="py-1.5">
+                <span class="text-xs text-gray-500 block mb-1">错误信息</span>
+                <span class="text-xs text-red-600 bg-red-50 px-2 py-1 rounded block break-all">{{ modelHealth.error }}</span>
+              </div>
+            </div>
+          </el-card>
+
           <!-- 更新操作 -->
           <el-card shadow="never">
             <template #header>
@@ -304,6 +359,12 @@
                     <el-icon><Download /></el-icon> 打包下载
                   </el-button>
                   <el-button
+                    v-if="hasSite"
+                    size="small" type="success" plain @click="previewSite"
+                  >
+                    <el-icon><Monitor /></el-icon> 预览站点
+                  </el-button>
+                  <el-button
                     v-if="selectedTask.status === 'running'"
                     size="small" type="warning" plain @click="stopTask(selectedTask)"
                   >
@@ -443,7 +504,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Lock, MagicStick, VideoPlay, VideoPause, Refresh, RefreshRight,
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
-  FolderOpened, Bottom, SetUp, Upload
+  FolderOpened, Bottom, SetUp, Upload, Monitor, Connection
 } from '@element-plus/icons-vue'
 
 const SESSION_KEY = 'autodev_password'
@@ -622,6 +683,7 @@ const selectedTask = ref(null)
 const taskState = ref(null)
 const activeTab = ref('files')
 const taskFiles = ref([])
+const taskHasSite = ref(false)
 const activeFilePath = ref(null)
 const activeFileContent = ref('')
 const loadingFile = ref(false)
@@ -641,6 +703,7 @@ async function selectTask(task) {
   activeFileContent.value = ''
   logContent.value = ''
   taskFiles.value = []
+  taskHasSite.value = false
   availableLogPhases.value = ['driver']
   activeLogPhase.value = 'driver'
   await refreshDetail()
@@ -666,6 +729,7 @@ async function loadFiles() {
   if (res.ok) {
     const data = await res.json()
     taskFiles.value = data.files || []
+    taskHasSite.value = !!data.has_site
     if (!activeFilePath.value) {
       const result = taskFiles.value.find(f => f.name === 'RESULT.md')
       if (result) loadFile(result.path)
@@ -732,6 +796,14 @@ async function downloadTask() {
     ElMessage.success('开始下载')
   } catch { ElMessage.error('下载失败') }
   finally { setTimeout(() => { downloading.value = false }, 1000) }
+}
+
+const hasSite = computed(() => taskHasSite.value)
+
+function previewSite() {
+  if (!selectedTask.value) return
+  const url = `${API_BASE}/tasks/${selectedTask.value.id}/site/index.html?password=${encodeURIComponent(savedPassword)}`
+  window.open(url, '_blank')
 }
 
 // ---- phase progress helpers ----
@@ -835,6 +907,8 @@ function formatTime(t) {
 const claudeDrawerVisible = ref(false)
 const claudeInfo = ref(null)
 const loadingClaudeInfo = ref(false)
+const modelHealth = ref(null)
+const testingModel = ref(false)
 const updating = ref(false)
 const updateLogs = ref([])
 const updateResult = ref(null)
@@ -851,6 +925,17 @@ async function loadClaudeVersion() {
     if (res.ok) claudeInfo.value = await res.json()
   } catch { ElMessage.error('获取版本信息失败') }
   finally { loadingClaudeInfo.value = false }
+}
+
+async function testModel() {
+  testingModel.value = true
+  modelHealth.value = null
+  try {
+    const res = await fetch(`${API_BASE}/claude/test?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) modelHealth.value = await res.json()
+    else ElMessage.error('测试请求失败')
+  } catch { ElMessage.error('测试请求失败') }
+  finally { testingModel.value = false }
 }
 
 function startUpdate() {

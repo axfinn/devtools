@@ -714,10 +714,12 @@ func main() {
 			autodev.GET("/tasks/:id/file", autoDevHandler.GetFile)
 			autodev.GET("/tasks/:id/logs", autoDevHandler.GetLogs)
 			autodev.GET("/tasks/:id/download", autoDevHandler.Download)
+			autodev.GET("/tasks/:id/site/*filepath", autoDevHandler.GetSite)
 			autodev.POST("/tasks/:id/stop", autoDevHandler.StopTask)
 			autodev.DELETE("/tasks/:id", autoDevHandler.DeleteTask)
 			// Claude CLI 版本管理
 			autodev.GET("/claude/version", autoDevHandler.GetClaudeVersion)
+			autodev.GET("/claude/test", autoDevHandler.TestModel)
 			autodev.GET("/claude/update/stream", autoDevHandler.UpdateClaude)
 		}
 
