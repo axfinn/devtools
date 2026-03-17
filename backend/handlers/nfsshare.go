@@ -478,16 +478,16 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 	// 读取目录内容，统一转为 FileEntry
 	var result []FileEntry
 	if isSMB {
-		smbPath := pp.relPath
-		if smbPath == "." {
-			smbPath = ""
-		}
+		smbPath := pp.relPath // 保持 "."，go-smb2 用 "." 读根目录，不能传空字符串
 		infos, err2 := pp.ms.smb.ReadDir(smbPath)
 		if err2 != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取目录: " + err2.Error()})
 			return
 		}
 		relBase := smbPath
+		if relBase == "." {
+			relBase = ""
+		}
 		result = make([]FileEntry, 0, len(infos))
 		for _, info := range infos {
 			var entryPath string
