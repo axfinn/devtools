@@ -163,6 +163,14 @@
                     <el-option :value="365" label="1 年" />
                   </el-select>
                 </el-form-item>
+                <el-form-item label="访问密码">
+                  <el-input
+                    v-model="createForm.password"
+                    type="password"
+                    placeholder="留空则无需密码"
+                    show-password
+                  />
+                </el-form-item>
                 <el-form-item>
                   <el-button
                     type="primary"
@@ -424,7 +432,8 @@ const createForm = reactive({
   filePath: '',
   name: '',
   maxViews: 5,
-  expiresDays: 7
+  expiresDays: 7,
+  password: ''
 })
 const createLoading = ref(false)
 
@@ -586,7 +595,8 @@ async function createShare() {
         name: createForm.name,
         file_path: createForm.filePath,
         max_views: createForm.maxViews,
-        expires_days: createForm.expiresDays
+        expires_days: createForm.expiresDays,
+        password: createForm.password || ''
       })
     })
     const data = await res.json()

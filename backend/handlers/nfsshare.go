@@ -18,6 +18,7 @@ import (
 
 	"devtools/config"
 	"devtools/models"
+	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -298,6 +299,22 @@ func (h *NFSShareHandler) verifyAdmin(password string) bool {
 	return h.cfg.AdminPassword != "" && password == h.cfg.AdminPassword
 }
 
+// checkSharePassword 校验分享访问密码，通过返回 true；未通过时自动写 403 响应
+func checkSharePassword(c *gin.Context, share *models.NFSShare, password string) bool {
+	if share.Password == "" {
+		return true
+	}
+	if password == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "该分享需要密码", "need_password": true})
+		return false
+	}
+	if !utils.VerifyPassword(password, share.Password) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "密码错误"})
+		return false
+	}
+	return true
+}
+
 func (h *NFSShareHandler) checkEnabled(c *gin.Context) bool {
 	if !h.cfg.Enabled {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "NFS/SMB 分享功能未启用，请在 config.yaml 中配置 nfs_share.enabled: true"})
@@ -509,10 +526,7 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 			}
 			mt := ""
 			if !info.IsDir() {
-				mt = mime.TypeByExtension(filepath.Ext(info.Name()))
-				if mt == "" {
-					mt = "application/octet-stream"
-				}
+				mt = detectMimeType(info.Name())
 			}
 			result = append(result, FileEntry{
 				Name:     info.Name(),
@@ -547,10 +561,7 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 			}
 			mt := ""
 			if !e.IsDir() {
-				mt = mime.TypeByExtension(filepath.Ext(e.Name()))
-				if mt == "" {
-					mt = "application/octet-stream"
-				}
+				mt = detectMimeType(e.Name())
 			}
 			result = append(result, FileEntry{
 				Name:     e.Name(),
@@ -565,6 +576,41 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"path": path, "entries": result})
 }
 
+// -------- MIME 类型检测 --------
+
+// videoExtensions 常见视频文件扩展名到 MIME 类型的映射
+var videoExtensions = map[string]string{
+	".mp4":  "video/mp4",
+	".m4v":  "video/mp4",
+	".mkv":  "video/x-matroska",
+	".avi":  "video/x-msvideo",
+	".mov":  "video/quicktime",
+	".qt":   "video/quicktime",
+	".webm": "video/webm",
+	".flv":  "video/x-flv",
+	".wmv":  "video/x-ms-wmv",
+	".ts":   "video/mp2t",
+	".ogv":  "video/ogg",
+	".3gp":  "video/3gpp",
+	".3g2":  "video/3gpp2",
+}
+
+// detectMimeType 根据文件扩展名检测 MIME 类型，对常见视频格式有可靠的回退
+func detectMimeType(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if mt := mime.TypeByExtension(ext); mt != "" && mt != "application/octet-stream" {
+		return mt
+	}
+	if mt, ok := videoExtensions[ext]; ok {
+		return mt
+	}
+	mt := mime.TypeByExtension(ext)
+	if mt == "" {
+		return "application/octet-stream"
+	}
+	return mt
+}
+
 // -------- 创建分享 --------
 
 // CreateNFSShareRequest 创建分享请求
@@ -574,6 +620,7 @@ type CreateNFSShareRequest struct {
 	FilePath      string `json:"file_path" binding:"required"`
 	MaxViews      int    `json:"max_views" binding:"required,min=1"`
 	ExpiresDays   int    `json:"expires_days"`
+	Password      string `json:"password"` // 可选，访问密码
 }
 
 // Create 创建分享（超管）
@@ -627,10 +674,7 @@ func (h *NFSShareHandler) Create(c *gin.Context) {
 		return
 	}
 
-	mimeType := mime.TypeByExtension(filepath.Ext(req.FilePath))
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	}
+	mimeType := detectMimeType(req.FilePath)
 
 	var expiresAt *time.Time
 	if req.ExpiresDays > 0 {
@@ -638,12 +682,25 @@ func (h *NFSShareHandler) Create(c *gin.Context) {
 		expiresAt = &t
 	}
 
-	share, err := h.db.CreateNFSShare(req.Name, req.FilePath, mimeType, fileSize, req.MaxViews, expiresAt, c.ClientIP())
+	hashedPwd := ""
+	if req.Password != "" {
+		hashedPwd, err = utils.HashPassword(req.Password)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "密码处理失败"})
+			return
+		}
+	}
+
+	share, err := h.db.CreateNFSShare(req.Name, req.FilePath, mimeType, hashedPwd, fileSize, req.MaxViews, expiresAt, c.ClientIP())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusCreated, share)
+	c.JSON(http.StatusCreated, gin.H{
+		"id":           share.ID,
+		"name":         share.Name,
+		"has_password": share.Password != "",
+	})
 }
 
 // -------- 公开访问 --------
@@ -669,6 +726,9 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 	if share.MaxViews > 0 && share.Views >= share.MaxViews {
 		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "denied_views", 0)
 		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("分享次数已用完（最大 %d 次）", share.MaxViews)})
+		return
+	}
+	if !checkSharePassword(c, share, c.Query("password")) {
 		return
 	}
 
@@ -747,6 +807,7 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 		"exhausted":              share.MaxViews > 0 && share.Views >= share.MaxViews,
 		"is_video":               isVideo,
 		"disable_video_download": h.cfg.DisableVideoDownload && isVideo,
+		"has_password":           share.Password != "",
 	})
 }
 
@@ -905,6 +966,9 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 	}
 	if share.MaxViews > 0 && share.Views >= share.MaxViews {
 		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("分享次数已用完（最大 %d 次）", share.MaxViews)})
+		return
+	}
+	if !checkSharePassword(c, share, c.Query("password")) {
 		return
 	}
 	if !strings.HasPrefix(share.MimeType, "video/") {
@@ -1140,6 +1204,9 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	}
 	if share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "分享已过期"})
+		return
+	}
+	if !checkSharePassword(c, share, c.Query("password")) {
 		return
 	}
 

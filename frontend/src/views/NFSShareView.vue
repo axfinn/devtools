@@ -1,5 +1,26 @@
 <template>
   <div class="nfs-share-page" :class="{ 'with-chat': watchConnected }">
+    <!-- 密码验证弹窗 -->
+    <el-dialog v-model="passwordDialogVisible" title="访问密码" width="340px" :show-close="false" :close-on-click-modal="false">
+      <el-form @submit.prevent="confirmPassword">
+        <p style="color:#999;font-size:13px;margin:0 0 16px">该分享需要密码才能访问</p>
+        <el-form-item>
+          <el-input
+            v-model="inputPassword"
+            type="password"
+            placeholder="输入访问密码"
+            show-password
+            autofocus
+            @keydown.enter.prevent="confirmPassword"
+          />
+        </el-form-item>
+        <p v-if="passwordError" style="color:#f56c6c;font-size:12px;margin:4px 0 0">{{ passwordError }}</p>
+      </el-form>
+      <template #footer>
+        <el-button type="primary" :loading="passwordChecking" @click="confirmPassword">确认</el-button>
+      </template>
+    </el-dialog>
+
     <!-- Loading -->
     <div v-if="loading" class="status-container">
       <el-icon class="is-loading" style="font-size:36px"><Loading /></el-icon>
@@ -170,6 +191,13 @@ const videoEl = ref(null)
 const playerWrapper = ref(null)
 const danmakuLayer = ref(null)
 
+// ---- 密码 ----
+const password = ref('')
+const passwordDialogVisible = ref(false)
+const inputPassword = ref('')
+const passwordError = ref('')
+const passwordChecking = ref(false)
+
 // ---- Watch Party ----
 const watchConnected = ref(false)
 const joinDialogVisible = ref(false)
@@ -189,8 +217,14 @@ let syncLock = false // 防止收到 sync 时触发重复 sync
 let hls = null
 let pollTimer = null
 
-const downloadUrl = computed(() => `/api/nfsshare/${id}`)
-const hlsUrl = computed(() => `/api/nfsshare/${id}/hls/index.m3u8`)
+const downloadUrl = computed(() => {
+  const base = `/api/nfsshare/${id}`
+  return password.value ? `${base}?password=${encodeURIComponent(password.value)}` : base
+})
+const hlsUrl = computed(() => {
+  const base = `/api/nfsshare/${id}/hls/index.m3u8`
+  return password.value ? `${base}?password=${encodeURIComponent(password.value)}` : base
+})
 
 const remainingTag = computed(() => {
   const r = info.value.remaining_views
@@ -220,13 +254,48 @@ async function loadInfo() {
     if (data.expired) { error.value = '该分享已过期'; return }
     if (data.exhausted) { error.value = '该分享次数已用完'; return }
     info.value = data
-    if (data.is_video) {
+    if (data.has_password) {
+      // 需要密码才能继续，弹出密码框
+      passwordDialogVisible.value = true
+    } else if (data.is_video) {
       await initPlayer()
     }
   } catch {
     error.value = '加载失败，请检查网络'
   } finally {
     loading.value = false
+  }
+}
+
+// ---- 密码验证 ----
+async function confirmPassword() {
+  const pwd = inputPassword.value.trim()
+  if (!pwd) {
+    passwordError.value = '请输入密码'
+    return
+  }
+  passwordChecking.value = true
+  passwordError.value = ''
+  try {
+    // 用 HLS 或 Access 接口试探密码是否正确（head 请求不消耗次数）
+    const testUrl = info.value.is_video
+      ? `/api/nfsshare/${id}/hls/index.m3u8?password=${encodeURIComponent(pwd)}`
+      : `/api/nfsshare/${id}?password=${encodeURIComponent(pwd)}`
+    const res = await fetch(testUrl, { method: 'HEAD' })
+    if (res.status === 401 || res.status === 403) {
+      passwordError.value = '密码错误，请重试'
+      return
+    }
+    // 密码正确
+    password.value = pwd
+    passwordDialogVisible.value = false
+    if (info.value.is_video) {
+      await initPlayer()
+    }
+  } catch {
+    passwordError.value = '验证失败，请重试'
+  } finally {
+    passwordChecking.value = false
   }
 }
 
@@ -319,6 +388,7 @@ function connectWatch(nickname, adminPwd) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   let url = `${proto}://${location.host}/api/nfsshare/${id}/watch/ws?nickname=${encodeURIComponent(nickname)}`
   if (adminPwd) url += `&admin_password=${encodeURIComponent(adminPwd)}`
+  if (password.value) url += `&password=${encodeURIComponent(password.value)}`
   ws = new WebSocket(url)
   ws.onopen = () => {
     watchConnected.value = true
@@ -668,10 +738,114 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
+/* ===== 手机端适配 ===== */
 @media (max-width: 768px) {
-  .content-layout { flex-direction: column; height: auto; }
-  .chat-panel { width: 100%; height: 40vh; border-left: none; border-top: 1px solid #2a2a2a; }
-  .main-area { padding: 10px 8px; }
-  .video-title { font-size: 15px; }
+  /* 布局：纵向堆叠 */
+  .content-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .main-area {
+    padding: 8px;
+    overflow-y: visible;
+  }
+
+  /* 视频区域撑满宽度 */
+  .video-area {
+    gap: 8px;
+    max-width: 100%;
+  }
+
+  .video-header {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .video-title {
+    font-size: 14px;
+  }
+
+  .video-meta {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* 播放器 16:9 自适应 */
+  .player-wrapper {
+    border-radius: 4px;
+  }
+
+  /* 操作按钮适当缩小 */
+  .video-actions {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* 聊天面板放在视频下方，高度适中 */
+  .chat-panel {
+    width: 100%;
+    height: 45vh;
+    min-height: 220px;
+    border-left: none;
+    border-top: 1px solid #2a2a2a;
+    /* 避免高度撑满整屏 */
+    max-height: 50vh;
+  }
+
+  /* 下载页内边距减小 */
+  .download-area {
+    padding: 30px 12px;
+    gap: 14px;
+  }
+
+  .download-area h2 {
+    font-size: 16px;
+  }
+
+  .file-meta {
+    font-size: 13px;
+    gap: 8px;
+  }
+
+  /* 弹幕字体稍小 */
+  :global(.danmaku-item) {
+    font-size: 14px;
+  }
+}
+
+/* 超小屏（≤480px） */
+@media (max-width: 480px) {
+  .main-area {
+    padding: 4px;
+  }
+
+  .video-title {
+    font-size: 13px;
+  }
+
+  .chat-panel {
+    height: 40vh;
+    min-height: 180px;
+  }
+
+  .chat-header {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .chat-messages {
+    padding: 6px 8px;
+  }
+
+  .chat-input-area {
+    padding: 6px 8px;
+  }
+
+  .danmaku-input-area {
+    padding: 4px 8px 8px;
+  }
 }
 </style>
