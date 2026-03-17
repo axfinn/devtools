@@ -717,6 +717,9 @@ func main() {
 			autodev.GET("/tasks/:id/site/*filepath", autoDevHandler.GetSite)
 			autodev.POST("/tasks/:id/stop", autoDevHandler.StopTask)
 			autodev.DELETE("/tasks/:id", autoDevHandler.DeleteTask)
+			// SSH key for GitHub access
+			autodev.GET("/sshkey", autoDevHandler.GetSSHKey)
+			autodev.POST("/sshkey/regenerate", autoDevHandler.RegenerateSSHKey)
 			// Claude CLI 版本管理
 			autodev.GET("/claude/version", autoDevHandler.GetClaudeVersion)
 			autodev.GET("/claude/test", autoDevHandler.TestModel)

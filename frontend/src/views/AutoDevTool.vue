@@ -523,6 +523,65 @@
             </el-result>
           </div>
         </el-card>
+
+        <!-- SSH Key Card -->
+        <el-card shadow="never">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <el-icon class="text-green-500"><Key /></el-icon>
+                <span class="font-semibold text-sm">GitHub SSH 密钥</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <el-button size="small" :loading="loadingSSHKey" @click="loadSSHKey" circle plain>
+                  <el-icon><Refresh /></el-icon>
+                </el-button>
+                <el-popconfirm title="重新生成将使旧密钥失效，需重新添加到 GitHub，确认吗？" confirm-button-text="确认重新生成" cancel-button-text="取消" @confirm="regenerateSSHKey">
+                  <template #reference>
+                    <el-button size="small" type="danger" plain :loading="regeneratingSSHKey">
+                      <el-icon><RefreshRight /></el-icon> 重新生成
+                    </el-button>
+                  </template>
+                </el-popconfirm>
+              </div>
+            </div>
+          </template>
+          <div v-if="loadingSSHKey || regeneratingSSHKey" class="text-center py-4">
+            <el-icon class="is-loading text-green-500 text-xl"><Loading /></el-icon>
+            <p class="text-xs text-gray-400 mt-2">{{ regeneratingSSHKey ? '正在重新生成密钥…' : '正在获取密钥…' }}</p>
+          </div>
+          <div v-else-if="sshKeyInfo" class="space-y-3">
+            <div class="flex items-center justify-between py-1 border-b">
+              <span class="text-sm text-gray-500">类型</span>
+              <el-tag type="success" size="small" effect="dark">{{ sshKeyInfo.key_type || 'ed25519' }}</el-tag>
+            </div>
+            <div class="py-1.5">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-gray-500">公钥（添加到 GitHub）</span>
+                <el-button size="small" type="primary" plain @click="copySSHKey">
+                  <el-icon><CopyDocument /></el-icon> 复制
+                </el-button>
+              </div>
+              <div class="relative">
+                <pre class="text-xs bg-gray-900 text-green-300 p-3 rounded overflow-x-auto whitespace-pre-wrap break-all font-mono leading-5 select-all">{{ sshKeyInfo.public_key }}</pre>
+              </div>
+            </div>
+            <el-alert type="info" :closable="false" show-icon>
+              <template #default>
+                <p class="text-xs leading-5">
+                  将上方公钥添加到
+                  <a href="https://github.com/settings/keys" target="_blank" class="text-blue-500 underline">GitHub → Settings → SSH keys</a>
+                  后，autodev 任务即可通过 SSH 访问你的私有仓库。
+                  <br/>密钥保存在数据 Volume 中，重建容器后无需重新配置。
+                </p>
+              </template>
+            </el-alert>
+          </div>
+          <div v-else class="text-center text-gray-400 py-4 text-sm">
+            <p>点击刷新按钮获取 SSH 公钥</p>
+            <p class="text-xs mt-1 text-gray-300">首次获取时会自动生成密钥对</p>
+          </div>
+        </el-card>
       </div>
     </el-drawer>
 
@@ -539,7 +598,7 @@ import {
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
   FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
   SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled,
-  Sunny, MoonNight
+  Sunny, MoonNight, Key
 } from '@element-plus/icons-vue'
 
 // ---- markdown-it setup ----
@@ -1054,7 +1113,47 @@ const updateLogs = ref([])
 const updateResult = ref(null)
 const updateLogEl = ref(null)
 
-function onClaudeDrawerOpen() { if (!claudeInfo.value) loadClaudeVersion() }
+// ---- SSH Key ----
+const sshKeyInfo = ref(null)
+const loadingSSHKey = ref(false)
+const regeneratingSSHKey = ref(false)
+
+async function loadSSHKey() {
+  loadingSSHKey.value = true
+  try {
+    const res = await fetch(`${API_BASE}/sshkey?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) sshKeyInfo.value = await res.json()
+    else ElMessage.error('获取 SSH 密钥失败')
+  } catch { ElMessage.error('网络错误') } finally { loadingSSHKey.value = false }
+}
+
+async function regenerateSSHKey() {
+  regeneratingSSHKey.value = true
+  try {
+    const res = await fetch(`${API_BASE}/sshkey/regenerate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: savedPassword })
+    })
+    if (res.ok) {
+      sshKeyInfo.value = await res.json()
+      ElMessage.success('密钥已重新生成，请将新公钥添加到 GitHub')
+    } else { ElMessage.error('重新生成失败') }
+  } catch { ElMessage.error('网络错误') } finally { regeneratingSSHKey.value = false }
+}
+
+async function copySSHKey() {
+  if (!sshKeyInfo.value?.public_key) return
+  try {
+    await navigator.clipboard.writeText(sshKeyInfo.value.public_key)
+    ElMessage.success('公钥已复制到剪贴板')
+  } catch { ElMessage.error('复制失败，请手动选择复制') }
+}
+
+function onClaudeDrawerOpen() {
+  if (!claudeInfo.value) loadClaudeVersion()
+  if (!sshKeyInfo.value) loadSSHKey()
+}
 
 async function loadClaudeVersion() {
   loadingClaudeInfo.value = true

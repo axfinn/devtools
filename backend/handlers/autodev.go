@@ -486,6 +486,17 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 	}
 	env = append(env, "HOME="+autodevHome)
 	env = append(env, "UV_CACHE_DIR=/tmp/uv-cache-autodev")
+	// Inject SSH key for git operations (e.g. cloning private GitHub repos)
+	if gitSSHCmd := h.gitSSHCommand(); gitSSHCmd != "" {
+		// Filter out any existing GIT_SSH_COMMAND
+		filtered := env[:0]
+		for _, e := range env {
+			if !strings.HasPrefix(e, "GIT_SSH_COMMAND=") {
+				filtered = append(filtered, e)
+			}
+		}
+		env = append(filtered, "GIT_SSH_COMMAND="+gitSSHCmd)
+	}
 	cmd.Env = env
 
 	h.mu.Lock()
@@ -963,4 +974,130 @@ func (h *AutoDevHandler) checkPasswordQuery(c *gin.Context) bool {
 		return false
 	}
 	return true
+}
+
+// ─── SSH Key Management ────────────────────────────────────────────────────
+
+// ensureSSHKey generates an ed25519 SSH keypair (if not yet created) inside
+// the persistent data volume at <dataDir>/ssh/ and returns the public key.
+// The private key is chowned to the autodev user so it can be read during tasks.
+func (h *AutoDevHandler) ensureSSHKey() (pubKey string, err error) {
+	sshDir := filepath.Join(h.dataDir, "ssh")
+	keyPath := filepath.Join(sshDir, "id_ed25519")
+	pubKeyPath := keyPath + ".pub"
+	knownHostsPath := filepath.Join(sshDir, "known_hosts")
+
+	if err = os.MkdirAll(sshDir, 0700); err != nil {
+		return "", fmt.Errorf("创建 SSH 目录失败: %v", err)
+	}
+
+	if _, statErr := os.Stat(keyPath); os.IsNotExist(statErr) {
+		// Generate ed25519 keypair
+		out, cmdErr := exec.Command(
+			"ssh-keygen", "-t", "ed25519",
+			"-f", keyPath,
+			"-N", "",
+			"-C", "autodev@devtools",
+		).CombinedOutput()
+		if cmdErr != nil {
+			return "", fmt.Errorf("生成 SSH 密钥失败: %v\n%s", cmdErr, out)
+		}
+		_ = os.Chmod(keyPath, 0600)
+		_ = os.Chmod(pubKeyPath, 0644)
+
+		// Pre-populate GitHub host keys so git doesn't prompt
+		if scanOut, scanErr := exec.Command("ssh-keyscan", "-H", "github.com").Output(); scanErr == nil && len(scanOut) > 0 {
+			_ = os.WriteFile(knownHostsPath, scanOut, 0644)
+		}
+	}
+
+	// Always ensure the autodev user (uid 1001) owns the key files so that
+	// tasks running as that user can actually read the private key.
+	_ = os.Chown(sshDir, autodevUID, autodevGID)
+	_ = os.Chown(keyPath, autodevUID, autodevGID)
+	_ = os.Chown(pubKeyPath, autodevUID, autodevGID)
+	if _, statErr := os.Stat(knownHostsPath); statErr == nil {
+		_ = os.Chown(knownHostsPath, autodevUID, autodevGID)
+	}
+
+	raw, err := os.ReadFile(pubKeyPath)
+	if err != nil {
+		return "", fmt.Errorf("读取公钥失败: %v", err)
+	}
+	return strings.TrimSpace(string(raw)), nil
+}
+
+// gitSSHCommand returns a GIT_SSH_COMMAND value that forces git to use the
+// persistent autodev SSH key. Returns "" if the key is not available yet
+// (e.g. first startup before any call to GetSSHKey).
+func (h *AutoDevHandler) gitSSHCommand() string {
+	sshDir := filepath.Join(h.dataDir, "ssh")
+	keyPath := filepath.Join(sshDir, "id_ed25519")
+	knownHostsPath := filepath.Join(sshDir, "known_hosts")
+
+	if _, err := os.Stat(keyPath); err != nil {
+		return ""
+	}
+	base := fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new", keyPath)
+	if _, err := os.Stat(knownHostsPath); err == nil {
+		base += fmt.Sprintf(" -o UserKnownHostsFile=%s", knownHostsPath)
+	}
+	return base
+}
+
+// GetSSHKey handles GET /api/autodev/sshkey — returns (and generates if needed)
+// the public SSH key that should be added to GitHub as a deploy key.
+func (h *AutoDevHandler) GetSSHKey(c *gin.Context) {
+	if !h.checkPasswordQuery(c) {
+		return
+	}
+	pubKey, err := h.ensureSSHKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	keyPath := filepath.Join(h.dataDir, "ssh", "id_ed25519")
+	c.JSON(http.StatusOK, gin.H{
+		"public_key": pubKey,
+		"key_type":   "ed25519",
+		"key_path":   keyPath,
+		"comment":    "autodev@devtools",
+		"github_tip": "将上面的 public_key 添加到 GitHub → Settings → SSH and GPG keys",
+	})
+}
+
+// RegenerateSSHKey handles POST /api/autodev/sshkey/regenerate — deletes the
+// existing keypair and generates a new one.
+func (h *AutoDevHandler) RegenerateSSHKey(c *gin.Context) {
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	if h.adminPassword == "" || req.Password != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return
+	}
+
+	sshDir := filepath.Join(h.dataDir, "ssh")
+	keyPath := filepath.Join(sshDir, "id_ed25519")
+
+	// Remove old keys
+	_ = os.Remove(keyPath)
+	_ = os.Remove(keyPath + ".pub")
+	_ = os.Remove(filepath.Join(sshDir, "known_hosts"))
+
+	pubKey, err := h.ensureSSHKey()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"public_key": pubKey,
+		"key_type":   "ed25519",
+		"regenerated": true,
+		"github_tip": "新密钥已生成，请将 public_key 重新添加到 GitHub → Settings → SSH and GPG keys",
+	})
 }
