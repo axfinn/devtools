@@ -87,8 +87,14 @@
                 {{ watchConnected ? '退出一起看' : '一起看' }}
               </el-button>
 
-              <!-- 清晰度选择器（仅非原生视频显示） -->
-              <template v-if="!isNativeVideo && qualityList.length > 0">
+              <!-- 播放模式切换（原生视频且 HLS 可用时显示） -->
+              <el-button-group v-if="isNativeVideo && qualityList.length > 0" size="small">
+                <el-button :type="playMode === 'hls' ? 'primary' : ''" @click="switchMode('hls')">HLS</el-button>
+                <el-button :type="playMode === 'native' ? 'primary' : ''" @click="switchMode('native')">原生</el-button>
+              </el-button-group>
+
+              <!-- 清晰度选择器（HLS 模式且有清晰度时显示） -->
+              <template v-if="playMode === 'hls' && qualityList.length > 0">
                 <el-select
                   v-model="currentQuality"
                   size="small"
@@ -234,6 +240,7 @@ let syncLock = false // 防止收到 sync 时触发重复 sync
 // ---- 清晰度 ----
 const qualityList = ref([])   // [{ name, height, ready }]
 const currentQuality = ref('')
+const playMode = ref('hls')   // 'hls' | 'native'，默认 HLS
 
 // ---- HLS ----
 let hls = null
@@ -350,21 +357,43 @@ async function loadQualities() {
 
 // ---- 视频播放器 ----
 async function initPlayer() {
-  if (isNativeVideo.value) {
-    startNative()
-  } else {
-    await loadQualities()
-    if (!currentQuality.value) {
-      // ffprobe 不可用或接口失败，降级到原生播放或报错
-      if (info.value.is_native_video) {
-        startNative()
-      } else {
-        error.value = '无法获取视频清晰度信息，请稍后重试'
-      }
-      return
-    }
+  // 统一先尝试 HLS（默认），失败再降级
+  await loadQualities()
+  if (qualityList.value.length > 0) {
+    playMode.value = 'hls'
     transcoding.value = true
     startHLS()
+  } else if (isNativeVideo.value) {
+    // HLS 不可用（ffmpeg 缺失等），原生格式可以降级直播
+    playMode.value = 'native'
+    startNative()
+  } else {
+    error.value = '无法获取视频清晰度信息，请稍后重试'
+  }
+}
+
+async function switchMode(mode) {
+  if (mode === playMode.value) return
+  const savedTime = videoEl.value?.currentTime || 0
+  playMode.value = mode
+  if (hls) { hls.destroy(); hls = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (mode === 'hls') {
+    transcoding.value = true
+    startHLS()
+    if (hls) {
+      hls.once(Hls.Events.MANIFEST_PARSED, () => {
+        if (savedTime > 0 && videoEl.value) videoEl.value.currentTime = savedTime
+      })
+    }
+  } else {
+    transcoding.value = false
+    startNative()
+    if (savedTime > 0 && videoEl.value) {
+      videoEl.value.addEventListener('loadedmetadata', () => {
+        videoEl.value.currentTime = savedTime
+      }, { once: true })
+    }
   }
 }
 
