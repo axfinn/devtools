@@ -71,13 +71,18 @@
           <el-input
             v-model="newTask.description"
             type="textarea"
-            :rows="3"
-            placeholder="描述你的任务，例如：写一份 Redis 集群最佳实践文档"
+            :rows="4"
+            :placeholder="taskPlaceholder"
             maxlength="500"
             show-word-limit
             :disabled="!!resumeTaskId"
             class="mb-3"
           />
+          <!-- Output location hint -->
+          <div class="output-hint">
+            <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
+            <span>结果将输出到 <code class="hint-code">RESULT.md</code>，代码文件保存在任务目录根路径，过程文档在 <code class="hint-code">process/</code></span>
+          </div>
           <div v-if="resumeTaskId" class="flex items-center gap-2 mb-3">
             <span class="text-xs text-slate-400 shrink-0">从阶段</span>
             <el-input-number v-model="newTask.resumeFrom" :min="1" :max="6" size="small" class="flex-1" />
@@ -301,32 +306,52 @@
                 <p class="text-slate-400">{{ selectedTask.status === 'running' ? '文件生成后自动显示…' : '暂无文件' }}</p>
               </div>
               <div v-else class="files-layout">
-                <!-- File Tree -->
+                <!-- Grouped File Tree -->
                 <div class="file-tree">
-                  <div
-                    v-for="file in taskFiles"
-                    :key="file.path"
-                    class="file-item"
-                    :class="{ 'file-item--active': activeFilePath === file.path }"
-                    @click="loadFile(file.path)"
-                    :title="file.path"
-                  >
-                    <span class="file-icon">{{ fileIcon(file.name) }}</span>
-                    <span class="file-name">{{ file.name }}</span>
-                  </div>
+                  <template v-for="group in fileGroups" :key="group.category">
+                    <div class="file-group-header">
+                      <span class="file-group-icon">{{ group.icon }}</span>
+                      <span class="file-group-label">{{ group.label }}</span>
+                      <span class="file-group-count">{{ group.files.length }}</span>
+                    </div>
+                    <div
+                      v-for="file in group.files"
+                      :key="file.path"
+                      class="file-item"
+                      :class="{ 'file-item--active': activeFilePath === file.path }"
+                      @click="loadFile(file.path)"
+                      :title="file.path"
+                    >
+                      <span class="file-icon">{{ fileIcon(file.name) }}</span>
+                      <div class="file-info">
+                        <span class="file-name">{{ file.name }}</span>
+                        <span class="file-path-hint" v-if="file.path.includes('/')">{{ file.path.substring(0, file.path.lastIndexOf('/')) }}/</span>
+                      </div>
+                    </div>
+                  </template>
                 </div>
                 <!-- File Content -->
                 <div class="file-content-area">
                   <div v-if="!activeFilePath" class="empty-content">
-                    <p class="text-slate-500 text-sm">点击左侧文件查看内容</p>
+                    <div class="text-center">
+                      <p class="text-slate-500 text-sm mb-3">点击左侧文件查看内容</p>
+                      <div class="text-xs text-slate-600 space-y-1 text-left inline-block">
+                        <p>📄 <strong class="text-slate-500">RESULT.md</strong> — 任务最终结果</p>
+                        <p>💻 <strong class="text-slate-500">项目代码</strong> — autodev 生成的代码文件</p>
+                        <p>📋 <strong class="text-slate-500">process/</strong> — 各阶段过程文档</p>
+                      </div>
+                    </div>
                   </div>
                   <div v-else-if="loadingFile" class="empty-content">
                     <el-icon class="text-2xl text-purple-400 is-loading"><Loading /></el-icon>
                   </div>
                   <div v-else class="h-full flex flex-col">
                     <div class="result-toolbar">
-                      <span class="text-xs text-slate-500 font-mono">{{ activeFilePath }}</span>
-                      <div class="flex gap-2">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="file-category-badge" :class="`badge--${activeCategoryName}`">{{ activeCategoryLabel }}</span>
+                        <span class="text-xs text-slate-500 font-mono truncate">{{ activeFilePath }}</span>
+                      </div>
+                      <div class="flex gap-2 shrink-0">
                         <el-button v-if="activeFilePath?.endsWith('.md')" size="small" text class="!text-slate-400" @click="openFullscreenFile">
                           <el-icon><FullScreen /></el-icon>
                         </el-button>
@@ -508,7 +533,7 @@ import {
   Lock, MagicStick, VideoPlay, VideoPause, Refresh, RefreshRight,
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
   FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
-  SwitchButton, List, Check, FullScreen, CopyDocument
+  SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled
 } from '@element-plus/icons-vue'
 
 // ---- markdown-it setup ----
@@ -907,18 +932,69 @@ function miniPhaseClass(i, state) {
   return 'bg-slate-700'
 }
 
+// ---- file groups (computed from taskFiles by category) ----
+const FILE_GROUP_DEFS = [
+  { category: 'result',  icon: '📄', label: '结果文档' },
+  { category: 'code',    icon: '💻', label: '项目代码' },
+  { category: 'process', icon: '📋', label: '过程文档' },
+  { category: 'docs',    icon: '📚', label: '文档配置' },
+  { category: 'log',     icon: '📝', label: '执行日志' },
+  { category: 'state',   icon: '⚙️', label: '运行状态' },
+]
+
+const fileGroups = computed(() => {
+  const map = {}
+  for (const file of taskFiles.value) {
+    const cat = file.category || 'code'
+    if (!map[cat]) map[cat] = []
+    map[cat].push(file)
+  }
+  return FILE_GROUP_DEFS.filter(g => map[g.category]?.length).map(g => ({
+    ...g,
+    files: map[g.category],
+  }))
+})
+
+const activeCategoryName = computed(() => {
+  if (!activeFilePath.value) return ''
+  const f = taskFiles.value.find(f => f.path === activeFilePath.value)
+  return f?.category || 'code'
+})
+
+const activeCategoryLabel = computed(() => {
+  const def = FILE_GROUP_DEFS.find(g => g.category === activeCategoryName.value)
+  return def ? `${def.icon} ${def.label}` : ''
+})
+
+// Example task placeholders to guide output expectations
+const TASK_EXAMPLES = [
+  '用 C++ 写一个 hello world，结果放到 RESULT.md',
+  '写一份 Redis 集群最佳实践文档，保存到 RESULT.md',
+  '实现一个 Python 快速排序，代码和说明都输出到 RESULT.md',
+  '分析 Go 并发模型并写教程，保存到 RESULT.md',
+]
+const taskPlaceholder = computed(() => {
+  const idx = Math.floor(Date.now() / 10000) % TASK_EXAMPLES.length
+  return `例如：${TASK_EXAMPLES[idx]}`
+})
+
 // ---- file helpers ----
 function fileIcon(name) {
-  if (name.endsWith('.md')) return '📄'
-  if (name.endsWith('.json')) return '📋'
-  if (name.endsWith('.js') || name.endsWith('.ts')) return '📜'
-  if (name.endsWith('.py')) return '🐍'
-  if (name.endsWith('.go')) return '🔵'
-  if (name.endsWith('.html')) return '🌐'
-  if (name.endsWith('.css')) return '🎨'
-  if (name.endsWith('.sh')) return '⚙️'
-  if (name.endsWith('.log')) return '📝'
-  return '📄'
+  const ext = name.split('.').pop()?.toLowerCase()
+  const map = {
+    md: '📄', txt: '📄',
+    json: '📋', yaml: '📋', yml: '📋', toml: '📋',
+    js: '📜', ts: '📜', jsx: '📜', tsx: '📜',
+    py: '🐍', rb: '💎', php: '🐘',
+    go: '🔵', rs: '🦀', java: '☕',
+    c: '⚡', cpp: '⚡', h: '⚡', hpp: '⚡',
+    sh: '⚙️', bash: '⚙️', zsh: '⚙️',
+    html: '🌐', css: '🎨', scss: '🎨',
+    log: '📝',
+    sql: '🗄️', db: '🗄️',
+    png: '🖼️', jpg: '🖼️', svg: '🖼️',
+  }
+  return map[ext] || '📄'
 }
 
 // ---- helpers ----
@@ -1453,8 +1529,64 @@ onUnmounted(() => clearInterval(refreshTimer))
 .file-item--active { background: #1e1b4b !important; }
 
 .file-icon { font-size: 13px; flex-shrink: 0; }
-.file-name { font-size: 12px; color: #94a3b8; truncate: true; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-info { display: flex; flex-direction: column; min-width: 0; }
+.file-name { font-size: 12px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-path-hint { font-size: 10px; color: #475569; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-item--active .file-name { color: #a78bfa; font-weight: 500; }
+.file-item--active .file-path-hint { color: #7c3aed; }
+
+/* File group headers */
+.file-group-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 8px 4px;
+  margin-top: 4px;
+  border-top: 1px solid #1e293b;
+}
+.file-group-header:first-child { border-top: none; margin-top: 0; }
+.file-group-icon { font-size: 11px; }
+.file-group-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; flex: 1; }
+.file-group-count { font-size: 10px; background: #334155; color: #64748b; border-radius: 8px; padding: 0 5px; }
+
+/* Category badge in file content toolbar */
+.file-category-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.badge--result  { background: #1e1b4b; color: #a78bfa; }
+.badge--code    { background: #052e16; color: #4ade80; }
+.badge--process { background: #172554; color: #60a5fa; }
+.badge--log     { background: #1c1917; color: #a8a29e; }
+.badge--docs    { background: #1c1917; color: #fbbf24; }
+.badge--state   { background: #1c1917; color: #94a3b8; }
+
+/* Output hint in submit form */
+.output-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.5;
+}
+.hint-code {
+  background: #1e293b;
+  color: #a78bfa;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 11px;
+}
 
 .file-content-area {
   flex: 1;
