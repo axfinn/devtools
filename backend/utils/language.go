@@ -160,8 +160,11 @@ func DetectLanguage(content string) string {
 		scores["csharp"] += 2
 	}
 
-	// PHP
-	if phpTagPattern.MatchString(content) || phpVarPattern.MatchString(content) {
+	// PHP - 标签匹配优先级更高，因为 <?php 是 PHP 独有的标识
+	if phpTagPattern.MatchString(content) {
+		scores["php"] += 5 // 提高优先级
+	}
+	if phpVarPattern.MatchString(content) {
 		scores["php"] += 2
 	}
 

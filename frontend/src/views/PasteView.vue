@@ -160,10 +160,19 @@
               <audio :src="API_BASE + file.url" controls style="width: 100%; margin-top: 10px;"></audio>
             </div>
             <!-- PDF预览 -->
-            <div v-else-if="file.type === 'document' && file.url.endsWith('.pdf')" class="file-preview-doc">
+            <div v-else-if="file.type === 'document' && (file.url.endsWith('.pdf') || isPdfFile(file))" class="file-preview-doc">
               <el-icon :size="48"><Document /></el-icon>
               <span class="doc-label">PDF文档</span>
               <el-button size="small" type="primary" @click="viewPDF(file)">
+                <el-icon><View /></el-icon>
+                在线查看
+              </el-button>
+            </div>
+            <!-- 压缩包预览 -->
+            <div v-else-if="file.type === 'archive' || isArchiveFile(file)" class="file-preview-archive" @click="viewArchive(file)">
+              <el-icon :size="48"><Folder /></el-icon>
+              <span class="doc-label">压缩包</span>
+              <el-button size="small" type="primary">
                 <el-icon><View /></el-icon>
                 在线查看
               </el-button>
@@ -199,8 +208,13 @@
       </div>
 
       <!-- PDF预览弹窗 -->
-      <el-dialog v-model="showPDFPreview" title="PDF预览" width="90%" :close-on-click-modal="false" fullscreen>
-        <iframe v-if="pdfUrl" :src="pdfUrl" style="width: 100%; height: 80vh; border: none;"></iframe>
+      <el-dialog v-model="showPDFPreview" title="PDF预览" width="90%" :close-on-click-modal="false" fullscreen destroy-on-close>
+        <PdfViewer v-if="showPDFPreview" :url="pdfUrl" :filename="currentPdfFile?.original_name || currentPdfFile?.filename || 'document.pdf'" @download="downloadFile(currentPdfFile)" />
+      </el-dialog>
+
+      <!-- 压缩包预览弹窗 -->
+      <el-dialog v-model="showArchivePreview" :title="currentArchiveFile?.original_name || currentArchiveFile?.filename || '压缩包预览'" width="80%" :close-on-click-modal="false" destroy-on-close>
+        <ZipViewer v-if="showArchivePreview" :url="archiveUrl" :filename="currentArchiveFile?.original_name || currentArchiveFile?.filename || 'archive.zip'" @download="downloadFile(currentArchiveFile)" />
       </el-dialog>
 
       <!-- 代码文件预览弹窗 -->
@@ -290,6 +304,8 @@ import mark from 'markdown-it-mark'
 import taskLists from 'markdown-it-task-lists'
 import 'highlight.js/styles/github-dark.css'
 import { API_BASE } from '../api'
+import PdfViewer from '../components/PdfViewer.vue'
+import ZipViewer from '../components/ZipViewer.vue'
 
 // 初始化 markdown-it
 const md = new MarkdownIt({
@@ -324,6 +340,10 @@ const previewImage = ref(null)
 const previewIndex = ref(0)
 const showPDFPreview = ref(false)
 const pdfUrl = ref('')
+const currentPdfFile = ref(null)
+const showArchivePreview = ref(false)
+const archiveUrl = ref('')
+const currentArchiveFile = ref(null)
 const showVideoPreview = ref(false)
 const currentVideoFile = ref(null)
 
@@ -727,8 +747,28 @@ const getFileTypeLabel = (file) => {
 
 // 在线查看PDF
 const viewPDF = (file) => {
+  currentPdfFile.value = file
   pdfUrl.value = API_BASE + file.url
   showPDFPreview.value = true
+}
+
+// 判断是否为 PDF 文件
+const isPdfFile = (file) => {
+  const filename = (file.original_name || file.filename || '').toLowerCase()
+  return filename.endsWith('.pdf')
+}
+
+// 判断是否为压缩包文件
+const isArchiveFile = (file) => {
+  const filename = (file.original_name || file.filename || '').toLowerCase()
+  return filename.endsWith('.zip') || filename.endsWith('.rar') || filename.endsWith('.7z') || filename.endsWith('.tar') || filename.endsWith('.gz')
+}
+
+// 在线查看压缩包
+const viewArchive = (file) => {
+  currentArchiveFile.value = file
+  archiveUrl.value = API_BASE + file.url
+  showArchivePreview.value = true
 }
 
 onMounted(() => {
@@ -973,6 +1013,23 @@ onMounted(() => {
 .doc-label {
   color: var(--text-secondary);
   font-size: 14px;
+}
+
+.file-preview-archive {
+  width: 100%;
+  padding: 30px 20px;
+  background-color: #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #f39c12;
+  cursor: pointer;
+}
+
+.file-preview-archive:hover {
+  background-color: #2d2d2d;
 }
 
 .file-preview-other {

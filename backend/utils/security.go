@@ -6,6 +6,105 @@ import (
 	"strings"
 )
 
+// MagicBytesSignatures 文件魔数（Magic Bytes）签名表
+// 用于通过文件头部字节识别真实文件类型
+// 注意：顺序很重要，需要先匹配更长的签名
+var MagicBytesSignatures = []struct {
+	fileType  string
+	magic     []byte
+	extraCheck func([]byte) bool // 可选的额外检查函数
+}{
+	// 图片格式 - 需要更长的签名以避免冲突
+	{"avif", []byte{0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66}, nil}, // ftypavif (12 bytes)
+	{"webp", []byte{0x52, 0x49, 0x46, 0x46}, func(b []byte) bool { return len(b) >= 12 && string(b[8:12]) == "WEBP" }}, // RIFF....WEBP
+	{"png", []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, nil}, // 8 bytes PNG
+	{"tiff", []byte{0x49, 0x49, 0x2A, 0x00}, nil}, // Little endian TIFF
+	{"tiff", []byte{0x4D, 0x4D, 0x00, 0x2A}, nil}, // Big endian TIFF
+	{"gif", []byte{0x47, 0x49, 0x46, 0x38}, nil}, // GIF
+	{"bmp", []byte{0x42, 0x4D}, nil}, // BM
+	{"ico", []byte{0x00, 0x00, 0x01, 0x00}, nil},
+	{"jpg", []byte{0xFF, 0xD8, 0xFF}, nil}, // JPEG
+	{"jpeg", []byte{0xFF, 0xD8, 0xFF}, nil},
+
+	// 视频格式
+	{"webm", []byte{0x1A, 0x45, 0xDF, 0xA3}, nil}, // WebM
+	{"mkv", []byte{0x1A, 0x45, 0xDF, 0xA3}, nil}, // Matroska (same as webm)
+
+	// 音频格式
+	{"ogg", []byte{0x4F, 0x67, 0x67, 0x53}, nil}, // OggS
+	{"flac", []byte{0x66, 0x4C, 0x61, 0x43}, nil}, // fLaC
+	{"wav", []byte{0x52, 0x49, 0x46, 0x46}, func(b []byte) bool { return len(b) >= 12 && string(b[8:12]) == "WAVE" }}, // RIFF....WAVE
+	{"avi", []byte{0x52, 0x49, 0x46, 0x46}, func(b []byte) bool { return len(b) >= 12 && string(b[8:12]) == "AVI " }}, // RIFF....AVI
+	{"mp3", []byte{0xFF, 0xFB}, nil}, // MP3
+	{"mp3", []byte{0xFF, 0xF3}, nil}, // MP3
+	{"mp3", []byte{0xFF, 0xF1}, nil}, // AAC
+	{"aac", []byte{0xFF, 0xF1}, nil},
+
+	// 文档格式
+	{"pdf", []byte{0x25, 0x50, 0x44, 0x46}, nil}, // %PDF
+	{"doc", []byte{0xD0, 0xCF, 0x11, 0xE0}, nil}, // OLE Compound Document
+	{"xls", []byte{0xD0, 0xCF, 0x11, 0xE0}, nil},
+	{"ppt", []byte{0xD0, 0xCF, 0x11, 0xE0}, nil},
+
+	// Office Open XML (OOXML) - 实际是 ZIP 格式，需要更长的签名来区分
+	{"docx", []byte{0x50, 0x4B, 0x03, 0x04}, func(b []byte) bool { return len(b) >= 30 }}, // ZIP with docx content
+	{"xlsx", []byte{0x50, 0x4B, 0x03, 0x04}, func(b []byte) bool { return len(b) >= 30 }},
+	{"pptx", []byte{0x50, 0x4B, 0x03, 0x04}, func(b []byte) bool { return len(b) >= 30 }},
+
+	// 压缩包格式
+	{"zip", []byte{0x50, 0x4B, 0x03, 0x04}, nil}, // ZIP
+	{"rar", []byte{0x52, 0x61, 0x72, 0x21}, nil}, // Rar!
+	{"7z", []byte{0x37, 0x7A, 0xBC, 0xAF}, nil}, // 7zbc
+	{"tar", []byte{0x75, 0x73, 0x74, 0x61}, nil}, // ustar
+	{"gz", []byte{0x1F, 0x8B}, nil}, // gzip
+	{"bz2", []byte{0x42, 0x5A, 0x68}, nil}, // BZh
+	{"xz", []byte{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, nil},
+
+	// MP4 - 需要特殊处理，因为它可能以各种大小开头
+	{"mp4", []byte{0x00, 0x00, 0x00}, nil},
+
+	// 可执行文件 (危险) - 放在最后
+	{"exe", []byte{0x4D, 0x5A}, nil}, // MZ
+}
+
+// 允许的文件扩展名对应的魔数类型
+var extensionToMagicTypes = map[string][]string{
+	".jpg":  {"jpg", "jpeg"},
+	".jpeg": {"jpg", "jpeg"},
+	".png":  {"png"},
+	".gif":  {"gif"},
+	".webp": {"webp"},
+	".bmp":  {"bmp"},
+	".ico":  {"ico"},
+	".tiff": {"tiff"},
+	".avif": {"avif"},
+	".webm": {"webm"},
+	".avi":  {"avi", "webm"},
+	".mkv":  {"mkv", "webm"},
+	".mp3":  {"mp3", "aac"},
+	".wav":  {"wav"},
+	".ogg":  {"ogg"},
+	".flac": {"flac"},
+	".aac":  {"aac", "mp3"},
+	".pdf":  {"pdf"},
+	".doc":  {"doc"},
+	".xls":  {"xls"},
+	".ppt":  {"ppt"},
+	".docx": {"docx", "zip"},
+	".xlsx": {"xlsx", "zip"},
+	".pptx": {"pptx", "zip"},
+	".zip":  {"zip", "docx", "xlsx", "pptx"},
+	".rar":  {"rar"},
+	".7z":   {"7z"},
+	".tar":  {"tar"},
+	".gz":   {"gz"},
+	".bz2":  {"bz2"},
+	".xz":   {"xz"},
+	".exe":  {"exe"},
+	".mp4":  {"mp4"},
+	".m4a":  {"m4a", "mp4"},
+}
+
 // SecurityScanner 安全扫描器
 // 用于检测恶意内容和可疑链接
 
@@ -297,4 +396,106 @@ func SanitizeFilenameForDownload(filename string) string {
 	}
 
 	return filename
+}
+
+// DetectFileTypeByMagicBytes 通过魔数检测文件真实类型
+func DetectFileTypeByMagicBytes(data []byte) string {
+	if len(data) < 4 {
+		return "unknown"
+	}
+
+	// 检查每种文件类型的魔数
+	for _, sig := range MagicBytesSignatures {
+		if len(data) >= len(sig.magic) {
+			match := true
+			for i, b := range sig.magic {
+				if data[i] != b {
+					match = false
+					break
+				}
+			}
+			if match {
+				// 如果有额外检查函数，执行它
+				if sig.extraCheck != nil {
+					if !sig.extraCheck(data) {
+						continue
+					}
+				}
+				return sig.fileType
+			}
+		}
+	}
+
+	// 特殊处理 MP4 (需要更多字节)
+	if len(data) >= 8 {
+		// MP4: ftyp box
+		if data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x70 {
+			return "mp4"
+		}
+		// M4A: ftypM4A
+		if data[4] == 0x66 && data[5] == 0x74 && data[6] == 0x79 && data[7] == 0x4D {
+			return "m4a"
+		}
+	}
+
+	return "unknown"
+}
+
+// ValidateMagicBytes 验证文件的魔数是否与扩展名匹配
+func ValidateMagicBytes(filename string, data []byte) (bool, string) {
+	ext := strings.ToLower(filepath.Ext(filename))
+
+	// 获取该扩展名允许的魔数类型
+	allowedTypes, exists := extensionToMagicTypes[ext]
+	if !exists {
+		// 不在白名单中的扩展名，拒绝上传（安全考虑）
+		return false, "不支持的文件扩展名: " + ext
+	}
+
+	// 如果文件太小，无法验证
+	if len(data) < 4 {
+		// 对于小文件，只检查扩展名白名单
+		return true, ""
+	}
+
+	// 检测文件真实类型
+	detectedType := DetectFileTypeByMagicBytes(data)
+
+	// 检查检测到的类型是否在允许列表中
+	for _, allowed := range allowedTypes {
+		if detectedType == allowed {
+			return true, ""
+		}
+	}
+
+	// 特殊处理：ZIP 格式可以包含多种 OOXML 文件
+	if detectedType == "zip" {
+		for _, allowed := range allowedTypes {
+			if allowed == "zip" || allowed == "docx" || allowed == "xlsx" || allowed == "pptx" {
+				return true, ""
+			}
+		}
+	}
+
+	// 危险检测：可执行文件伪装成其他文件
+	if detectedType == "exe" {
+		return false, "检测到可执行文件伪装"
+	}
+
+	return false, "文件类型不匹配：扩展名为 " + ext + "，但文件魔数检测为 " + detectedType
+}
+
+// ScanFileWithMagicBytes 使用魔数增强的文件扫描
+func ScanFileWithMagicBytes(filename string, data []byte) *SecurityScanResult {
+	result := ScanFileContent(data)
+
+	// 验证魔数
+	isValid, msg := ValidateMagicBytes(filename, data)
+	if !isValid {
+		result.HasVirus = true
+		result.IsSafe = false
+		result.Warnings = append(result.Warnings, "魔数检测失败: "+msg)
+	}
+
+	return result
 }
