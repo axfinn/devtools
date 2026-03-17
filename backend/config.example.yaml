@@ -284,13 +284,11 @@ nfs_share:
 
   # 挂载点列表（启动时自动挂载，需要系统已安装 nfs-common / cifs-utils）
   mounts:
-    # NFS 示例（服务端通过 /etc/exports 控制主机权限，无需用户名密码）
-    - name: "project-files"       # 唯一标识，用作路径前缀
-      type: nfs                   # 协议类型：nfs | smb | local
-      host: "192.168.1.100"       # NFS 服务器地址
-      export: "/exports/data"     # 服务端导出路径
-      options: "soft,timeo=30"    # 附加挂载选项（可选）
-      mount_point: ""             # 留空则自动使用 ./data/mounts/project-files
+    # ⚠️  NFS 暂不支持：需要 root/SYS_ADMIN 权限，Docker 部署不适用
+    # - name: "project-files"
+    #   type: nfs
+    #   host: "192.168.1.100"
+    #   export: "/exports/data"
 
     # SMB/CIFS 示例（Windows 网络共享 / Samba，支持用户名密码）
     # 依赖：apt install cifs-utils
