@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -57,6 +58,160 @@ func NewAutoDevHandler(db *models.DB, adminPassword, autodevPath, dataDir string
 	return h
 }
 
+// Ask handles POST /api/autodev/ask — submit a quick Q&A request using driver.py ask
+func (h *AutoDevHandler) Ask(c *gin.Context) {
+	var req struct {
+		Description string `json:"description" binding:"required"`
+		Password    string `json:"password" binding:"required"`
+		WorkDir     string `json:"work_dir"` // optional: specify working directory for context
+		Background  bool   `json:"background"` // run in background
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+	if h.adminPassword == "" || req.Password != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return
+	}
+
+	// WorkDir is required for ask
+	if req.WorkDir == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ask 模式需要指定 work_dir"})
+		return
+	}
+
+	// Verify work_dir exists
+	if _, err := os.Stat(req.WorkDir); os.IsNotExist(err) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + req.WorkDir})
+		return
+	}
+
+	// Create task record
+	task, err := h.db.CreateAutoDevTask(models.TaskTypeAsk, req.Description, "{}", req.WorkDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务失败"})
+		return
+	}
+
+	// Run ask task (synchronously or in background)
+	if req.Background {
+		go h.runAskTask(task.ID, req.Description, req.WorkDir, true)
+		c.JSON(http.StatusOK, gin.H{
+			"id":          task.ID,
+			"description": task.Description,
+			"status":      "running",
+			"work_dir":    task.WorkDir,
+			"message":     "task running in background",
+		})
+	} else {
+		go h.runAskTask(task.ID, req.Description, req.WorkDir, false)
+		c.JSON(http.StatusOK, gin.H{
+			"id":          task.ID,
+			"description": task.Description,
+			"status":      task.Status,
+			"work_dir":    task.WorkDir,
+		})
+	}
+}
+
+// GetAskResult handles GET /api/autodev/ask/:id?password=xxx
+func (h *AutoDevHandler) GetAskResult(c *gin.Context) {
+	if !h.checkPassword(c) {
+		return
+	}
+	task, ok := h.loadTask(c)
+	if !ok {
+		return
+	}
+
+	// Only allow ask type tasks
+	if task.Type != models.TaskTypeAsk {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该任务不是问答任务"})
+		return
+	}
+
+	result := gin.H{
+		"id":          task.ID,
+		"description": task.Description,
+		"status":      task.Status,
+		"work_dir":    task.WorkDir,
+	}
+
+	// If completed, try to read qa.md
+	if task.Status == "completed" && task.ResultFile != "" {
+		if content, err := os.ReadFile(task.ResultFile); err == nil {
+			result["qa_content"] = string(content)
+			result["qa_file"] = task.ResultFile
+		}
+	}
+
+	// Also check for log file
+	logFile := filepath.Join(task.WorkDir, ".autodev", "logs", "ask.log")
+	if content, err := os.ReadFile(logFile); err == nil {
+		result["logs"] = string(content)
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// Extend handles POST /api/autodev/extend — extend an existing project with new requirements
+func (h *AutoDevHandler) Extend(c *gin.Context) {
+	var req struct {
+		Description string `json:"description" binding:"required"`
+		Password    string `json:"password" binding:"required"`
+		WorkDir     string `json:"work_dir" binding:"required"` // existing project directory
+		Background  bool   `json:"background"`                  // run in background
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+	if h.adminPassword == "" || req.Password != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return
+	}
+
+	// Verify work_dir exists
+	if _, err := os.Stat(req.WorkDir); os.IsNotExist(err) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + req.WorkDir})
+		return
+	}
+
+	// Verify autodev CLI is available
+	if _, err := os.Stat(h.autodevPath); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autodev 未安装，请检查 Docker 配置"})
+		return
+	}
+
+	// Create task record
+	task, err := h.db.CreateAutoDevTask(models.TaskTypeExtend, req.Description, "{}", req.WorkDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务失败"})
+		return
+	}
+
+	// Run extend task
+	if req.Background {
+		go h.runExtendTask(task.ID, req.Description, req.WorkDir, true)
+		c.JSON(http.StatusOK, gin.H{
+			"id":          task.ID,
+			"description": task.Description,
+			"status":      "running",
+			"work_dir":    task.WorkDir,
+			"message":     "extend task running in background",
+		})
+	} else {
+		go h.runExtendTask(task.ID, req.Description, req.WorkDir, false)
+		c.JSON(http.StatusOK, gin.H{
+			"id":          task.ID,
+			"description": task.Description,
+			"status":      task.Status,
+			"work_dir":    task.WorkDir,
+		})
+	}
+}
+
 // VerifyPassword handles POST /api/autodev/verify
 func (h *AutoDevHandler) VerifyPassword(c *gin.Context) {
 	var req struct {
@@ -76,6 +231,7 @@ func (h *AutoDevHandler) VerifyPassword(c *gin.Context) {
 // Submit handles POST /api/autodev/tasks — start a new task or resume from breakpoint
 func (h *AutoDevHandler) Submit(c *gin.Context) {
 	var req struct {
+		Type        string `json:"type"` // develop, ask, export (default: develop)
 		Description string `json:"description" binding:"required"`
 		Password    string `json:"password" binding:"required"`
 		Publish     bool   `json:"publish"`
@@ -84,6 +240,8 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 		// Resume support: if set, --from <phase> is passed and WorkDir is used
 		ResumeFrom  int    `json:"resume_from"` // phase number to resume from (1-based, 0 = new task)
 		WorkDir     string `json:"work_dir"`    // existing work dir to resume
+		// Export options
+		ExportFormat string `json:"export_format"` // zip, tar (default: zip)
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
@@ -93,9 +251,19 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
 		return
 	}
-	if _, err := os.Stat(h.autodevPath); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autodev 未安装，请检查 Docker 配置"})
-		return
+
+	// Default to develop type
+	taskType := req.Type
+	if taskType == "" {
+		taskType = models.TaskTypeDevelop
+	}
+
+	// Check autodev CLI availability for develop/export tasks
+	if taskType != models.TaskTypeAsk {
+		if _, err := os.Stat(h.autodevPath); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autodev 未安装，请检查 Docker 配置"})
+			return
+		}
 	}
 
 	var taskDir string
@@ -121,17 +289,25 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 	}
 
 	opts := models.AutoDevOptions{Publish: req.Publish, Build: req.Build, Push: req.Push}
-	task, err := h.db.CreateAutoDevTask(req.Description, models.MarshalAutoDevOptions(opts), taskDir)
+	task, err := h.db.CreateAutoDevTask(taskType, req.Description, models.MarshalAutoDevOptions(opts), taskDir)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务失败"})
 		return
 	}
 
-	resumeFrom := 0
-	if isResume {
-		resumeFrom = req.ResumeFrom
+	// Execute task based on type
+	switch taskType {
+	case models.TaskTypeAsk:
+		go h.runAskTask(task.ID, req.Description, taskDir, false)
+	case models.TaskTypeExport:
+		go h.runExportTask(task.ID, req.Description, taskDir, req.ExportFormat)
+	default:
+		resumeFrom := 0
+		if isResume {
+			resumeFrom = req.ResumeFrom
+		}
+		go h.runTask(task.ID, req.Description, taskDir, req.Publish, req.Build, req.Push, resumeFrom)
 	}
-	go h.runTask(task.ID, req.Description, taskDir, req.Publish, req.Build, req.Push, resumeFrom)
 
 	c.JSON(http.StatusOK, task)
 }
@@ -143,7 +319,8 @@ func (h *AutoDevHandler) List(c *gin.Context) {
 	}
 	tasks, err := h.db.ListAutoDevTasks()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务列表失败"})
+		log.Printf("[AutoDev] ListAutoDevTasks error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务列表失败: " + err.Error()})
 		return
 	}
 	if tasks == nil {
@@ -534,6 +711,241 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 	h.mu.Unlock()
 }
 
+// runAskTask executes claude ask in a background goroutine
+func (h *AutoDevHandler) runAskTask(id, description, workDir string, background bool) {
+	// Create log directory
+	logDir := filepath.Join(workDir, ".autodev", "logs")
+	os.MkdirAll(logDir, 0777)
+	os.Chmod(workDir, 0777)
+	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
+	os.Chmod(logDir, 0777)
+
+	// Pre-create ask.log
+	logFilePath := filepath.Join(logDir, "ask.log")
+	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+		f.Close()
+	}
+	os.Chmod(logFilePath, 0666)
+
+	// Ensure process directory exists for qa.md
+	os.MkdirAll(filepath.Join(workDir, "process"), 0777)
+
+	// Run driver.py ask command
+	cmd := exec.Command("python3", h.autodevPath, "ask", description, "--path", workDir)
+	cmd.Dir = workDir
+
+	// Set up environment for non-root user
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
+	}
+	env := h.buildEnv()
+	cmd.Env = env
+
+	// If background mode, start the process and return immediately
+	if background {
+		h.mu.Lock()
+		h.processes[id] = cmd
+		h.mu.Unlock()
+
+		if err := cmd.Start(); err != nil {
+			h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
+			return
+		}
+		h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
+		return
+	}
+
+	// Synchronous mode: wait for completion
+	output, err := cmd.CombinedOutput()
+	outputStr := string(output)
+
+	// Update task status
+	exitCode := 0
+	status := "completed"
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		status = "failed"
+	}
+
+	// Find the qa.md file (in process/qa.md)
+	qaFilePath := filepath.Join(workDir, "process", "qa.md")
+
+	// Store result file path
+	h.db.UpdateAutoDevTaskResult(id, qaFilePath)
+	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
+
+	// Append logs to ask.log
+	logContent := fmt.Sprintf("[%s] Ask completed with status: %s\nOutput: %s\n", time.Now().Format(time.RFC3339), status, outputStr)
+	os.WriteFile(logFilePath, []byte(logContent), 0666)
+}
+
+// runExtendTask executes autodev extend in a background goroutine
+func (h *AutoDevHandler) runExtendTask(id, description, workDir string, background bool) {
+	// Create log directory
+	logDir := filepath.Join(workDir, ".autodev", "logs")
+	os.MkdirAll(logDir, 0777)
+	os.Chmod(workDir, 0777)
+	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
+	os.Chmod(logDir, 0777)
+
+	// Pre-create extend.log
+	logFilePath := filepath.Join(logDir, "extend.log")
+	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+		f.Close()
+	}
+	os.Chmod(logFilePath, 0666)
+
+	// Run driver.py extend command
+	cmd := exec.Command("python3", h.autodevPath, "extend", description, "--path", workDir)
+	cmd.Dir = workDir
+
+	// Set up environment for non-root user
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
+	}
+	env := h.buildEnv()
+	cmd.Env = env
+
+	// If background mode, start the process and return immediately
+	if background {
+		h.mu.Lock()
+		h.processes[id] = cmd
+		h.mu.Unlock()
+
+		if err := cmd.Start(); err != nil {
+			h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
+			return
+		}
+		h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
+		return
+	}
+
+	// Synchronous mode: wait for completion
+	err := cmd.Wait()
+	exitCode := 0
+	status := "completed"
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		status = "failed"
+	}
+
+	// Check autodev state for actual completion status
+	if state := readAutoDevState(workDir); state != nil {
+		if s, ok := state["status"].(string); ok && s == "finished" {
+			status = "completed"
+			exitCode = 0
+		}
+	}
+
+	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
+
+	h.mu.Lock()
+	delete(h.processes, id)
+	h.mu.Unlock()
+}
+
+// buildEnv builds the environment variables for running autodev tasks
+func (h *AutoDevHandler) buildEnv() []string {
+	env := make([]string, 0, len(os.Environ())+3)
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "HOME=") && !strings.HasPrefix(e, "UV_CACHE_DIR=") {
+			env = append(env, e)
+		}
+	}
+	env = append(env, "HOME="+autodevHome)
+	env = append(env, "UV_CACHE_DIR=/tmp/uv-cache-autodev")
+	// Inject SSH key for git operations
+	if gitSSHCmd := h.gitSSHCommand(); gitSSHCmd != "" {
+		filtered := env[:0]
+		for _, e := range env {
+			if !strings.HasPrefix(e, "GIT_SSH_COMMAND=") {
+				filtered = append(filtered, e)
+			}
+		}
+		env = append(filtered, "GIT_SSH_COMMAND="+gitSSHCmd)
+	}
+	return env
+}
+
+// runExportTask executes autodev export in a background goroutine
+func (h *AutoDevHandler) runExportTask(id, description, workDir, exportFormat string) {
+	// Default format is zip
+	if exportFormat == "" {
+		exportFormat = "zip"
+	}
+
+	args := []string{description, "--path", workDir, "--export", exportFormat}
+
+	cmd := exec.Command(h.autodevPath, args...)
+	cmd.Dir = workDir
+
+	// Create log directory
+	logDir := filepath.Join(workDir, ".autodev", "logs")
+	os.MkdirAll(logDir, 0777)
+	os.Chmod(workDir, 0777)
+	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
+	os.Chmod(logDir, 0777)
+
+	logFilePath := filepath.Join(logDir, "export.log")
+	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+		f.Close()
+	}
+	os.Chmod(logFilePath, 0666)
+
+	// Set up environment
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
+	}
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "HOME=") && !strings.HasPrefix(e, "UV_CACHE_DIR=") {
+			env = append(env, e)
+		}
+	}
+	env = append(env, "HOME="+autodevHome)
+	env = append(env, "UV_CACHE_DIR=/tmp/uv-cache-autodev")
+	if gitSSHCmd := h.gitSSHCommand(); gitSSHCmd != "" {
+		filtered := env[:0]
+		for _, e := range env {
+			if !strings.HasPrefix(e, "GIT_SSH_COMMAND=") {
+				filtered = append(filtered, e)
+			}
+		}
+		env = append(filtered, "GIT_SSH_COMMAND="+gitSSHCmd)
+	}
+	cmd.Env = env
+
+	h.mu.Lock()
+	h.processes[id] = cmd
+	h.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
+		return
+	}
+	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
+
+	err := cmd.Wait()
+	exitCode := 0
+	status := "completed"
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		status = "failed"
+	}
+
+	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
+
+	h.mu.Lock()
+	delete(h.processes, id)
+	h.mu.Unlock()
+}
+
 // ---- helpers ----
 
 func (h *AutoDevHandler) checkPassword(c *gin.Context) bool {
@@ -680,6 +1092,7 @@ func classifyFile(rel, name string) string {
 func taskToMap(t *models.AutoDevTask) map[string]any {
 	m := map[string]any{
 		"id":           t.ID,
+		"type":         t.Type,
 		"description":  t.Description,
 		"options":      t.Options,
 		"status":       t.Status,
@@ -689,6 +1102,7 @@ func taskToMap(t *models.AutoDevTask) map[string]any {
 		"created_at":   t.CreatedAt,
 		"started_at":   t.StartedAt,
 		"completed_at": t.CompletedAt,
+		"result_file":  t.ResultFile,
 	}
 	return m
 }

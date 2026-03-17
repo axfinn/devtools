@@ -717,6 +717,11 @@ func main() {
 			autodev.GET("/tasks/:id/site/*filepath", autoDevHandler.GetSite)
 			autodev.POST("/tasks/:id/stop", autoDevHandler.StopTask)
 			autodev.DELETE("/tasks/:id", autoDevHandler.DeleteTask)
+			// Ask API - quick Q&A
+			autodev.POST("/ask", autoDevHandler.Ask)
+			autodev.GET("/ask/:id", autoDevHandler.GetAskResult)
+			// Extend API - extend existing project with new requirements
+			autodev.POST("/extend", autoDevHandler.Extend)
 			// SSH key for GitHub access
 			autodev.GET("/sshkey", autoDevHandler.GetSSHKey)
 			autodev.POST("/sshkey/regenerate", autoDevHandler.RegenerateSSHKey)

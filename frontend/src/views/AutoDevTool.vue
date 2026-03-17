@@ -73,6 +73,92 @@
             <span>{{ resumeTaskId ? '断点恢复' : '新建任务' }}</span>
             <el-button v-if="resumeTaskId" size="small" text class="ml-auto !text-slate-400 !text-xs" @click="cancelResume">取消</el-button>
           </div>
+
+          <!-- Mode Tabs (only show when not resuming) -->
+          <div v-if="!resumeTaskId" class="mode-tabs mb-3">
+            <button
+              v-for="mode in ['develop', 'ask', 'extend', 'export']"
+              :key="mode"
+              class="mode-tab"
+              :class="{ 'mode-tab--active': activeMode === mode }"
+              @click="activeMode = mode"
+            >
+              {{ mode === 'develop' ? '开发' : mode === 'ask' ? '问答' : mode === 'extend' ? '扩展' : '导出' }}
+            </button>
+          </div>
+
+          <!-- Ask Mode: Simple input -->
+          <div v-if="activeMode === 'ask' && !resumeTaskId" class="mb-3">
+            <el-input
+              v-model="newTask.description"
+              type="textarea"
+              :rows="3"
+              placeholder="输入你的问题，例如：如何用 Go 实现并发爬虫？"
+              maxlength="500"
+              show-word-limit
+              class="mb-2"
+            />
+            <el-input
+              v-model="newTask.workDir"
+              placeholder="项目目录（已有项目）"
+              class="mb-2"
+            >
+              <template #prefix><el-icon class="text-slate-400"><Folder /></el-icon></template>
+            </el-input>
+            <el-checkbox v-model="newTask.background" class="mb-2">后台运行</el-checkbox>
+            <div class="output-hint">
+              <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
+              <span>AI 将基于当前项目上下文回答问题，结果保存到 <code class="hint-code">process/qa.md</code></span>
+            </div>
+          </div>
+
+          <!-- Extend Mode: Extend existing project -->
+          <div v-if="activeMode === 'extend' && !resumeTaskId" class="mb-3">
+            <el-input
+              v-model="newTask.description"
+              type="textarea"
+              :rows="3"
+              placeholder="输入要追加的新需求，例如：添加 OAuth2 登录功能"
+              maxlength="500"
+              show-word-limit
+              class="mb-2"
+            />
+            <el-input
+              v-model="newTask.workDir"
+              placeholder="已有项目目录（必填）"
+              class="mb-2"
+            >
+              <template #prefix><el-icon class="text-slate-400"><Folder /></el-icon></template>
+            </el-input>
+            <el-checkbox v-model="newTask.background" class="mb-2">后台运行</el-checkbox>
+            <div class="output-hint">
+              <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
+              <span>在已有项目上追加新需求，自动走 DESIGN→DO→REVIEW→DELIVER 流程</span>
+            </div>
+          </div>
+
+          <!-- Export Mode -->
+          <div v-if="activeMode === 'export' && !resumeTaskId" class="mb-3">
+            <el-input
+              v-model="newTask.description"
+              type="textarea"
+              :rows="2"
+              placeholder="要导出的任务描述或目录名"
+              maxlength="200"
+              class="mb-2"
+            />
+            <el-select v-model="newTask.exportFormat" placeholder="导出格式" size="small" class="w-full mb-2">
+              <el-option label="ZIP 压缩包" value="zip" />
+              <el-option label="TAR.GZ 压缩包" value="tar" />
+            </el-select>
+            <div class="output-hint">
+              <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
+              <span>导出任务目录为压缩包，支持 <code class="hint-code">zip</code> 或 <code class="hint-code">tar</code> 格式</span>
+            </div>
+          </div>
+
+          <!-- Develop Mode -->
+          <template v-if="activeMode === 'develop' && !resumeTaskId">
           <el-input
             v-model="newTask.description"
             type="textarea"
@@ -80,7 +166,6 @@
             :placeholder="taskPlaceholder"
             maxlength="500"
             show-word-limit
-            :disabled="!!resumeTaskId"
             class="mb-3"
           />
           <!-- Output location hint -->
@@ -93,7 +178,7 @@
             <el-input-number v-model="newTask.resumeFrom" :min="1" :max="6" size="small" class="flex-1" />
             <span class="text-xs text-purple-400 shrink-0">{{ phaseLabel(newTask.resumeFrom) }}</span>
           </div>
-          <div class="flex gap-2 mb-3 flex-wrap">
+          <div v-if="activeMode === 'develop'" class="flex gap-2 mb-3 flex-wrap">
             <el-checkbox v-model="newTask.publish" size="small" border class="!text-xs">
               <span class="text-xs text-slate-300">publish</span>
             </el-checkbox>
@@ -111,9 +196,15 @@
             @click="submitTask"
             class="w-full submit-btn"
           >
-            <el-icon v-if="!submitting"><VideoPlay /></el-icon>
-            <span class="ml-1">{{ resumeTaskId ? '恢复执行' : '开始执行' }}</span>
+            <el-icon v-if="!submitting">
+              <VideoPlay v-if="activeMode === 'develop'" />
+              <ChatLineRound v-else-if="activeMode === 'ask'" />
+              <Plus v-else-if="activeMode === 'extend'" />
+              <Download v-else-if="activeMode === 'export'" />
+            </el-icon>
+            <span class="ml-1">{{ resumeTaskId ? '恢复执行' : submitButtonText }}</span>
           </el-button>
+          </template>
         </div>
 
         <!-- Task List -->
@@ -598,7 +689,7 @@ import {
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
   FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
   SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled,
-  Sunny, MoonNight, Key
+  Sunny, MoonNight, Key, ChatLineRound, Plus
 } from '@element-plus/icons-vue'
 
 // ---- markdown-it setup ----
@@ -703,8 +794,20 @@ const tasks = ref([])
 const loadingList = ref(false)
 const submitting = ref(false)
 const resumeTaskId = ref('')
-const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '' })
+const activeMode = ref('develop') // 'develop' | 'ask' | 'extend' | 'export'
+const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', background: false })
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
+
+// Button text based on mode
+const submitButtonText = computed(() => {
+  if (resumeTaskId.value) return '恢复执行'
+  switch (activeMode.value) {
+    case 'ask': return '提问'
+    case 'extend': return '扩展'
+    case 'export': return '导出'
+    default: return '开始执行'
+  }
+})
 
 async function loadTasks() {
   loadingList.value = true
@@ -726,29 +829,83 @@ async function loadTasks() {
 
 async function submitTask() {
   if (!newTask.value.description.trim()) return
+  // For ask and extend, workDir is required
+  if ((activeMode.value === 'ask' || activeMode.value === 'extend') && !newTask.value.workDir.trim()) {
+    ElMessage.error('请输入项目目录')
+    return
+  }
   submitting.value = true
   try {
-    const body = {
-      description: newTask.value.description.trim(),
-      password: savedPassword,
-      publish: newTask.value.publish,
-      build: newTask.value.build,
-      push: newTask.value.push,
+    let res, data
+
+    if (activeMode.value === 'ask') {
+      // Ask mode: use dedicated ask API
+      res = await fetch(`${API_BASE}/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: savedPassword,
+          description: newTask.value.description.trim(),
+          work_dir: newTask.value.workDir.trim(),
+          background: newTask.value.background
+        })
+      })
+      data = await res.json()
+    } else if (activeMode.value === 'extend') {
+      // Extend mode: use dedicated extend API
+      res = await fetch(`${API_BASE}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: savedPassword,
+          description: newTask.value.description.trim(),
+          work_dir: newTask.value.workDir.trim(),
+          background: newTask.value.background
+        })
+      })
+      data = await res.json()
+    } else {
+      // Build request body based on mode
+      const body = {
+        password: savedPassword,
+      }
+
+      if (resumeTaskId.value) {
+        // Resume mode
+        body.description = newTask.value.description.trim()
+        body.type = 'develop'
+        body.resume_from = newTask.value.resumeFrom
+        body.work_dir = newTask.value.workDir
+      } else {
+        // Normal mode - include type based on activeMode
+        body.description = newTask.value.description.trim()
+        body.type = activeMode.value
+
+        if (activeMode.value === 'develop') {
+          body.publish = newTask.value.publish
+          body.build = newTask.value.build
+          body.push = newTask.value.push
+        } else if (activeMode.value === 'export') {
+          body.export_format = newTask.value.exportFormat
+        }
+      }
+
+      res = await fetch(`${API_BASE}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      data = await res.json()
     }
-    if (resumeTaskId.value) {
-      body.resume_from = newTask.value.resumeFrom
-      body.work_dir = newTask.value.workDir
-    }
-    const res = await fetch(`${API_BASE}/tasks`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-    const data = await res.json()
+
     if (res.ok) {
-      ElMessage.success(resumeTaskId.value ? '已恢复执行' : '任务已提交，正在执行…')
+      const successMsg = resumeTaskId.value ? '已恢复执行' :
+        activeMode.value === 'ask' ? (newTask.value.background ? '问答任务已在后台运行' : '问题已提交，AI 正在思考…') :
+        activeMode.value === 'extend' ? (newTask.value.background ? '扩展任务已在后台运行' : '扩展任务已提交，正在执行…') :
+        activeMode.value === 'export' ? '导出任务已提交…' : '任务已提交，正在执行…'
+      ElMessage.success(successMsg)
       resumeTaskId.value = ''
-      newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '' }
+      newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', background: false }
       await loadTasks()
       selectTask(data)
     } else {
@@ -1694,6 +1851,39 @@ onUnmounted(() => clearInterval(refreshTimer))
 .badge--log     { background: #1c1917; color: #a8a29e; }
 .badge--docs    { background: #1c1917; color: #fbbf24; }
 .badge--state   { background: #1c1917; color: #94a3b8; }
+
+/* Mode tabs in submit form */
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  background: #0f172a;
+  padding: 3px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.mode-tab {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.mode-tab:hover {
+  color: #e2e8f0;
+  background: #1e293b;
+}
+.mode-tab--active {
+  background: #7c3aed;
+  color: #fff;
+}
+.mode-tab--active:hover {
+  background: #6d28d9;
+}
 
 /* Output hint in submit form */
 .output-hint {

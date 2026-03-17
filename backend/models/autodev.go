@@ -6,9 +6,18 @@ import (
 	"time"
 )
 
+// Task type constants
+const (
+	TaskTypeDevelop = "develop"
+	TaskTypeAsk     = "ask"
+	TaskTypeExport  = "export"
+	TaskTypeExtend  = "extend"
+)
+
 // AutoDevTask represents an autodev execution task
 type AutoDevTask struct {
 	ID          string     `json:"id"`
+	Type        string     `json:"type"` // develop, ask, export
 	Description string     `json:"description"`
 	Options     string     `json:"options"` // JSON: {publish,build,push}
 	Status      string     `json:"status"`  // pending, running, completed, failed
@@ -18,6 +27,7 @@ type AutoDevTask struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ResultFile  string     `json:"result_file,omitempty"` // For ask: qa.md path
 }
 
 // AutoDevOptions task execution options
@@ -32,6 +42,7 @@ func (db *DB) InitAutoDevTasks() error {
 	_, err := db.conn.Exec(`
 		CREATE TABLE IF NOT EXISTS autodev_tasks (
 			id TEXT PRIMARY KEY,
+			type TEXT DEFAULT 'develop',
 			description TEXT NOT NULL,
 			options TEXT DEFAULT '{}',
 			status TEXT DEFAULT 'pending',
@@ -40,7 +51,8 @@ func (db *DB) InitAutoDevTasks() error {
 			pid INTEGER DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			started_at DATETIME,
-			completed_at DATETIME
+			completed_at DATETIME,
+			result_file TEXT
 		);
 		CREATE INDEX IF NOT EXISTS idx_autodev_tasks_status ON autodev_tasks(status);
 		CREATE INDEX IF NOT EXISTS idx_autodev_tasks_created_at ON autodev_tasks(created_at);
@@ -49,11 +61,14 @@ func (db *DB) InitAutoDevTasks() error {
 }
 
 // CreateAutoDevTask creates a new task record
-func (db *DB) CreateAutoDevTask(description, options, workDir string) (*AutoDevTask, error) {
+func (db *DB) CreateAutoDevTask(taskType, description, options, workDir string) (*AutoDevTask, error) {
 	id := generateID(8)
+	if taskType == "" {
+		taskType = TaskTypeDevelop
+	}
 	_, err := db.conn.Exec(
-		`INSERT INTO autodev_tasks (id, description, options, work_dir, status) VALUES (?, ?, ?, ?, 'pending')`,
-		id, description, options, workDir,
+		`INSERT INTO autodev_tasks (id, type, description, options, work_dir, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
+		id, taskType, description, options, workDir,
 	)
 	if err != nil {
 		return nil, err
@@ -66,15 +81,18 @@ func (db *DB) GetAutoDevTask(id string) (*AutoDevTask, error) {
 	var task AutoDevTask
 	var startedAt, completedAt sql.NullTime
 	err := db.conn.QueryRow(
-		`SELECT id, description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at
+		`SELECT id, type, description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
 		 FROM autodev_tasks WHERE id = ?`, id,
 	).Scan(
-		&task.ID, &task.Description, &task.Options, &task.Status,
+		&task.ID, &task.Type, &task.Description, &task.Options, &task.Status,
 		&task.ExitCode, &task.WorkDir, &task.PID, &task.CreatedAt,
-		&startedAt, &completedAt,
+		&startedAt, &completedAt, &task.ResultFile,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if task.Type == "" {
+		task.Type = TaskTypeDevelop
 	}
 	if startedAt.Valid {
 		task.StartedAt = &startedAt.Time
@@ -88,7 +106,7 @@ func (db *DB) GetAutoDevTask(id string) (*AutoDevTask, error) {
 // ListAutoDevTasks lists all tasks ordered by creation time desc
 func (db *DB) ListAutoDevTasks() ([]*AutoDevTask, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at
+		`SELECT id, type, description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
 		 FROM autodev_tasks ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -101,11 +119,14 @@ func (db *DB) ListAutoDevTasks() ([]*AutoDevTask, error) {
 		var task AutoDevTask
 		var startedAt, completedAt sql.NullTime
 		if err := rows.Scan(
-			&task.ID, &task.Description, &task.Options, &task.Status,
+			&task.ID, &task.Type, &task.Description, &task.Options, &task.Status,
 			&task.ExitCode, &task.WorkDir, &task.PID, &task.CreatedAt,
-			&startedAt, &completedAt,
+			&startedAt, &completedAt, &task.ResultFile,
 		); err != nil {
 			continue
+		}
+		if task.Type == "" {
+			task.Type = TaskTypeDevelop
 		}
 		if startedAt.Valid {
 			task.StartedAt = &startedAt.Time
@@ -146,6 +167,12 @@ func (db *DB) UpdateAutoDevTaskStatus(id, status string, exitCode, pid int) erro
 // DeleteAutoDevTask deletes a task record
 func (db *DB) DeleteAutoDevTask(id string) error {
 	_, err := db.conn.Exec(`DELETE FROM autodev_tasks WHERE id = ?`, id)
+	return err
+}
+
+// UpdateAutoDevTaskResult updates the result file path for ask tasks
+func (db *DB) UpdateAutoDevTaskResult(id, resultFile string) error {
+	_, err := db.conn.Exec(`UPDATE autodev_tasks SET result_file = ? WHERE id = ?`, resultFile, id)
 	return err
 }
 
