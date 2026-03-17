@@ -29,7 +29,8 @@ FROM docker.m.daocloud.io/library/alpine:latest
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates tzdata curl python3 coreutils ffmpeg
+RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
+    nodejs npm git bash
 
 # Install uv (provides uvx) for MCP runtime
 RUN curl -Ls https://astral.sh/uv/install.sh | sh
@@ -40,15 +41,52 @@ ENV UV_CACHE_DIR=/root/.cache/uv
 # Warm up uvx tool cache to avoid runtime downloads
 RUN uvx minimax-coding-plan-mcp -y --help >/dev/null 2>&1 || true
 
+# Install Claude Code CLI
+RUN npm install -g @anthropic-ai/claude-code --unsafe-perm 2>&1 || true
+
+# Install autodev from clawtest
+RUN git clone --depth=1 https://github.com/axfinn/clawtest.git /opt/clawtest \
+    && chmod +x /opt/clawtest/autodev/autodev \
+    && chmod +x /opt/clawtest/autodev/autodev-stop \
+    && ln -sf /opt/clawtest/autodev/autodev /usr/local/bin/autodev
+
+# Configure Claude Code for autodev
+# Settings without sensitive credentials (tokens are injected at runtime via env vars)
+RUN mkdir -p /root/.claude
+RUN cat > /root/.claude/settings.json << 'EOF'
+{
+  "skills": {
+    "paths": ["~/.claude/skills"]
+  },
+  "env": {
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "ANTHROPIC_MODEL": "MiniMax-M2.5",
+    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.5"
+  }
+}
+EOF
+
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=frontend-builder /app/frontend/dist ./dist
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/autodev
 
 ENV PORT=8082
 ENV DB_PATH=/app/data/paste.db
 ENV GIN_MODE=release
 ENV TZ=Asia/Shanghai
+# AutoDev 配置（通过 .env 或 docker-compose environment 覆盖）
+ENV AUTODEV_PATH=/usr/local/bin/autodev
+ENV AUTODEV_DATA_DIR=/app/data/autodev
+# Claude API 配置（ANTHROPIC_AUTH_TOKEN 必须在 .env 中设置，不要硬编码在此）
+ENV ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+ENV ANTHROPIC_MODEL=MiniMax-M2.5
+ENV API_TIMEOUT_MS=3000000
+ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 
 EXPOSE 8082
 

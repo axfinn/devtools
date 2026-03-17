@@ -33,6 +33,14 @@ type Config struct {
 	NFSShare           NFSShareConfig           `yaml:"nfs_share"`
 	ImageUnderstanding ImageUnderstandingConfig `yaml:"image_understanding"`
 	TURN               TURNConfig               `yaml:"turn"`
+	AutoDev            AutoDevConfig            `yaml:"autodev"`
+}
+
+// AutoDevConfig AutoDev AI 任务配置
+type AutoDevConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 访问密码（必填）
+	AutodevPath   string `yaml:"autodev_path"`   // autodev 可执行文件路径，默认 /opt/autodev/autodev
+	DataDir       string `yaml:"data_dir"`       // 任务工作目录，默认 ./data/autodev
 }
 
 // TURNConfig WebRTC TURN 服务器配置（coturn use-auth-secret 模式）
@@ -371,6 +379,10 @@ func DefaultConfig() *Config {
 			Port: 3478,
 			TTL:  3600,
 		},
+		AutoDev: AutoDevConfig{
+			AutodevPath: "/opt/autodev/autodev",
+			DataDir:     "./data/autodev",
+		},
 	}
 }
 
@@ -442,6 +454,16 @@ func Load(path string) (*Config, error) {
 	}
 	if upstreamModel := os.Getenv("AI_GATEWAY_PROXY_UPSTREAM_MODEL"); upstreamModel != "" {
 		cfg.AIGateway.Proxy.UpstreamModel = upstreamModel
+	}
+	// AutoDev 配置支持环境变量覆盖
+	if autodevPassword := os.Getenv("AUTODEV_ADMIN_PASSWORD"); autodevPassword != "" {
+		cfg.AutoDev.AdminPassword = autodevPassword
+	}
+	if autodevPath := os.Getenv("AUTODEV_PATH"); autodevPath != "" {
+		cfg.AutoDev.AutodevPath = autodevPath
+	}
+	if autodevDataDir := os.Getenv("AUTODEV_DATA_DIR"); autodevDataDir != "" {
+		cfg.AutoDev.DataDir = autodevDataDir
 	}
 
 	globalConfig = cfg
