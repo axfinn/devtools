@@ -13,12 +13,19 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"devtools/models"
 
 	"github.com/gin-gonic/gin"
 )
+
+// autodevUID/GID is the non-root user created in the Dockerfile for running
+// autodev tasks. Claude Code refuses --dangerously-skip-permissions as root.
+const autodevUID = 1001
+const autodevGID = 1001
+const autodevHome = "/home/autodev"
 
 // AutoDevHandler handles autodev task operations
 type AutoDevHandler struct {
@@ -105,10 +112,12 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 		// New task: create work directory
 		taskName := sanitizeTaskName(req.Description)
 		taskDir = filepath.Join(h.dataDir, fmt.Sprintf("%s-%d", taskName, time.Now().Unix()))
-		if err := os.MkdirAll(taskDir, 0755); err != nil {
+		if err := os.MkdirAll(taskDir, 0777); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务目录失败"})
 			return
 		}
+		// Allow non-root autodev user to write
+		os.Chmod(taskDir, 0777)
 	}
 
 	opts := models.AutoDevOptions{Publish: req.Publish, Build: req.Build, Push: req.Push}
@@ -450,16 +459,33 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 
 	// write stdout+stderr to driver.log
 	logDir := filepath.Join(workDir, ".autodev", "logs")
-	os.MkdirAll(logDir, 0755)
-	logFile, _ := os.Create(filepath.Join(logDir, "driver.log"))
+	os.MkdirAll(logDir, 0777)
+	// chmod so non-root autodev user can also write here
+	os.Chmod(workDir, 0777)
+	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
+	os.Chmod(logDir, 0777)
+
+	logFile, _ := os.OpenFile(filepath.Join(logDir, "driver.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if logFile != nil {
 		defer logFile.Close()
 		cmd.Stdout = logFile
 		cmd.Stderr = logFile
 	}
 
-	// pass Claude env vars from system environment
-	cmd.Env = os.Environ()
+	// Run as non-root user (uid 1001) so Claude Code allows --dangerously-skip-permissions.
+	// Replace HOME so Claude Code finds the non-root user's config.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
+	}
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "HOME=") && !strings.HasPrefix(e, "UV_CACHE_DIR=") {
+			env = append(env, e)
+		}
+	}
+	env = append(env, "HOME="+autodevHome)
+	env = append(env, "UV_CACHE_DIR=/tmp/uv-cache-autodev")
+	cmd.Env = env
 
 	h.mu.Lock()
 	h.processes[id] = cmd

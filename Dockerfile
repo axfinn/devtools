@@ -69,10 +69,19 @@ RUN cat > /root/.claude/settings.json << 'EOF'
 }
 EOF
 
+# Create non-root user for running autodev tasks
+# Claude Code refuses --dangerously-skip-permissions when running as root
+RUN addgroup -g 1001 autodev && \
+    adduser -D -u 1001 -G autodev autodev && \
+    mkdir -p /home/autodev/.claude && \
+    cp /root/.claude/settings.json /home/autodev/.claude/settings.json && \
+    chown -R autodev:autodev /home/autodev && \
+    chmod -R 755 /home/autodev/.claude
+
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=frontend-builder /app/frontend/dist ./dist
 
-RUN mkdir -p /app/data/autodev
+RUN mkdir -p /app/data/autodev && chmod 777 /app/data/autodev
 
 ENV PORT=8082
 ENV DB_PATH=/app/data/paste.db
