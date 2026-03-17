@@ -432,11 +432,57 @@ func (db *DB) CleanOldAIAPIRequestLogs(retentionDays int) (int64, error) {
 		return 0, nil
 	}
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
-	result, err := db.conn.Exec(`DELETE FROM ai_api_request_logs WHERE created_at < ?`, cutoff)
+	// 排除 internal:* 记录（这些记录永不过期）
+	result, err := db.conn.Exec(
+		`DELETE FROM ai_api_request_logs WHERE created_at < ? AND api_key_id NOT LIKE 'internal:%'`,
+		cutoff,
+	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+// ListInternalRequestLogs 查询内部（免 API Key）请求流水，按时间倒序
+func (db *DB) ListInternalRequestLogs(keyID string, limit, offset int) ([]*AIAPIRequestLog, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, api_key_id, model, provider, endpoint, request_type, status_code, success,
+			error_message, request_body, response_body, client_ip, latency_ms, input_tokens,
+			output_tokens, total_tokens, estimated_cost, currency, created_at
+		FROM ai_api_request_logs
+		WHERE api_key_id = ?
+		ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		keyID, limit, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	logs := make([]*AIAPIRequestLog, 0)
+	for rows.Next() {
+		item := &AIAPIRequestLog{}
+		var success int
+		if err := rows.Scan(
+			&item.ID, &item.APIKeyID, &item.Model, &item.Provider, &item.Endpoint, &item.RequestType,
+			&item.StatusCode, &success, &item.ErrorMessage, &item.RequestBody, &item.ResponseBody,
+			&item.ClientIP, &item.LatencyMS, &item.InputTokens, &item.OutputTokens,
+			&item.TotalTokens, &item.EstimatedCost, &item.Currency, &item.CreatedAt,
+		); err != nil {
+			continue
+		}
+		item.Success = success == 1
+		logs = append(logs, item)
+	}
+	return logs, nil
+}
+
+// CountInternalRequestLogs 统计内部请求总数
+func (db *DB) CountInternalRequestLogs(keyID string) (int, error) {
+	var count int
+	err := db.conn.QueryRow(
+		`SELECT COUNT(*) FROM ai_api_request_logs WHERE api_key_id = ?`, keyID,
+	).Scan(&count)
+	return count, err
 }
 
 func (db *DB) scanAIAPIKey(query string, args ...interface{}) (*AIAPIKey, error) {

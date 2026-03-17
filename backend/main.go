@@ -594,6 +594,9 @@ func main() {
 			imageUnderstanding.POST("/sse/create-file", createRateLimiter.Middleware(), imageUnderstandingHandler.CreateSseTaskFromFile)
 			imageUnderstanding.GET("/sse/task/:id", imageUnderstandingHandler.GetSseTask)
 			imageUnderstanding.GET("/sse/stream/:id", imageUnderstandingHandler.StreamSseTask)
+			// Qwen 视觉理解（内部免 API Key，使用服务端 DashScope 配置）
+			imageUnderstanding.POST("/qwen-vision", createRateLimiter.Middleware(), aiGatewayHandler.InternalQwenVision)
+			imageUnderstanding.GET("/qwen-vision/logs", aiGatewayHandler.AdminListQwenVisionLogs)
 		}
 
 		// 百炼图片模型

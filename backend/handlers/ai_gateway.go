@@ -674,6 +674,108 @@ func (h *AIGatewayHandler) runAsyncChatTask(taskID string, req ChatCompletionReq
 	_ = h.db.UpdateLLMTask(task)
 }
 
+const internalQwenVisionKeyID = "internal:qwen-vision"
+
+// InternalQwenVision 内部免 API Key 图像理解接口（qwen3.5-plus 视觉能力）
+// POST /api/image-understanding/qwen-vision
+func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
+	var req struct {
+		Image  string `json:"image" binding:"required"`
+		Prompt string `json:"prompt"`
+		Model  string `json:"model"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整，缺少 image 字段"})
+		return
+	}
+	if strings.TrimSpace(h.cfg.DashScope.APIKey) == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 DashScope API Key，请联系管理员"})
+		return
+	}
+
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = "qwen3.5-plus"
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		prompt = "请简洁描述图片内容，提取关键对象、场景和文字信息。"
+	}
+
+	chatReq := ChatCompletionRequest{
+		Model: model,
+		Messages: []map[string]interface{}{
+			{
+				"role": "user",
+				"content": []map[string]interface{}{
+					{"type": "image_url", "image_url": map[string]interface{}{"url": req.Image}},
+					{"type": "text", "text": prompt},
+				},
+			},
+		},
+	}
+
+	start := time.Now()
+	result, rawMap, err := h.callDashScope(chatReq)
+	latency := time.Since(start)
+
+	statusCode := http.StatusOK
+	success := err == nil
+	errMsg := ""
+	responseBody := ""
+	if err != nil {
+		statusCode = http.StatusBadGateway
+		errMsg = err.Error()
+	} else {
+		responseBody = truncateString(sanitizeJSON(rawMap), 5000)
+	}
+
+	// 记录请求流水（永不过期）
+	_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
+		APIKeyID:     internalQwenVisionKeyID,
+		Model:        model,
+		Provider:     "dashscope",
+		Endpoint:     "/api/image-understanding/qwen-vision",
+		RequestType:  "vision",
+		StatusCode:   statusCode,
+		Success:      success,
+		ErrorMessage: errMsg,
+		RequestBody:  truncateString(fmt.Sprintf(`{"prompt":%q,"model":%q}`, prompt, model), 2000),
+		ResponseBody: responseBody,
+		ClientIP:     c.ClientIP(),
+		LatencyMS:    latency.Milliseconds(),
+	})
+
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": errMsg})
+		return
+	}
+
+	content, _ := result["content"].(string)
+	c.JSON(http.StatusOK, gin.H{
+		"text":   content,
+		"model":  model,
+		"result": result,
+	})
+}
+
+// AdminListQwenVisionLogs 管理员查看 Qwen 视觉理解请求流水
+// GET /api/image-understanding/qwen-vision/logs?admin_password=xxx
+func (h *AIGatewayHandler) AdminListQwenVisionLogs(c *gin.Context) {
+	if !h.requireSuperAdmin(c, "") {
+		return
+	}
+	limit := boundedInt(c.DefaultQuery("limit", "50"), 50, 1, 200)
+	offset := boundedInt(c.DefaultQuery("offset", "0"), 0, 0, 1000000)
+	logs, err := h.db.ListInternalRequestLogs(internalQwenVisionKeyID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取流水失败"})
+		return
+	}
+	total, _ := h.db.CountInternalRequestLogs(internalQwenVisionKeyID)
+	c.JSON(http.StatusOK, gin.H{"logs": logs, "total": total, "limit": limit, "offset": offset})
+}
+
 func (h *AIGatewayHandler) executeChatRequest(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
 	provider := h.resolveChatProvider(req.Model)
 	switch provider {

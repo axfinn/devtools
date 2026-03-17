@@ -2,107 +2,250 @@
   <div class="tool-container image-understanding-page">
     <div class="tool-header">
       <h2>图像理解</h2>
-      <p>调用 MiniMax MCP 图像理解能力，支持上传图片并返回描述结果。</p>
+      <p>支持 MiniMax MCP 和 Qwen 大模型两种图像理解方式。</p>
     </div>
 
-    <div class="tool-grid">
-      <el-card class="panel-card">
-        <template #header>
-          <div class="panel-header">
-            <span>输入</span>
-            <el-button text @click="loadTools" :loading="loadingTools">刷新工具</el-button>
-          </div>
-        </template>
-
-        <el-form label-position="top">
-          <el-form-item label="选择工具">
-            <el-select v-model="selectedTool" placeholder="自动选择" class="w-full" :loading="loadingTools">
-              <el-option
-                v-for="tool in tools"
-                :key="tool.name"
-                :label="tool.name"
-                :value="tool.name"
-              >
-                <div class="tool-option">
-                  <span>{{ tool.name }}</span>
-                  <span class="tool-desc">{{ tool.description || '未填写描述' }}</span>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-
-          <el-form-item label="图片">
-            <el-upload
-              class="image-uploader"
-              :auto-upload="false"
-              :show-file-list="false"
-              :on-change="handleFileChange"
-              accept="image/*"
-            >
-              <div class="upload-area">
-                <el-icon :size="46" color="#409eff"><Upload /></el-icon>
-                <p>点击或拖拽上传图片</p>
+    <el-tabs v-model="activeMode" class="mode-tabs">
+      <!-- MiniMax MCP Tab -->
+      <el-tab-pane label="MiniMax MCP" name="minimax">
+        <div class="tool-grid">
+          <el-card class="panel-card">
+            <template #header>
+              <div class="panel-header">
+                <span>输入</span>
+                <el-button text @click="loadTools" :loading="loadingTools">刷新工具</el-button>
               </div>
-            </el-upload>
-            <div v-if="imagePreview" class="image-preview">
-              <img :src="imagePreview" alt="preview" />
-              <el-button size="small" text type="danger" @click="clearImage">移除图片</el-button>
+            </template>
+
+            <el-form label-position="top">
+              <el-form-item label="选择工具">
+                <el-select v-model="selectedTool" placeholder="自动选择" class="w-full" :loading="loadingTools">
+                  <el-option
+                    v-for="tool in tools"
+                    :key="tool.name"
+                    :label="tool.name"
+                    :value="tool.name"
+                  >
+                    <div class="tool-option">
+                      <span>{{ tool.name }}</span>
+                      <span class="tool-desc">{{ tool.description || '未填写描述' }}</span>
+                    </div>
+                  </el-option>
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="图片">
+                <el-upload
+                  class="image-uploader"
+                  :auto-upload="false"
+                  :show-file-list="false"
+                  :on-change="handleFileChange"
+                  accept="image/*"
+                >
+                  <div class="upload-area">
+                    <el-icon :size="46" color="#409eff"><Upload /></el-icon>
+                    <p>点击或拖拽上传图片</p>
+                  </div>
+                </el-upload>
+                <div v-if="imagePreview" class="image-preview">
+                  <img :src="imagePreview" alt="preview" />
+                  <el-button size="small" text type="danger" @click="clearImage">移除图片</el-button>
+                </div>
+              </el-form-item>
+
+              <el-form-item label="提示词（可选）">
+                <el-input v-model="prompt" type="textarea" :rows="3" placeholder="例如：描述画面里的主要物体和场景" />
+              </el-form-item>
+
+              <el-form-item label="自定义参数 JSON（可选）">
+                <el-input
+                  v-model="argsText"
+                  type="textarea"
+                  :rows="4"
+                  placeholder='{"detail": "high"}'
+                />
+              </el-form-item>
+
+              <el-form-item>
+                <div class="action-row">
+                  <el-button type="primary" :loading="submitting" :disabled="!imageBase64" @click="submit">
+                    开始识别（同步）
+                  </el-button>
+                  <el-button type="success" :loading="sseLoading" :disabled="!imageBase64" @click="submitSse">
+                    开始识别（SSE）
+                  </el-button>
+                  <el-button @click="resetAll">清空</el-button>
+                </div>
+              </el-form-item>
+            </el-form>
+          </el-card>
+
+          <el-card class="panel-card result-card">
+            <template #header>
+              <div class="panel-header">
+                <span>结果</span>
+                <el-button text :disabled="!resultText" @click="copyResult">复制文本</el-button>
+              </div>
+            </template>
+
+            <el-tabs v-if="resultText" v-model="resultTab" class="result-tabs">
+              <el-tab-pane label="渲染预览" name="render">
+                <div class="markdown-body" v-html="renderedHtml"></div>
+              </el-tab-pane>
+              <el-tab-pane label="原文" name="raw">
+                <el-input v-model="resultText" type="textarea" :rows="10" readonly />
+              </el-tab-pane>
+            </el-tabs>
+            <div v-else class="empty-result">
+              暂无结果，请上传图片并点击开始识别。
             </div>
-          </el-form-item>
 
-          <el-form-item label="提示词（可选）">
-            <el-input v-model="prompt" type="textarea" :rows="3" placeholder="例如：描述画面里的主要物体和场景" />
-          </el-form-item>
-
-          <el-form-item label="自定义参数 JSON（可选）">
-            <el-input
-              v-model="argsText"
-              type="textarea"
-              :rows="4"
-              placeholder='{"detail": "high"}'
-            />
-          </el-form-item>
-
-          <el-form-item>
-            <div class="action-row">
-              <el-button type="primary" :loading="submitting" :disabled="!imageBase64" @click="submit">
-                开始识别（同步）
-              </el-button>
-              <el-button type="success" :loading="sseLoading" :disabled="!imageBase64" @click="submitSse">
-                开始识别（SSE）
-              </el-button>
-              <el-button @click="resetAll">清空</el-button>
+            <div v-if="rawResult" class="raw-block">
+              <h4>原始响应</h4>
+              <pre class="raw-json">{{ rawResult }}</pre>
             </div>
-          </el-form-item>
-        </el-form>
-      </el-card>
+          </el-card>
+        </div>
+      </el-tab-pane>
 
-      <el-card class="panel-card result-card">
-        <template #header>
-          <div class="panel-header">
-            <span>结果</span>
-            <el-button text :disabled="!resultText" @click="copyResult">复制文本</el-button>
-          </div>
+      <!-- Qwen 大模型理解 Tab -->
+      <el-tab-pane name="qwen">
+        <template #label>
+          <span>大模型理解</span>
+          <el-tag size="small" type="success" class="ml-1">Qwen</el-tag>
         </template>
+        <div class="tool-grid">
+          <el-card class="panel-card">
+            <template #header>
+              <div class="panel-header">
+                <span>输入</span>
+              </div>
+            </template>
 
-        <el-tabs v-if="resultText" v-model="resultTab" class="result-tabs">
-          <el-tab-pane label="渲染预览" name="render">
-            <div class="markdown-body" v-html="renderedHtml"></div>
-          </el-tab-pane>
-          <el-tab-pane label="原文" name="raw">
-            <el-input v-model="resultText" type="textarea" :rows="10" readonly />
-          </el-tab-pane>
-        </el-tabs>
-        <div v-else class="empty-result">
-          暂无结果，请上传图片并点击开始识别。
+            <el-form label-position="top">
+              <el-form-item label="模型">
+                <el-select v-model="qwenModel" class="w-full">
+                  <el-option value="qwen3.5-plus" label="qwen3.5-plus（推荐，深度思考+视觉）" />
+                  <el-option value="kimi-k2.5" label="kimi-k2.5（Kimi 视觉理解）" />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="图片">
+                <el-upload
+                  class="image-uploader"
+                  :auto-upload="false"
+                  :show-file-list="false"
+                  :on-change="handleQwenFileChange"
+                  accept="image/*"
+                >
+                  <div class="upload-area">
+                    <el-icon :size="46" color="#67c23a"><Upload /></el-icon>
+                    <p>点击或拖拽上传图片（支持粘贴）</p>
+                  </div>
+                </el-upload>
+                <div v-if="qwenImagePreview" class="image-preview">
+                  <img :src="qwenImagePreview" alt="preview" />
+                  <el-button size="small" text type="danger" @click="clearQwenImage">移除图片</el-button>
+                </div>
+              </el-form-item>
+
+              <el-form-item label="提示词">
+                <el-input
+                  v-model="qwenPrompt"
+                  type="textarea"
+                  :rows="3"
+                  placeholder="例如：请详细描述图片内容，识别其中的文字和关键信息。"
+                />
+              </el-form-item>
+
+              <el-form-item>
+                <div class="action-row">
+                  <el-button type="primary" :loading="qwenSubmitting" :disabled="!qwenImageBase64" @click="submitQwen">
+                    开始理解
+                  </el-button>
+                  <el-button @click="resetQwen">清空</el-button>
+                  <el-button text @click="showLogsDialog = true">查看流水</el-button>
+                </div>
+              </el-form-item>
+            </el-form>
+          </el-card>
+
+          <el-card class="panel-card result-card">
+            <template #header>
+              <div class="panel-header">
+                <span>结果</span>
+                <div class="panel-actions">
+                  <el-tag v-if="qwenUsedModel" size="small" type="info">{{ qwenUsedModel }}</el-tag>
+                  <el-button text :disabled="!qwenResultText" @click="copyQwenResult">复制文本</el-button>
+                </div>
+              </div>
+            </template>
+
+            <el-tabs v-if="qwenResultText" v-model="qwenResultTab" class="result-tabs">
+              <el-tab-pane label="渲染预览" name="render">
+                <div class="markdown-body" v-html="qwenRenderedHtml"></div>
+              </el-tab-pane>
+              <el-tab-pane label="原文" name="raw">
+                <el-input v-model="qwenResultText" type="textarea" :rows="10" readonly />
+              </el-tab-pane>
+            </el-tabs>
+            <div v-else class="empty-result">
+              暂无结果，请上传图片并点击开始理解。
+            </div>
+          </el-card>
+        </div>
+      </el-tab-pane>
+
+      <!-- 请求流水对话框 -->
+      <el-dialog v-model="showLogsDialog" title="Qwen 视觉请求流水" width="800px" top="5vh">
+        <div class="logs-toolbar">
+          <el-input
+            v-model="logsAdminPassword"
+            type="password"
+            show-password
+            placeholder="输入管理员密码（super_admin_password）"
+            style="max-width: 320px"
+            @keyup.enter="loadLogs"
+          />
+          <el-button type="primary" :loading="logsLoading" @click="loadLogs">查询</el-button>
+          <span class="logs-total" v-if="logsTotal > 0">共 {{ logsTotal }} 条</span>
         </div>
 
-        <div v-if="rawResult" class="raw-block">
-          <h4>原始响应</h4>
-          <pre class="raw-json">{{ rawResult }}</pre>
+        <el-table :data="logs" v-loading="logsLoading" size="small" class="logs-table" max-height="480">
+          <el-table-column prop="id" label="ID" width="60" />
+          <el-table-column prop="model" label="模型" width="130" />
+          <el-table-column prop="client_ip" label="IP" width="120" />
+          <el-table-column label="状态" width="70">
+            <template #default="{ row }">
+              <el-tag :type="row.success ? 'success' : 'danger'" size="small">
+                {{ row.success ? '成功' : '失败' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="latency_ms" label="延迟(ms)" width="90" />
+          <el-table-column label="请求摘要" min-width="180">
+            <template #default="{ row }">
+              <span class="log-body">{{ row.request_body }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="150">
+            <template #default="{ row }">
+              {{ new Date(row.created_at).toLocaleString('zh-CN') }}
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div class="logs-pagination" v-if="logsTotal > logsPageSize">
+          <el-pagination
+            v-model:current-page="logsPage"
+            :page-size="logsPageSize"
+            :total="logsTotal"
+            layout="prev, pager, next"
+            @current-change="loadLogs"
+          />
         </div>
-      </el-card>
-    </div>
+      </el-dialog>
+    </el-tabs>
   </div>
 </template>
 
@@ -112,6 +255,10 @@ import { ElMessage } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
+// ---- 模式切换 ----
+const activeMode = ref('minimax')
+
+// ---- MiniMax MCP ----
 const tools = ref([])
 const loadingTools = ref(false)
 const selectedTool = ref('')
@@ -128,6 +275,25 @@ const rawResult = ref('')
 const resultTab = ref('render')
 const isListening = ref(false)
 
+// ---- Qwen 大模型理解 ----
+const qwenModel = ref('qwen3.5-plus')
+const qwenPrompt = ref('')
+const qwenImageBase64 = ref('')
+const qwenImagePreview = ref('')
+const qwenSubmitting = ref(false)
+const qwenResultText = ref('')
+const qwenResultTab = ref('render')
+const qwenUsedModel = ref('')
+
+// ---- 流水日志 ----
+const showLogsDialog = ref(false)
+const logsAdminPassword = ref('')
+const logsLoading = ref(false)
+const logs = ref([])
+const logsTotal = ref(0)
+const logsPage = ref(1)
+const logsPageSize = 50
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -135,6 +301,7 @@ const md = new MarkdownIt({
 })
 
 const renderedHtml = computed(() => md.render(resultText.value || ''))
+const qwenRenderedHtml = computed(() => md.render(qwenResultText.value || ''))
 
 const parseJsonSafe = async (resp) => {
   const text = await resp.text()
@@ -184,6 +351,98 @@ const handleFileChange = (file) => {
   reader.readAsDataURL(file.raw)
 }
 
+// ---- Qwen 相关方法 ----
+const handleQwenFileChange = (file) => {
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    qwenImageBase64.value = e.target.result
+    qwenImagePreview.value = e.target.result
+  }
+  reader.readAsDataURL(file.raw)
+}
+
+const clearQwenImage = () => {
+  qwenImageBase64.value = ''
+  qwenImagePreview.value = ''
+}
+
+const resetQwen = () => {
+  clearQwenImage()
+  qwenPrompt.value = ''
+  qwenResultText.value = ''
+  qwenUsedModel.value = ''
+}
+
+const submitQwen = async () => {
+  if (!qwenImageBase64.value) {
+    ElMessage.warning('请先上传图片')
+    return
+  }
+  qwenSubmitting.value = true
+  qwenResultText.value = ''
+  qwenUsedModel.value = ''
+  try {
+    const resp = await fetch('/api/image-understanding/qwen-vision', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: qwenImageBase64.value,
+        prompt: qwenPrompt.value || undefined,
+        model: qwenModel.value
+      })
+    })
+    const data = await parseJsonSafe(resp)
+    if (!resp.ok) {
+      throw new Error(data.error || '识别失败')
+    }
+    qwenResultText.value = data.text || ''
+    qwenUsedModel.value = data.model || qwenModel.value
+    qwenResultTab.value = 'render'
+    if (!qwenResultText.value) {
+      ElMessage.warning('已返回结果，但未解析到文本')
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '识别失败')
+  } finally {
+    qwenSubmitting.value = false
+  }
+}
+
+const copyQwenResult = async () => {
+  if (!qwenResultText.value) return
+  try {
+    await navigator.clipboard.writeText(qwenResultText.value)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
+const loadLogs = async () => {
+  if (!logsAdminPassword.value.trim()) {
+    ElMessage.warning('请输入管理员密码')
+    return
+  }
+  logsLoading.value = true
+  try {
+    const offset = (logsPage.value - 1) * logsPageSize
+    const url = `/api/image-understanding/qwen-vision/logs?limit=${logsPageSize}&offset=${offset}`
+    const resp = await fetch(url, {
+      headers: { 'X-Super-Admin-Password': logsAdminPassword.value }
+    })
+    const data = await parseJsonSafe(resp)
+    if (!resp.ok) {
+      throw new Error(data.error || '获取流水失败')
+    }
+    logs.value = data.logs || []
+    logsTotal.value = data.total || 0
+  } catch (err) {
+    ElMessage.error(err.message || '获取流水失败')
+  } finally {
+    logsLoading.value = false
+  }
+}
+
 const handlePaste = (e) => {
   const items = e.clipboardData?.items
   if (!items) return
@@ -194,9 +453,14 @@ const handlePaste = (e) => {
       if (file) {
         const reader = new FileReader()
         reader.onload = (event) => {
-          imageBase64.value = event.target.result
-          imagePreview.value = event.target.result
-          imageFile.value = file
+          if (activeMode.value === 'qwen') {
+            qwenImageBase64.value = event.target.result
+            qwenImagePreview.value = event.target.result
+          } else {
+            imageBase64.value = event.target.result
+            imagePreview.value = event.target.result
+            imageFile.value = file
+          }
           ElMessage.success('已从剪贴板读取图片')
         }
         reader.readAsDataURL(file)
@@ -466,6 +730,24 @@ onUnmounted(() => {
   justify-content: space-between;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mode-tabs {
+  margin-top: 0;
+}
+
+.mode-tabs :deep(.el-tabs__header) {
+  margin-bottom: 16px;
+}
+
+.ml-1 {
+  margin-left: 4px;
+}
+
 .tool-option {
   display: flex;
   flex-direction: column;
@@ -569,5 +851,37 @@ onUnmounted(() => {
   border-radius: 10px;
   font-size: 12px;
   overflow-x: auto;
+}
+
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.logs-total {
+  color: #909399;
+  font-size: 13px;
+}
+
+.logs-table {
+  width: 100%;
+}
+
+.log-body {
+  font-size: 12px;
+  color: #606266;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  display: block;
+}
+
+.logs-pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
 }
 </style>
