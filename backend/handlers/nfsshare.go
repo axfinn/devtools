@@ -1056,6 +1056,118 @@ func (h *NFSShareHandler) Stream(c *gin.Context) {
 
 const transcodDir = "./data/transcode"
 
+// QualityPreset 清晰度预设
+type QualityPreset struct {
+	Name    string // "1080p" / "720p" / "480p" / "360p"
+	Height  int    // 目标高度，-1 表示保持原始分辨率
+	CRF     int    // 质量因子
+	AudioBR string // 音频码率
+}
+
+// allQualityPresets 按高到低排列
+var allQualityPresets = []QualityPreset{
+	{Name: "1080p", Height: 1080, CRF: 22, AudioBR: "192k"},
+	{Name: "720p", Height: 720, CRF: 23, AudioBR: "128k"},
+	{Name: "480p", Height: 480, CRF: 24, AudioBR: "96k"},
+	{Name: "360p", Height: 360, CRF: 25, AudioBR: "64k"},
+}
+
+// findPreset 按名称查找预设，找不到返回 false
+func findPreset(name string) (QualityPreset, bool) {
+	for _, p := range allQualityPresets {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return QualityPreset{}, false
+}
+
+// availableQualities 根据源视频高度过滤可用清晰度列表
+// srcHeight <= 0 表示无法探测，返回全部预设
+func availableQualities(srcHeight int) []QualityPreset {
+	if srcHeight <= 0 {
+		return allQualityPresets
+	}
+	var list []QualityPreset
+	for _, p := range allQualityPresets {
+		if p.Height <= srcHeight {
+			list = append(list, p)
+		}
+	}
+	if len(list) == 0 {
+		// 源分辨率比360p还低，只给360p
+		return allQualityPresets[len(allQualityPresets)-1:]
+	}
+	return list
+}
+
+// probeVideoHeight 用 ffprobe 获取视频源高度，失败返回 0
+func probeVideoHeight(filePath string) int {
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=height",
+		"-of", "csv=p=0",
+		filePath,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	h, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return h
+}
+
+// hlsJobKey 转码任务唯一键（分享ID + 清晰度）
+func hlsJobKey(id, quality string) string {
+	return id + "/" + quality
+}
+
+// HLSQualities 返回该分享可用的清晰度列表（公开）
+func (h *NFSShareHandler) HLSQualities(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	id := c.Param("id")
+	share, err := h.db.GetNFSShare(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
+		return
+	}
+	if !checkSharePassword(c, share, c.Query("password")) {
+		return
+	}
+	if !isVideoFile(share.MimeType, share.FilePath) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非视频文件"})
+		return
+	}
+
+	srcHeight := 0
+	// 仅对本地/NFS 文件运行 ffprobe；SMB 需要先下载，暂跳过探测
+	pp, err := h.parsePath(share.FilePath)
+	if err == nil && strings.ToLower(pp.ms.Config.Type) != "smb" {
+		srcHeight = probeVideoHeight(pp.absPath)
+	}
+
+	presets := availableQualities(srcHeight)
+	type qualityInfo struct {
+		Name   string `json:"name"`
+		Height int    `json:"height"`
+		Ready  bool   `json:"ready"` // 已转码完成
+	}
+	list := make([]qualityInfo, 0, len(presets))
+	for _, p := range presets {
+		outDir := filepath.Join(transcodDir, id, p.Name)
+		m3u8 := filepath.Join(outDir, "index.m3u8")
+		ready := false
+		if data, err := os.ReadFile(m3u8); err == nil && strings.Contains(string(data), "#EXT-X-ENDLIST") {
+			ready = true
+		}
+		list = append(list, qualityInfo{Name: p.Name, Height: p.Height, Ready: ready})
+	}
+	c.JSON(http.StatusOK, gin.H{"qualities": list, "source_height": srcHeight})
+}
+
 // waitForPlayable 等待转码输出目录中至少有2个分片可供播放，或等待转码完成
 // 最多等待 timeout 时间；一旦可播放或完成立即返回
 func waitForPlayable(outDir string, job *hlsJob, timeout time.Duration) error {
@@ -1077,13 +1189,20 @@ func waitForPlayable(outDir string, job *hlsJob, timeout time.Duration) error {
 	}
 }
 
-// HLSPlaylist 触发 HLS 转码并返回 m3u8（公开，消耗1次view）
-// 采用流式策略：有前2个分片即可返回，hls.js 作为 event 流继续拉取后续分片
+// HLSPlaylist 触发指定清晰度的 HLS 转码并返回 m3u8（公开，消耗1次view）
+// 有前2个分片即可返回，hls.js 作为 event 流继续拉取后续分片
 func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
 	id := c.Param("id")
+	qualityName := c.Param("quality")
+	preset, ok := findPreset(qualityName)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的清晰度: " + qualityName})
+		return
+	}
+
 	share, err := h.db.GetNFSShare(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
@@ -1105,7 +1224,7 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		return
 	}
 
-	outDir := filepath.Join(transcodDir, id)
+	outDir := filepath.Join(transcodDir, id, qualityName)
 	m3u8Path := filepath.Join(outDir, "index.m3u8")
 
 	// 已转码完成（m3u8 存在且含 ENDLIST 标记）
@@ -1116,14 +1235,15 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		return
 	}
 
-	// 获取或创建转码 job
-	jobVal, loaded := h.hlsJobs.LoadOrStore(id, &hlsJob{done: make(chan struct{})})
+	// 获取或创建该清晰度的转码 job
+	key := hlsJobKey(id, qualityName)
+	jobVal, loaded := h.hlsJobs.LoadOrStore(key, &hlsJob{done: make(chan struct{})})
 	job := jobVal.(*hlsJob)
 
 	if !loaded {
 		go func() {
-			defer h.hlsJobs.Delete(id)
-			job.err = h.doTranscode(id, share, outDir, m3u8Path)
+			defer h.hlsJobs.Delete(key)
+			job.err = h.doTranscode(id, share, preset, outDir, m3u8Path)
 			close(job.done)
 		}()
 	}
@@ -1139,8 +1259,8 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 	c.File(m3u8Path)
 }
 
-// doTranscode 执行 FFmpeg 转码，将源文件转为 HLS
-func (h *NFSShareHandler) doTranscode(id string, share *models.NFSShare, outDir, m3u8Path string) error {
+// doTranscode 执行 FFmpeg 转码，将源文件转为指定清晰度的 HLS
+func (h *NFSShareHandler) doTranscode(id string, share *models.NFSShare, preset QualityPreset, outDir, m3u8Path string) error {
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return fmt.Errorf("创建输出目录失败: %v", err)
 	}
@@ -1166,16 +1286,22 @@ func (h *NFSShareHandler) doTranscode(id string, share *models.NFSShare, outDir,
 	}
 
 	segPattern := filepath.Join(outDir, "%03d.ts")
-	cmd := exec.Command("ffmpeg", "-y",
-		"-i", sourceFile,
-		"-c:v", "libx264", "-preset", "fast", "-crf", "23",
-		"-c:a", "aac", "-b:a", "128k",
+	args := []string{"-y", "-i", sourceFile,
+		"-c:v", "libx264", "-preset", "fast", "-crf", strconv.Itoa(preset.CRF),
+		"-c:a", "aac", "-b:a", preset.AudioBR,
+	}
+	if preset.Height > 0 {
+		// 按高度缩放，宽度自适应（-2 保证被2整除）
+		args = append(args, "-vf", fmt.Sprintf("scale=-2:%d", preset.Height))
+	}
+	args = append(args,
 		"-f", "hls",
 		"-hls_time", "10",
 		"-hls_playlist_type", "event", // event 类型：分片增量写入，完成后追加 EXT-X-ENDLIST
 		"-hls_segment_filename", segPattern,
 		m3u8Path,
 	)
+	cmd := exec.Command("ffmpeg", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("[NFSShare] HLS 转码失败 %s: %v\n%s", id, err, string(out))
@@ -1209,13 +1335,15 @@ func (h *NFSShareHandler) HLSSegment(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
+	quality := c.Param("quality")
 	segment := c.Param("segment")
 	// 防路径穿越
-	if strings.Contains(segment, "..") || strings.Contains(segment, "/") {
+	if strings.Contains(segment, "..") || strings.Contains(segment, "/") ||
+		strings.Contains(quality, "..") || strings.Contains(quality, "/") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "非法路径"})
 		return
 	}
-	segPath := filepath.Join(transcodDir, id, segment)
+	segPath := filepath.Join(transcodDir, id, quality, segment)
 	if _, err := os.Stat(segPath); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "分片不存在"})
 		return

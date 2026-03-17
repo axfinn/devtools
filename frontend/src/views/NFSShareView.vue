@@ -86,6 +86,24 @@
                 <el-icon><VideoPlay v-if="!watchConnected" /><VideoPause v-else /></el-icon>
                 {{ watchConnected ? '退出一起看' : '一起看' }}
               </el-button>
+
+              <!-- 清晰度选择器（仅非原生视频显示） -->
+              <template v-if="!isNativeVideo && qualityList.length > 0">
+                <el-select
+                  v-model="currentQuality"
+                  size="small"
+                  style="width: 90px"
+                  @change="onQualityChange"
+                >
+                  <el-option
+                    v-for="q in qualityList"
+                    :key="q.name"
+                    :label="q.name + (q.ready ? '' : ' ⏳')"
+                    :value="q.name"
+                  />
+                </el-select>
+              </template>
+
               <el-button v-if="!info.disable_video_download" size="small" :href="downloadUrl" tag="a" target="_blank">
                 <el-icon><Download /></el-icon>
                 下载
@@ -213,6 +231,10 @@ const myNickname = ref('')
 let ws = null
 let syncLock = false // 防止收到 sync 时触发重复 sync
 
+// ---- 清晰度 ----
+const qualityList = ref([])   // [{ name, height, ready }]
+const currentQuality = ref('')
+
 // ---- HLS ----
 let hls = null
 let pollTimer = null
@@ -226,7 +248,9 @@ const streamUrl = computed(() => {
   return password.value ? `${base}?password=${encodeURIComponent(password.value)}` : base
 })
 const hlsUrl = computed(() => {
-  const base = `/api/nfsshare/${id}/hls/index.m3u8`
+  const q = currentQuality.value
+  if (!q) return ''
+  const base = `/api/nfsshare/${id}/hls/${q}/index.m3u8`
   return password.value ? `${base}?password=${encodeURIComponent(password.value)}` : base
 })
 // 浏览器原生支持的视频格式，直接流式播放，无需 HLS 转码
@@ -283,11 +307,11 @@ async function confirmPassword() {
   passwordChecking.value = true
   passwordError.value = ''
   try {
-    // 用 info 接口试探密码无效；改用 stream/hls 接口验证（head 请求不消耗次数）
+    // 密码验证：用 info 接口（不消耗次数），但 info 不校验密码，改用专用接口 HEAD 试探
     const testUrl = info.value.is_native_video
       ? `/api/nfsshare/${id}/stream?password=${encodeURIComponent(pwd)}`
       : info.value.is_video
-        ? `/api/nfsshare/${id}/hls/index.m3u8?password=${encodeURIComponent(pwd)}`
+        ? `/api/nfsshare/${id}/qualities?password=${encodeURIComponent(pwd)}`
         : `/api/nfsshare/${id}?password=${encodeURIComponent(pwd)}`
     const res = await fetch(testUrl, { method: 'HEAD' })
     if (res.status === 401 || res.status === 403) {
@@ -307,14 +331,42 @@ async function confirmPassword() {
   }
 }
 
+// ---- 清晰度加载 ----
+async function loadQualities() {
+  try {
+    const pwdParam = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
+    const res = await fetch(`/api/nfsshare/${id}/qualities${pwdParam}`)
+    if (!res.ok) return
+    const data = await res.json()
+    qualityList.value = data.qualities || []
+    if (qualityList.value.length > 0) {
+      currentQuality.value = qualityList.value[0].name // 默认最高清晰度
+    }
+  } catch (_) {}
+}
+
 // ---- 视频播放器 ----
 async function initPlayer() {
   if (isNativeVideo.value) {
     startNative()
   } else {
+    await loadQualities()
     transcoding.value = true
     startHLS()
   }
+}
+
+async function onQualityChange(quality) {
+  if (!videoEl.value) return
+  const savedTime = videoEl.value.currentTime || 0
+  currentQuality.value = quality
+  transcoding.value = true
+  if (hls) { hls.destroy(); hls = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  startHLS()
+  videoEl.value.addEventListener('canplay', () => {
+    videoEl.value.currentTime = savedTime
+  }, { once: true })
 }
 
 function startNative() {
