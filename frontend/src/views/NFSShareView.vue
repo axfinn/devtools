@@ -155,6 +155,40 @@
             <span>聊天室</span>
             <span class="viewer-count">{{ viewerCount }} 人在线</span>
           </div>
+
+          <!-- 语音区 -->
+          <div class="voice-area">
+            <div class="voice-bar">
+              <el-button
+                :type="voiceActive ? 'danger' : 'success'"
+                size="small"
+                @click="toggleVoice"
+              >
+                {{ voiceActive ? '挂断语音' : '🎤 加入语音' }}
+              </el-button>
+              <el-button
+                v-if="voiceActive"
+                :type="voiceMuted ? 'warning' : ''"
+                size="small"
+                @click="toggleMute"
+              >
+                {{ voiceMuted ? '🔇 已静音' : '🔊 静音' }}
+              </el-button>
+            </div>
+            <div v-if="voiceParticipants.length > 0" class="voice-participants">
+              <div
+                v-for="p in voiceParticipants"
+                :key="p.peerID"
+                class="voice-user"
+                :class="{ speaking: p.speaking }"
+              >
+                <span class="voice-icon">🎤</span>
+                <span class="voice-name">{{ p.nickname }}</span>
+              </div>
+            </div>
+            <div v-else-if="voiceActive" class="voice-empty">等待他人加入语音...</div>
+          </div>
+
           <div class="chat-messages" ref="chatMessagesEl">
             <div
               v-for="(msg, i) in chatMessages"
@@ -201,6 +235,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import Hls from 'hls.js'
 
 const route = useRoute()
@@ -236,6 +271,36 @@ const isHost = ref(false)
 const myNickname = ref('')
 let ws = null
 let syncLock = false // 防止收到 sync 时触发重复 sync
+
+// ---- Voice Chat (WebRTC) ----
+const voiceActive = ref(false)
+const voiceMuted = ref(false)
+const voiceParticipants = ref([]) // [{ peerID, nickname, speaking }]
+let myPeerID = ''
+let localStream = null
+const peerConns = new Map() // peerID → RTCPeerConnection
+let rtcConfig = null // 动态从后端获取
+
+async function fetchRtcConfig() {
+  if (rtcConfig) return rtcConfig
+  try {
+    const res = await fetch('/api/nfsshare/turn-credentials')
+    if (res.ok) {
+      const d = await res.json()
+      rtcConfig = {
+        iceServers: [
+          { urls: d.stun },
+          { urls: d.turn, username: d.username, credential: d.credential },
+        ],
+      }
+    }
+  } catch (_) {}
+  // fallback：无 TURN 时仅用公共 STUN
+  if (!rtcConfig) {
+    rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+  }
+  return rtcConfig
+}
 
 // ---- 清晰度 ----
 const qualityList = ref([])   // [{ name, height, ready }]
@@ -561,6 +626,32 @@ function handleWsMsg(msg) {
       else if (msg.action === 'pause') videoEl.value.pause()
       setTimeout(() => { syncLock = false }, 500)
       break
+
+    // ---- WebRTC 语音信令 ----
+    case 'voice_peers':
+      // 服务端返回已在语音的成员列表，我主动向每人发 offer
+      if (voiceActive.value && msg.peers) {
+        for (const p of msg.peers) initiateCall(p.peer_id, p.nickname)
+      }
+      break
+    case 'voice_join':
+      // 其他人加入了语音，如果我也在语音里，主动向他发 offer
+      if (voiceActive.value && msg.peer_id) {
+        initiateCall(msg.peer_id, msg.nickname)
+      }
+      break
+    case 'voice_leave':
+      if (msg.peer_id) removeVoiceParticipant(msg.peer_id)
+      break
+    case 'voice_offer':
+      if (voiceActive.value && msg.from) handleVoiceOffer(msg.from, msg.sdp, msg.nickname)
+      break
+    case 'voice_answer':
+      if (msg.from) handleVoiceAnswer(msg.from, msg.sdp)
+      break
+    case 'voice_ice':
+      if (msg.from) handleVoiceIce(msg.from, msg.candidate)
+      break
   }
 }
 
@@ -612,11 +703,157 @@ function fireDanmaku(text) {
   ], { duration, easing: 'linear', fill: 'forwards' }).onfinish = () => el.remove()
 }
 
+// ---- Voice: 开关语音 ----
+async function toggleVoice() {
+  if (voiceActive.value) {
+    stopVoice()
+  } else {
+    await startVoice()
+  }
+}
+
+async function startVoice() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+  } catch (e) {
+    ElMessage.error('无法获取麦克风：' + (e.message || e))
+    return
+  }
+  await fetchRtcConfig()
+  myPeerID = Math.random().toString(36).slice(2, 10)
+  voiceActive.value = true
+  voiceMuted.value = false
+  wsSend({ type: 'voice_join' })
+}
+
+function stopVoice() {
+  wsSend({ type: 'voice_leave' })
+  // 关闭所有 peer 连接
+  for (const [, pc] of peerConns) pc.close()
+  peerConns.clear()
+  voiceParticipants.value = []
+  // 停止麦克风
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop())
+    localStream = null
+  }
+  voiceActive.value = false
+}
+
+function toggleMute() {
+  voiceMuted.value = !voiceMuted.value
+  if (localStream) {
+    localStream.getAudioTracks().forEach(t => { t.enabled = !voiceMuted.value })
+  }
+}
+
+// ---- Voice: 创建 RTCPeerConnection ----
+function createPC(peerID) {
+  if (peerConns.has(peerID)) return peerConns.get(peerID)
+  const pc = new RTCPeerConnection(rtcConfig || { iceServers: [] })
+
+  // 把本地音轨加入
+  if (localStream) {
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
+  }
+
+  // 收到对端音频
+  pc.ontrack = (e) => {
+    const audio = new Audio()
+    audio.srcObject = e.streams[0]
+    audio.autoplay = true
+    // 用 AudioContext 检测说话（音量）
+    try {
+      const ctx = new AudioContext()
+      const src = ctx.createMediaStreamSource(e.streams[0])
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+      src.connect(analyser)
+      const buf = new Uint8Array(analyser.frequencyBinCount)
+      const checkSpeaking = () => {
+        if (!peerConns.has(peerID)) { ctx.close(); return }
+        analyser.getByteFrequencyData(buf)
+        const avg = buf.reduce((a, b) => a + b, 0) / buf.length
+        const p = voiceParticipants.value.find(p => p.peerID === peerID)
+        if (p) p.speaking = avg > 15
+        requestAnimationFrame(checkSpeaking)
+      }
+      checkSpeaking()
+    } catch (_) {}
+  }
+
+  // ICE 候选
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      wsSend({ type: 'voice_ice', to: peerID, candidate: JSON.stringify(e.candidate) })
+    }
+  }
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      pc.close()
+      peerConns.delete(peerID)
+      voiceParticipants.value = voiceParticipants.value.filter(p => p.peerID !== peerID)
+    }
+  }
+
+  peerConns.set(peerID, pc)
+  return pc
+}
+
+// ---- Voice: 主动发起 offer（我向对方呼叫）----
+async function initiateCall(peerID, nickname) {
+  addVoiceParticipant(peerID, nickname)
+  const pc = createPC(peerID)
+  const offer = await pc.createOffer()
+  await pc.setLocalDescription(offer)
+  wsSend({ type: 'voice_offer', to: peerID, sdp: offer.sdp })
+}
+
+// ---- Voice: 收到 offer，回 answer ----
+async function handleVoiceOffer(from, sdp, nickname) {
+  addVoiceParticipant(from, nickname || from)
+  const pc = createPC(from)
+  await pc.setRemoteDescription({ type: 'offer', sdp })
+  const answer = await pc.createAnswer()
+  await pc.setLocalDescription(answer)
+  wsSend({ type: 'voice_answer', to: from, sdp: answer.sdp })
+}
+
+// ---- Voice: 收到 answer ----
+async function handleVoiceAnswer(from, sdp) {
+  const pc = peerConns.get(from)
+  if (!pc) return
+  await pc.setRemoteDescription({ type: 'answer', sdp })
+}
+
+// ---- Voice: 收到 ICE candidate ----
+async function handleVoiceIce(from, candidateStr) {
+  const pc = peerConns.get(from)
+  if (!pc) return
+  try {
+    await pc.addIceCandidate(JSON.parse(candidateStr))
+  } catch (_) {}
+}
+
+function addVoiceParticipant(peerID, nickname) {
+  if (!voiceParticipants.value.find(p => p.peerID === peerID)) {
+    voiceParticipants.value.push({ peerID, nickname, speaking: false })
+  }
+}
+
+function removeVoiceParticipant(peerID) {
+  const pc = peerConns.get(peerID)
+  if (pc) { pc.close(); peerConns.delete(peerID) }
+  voiceParticipants.value = voiceParticipants.value.filter(p => p.peerID !== peerID)
+}
+
 onMounted(() => { loadInfo() })
 onUnmounted(() => {
   if (hls) { hls.destroy(); hls = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (ws) { ws.close(); ws = null }
+  if (voiceActive.value) stopVoice()
 })
 </script>
 
@@ -931,6 +1168,56 @@ onUnmounted(() => {
   :global(.danmaku-item) {
     font-size: 14px;
   }
+}
+
+/* 语音区 */
+.voice-area {
+  border-bottom: 1px solid #2a2a2a;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.voice-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.voice-participants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.voice-user {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #1e2a1e;
+  border: 1px solid #2a4a2a;
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: #aaa;
+  transition: all 0.2s;
+}
+
+.voice-user.speaking {
+  background: #1a3a1a;
+  border-color: #67c23a;
+  color: #67c23a;
+}
+
+.voice-icon {
+  font-size: 11px;
+}
+
+.voice-empty {
+  font-size: 11px;
+  color: #555;
+  font-style: italic;
 }
 
 /* 超小屏（≤480px） */

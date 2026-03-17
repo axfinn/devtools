@@ -1,6 +1,11 @@
 package handlers
 
 import (
+	crypto_rand "crypto/rand"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1379,52 +1384,112 @@ var watchUpgrader = websocket.Upgrader{
 
 // watchMsg 客户端 → 服务器 消息
 type watchMsg struct {
-	Type     string  `json:"type"`     // join | chat | danmaku | sync
-	Nickname string  `json:"nickname"` // join 时设置
-	Text     string  `json:"text"`     // chat / danmaku 内容
-	Action   string  `json:"action"`   // sync: play | pause | seek
-	Time     float64 `json:"time"`     // sync: 当前播放时间（秒）
+	Type      string  `json:"type"`              // join | chat | danmaku | sync | voice_*
+	Nickname  string  `json:"nickname"`           // join 时设置
+	Text      string  `json:"text"`               // chat / danmaku 内容
+	Action    string  `json:"action"`             // sync: play | pause | seek
+	Time      float64 `json:"time"`               // sync: 当前播放时间（秒）
+	To        string  `json:"to,omitempty"`       // WebRTC: 目标 peerID
+	SDP       string  `json:"sdp,omitempty"`      // WebRTC: offer/answer SDP
+	Candidate string  `json:"candidate,omitempty"` // WebRTC: ICE candidate JSON
+}
+
+// voicePeerInfo 语音参与者信息
+type voicePeerInfo struct {
+	PeerID   string `json:"peer_id"`
+	Nickname string `json:"nickname"`
 }
 
 // watchBroadcast 服务器 → 所有客户端 消息
 type watchBroadcast struct {
-	Type     string  `json:"type"`               // joined | left | chat | danmaku | sync | viewers
-	Nickname string  `json:"nickname,omitempty"` // 消息来源
-	Text     string  `json:"text,omitempty"`
-	Action   string  `json:"action,omitempty"`
-	Time     float64 `json:"time,omitempty"`
-	Count    int     `json:"count,omitempty"`    // viewers 类型：当前人数
-	IsHost   bool    `json:"is_host,omitempty"`  // 是否房主
+	Type      string          `json:"type"`               // joined | left | chat | danmaku | sync | voice_*
+	Nickname  string          `json:"nickname,omitempty"` // 消息来源
+	Text      string          `json:"text,omitempty"`
+	Action    string          `json:"action,omitempty"`
+	Time      float64         `json:"time,omitempty"`
+	Count     int             `json:"count,omitempty"`    // viewers 类型：当前人数
+	IsHost    bool            `json:"is_host,omitempty"`  // 是否房主
+	PeerID    string          `json:"peer_id,omitempty"`  // WebRTC: 发起者 peerID
+	From      string          `json:"from,omitempty"`     // WebRTC: 来源 peerID
+	SDP       string          `json:"sdp,omitempty"`      // WebRTC: offer/answer SDP
+	Candidate string          `json:"candidate,omitempty"` // WebRTC: ICE candidate JSON
+	Peers     []voicePeerInfo `json:"peers,omitempty"`    // voice_peers: 已在语音的成员
 }
 
 // watchClient 单个 WebSocket 连接
 type watchClient struct {
-	conn     *websocket.Conn
-	nickname string
-	isHost   bool
-	send     chan []byte
+	conn        *websocket.Conn
+	nickname    string
+	isHost      bool
+	send        chan []byte
+	peerID      string // WebRTC 信令唯一标识
+	voiceActive bool   // 是否已加入语音
 }
 
 // watchRoom 一个视频分享对应的观看室
 type watchRoom struct {
 	mu      sync.RWMutex
 	clients map[*watchClient]bool
+	byPeer  map[string]*watchClient // peerID → client
+}
+
+func randomPeerID() string {
+	b := make([]byte, 6)
+	crypto_rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func newWatchRoom() *watchRoom {
-	return &watchRoom{clients: make(map[*watchClient]bool)}
+	return &watchRoom{
+		clients: make(map[*watchClient]bool),
+		byPeer:  make(map[string]*watchClient),
+	}
 }
 
 func (r *watchRoom) add(c *watchClient) {
 	r.mu.Lock()
 	r.clients[c] = true
+	if c.peerID != "" {
+		r.byPeer[c.peerID] = c
+	}
 	r.mu.Unlock()
 }
 
 func (r *watchRoom) remove(c *watchClient) {
 	r.mu.Lock()
 	delete(r.clients, c)
+	if c.peerID != "" {
+		delete(r.byPeer, c.peerID)
+	}
 	r.mu.Unlock()
+}
+
+// sendToPeer 向指定 peerID 发送定向消息（WebRTC 信令）
+func (r *watchRoom) sendToPeer(peerID string, msg watchBroadcast) {
+	data, _ := json.Marshal(msg)
+	r.mu.RLock()
+	c, ok := r.byPeer[peerID]
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	select {
+	case c.send <- data:
+	default:
+	}
+}
+
+// voicePeers 返回当前已加入语音的成员（排除 exclude）
+func (r *watchRoom) voicePeers(exclude *watchClient) []voicePeerInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var peers []voicePeerInfo
+	for c := range r.clients {
+		if c != exclude && c.voiceActive {
+			peers = append(peers, voicePeerInfo{PeerID: c.peerID, Nickname: c.nickname})
+		}
+	}
+	return peers
 }
 
 func (r *watchRoom) count() int {
@@ -1491,15 +1556,17 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		nickname: nickname,
 		isHost:   isHost,
 		send:     make(chan []byte, 64),
+		peerID:   randomPeerID(),
 	}
 	room.add(client)
 
-	// 广播：有人加入
+	// 广播：有人加入（携带 peerID 供 WebRTC 信令使用）
 	room.broadcastAll(watchBroadcast{
 		Type:     "joined",
 		Nickname: nickname,
 		IsHost:   isHost,
 		Count:    room.count(),
+		PeerID:   client.peerID,
 	})
 
 	// 写 goroutine
@@ -1516,6 +1583,13 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	defer func() {
 		room.remove(client)
 		close(client.send)
+		// 语音成员断开：通知其他人关闭 RTCPeerConnection
+		if client.voiceActive {
+			room.broadcastAll(watchBroadcast{
+				Type:   "voice_leave",
+				PeerID: client.peerID,
+			})
+		}
 		// 广播：有人离开
 		room.broadcastAll(watchBroadcast{
 			Type:     "left",
@@ -1528,7 +1602,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		}
 	}()
 
-	conn.SetReadLimit(4096)
+	conn.SetReadLimit(65536) // 64KB，SDP/ICE 可能较大
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -1570,6 +1644,99 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 				Action: msg.Action,
 				Time:   msg.Time,
 			}, client) // 不发给自己
+
+		// ---- WebRTC 语音信令 ----
+		case "voice_join":
+			// 标记自己已加入语音
+			client.voiceActive = true
+			// 将已在语音的成员列表发回给本人，让其主动发起 offer
+			existingPeers := room.voicePeers(client)
+			if len(existingPeers) > 0 {
+				data, _ := json.Marshal(watchBroadcast{
+					Type:  "voice_peers",
+					Peers: existingPeers,
+				})
+				select {
+				case client.send <- data:
+				default:
+				}
+			}
+			// 广播给其他人：新成员加入了语音
+			room.broadcast(watchBroadcast{
+				Type:     "voice_join",
+				PeerID:   client.peerID,
+				Nickname: nickname,
+			}, client)
+
+		case "voice_leave":
+			client.voiceActive = false
+			room.broadcast(watchBroadcast{
+				Type:   "voice_leave",
+				PeerID: client.peerID,
+			}, client)
+
+		case "voice_offer":
+			// 转发 offer 给指定 peer
+			room.sendToPeer(msg.To, watchBroadcast{
+				Type: "voice_offer",
+				From: client.peerID,
+				SDP:  msg.SDP,
+			})
+
+		case "voice_answer":
+			// 转发 answer 给指定 peer
+			room.sendToPeer(msg.To, watchBroadcast{
+				Type: "voice_answer",
+				From: client.peerID,
+				SDP:  msg.SDP,
+			})
+
+		case "voice_ice":
+			// 转发 ICE candidate 给指定 peer
+			room.sendToPeer(msg.To, watchBroadcast{
+				Type:      "voice_ice",
+				From:      client.peerID,
+				Candidate: msg.Candidate,
+			})
 		}
 	}
+}
+
+// -------- TURN 临时凭证 --------
+
+// GetTurnCredentials 生成 coturn use-auth-secret 临时凭证
+// 算法：username = "<expiry_unix>:user"，password = base64(HMAC-SHA1(secret, username))
+func (h *NFSShareHandler) GetTurnCredentials(c *gin.Context) {
+	cfg := h.cfg
+	turnCfg := config.Get().TURN
+	if turnCfg.Secret == "" || turnCfg.Host == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "TURN 未配置"})
+		return
+	}
+	_ = cfg // suppress unused warning
+
+	ttl := turnCfg.TTL
+	if ttl <= 0 {
+		ttl = 3600
+	}
+	expiry := time.Now().Add(time.Duration(ttl) * time.Second).Unix()
+	username := fmt.Sprintf("%d:user", expiry)
+
+	mac := hmac.New(sha1.New, []byte(turnCfg.Secret))
+	mac.Write([]byte(username))
+	password := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+	port := turnCfg.Port
+	if port == 0 {
+		port = 3478
+	}
+	host := fmt.Sprintf("%s:%d", turnCfg.Host, port)
+
+	c.JSON(http.StatusOK, gin.H{
+		"stun": "stun:" + host,
+		"turn": "turn:" + host,
+		"username": username,
+		"credential": password,
+		"ttl": ttl,
+	})
 }

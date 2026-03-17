@@ -32,6 +32,15 @@ type Config struct {
 	AIGateway          AIGatewayConfig          `yaml:"ai_gateway"`
 	NFSShare           NFSShareConfig           `yaml:"nfs_share"`
 	ImageUnderstanding ImageUnderstandingConfig `yaml:"image_understanding"`
+	TURN               TURNConfig               `yaml:"turn"`
+}
+
+// TURNConfig WebRTC TURN 服务器配置（coturn use-auth-secret 模式）
+type TURNConfig struct {
+	Host   string `yaml:"host"`   // TURN 服务器地址，如 nps.jaxiu.cn
+	Port   int    `yaml:"port"`   // TURN 端口，默认 3478
+	Secret string `yaml:"secret"` // coturn static-auth-secret
+	TTL    int    `yaml:"ttl"`    // 凭证有效期（秒），默认 3600
 }
 
 // NFSShareConfig NFS/SMB 文件分享配置
@@ -357,6 +366,10 @@ func DefaultConfig() *Config {
 			MaxFileSizeMB:        0,
 			DisableVideoDownload: true,
 			Mounts:               []MountConfig{},
+		},
+		TURN: TURNConfig{
+			Port: 3478,
+			TTL:  3600,
 		},
 	}
 }

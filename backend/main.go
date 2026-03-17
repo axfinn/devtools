@@ -606,6 +606,7 @@ func main() {
 		nfsshare := api.Group("/nfsshare")
 		{
 			nfsshare.GET("/status", nfsShareHandler.Status)                      // 功能状态（公开）
+			nfsshare.GET("/turn-credentials", nfsShareHandler.GetTurnCredentials) // TURN 临时凭证（公开）
 			nfsshare.GET("/:id/info", nfsShareHandler.Info)                      // 分享信息（公开，不消耗次数）
 			nfsshare.GET("/:id/stream", nfsShareHandler.Stream)                   // 原生视频流（公开，Range 支持）
 			nfsshare.GET("/:id/qualities", nfsShareHandler.HLSQualities)           // 可用清晰度列表（公开）
