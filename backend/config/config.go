@@ -34,12 +34,26 @@ type Config struct {
 	ImageUnderstanding ImageUnderstandingConfig `yaml:"image_understanding"`
 }
 
-// NFSShareConfig NFS 文件分享配置
+// NFSShareConfig NFS/SMB 文件分享配置
 type NFSShareConfig struct {
-	Enabled       bool   `yaml:"enabled"`         // 是否启用 NFS 分享功能
-	MountPath     string `yaml:"mount_path"`      // NFS 挂载目录路径
-	AdminPassword string `yaml:"admin_password"`  // 超管密码，为空则禁用
-	MaxFileSizeMB int64  `yaml:"max_file_size_mb"` // 单文件最大大小（MB），0 表示不限制
+	Enabled       bool          `yaml:"enabled"`          // 是否启用
+	AdminPassword string        `yaml:"admin_password"`   // 超管密码，为空则禁用
+	MaxFileSizeMB int64         `yaml:"max_file_size_mb"` // 单文件最大大小（MB），0 不限
+	Mounts        []MountConfig `yaml:"mounts"`           // 挂载点列表
+}
+
+// MountConfig 单个挂载点配置
+type MountConfig struct {
+	Name       string `yaml:"name"`        // 唯一标识名（英文，用作路径前缀）
+	Type       string `yaml:"type"`        // "nfs" | "smb" | "local"
+	Host       string `yaml:"host"`        // 服务器 IP 或主机名
+	Export     string `yaml:"export"`      // NFS: 导出路径，如 /exports/data
+	Share      string `yaml:"share"`       // SMB: 共享名，如 data
+	Username   string `yaml:"username"`    // SMB: 用户名
+	Password   string `yaml:"password"`    // SMB: 密码
+	Domain     string `yaml:"domain"`      // SMB: 域名（可选）
+	Options    string `yaml:"options"`     // 附加挂载选项（逗号分隔）
+	MountPoint string `yaml:"mount_point"` // 本地挂载目录，留空则自动生成 ./data/mounts/<name>
 }
 
 // ServerConfig 服务器配置
@@ -339,8 +353,8 @@ func DefaultConfig() *Config {
 		},
 		NFSShare: NFSShareConfig{
 			Enabled:       false,
-			MountPath:     "/mnt/nfs",
-			MaxFileSizeMB: 0, // 不限制
+			MaxFileSizeMB: 0,
+			Mounts:        []MountConfig{},
 		},
 	}
 }

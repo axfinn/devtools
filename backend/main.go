@@ -591,18 +591,21 @@ func main() {
 			terminal.GET("/:id/ws", terminalHandler.HandleWebSocket) // WebSocket 连接
 		}
 
-		// NFS 文件分享 API
+		// NFS/SMB 文件分享 API
 		nfsshare := api.Group("/nfsshare")
 		{
-			nfsshare.GET("/status", nfsShareHandler.Status)                    // 功能状态（公开）
-			nfsshare.GET("/:id/info", nfsShareHandler.Info)                    // 分享信息（公开，不消耗次数）
-			nfsshare.GET("/:id", nfsShareHandler.Access)                       // 访问/下载文件（公开，消耗次数）
-			nfsshare.POST("", nfsShareHandler.Create)                          // 创建分享（超管）
-			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)              // 浏览目录（超管）
-			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)             // 分享列表（超管）
-			nfsshare.GET("/admin/:id/logs", nfsShareHandler.AdminGetLogs)      // 访问日志（超管）
-			nfsshare.PUT("/admin/:id", nfsShareHandler.AdminUpdate)            // 修改配置（超管）
-			nfsshare.DELETE("/admin/:id", nfsShareHandler.AdminDelete)         // 删除分享（超管）
+			nfsshare.GET("/status", nfsShareHandler.Status)                      // 功能状态（公开）
+			nfsshare.GET("/:id/info", nfsShareHandler.Info)                      // 分享信息（公开，不消耗次数）
+			nfsshare.GET("/:id", nfsShareHandler.Access)                         // 访问/下载文件（公开，消耗次数）
+			nfsshare.POST("", nfsShareHandler.Create)                            // 创建分享（超管）
+			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)                // 浏览目录（超管）
+			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)               // 分享列表（超管）
+			nfsshare.GET("/admin/mounts", nfsShareHandler.MountsList)            // 挂载点列表及状态（超管）
+			nfsshare.POST("/admin/mounts/:name/remount", nfsShareHandler.MountsRemount) // 重新挂载（超管）
+			nfsshare.POST("/admin/mounts/:name/umount", nfsShareHandler.MountsUmount)   // 卸载（超管）
+			nfsshare.GET("/admin/:id/logs", nfsShareHandler.AdminGetLogs)        // 访问日志（超管）
+			nfsshare.PUT("/admin/:id", nfsShareHandler.AdminUpdate)              // 修改配置（超管）
+			nfsshare.DELETE("/admin/:id", nfsShareHandler.AdminDelete)           // 删除分享（超管）
 		}
 
 		// OCR 文字识别

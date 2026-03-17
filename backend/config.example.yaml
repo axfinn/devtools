@@ -271,18 +271,42 @@ bailian:
       default_size: "1024*1024"
       description: "无免费额度，默认禁用"
 
-# NFS 文件分享配置
+# NFS/SMB 文件分享配置
 # 仅超管密码可操作，支持指定访问次数和过期时间，超限后禁止访问
+# 大文件使用流式传输，不会占用内存
 nfs_share:
-  # 是否启用 NFS 分享功能（默认关闭）
+  # 是否启用（默认关闭）
   enabled: false
-  # NFS 挂载目录的本地路径（所有分享文件必须在此目录下）
-  mount_path: "/mnt/nfs"
   # 超管密码（必填，留空则功能不可用）
   admin_password: ""
-  # 单文件最大分享大小（MB），0 表示不限制
-  # 注意：大文件使用流式传输，不会占用内存
+  # 单文件最大分享大小（MB），0 = 不限制
   max_file_size_mb: 0
+
+  # 挂载点列表（启动时自动挂载，需要系统已安装 nfs-common / cifs-utils）
+  mounts:
+    # NFS 示例（服务端通过 /etc/exports 控制主机权限，无需用户名密码）
+    - name: "project-files"       # 唯一标识，用作路径前缀
+      type: nfs                   # 协议类型：nfs | smb | local
+      host: "192.168.1.100"       # NFS 服务器地址
+      export: "/exports/data"     # 服务端导出路径
+      options: "soft,timeo=30"    # 附加挂载选项（可选）
+      mount_point: ""             # 留空则自动使用 ./data/mounts/project-files
+
+    # SMB/CIFS 示例（Windows 网络共享 / Samba，支持用户名密码）
+    # 依赖：apt install cifs-utils
+    - name: "team-share"
+      type: smb
+      host: "192.168.1.200"
+      share: "TeamDocs"           # 共享名（不含 //host/ 前缀）
+      username: "alice"
+      password: "secret"
+      domain: "CORP"              # 域名，非域账号可留空
+      options: "vers=3.0"         # SMB 版本等附加选项（可选）
+
+    # 本地目录示例（直接映射，不执行 mount 命令，path 填 export 字段）
+    - name: "local-backup"
+      type: local
+      export: "/mnt/backup"       # 本地目录路径
 
 # AI Gateway 配置
 ai_gateway:

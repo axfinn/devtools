@@ -177,7 +177,76 @@
           </div>
         </el-tab-pane>
 
-        <!-- Tab 2: 分享列表 -->
+        <!-- Tab 2: 挂载管理 -->
+        <el-tab-pane label="挂载管理" name="mounts">
+          <div class="mt-2">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-sm text-gray-500">挂载点来自 config.yaml → nfs_share.mounts</span>
+              <el-button size="small" :loading="mountsLoading" @click="loadMounts">
+                <el-icon><Refresh /></el-icon> 刷新状态
+              </el-button>
+            </div>
+            <el-empty v-if="!mountsLoading && mountsList.length === 0" description="暂无挂载点，请在 config.yaml 中配置 nfs_share.mounts" />
+            <div class="grid gap-3">
+              <el-card
+                v-for="m in mountsList"
+                :key="m.name"
+                :class="['border-l-4', m.mounted ? 'border-l-green-400' : 'border-l-red-400']"
+                shadow="never"
+              >
+                <div class="flex items-start justify-between">
+                  <div class="space-y-1">
+                    <div class="flex items-center gap-2">
+                      <span class="font-bold text-base">{{ m.name }}</span>
+                      <el-tag :type="m.mounted ? 'success' : 'danger'" size="small">
+                        {{ m.mounted ? '已挂载' : '未挂载' }}
+                      </el-tag>
+                      <el-tag size="small" type="info">{{ m.type.toUpperCase() }}</el-tag>
+                    </div>
+                    <div class="text-sm text-gray-600">
+                      <span v-if="m.type === 'nfs'">{{ m.host }}:{{ m.export }}</span>
+                      <span v-else-if="m.type === 'local'">{{ m.export }}</span>
+                      <span v-else>//{{ m.host }}/{{ m.share }}
+                        <span v-if="m.username" class="text-gray-400 ml-1">（用户：{{ m.username }}）</span>
+                      </span>
+                    </div>
+                    <div class="text-xs text-gray-400">本地挂载点：{{ m.local_path }}</div>
+                    <div v-if="m.mounted_at" class="text-xs text-gray-400">
+                      挂载时间：{{ formatDate(m.mounted_at) }}
+                    </div>
+                    <div v-if="m.error" class="text-xs text-red-500 mt-1">
+                      错误：{{ m.error }}
+                    </div>
+                  </div>
+                  <div class="flex gap-2 ml-4 flex-shrink-0">
+                    <el-button
+                      size="small"
+                      type="primary"
+                      :loading="mountActionLoading === m.name + '_remount'"
+                      @click="remount(m.name)"
+                    >重新挂载</el-button>
+                    <el-button
+                      v-if="m.mounted"
+                      size="small"
+                      type="warning"
+                      :loading="mountActionLoading === m.name + '_umount'"
+                      @click="umount(m.name)"
+                    >卸载</el-button>
+                  </div>
+                </div>
+              </el-card>
+            </div>
+
+            <!-- config.yaml 示例 -->
+            <el-collapse class="mt-4">
+              <el-collapse-item title="config.yaml 配置示例" name="example">
+                <pre class="bg-gray-50 rounded p-3 text-xs overflow-x-auto">{{configExample}}</pre>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
+        </el-tab-pane>
+
+        <!-- Tab 3: 分享列表 -->
         <el-tab-pane name="list">
           <template #label>
             <span>分享列表</span>
@@ -375,6 +444,11 @@ const logsPageSize = 50
 const logsTotal = ref(0)
 const logsLoading = ref(false)
 
+// 挂载管理
+const mountsList = ref([])
+const mountsLoading = ref(false)
+const mountActionLoading = ref('')
+
 // 编辑弹窗
 const editDialogVisible = ref(false)
 const editTarget = ref(null)
@@ -433,8 +507,7 @@ async function loginAdmin(silent = false) {
     if (res.ok) {
       adminLoggedIn.value = true
       sessionStorage.setItem('nfs_admin_password', adminPassword.value)
-      await loadDir('.')
-      await loadShareList()
+      await Promise.all([loadDir('.'), loadShareList(), loadMounts()])
     } else {
       const data = await res.json()
       if (!silent) ElMessage.error(data.error || '密码错误')
@@ -538,6 +611,93 @@ async function createShare() {
     createLoading.value = false
   }
 }
+
+// -------- 挂载管理 --------
+async function loadMounts() {
+  mountsLoading.value = true
+  try {
+    const res = await fetch(`/api/nfsshare/admin/mounts?admin_password=${encodeURIComponent(adminPassword.value)}`)
+    if (!res.ok) return
+    const data = await res.json()
+    mountsList.value = data.mounts || []
+  } catch {
+    // ignore
+  } finally {
+    mountsLoading.value = false
+  }
+}
+
+async function remount(name) {
+  mountActionLoading.value = name + '_remount'
+  try {
+    const res = await fetch(
+      `/api/nfsshare/admin/mounts/${name}/remount?admin_password=${encodeURIComponent(adminPassword.value)}`,
+      { method: 'POST' }
+    )
+    const data = await res.json()
+    if (res.ok) {
+      ElMessage.success(`${name} 挂载成功`)
+    } else {
+      ElMessage.error(data.error || '挂载失败')
+    }
+    await loadMounts()
+  } catch {
+    ElMessage.error('网络错误')
+  } finally {
+    mountActionLoading.value = ''
+  }
+}
+
+async function umount(name) {
+  try {
+    await ElMessageBox.confirm(`确定卸载 ${name}？`, '确认卸载', { type: 'warning' })
+  } catch { return }
+  mountActionLoading.value = name + '_umount'
+  try {
+    const res = await fetch(
+      `/api/nfsshare/admin/mounts/${name}/umount?admin_password=${encodeURIComponent(adminPassword.value)}`,
+      { method: 'POST' }
+    )
+    const data = await res.json()
+    if (res.ok) {
+      ElMessage.success(`${name} 已卸载`)
+    } else {
+      ElMessage.error(data.error || '卸载失败')
+    }
+    await loadMounts()
+  } catch {
+    ElMessage.error('网络错误')
+  } finally {
+    mountActionLoading.value = ''
+  }
+}
+
+const configExample = `nfs_share:
+  enabled: true
+  admin_password: "your_super_admin_pass"
+  max_file_size_mb: 0   # 0 = 不限制
+
+  mounts:
+    # NFS 示例（无需密码，服务端 /etc/exports 控制权限）
+    - name: "project-files"
+      type: nfs
+      host: "192.168.1.100"
+      export: "/exports/data"
+      options: "soft,timeo=30"   # 可选
+
+    # SMB/CIFS 示例（Windows 共享 / Samba）
+    - name: "team-share"
+      type: smb
+      host: "192.168.1.200"
+      share: "TeamDocs"
+      username: "alice"
+      password: "secret"
+      domain: "CORP"     # 可选，域账号时填写
+
+    # 本地目录示例（直接映射，不执行 mount）
+    - name: "local-backup"
+      type: local
+      export: "/mnt/backup"`
 
 // -------- 分享列表 --------
 async function loadShareList() {
