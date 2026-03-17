@@ -1,6 +1,7 @@
 <template>
   <!-- ===== Password Gate ===== -->
-  <div v-if="!authenticated" class="min-h-screen bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 flex items-center justify-center p-4">
+  <div v-if="!authenticated" class="min-h-screen flex items-center justify-center p-4"
+    :class="isDark ? 'bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900' : 'bg-gradient-to-br from-slate-100 via-purple-50 to-slate-100'">
     <div class="w-full max-w-sm">
       <div class="text-center mb-8">
         <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-purple-600/30 border border-purple-500/40 mb-4">
@@ -30,7 +31,7 @@
   </div>
 
   <!-- ===== Main Workspace ===== -->
-  <div v-else class="autodev-workspace">
+  <div v-else class="autodev-workspace" :class="{ 'theme-light': !isDark }">
 
     <!-- Top Bar -->
     <div class="topbar">
@@ -44,11 +45,15 @@
         </el-badge>
       </div>
       <div class="flex items-center gap-2">
-        <el-button size="small" @click="claudeDrawerVisible = true"
-          class="topbar-btn">
+        <el-button size="small" @click="claudeDrawerVisible = true" class="topbar-btn">
           <el-icon><SetUp /></el-icon>
           <span class="hidden sm:inline ml-1">Claude 管理</span>
         </el-button>
+        <el-tooltip :content="isDark ? '切换浅色模式' : '切换深色模式'" placement="bottom">
+          <el-button size="small" @click="toggleTheme" class="topbar-btn">
+            <el-icon><component :is="isDark ? Sunny : MoonNight" /></el-icon>
+          </el-button>
+        </el-tooltip>
         <el-button size="small" @click="logout" class="topbar-btn">
           <el-icon><SwitchButton /></el-icon>
         </el-button>
@@ -533,7 +538,8 @@ import {
   Lock, MagicStick, VideoPlay, VideoPause, Refresh, RefreshRight,
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
   FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
-  SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled
+  SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled,
+  Sunny, MoonNight
 } from '@element-plus/icons-vue'
 
 // ---- markdown-it setup ----
@@ -557,7 +563,32 @@ function renderMd(content) {
 }
 
 const SESSION_KEY = 'autodev_password'
+const THEME_KEY = 'autodev_theme'   // 'dark' | 'light' | null (follow system)
 const API_BASE = '/api/autodev'
+
+// ---- theme (follows system, user can override) ----
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
+
+function resolveIsDark() {
+  const stored = localStorage.getItem(THEME_KEY)
+  if (stored === 'dark') return true
+  if (stored === 'light') return false
+  return systemDark.matches  // follow system
+}
+
+const isDark = ref(resolveIsDark())
+
+// listen for system theme changes (only applies when no manual override)
+systemDark.addEventListener('change', () => {
+  if (!localStorage.getItem(THEME_KEY)) {
+    isDark.value = systemDark.matches
+  }
+})
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  localStorage.setItem(THEME_KEY, isDark.value ? 'dark' : 'light')
+}
 
 const PHASE_NAMES = [
   { label: 'DISCOVER', short: 'DIS' },
@@ -1670,4 +1701,152 @@ onUnmounted(() => clearInterval(refreshTimer))
   .content-panel { flex: 1; min-height: 50vh; }
   .markdown-view { padding: 16px; }
 }
+
+/* =====================================================
+   Light theme overrides — applied when .theme-light
+   ===================================================== */
+.theme-light {
+  background: #f8fafc;
+  color: #1e293b;
+}
+
+.theme-light .topbar {
+  background: #ffffff;
+  border-bottom-color: #e2e8f0;
+}
+.theme-light .topbar-btn {
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+.theme-light .topbar-btn:hover {
+  border-color: #7c3aed !important;
+  color: #6d28d9 !important;
+}
+
+.theme-light .sidebar {
+  background: #f1f5f9;
+  border-right-color: #e2e8f0;
+}
+.theme-light .sidebar-card {
+  background: #ffffff;
+  border-color: #e2e8f0;
+}
+.theme-light .sidebar-card-header { color: #64748b; }
+
+.theme-light .task-item:hover { background: #f8fafc; border-color: #cbd5e1; }
+.theme-light .task-item--active { background: #f5f3ff; border-color: #7c3aed !important; }
+.theme-light .task-item p.text-slate-200 { color: #1e293b !important; }
+.theme-light .task-item p.text-slate-500 { color: #94a3b8 !important; }
+
+.theme-light .content-panel { background: #ffffff; }
+.theme-light .content-header {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+}
+.theme-light .action-btn {
+  border-color: #cbd5e1 !important;
+  color: #64748b !important;
+}
+.theme-light .action-btn:hover {
+  border-color: #7c3aed !important;
+  color: #6d28d9 !important;
+}
+
+.theme-light .phase-steps {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+}
+.theme-light .phase-step-dot--pending { background: #e2e8f0; color: #94a3b8; }
+.theme-light .phase-connector { background: #e2e8f0; }
+
+.theme-light .tab-bar {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+}
+.theme-light .tab-btn { color: #94a3b8; }
+.theme-light .tab-btn:hover { color: #475569; background: rgba(0,0,0,0.03); }
+.theme-light .tab-btn--active { color: #7c3aed; border-bottom-color: #7c3aed; }
+.theme-light .tab-badge { background: #e2e8f0; color: #64748b; }
+
+.theme-light .result-toolbar {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+}
+
+/* Light markdown */
+.theme-light .markdown-view { color: #1e293b; }
+.theme-light .markdown-view :deep(h1) { color: #0f172a; border-bottom-color: #e2e8f0; }
+.theme-light .markdown-view :deep(h2) { color: #1e293b; border-bottom-color: #e2e8f0; }
+.theme-light .markdown-view :deep(h3) { color: #334155; }
+.theme-light .markdown-view :deep(h4),
+.theme-light .markdown-view :deep(h5),
+.theme-light .markdown-view :deep(h6) { color: #475569; }
+.theme-light .markdown-view :deep(p) { color: #334155; }
+.theme-light .markdown-view :deep(a) { color: #6d28d9; }
+.theme-light .markdown-view :deep(strong) { color: #0f172a; }
+.theme-light .markdown-view :deep(em) { color: #64748b; }
+.theme-light .markdown-view :deep(code) {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+  color: #be185d;
+}
+.theme-light .markdown-view :deep(.hljs-block) { border-color: #e2e8f0; }
+.theme-light .markdown-view :deep(.hljs-block code) { background: #f8fafc !important; }
+.theme-light .markdown-view :deep(pre) { background: #f8fafc; border-color: #e2e8f0; }
+.theme-light .markdown-view :deep(pre code) { color: #1e293b; }
+.theme-light .markdown-view :deep(li) { color: #334155; }
+.theme-light .markdown-view :deep(blockquote) { background: #f5f3ff; border-left-color: #7c3aed; color: #64748b; }
+.theme-light .markdown-view :deep(hr) { border-top-color: #e2e8f0; }
+.theme-light .markdown-view :deep(th) { background: #f1f5f9; color: #64748b; border-color: #e2e8f0; }
+.theme-light .markdown-view :deep(td) { border-color: #e2e8f0; color: #334155; }
+.theme-light .markdown-view :deep(tr:nth-child(even)) { background: #f8fafc; }
+
+/* Light file tree */
+.theme-light .file-tree {
+  background: #f8fafc;
+  border-right-color: #e2e8f0;
+}
+.theme-light .file-item:hover { background: #f1f5f9; }
+.theme-light .file-item--active { background: #ede9fe !important; }
+.theme-light .file-name { color: #475569; }
+.theme-light .file-path-hint { color: #94a3b8; }
+.theme-light .file-item--active .file-name { color: #6d28d9; }
+.theme-light .file-group-header { border-top-color: #e2e8f0; }
+.theme-light .file-group-label { color: #94a3b8; }
+.theme-light .file-group-count { background: #e2e8f0; color: #94a3b8; }
+
+.theme-light .file-content-area { background: #ffffff; }
+.theme-light .code-view { background: #f8fafc; color: #1e293b; }
+
+/* Light log terminal */
+.theme-light .log-toolbar {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+}
+.theme-light .log-terminal {
+  background: #1e293b;   /* keep terminal dark even in light mode — readability */
+  color: #4ade80;
+}
+
+/* Light empty states */
+.theme-light .empty-content { color: #94a3b8; }
+
+/* Light output hint */
+.theme-light .output-hint {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #94a3b8;
+}
+.theme-light .hint-code {
+  background: #e2e8f0;
+  color: #6d28d9;
+}
+
+/* Light category badges */
+.theme-light .badge--result  { background: #ede9fe; color: #6d28d9; }
+.theme-light .badge--code    { background: #dcfce7; color: #16a34a; }
+.theme-light .badge--process { background: #dbeafe; color: #2563eb; }
+.theme-light .badge--log     { background: #f1f5f9; color: #64748b; }
+.theme-light .badge--docs    { background: #fef9c3; color: #92400e; }
+.theme-light .badge--state   { background: #f1f5f9; color: #64748b; }
 </style>
