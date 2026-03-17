@@ -167,8 +167,9 @@ type MountInfo struct {
 
 // hlsJob 表示一个 HLS 转码任务
 type hlsJob struct {
-	done chan struct{} // 关闭表示完成
-	err  error
+	done        chan struct{} // 关闭表示完成
+	err         error
+	viewCounted bool // 是否已为本 job 计入过 view（防止重复计数）
 }
 
 // NFSShareHandler NFS/SMB 文件分享处理器
@@ -969,6 +970,7 @@ func (h *NFSShareHandler) AdminDelete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	CleanHLSCache(id)
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
 }
 
@@ -1229,7 +1231,15 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 
 	// 已转码完成（m3u8 存在且含 ENDLIST 标记）
 	if data, err := os.ReadFile(m3u8Path); err == nil && strings.Contains(string(data), "#EXT-X-ENDLIST") {
-		h.db.IncrementNFSShareViews(id)
+		// 如果同一个 job 已计过 view（hls.js 轮询到 ENDLIST），不重复计数
+		key := hlsJobKey(id, qualityName)
+		alreadyCounted := false
+		if jobVal, ok := h.hlsJobs.Load(key); ok {
+			alreadyCounted = jobVal.(*hlsJob).viewCounted
+		}
+		if !alreadyCounted {
+			h.db.IncrementNFSShareViews(id)
+		}
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
 		c.File(m3u8Path)
 		return
@@ -1241,6 +1251,9 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 	job := jobVal.(*hlsJob)
 
 	if !loaded {
+		// 本次请求触发新转码，计入一次 view
+		job.viewCounted = true
+		h.db.IncrementNFSShareViews(id)
 		go func() {
 			defer h.hlsJobs.Delete(key)
 			job.err = h.doTranscode(id, share, preset, outDir, m3u8Path)
@@ -1254,7 +1267,6 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		return
 	}
 
-	h.db.IncrementNFSShareViews(id)
 	c.Header("Content-Type", "application/vnd.apple.mpegurl")
 	c.File(m3u8Path)
 }

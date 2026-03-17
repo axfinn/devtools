@@ -284,6 +284,8 @@ async function loadInfo() {
     if (data.expired) { error.value = '该分享已过期'; return }
     if (data.exhausted) { error.value = '该分享次数已用完'; return }
     info.value = data
+    loading.value = false
+    await nextTick()
     if (data.has_password) {
       // 需要密码才能继续，弹出密码框
       passwordDialogVisible.value = true
@@ -321,6 +323,7 @@ async function confirmPassword() {
     // 密码正确
     password.value = pwd
     passwordDialogVisible.value = false
+    await nextTick()
     if (info.value.is_video) {
       await initPlayer()
     }
@@ -351,6 +354,15 @@ async function initPlayer() {
     startNative()
   } else {
     await loadQualities()
+    if (!currentQuality.value) {
+      // ffprobe 不可用或接口失败，降级到原生播放或报错
+      if (info.value.is_native_video) {
+        startNative()
+      } else {
+        error.value = '无法获取视频清晰度信息，请稍后重试'
+      }
+      return
+    }
     transcoding.value = true
     startHLS()
   }
@@ -364,9 +376,14 @@ async function onQualityChange(quality) {
   if (hls) { hls.destroy(); hls = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   startHLS()
-  videoEl.value.addEventListener('canplay', () => {
-    videoEl.value.currentTime = savedTime
-  }, { once: true })
+  // MANIFEST_PARSED 后再 seek：分片列表已知，时间跳转更可靠
+  if (hls) {
+    hls.once(Hls.Events.MANIFEST_PARSED, () => {
+      if (savedTime > 0 && videoEl.value) {
+        videoEl.value.currentTime = savedTime
+      }
+    })
+  }
 }
 
 function startNative() {
@@ -441,9 +458,7 @@ function toggleWatch() {
   if (watchConnected.value) {
     disconnectWatch()
   } else {
-    // 预填昵称
-    const savedPwd = sessionStorage.getItem('nfs_admin_password') || ''
-    joinAdminPwd.value = savedPwd
+    joinAdminPwd.value = ''
     joinNickname.value = ''
     joinDialogVisible.value = true
   }
