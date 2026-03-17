@@ -24,12 +24,22 @@ type Config struct {
 	Expense    ExpenseConfig    `yaml:"expense"`
 	Glucose    GlucoseConfig    `yaml:"glucose"`
 	Household  HouseholdConfig  `yaml:"household"`
-	DeepSeek   DeepSeekConfig   `yaml:"deepseek"`
-	MiniMax    MiniMaxConfig    `yaml:"minimax"`
-	MiniMaxMCP MiniMaxMCPConfig `yaml:"minimax_mcp"`
-	DashScope  DashScopeConfig  `yaml:"dashscope"`
-	Bailian    BailianConfig    `yaml:"bailian"`
-	AIGateway  AIGatewayConfig  `yaml:"ai_gateway"`
+	DeepSeek           DeepSeekConfig           `yaml:"deepseek"`
+	MiniMax            MiniMaxConfig            `yaml:"minimax"`
+	MiniMaxMCP         MiniMaxMCPConfig         `yaml:"minimax_mcp"`
+	DashScope          DashScopeConfig          `yaml:"dashscope"`
+	Bailian            BailianConfig            `yaml:"bailian"`
+	AIGateway          AIGatewayConfig          `yaml:"ai_gateway"`
+	NFSShare           NFSShareConfig           `yaml:"nfs_share"`
+	ImageUnderstanding ImageUnderstandingConfig `yaml:"image_understanding"`
+}
+
+// NFSShareConfig NFS 文件分享配置
+type NFSShareConfig struct {
+	Enabled       bool   `yaml:"enabled"`         // 是否启用 NFS 分享功能
+	MountPath     string `yaml:"mount_path"`      // NFS 挂载目录路径
+	AdminPassword string `yaml:"admin_password"`  // 超管密码，为空则禁用
+	MaxFileSizeMB int64  `yaml:"max_file_size_mb"` // 单文件最大大小（MB），0 表示不限制
 }
 
 // ServerConfig 服务器配置
@@ -208,6 +218,12 @@ type AIGatewayProxyModelConfig struct {
 	Description   string `yaml:"description"`
 }
 
+// ImageUnderstandingConfig 图像理解模块配置
+type ImageUnderstandingConfig struct {
+	// AdminPassword 用于查看 Qwen 视觉理解请求流水，独立于 super_admin_password
+	AdminPassword string `yaml:"admin_password"`
+}
+
 type AIGatewayPricingConfig struct {
 	Model             string  `yaml:"model"`
 	Provider          string  `yaml:"provider"`
@@ -320,6 +336,11 @@ func DefaultConfig() *Config {
 				Model: "proxy-chat",
 			},
 			Pricing: []AIGatewayPricingConfig{},
+		},
+		NFSShare: NFSShareConfig{
+			Enabled:       false,
+			MountPath:     "/mnt/nfs",
+			MaxFileSizeMB: 0, // 不限制
 		},
 	}
 }

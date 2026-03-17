@@ -177,6 +177,13 @@ dashscope:
   # API 基础地址，一般无需修改
   base_url: "https://coding.dashscope.aliyuncs.com/v1"
 
+# 图像理解模块（qwen 视觉理解）
+# POST /api/image-understanding/qwen-vision — 免 API Key 内部调用（仅限项目同域请求）
+# GET  /api/image-understanding/qwen-vision/logs — 查看永久流水（需 X-Image-Admin-Password header）
+image_understanding:
+  # 查看请求流水的独立管理员密码，独立于 ai_gateway.super_admin_password
+  admin_password: ""
+
 # 阿里云百炼图片模型配置
 bailian:
   # DashScope / 百炼 API Key
@@ -263,6 +270,19 @@ bailian:
       expires_at: ""
       default_size: "1024*1024"
       description: "无免费额度，默认禁用"
+
+# NFS 文件分享配置
+# 仅超管密码可操作，支持指定访问次数和过期时间，超限后禁止访问
+nfs_share:
+  # 是否启用 NFS 分享功能（默认关闭）
+  enabled: false
+  # NFS 挂载目录的本地路径（所有分享文件必须在此目录下）
+  mount_path: "/mnt/nfs"
+  # 超管密码（必填，留空则功能不可用）
+  admin_password: ""
+  # 单文件最大分享大小（MB），0 表示不限制
+  # 注意：大文件使用流式传输，不会占用内存
+  max_file_size_mb: 0
 
 # AI Gateway 配置
 ai_gateway:

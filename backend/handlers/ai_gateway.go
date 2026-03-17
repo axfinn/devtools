@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -676,16 +678,75 @@ func (h *AIGatewayHandler) runAsyncChatTask(taskID string, req ChatCompletionReq
 
 const internalQwenVisionKeyID = "internal:qwen-vision"
 
+// requireSameOrigin 校验请求来源是否来自当前服务器（同域浏览器请求）
+// 非浏览器直接调用（无 Origin/Referer）会被拒绝，防止外部直接访问内部免密钥接口
+func requireSameOrigin(c *gin.Context) bool {
+	origin := strings.TrimSpace(c.GetHeader("Origin"))
+	referer := strings.TrimSpace(c.GetHeader("Referer"))
+	source := origin
+	if source == "" {
+		source = referer
+	}
+	if source == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "此接口仅限项目内部调用，不允许外部直接请求", "code": 403})
+		return false
+	}
+	parsed, err := url.Parse(source)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无效的请求来源", "code": 403})
+		return false
+	}
+	sourceHost := parsed.Hostname()
+	// 允许 localhost / 127.0.0.1 / ::1（开发模式）
+	if sourceHost == "localhost" || sourceHost == "127.0.0.1" || sourceHost == "::1" {
+		return true
+	}
+	// 允许与当前请求 host 相同的来源
+	reqHost := c.Request.Host
+	if idx := strings.LastIndex(reqHost, ":"); idx >= 0 {
+		reqHost = reqHost[:idx]
+	}
+	if sourceHost == reqHost {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "此接口仅限项目内部调用，不允许外部直接请求", "code": 403})
+	return false
+}
+
 // InternalQwenVision 内部免 API Key 图像理解接口（qwen3.5-plus 视觉能力）
 // POST /api/image-understanding/qwen-vision
 func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
+	if !requireSameOrigin(c) {
+		return
+	}
+
 	var req struct {
-		Image  string `json:"image" binding:"required"`
-		Prompt string `json:"prompt"`
-		Model  string `json:"model"`
+		Images []string `json:"images"` // 多图，每项可为 base64 data URL 或 HTTP URL
+		Image  string   `json:"image"`  // 单图兼容，合并入 images
+		Prompt string   `json:"prompt"`
+		Model  string   `json:"model"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整，缺少 image 字段"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数解析失败"})
+		return
+	}
+	// 兼容单图字段
+	if strings.TrimSpace(req.Image) != "" {
+		req.Images = append([]string{req.Image}, req.Images...)
+	}
+	// 去空
+	imgs := make([]string, 0, len(req.Images))
+	for _, img := range req.Images {
+		if strings.TrimSpace(img) != "" {
+			imgs = append(imgs, strings.TrimSpace(img))
+		}
+	}
+	if len(imgs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请至少提供一张图片（image 或 images）"})
+		return
+	}
+	if len(imgs) > 10 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "图片数量不能超过 10 张"})
 		return
 	}
 	if strings.TrimSpace(h.cfg.DashScope.APIKey) == "" {
@@ -702,35 +763,61 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 		prompt = "请简洁描述图片内容，提取关键对象、场景和文字信息。"
 	}
 
+	// 处理每张图：HTTP URL 下载转 base64，data URL 直接使用
+	logSources := make([]string, 0, len(imgs))
+	contentParts := make([]map[string]interface{}, 0, len(imgs)+1)
+	totalSizeKB := 0
+	for i, img := range imgs {
+		if strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://") {
+			logSources = append(logSources, fmt.Sprintf("[%d]url:%s", i+1, truncateString(img, 80)))
+			downloaded, mimeType, dlErr := fetchImageAsBase64(h.client, img)
+			if dlErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("图片 %d 下载失败: %s", i+1, dlErr.Error())})
+				return
+			}
+			img = "data:" + mimeType + ";base64," + downloaded
+		} else {
+			mime, sizeKB := extractImageMeta(img)
+			totalSizeKB += sizeKB
+			logSources = append(logSources, fmt.Sprintf("[%d]%s~%dKB", i+1, mime, sizeKB))
+		}
+		contentParts = append(contentParts, map[string]interface{}{
+			"type":      "image_url",
+			"image_url": map[string]interface{}{"url": img},
+		})
+	}
+	contentParts = append(contentParts, map[string]interface{}{"type": "text", "text": prompt})
+
 	chatReq := ChatCompletionRequest{
 		Model: model,
 		Messages: []map[string]interface{}{
-			{
-				"role": "user",
-				"content": []map[string]interface{}{
-					{"type": "image_url", "image_url": map[string]interface{}{"url": req.Image}},
-					{"type": "text", "text": prompt},
-				},
-			},
+			{"role": "user", "content": contentParts},
 		},
 	}
 
 	start := time.Now()
-	result, rawMap, err := h.callDashScope(chatReq)
+	result, _, err := h.callDashScope(chatReq)
 	latency := time.Since(start)
 
 	statusCode := http.StatusOK
 	success := err == nil
 	errMsg := ""
-	responseBody := ""
+	content := ""
 	if err != nil {
 		statusCode = http.StatusBadGateway
 		errMsg = err.Error()
 	} else {
-		responseBody = truncateString(sanitizeJSON(rawMap), 5000)
+		content, _ = result["content"].(string)
 	}
 
-	// 记录请求流水（永不过期）
+	// 记录请求流水
+	reqInfo, _ := json.Marshal(map[string]interface{}{
+		"prompt":    prompt,
+		"model":     model,
+		"images":    logSources,
+		"total_kb":  totalSizeKB,
+		"img_count": len(imgs),
+	})
 	_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
 		APIKeyID:     internalQwenVisionKeyID,
 		Model:        model,
@@ -740,8 +827,8 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 		StatusCode:   statusCode,
 		Success:      success,
 		ErrorMessage: errMsg,
-		RequestBody:  truncateString(fmt.Sprintf(`{"prompt":%q,"model":%q}`, prompt, model), 2000),
-		ResponseBody: responseBody,
+		RequestBody:  string(reqInfo),
+		ResponseBody: truncateString(content, 5000),
 		ClientIP:     c.ClientIP(),
 		LatencyMS:    latency.Milliseconds(),
 	})
@@ -751,7 +838,6 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 		return
 	}
 
-	content, _ := result["content"].(string)
 	c.JSON(http.StatusOK, gin.H{
 		"text":   content,
 		"model":  model,
@@ -760,9 +846,10 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 }
 
 // AdminListQwenVisionLogs 管理员查看 Qwen 视觉理解请求流水
-// GET /api/image-understanding/qwen-vision/logs?admin_password=xxx
+// GET /api/image-understanding/qwen-vision/logs
+// 认证: X-Image-Admin-Password header 或 admin_password query（独立于 super_admin_password）
 func (h *AIGatewayHandler) AdminListQwenVisionLogs(c *gin.Context) {
-	if !h.requireSuperAdmin(c, "") {
+	if !h.requireImageUnderstandingAdmin(c) {
 		return
 	}
 	limit := boundedInt(c.DefaultQuery("limit", "50"), 50, 1, 200)
@@ -1064,6 +1151,24 @@ func (h *AIGatewayHandler) logAPIRequest(key *models.AIAPIKey, model, provider, 
 	_ = h.db.TouchAIAPIKeyUsage(key.ID, time.Now(), usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.Cost, usage.Currency)
 }
 
+// requireImageUnderstandingAdmin 校验图像理解模块独立管理员密码
+func (h *AIGatewayHandler) requireImageUnderstandingAdmin(c *gin.Context) bool {
+	password := strings.TrimSpace(c.GetHeader("X-Image-Admin-Password"))
+	if password == "" {
+		password = strings.TrimSpace(c.Query("admin_password"))
+	}
+	configured := strings.TrimSpace(h.cfg.ImageUnderstanding.AdminPassword)
+	if configured == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "未配置 image_understanding.admin_password", "code": 403})
+		return false
+	}
+	if password != configured {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
+		return false
+	}
+	return true
+}
+
 func (h *AIGatewayHandler) requireSuperAdmin(c *gin.Context, bodyPassword string) bool {
 	password := bodyPassword
 	if password == "" {
@@ -1337,4 +1442,56 @@ func interfaceToString(value interface{}) string {
 		data, _ := json.Marshal(v)
 		return string(data)
 	}
+}
+
+// fetchImageAsBase64 下载远程图片，返回 base64 编码内容和 mime 类型（最大 10MB）
+func fetchImageAsBase64(client *http.Client, imageURL string) (string, string, error) {
+	const maxImageSize = 10 * 1024 * 1024 // 10MB
+	resp, err := client.Get(imageURL)
+	if err != nil {
+		return "", "", fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
+	if err != nil {
+		return "", "", fmt.Errorf("读取失败: %w", err)
+	}
+	if len(data) > maxImageSize {
+		return "", "", fmt.Errorf("图片超过 10MB 限制")
+	}
+	// 从 Content-Type 获取 mime，默认 image/jpeg
+	mimeType := resp.Header.Get("Content-Type")
+	if idx := strings.Index(mimeType, ";"); idx >= 0 {
+		mimeType = strings.TrimSpace(mimeType[:idx])
+	}
+	if mimeType == "" || !strings.HasPrefix(mimeType, "image/") {
+		mimeType = "image/jpeg"
+	}
+	encoded := base64.StdEncoding.EncodeToString(data)
+	return encoded, mimeType, nil
+}
+
+// extractImageMeta 从 data URL 中提取 mime 类型和估算大小（KB）
+// data URL 格式: data:<mime>;base64,<data>
+func extractImageMeta(dataURL string) (mime string, sizeKB int) {
+	if !strings.HasPrefix(dataURL, "data:") {
+		return "unknown", len(dataURL) / 1024
+	}
+	// 取 "data:" 和 ";" 之间的部分
+	rest := dataURL[5:]
+	semi := strings.Index(rest, ";")
+	if semi < 0 {
+		return "unknown", len(dataURL) / 1024
+	}
+	mime = rest[:semi]
+	// base64 数据长度估算实际字节数
+	comma := strings.Index(dataURL, ",")
+	if comma >= 0 {
+		b64Len := len(dataURL) - comma - 1
+		sizeKB = b64Len * 3 / 4 / 1024
+	}
+	return mime, sizeKB
 }

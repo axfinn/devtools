@@ -184,6 +184,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/nfsshare',
+    name: 'NFSShare',
+    component: () => import('../views/NFSShareTool.vue'),
+    meta: {
+      title: 'NFS 文件分享',
+      icon: 'FolderOpened',
+      category: 'collab',
+      description: 'NFS 挂载文件受控分享，超管专用'
+    }
+  },
+  {
     path: '/shorturl',
     name: 'ShortUrl',
     component: () => import('../views/ShortUrl.vue'),

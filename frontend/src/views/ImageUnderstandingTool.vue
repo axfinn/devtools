@@ -130,22 +130,54 @@
                 </el-select>
               </el-form-item>
 
-              <el-form-item label="图片">
+              <el-form-item :label="`图片（已添加 ${qwenImages.length}/10 张）`">
+                <!-- URL 输入行 -->
+                <div class="img-url-row">
+                  <el-input
+                    v-model="qwenUrlInput"
+                    placeholder="粘贴图片链接 https://..."
+                    clearable
+                    @keyup.enter="addQwenUrl"
+                  />
+                  <el-button @click="addQwenUrl" :disabled="qwenImages.length >= 10">添加 URL</el-button>
+                </div>
+
+                <!-- 上传区域 -->
                 <el-upload
-                  class="image-uploader"
+                  class="image-uploader mt-2"
                   :auto-upload="false"
                   :show-file-list="false"
                   :on-change="handleQwenFileChange"
                   accept="image/*"
+                  :disabled="qwenImages.length >= 10"
+                  multiple
                 >
-                  <div class="upload-area">
-                    <el-icon :size="46" color="#67c23a"><Upload /></el-icon>
-                    <p>点击或拖拽上传图片（支持粘贴）</p>
+                  <div class="upload-area" :class="{ 'upload-disabled': qwenImages.length >= 10 }">
+                    <el-icon :size="36" :color="qwenImages.length >= 10 ? '#c0c4cc' : '#67c23a'"><Upload /></el-icon>
+                    <p>{{ qwenImages.length >= 10 ? '已达上限' : '点击/拖拽上传或粘贴图片（可多选）' }}</p>
                   </div>
                 </el-upload>
-                <div v-if="qwenImagePreview" class="image-preview">
-                  <img :src="qwenImagePreview" alt="preview" />
-                  <el-button size="small" text type="danger" @click="clearQwenImage">移除图片</el-button>
+
+                <!-- 图片列表预览 -->
+                <div v-if="qwenImages.length" class="qwen-img-list">
+                  <div v-for="(img, idx) in qwenImages" :key="idx" class="qwen-img-item">
+                    <img
+                      v-if="img.preview"
+                      :src="img.preview"
+                      class="qwen-thumb"
+                      @error="img.previewError = true"
+                    />
+                    <div v-else class="qwen-thumb qwen-thumb-url">
+                      <el-icon><Picture /></el-icon>
+                    </div>
+                    <div class="qwen-img-info">
+                      <span class="qwen-img-label">{{ img.label }}</span>
+                      <el-tag size="small" :type="img.type === 'url' ? 'warning' : 'success'">
+                        {{ img.type === 'url' ? 'URL' : '文件' }}
+                      </el-tag>
+                    </div>
+                    <el-button size="small" text type="danger" @click="removeQwenImage(idx)">删除</el-button>
+                  </div>
                 </div>
               </el-form-item>
 
@@ -160,7 +192,7 @@
 
               <el-form-item>
                 <div class="action-row">
-                  <el-button type="primary" :loading="qwenSubmitting" :disabled="!qwenImageBase64" @click="submitQwen">
+                  <el-button type="primary" :loading="qwenSubmitting" :disabled="!qwenImages.length" @click="submitQwen">
                     开始理解
                   </el-button>
                   <el-button @click="resetQwen">清空</el-button>
@@ -203,7 +235,7 @@
             v-model="logsAdminPassword"
             type="password"
             show-password
-            placeholder="输入管理员密码（super_admin_password）"
+            placeholder="输入管理员密码（image_understanding.admin_password）"
             style="max-width: 320px"
             @keyup.enter="loadLogs"
           />
@@ -252,7 +284,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Upload } from '@element-plus/icons-vue'
+import { Upload, Picture } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
 // ---- 模式切换 ----
@@ -278,8 +310,9 @@ const isListening = ref(false)
 // ---- Qwen 大模型理解 ----
 const qwenModel = ref('qwen3.5-plus')
 const qwenPrompt = ref('')
-const qwenImageBase64 = ref('')
-const qwenImagePreview = ref('')
+// qwenImages: { type: 'url'|'file', data: string (base64 or url), preview: string, label: string }
+const qwenImages = ref([])
+const qwenUrlInput = ref('')
 const qwenSubmitting = ref(false)
 const qwenResultText = ref('')
 const qwenResultTab = ref('render')
@@ -352,41 +385,75 @@ const handleFileChange = (file) => {
 }
 
 // ---- Qwen 相关方法 ----
+const isValidUrl = (str) => {
+  try {
+    const u = new URL(str)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+const addQwenUrl = () => {
+  const url = qwenUrlInput.value.trim()
+  if (!url) return
+  if (!isValidUrl(url)) {
+    ElMessage.warning('请输入有效的图片 URL（http/https）')
+    return
+  }
+  if (qwenImages.value.length >= 10) {
+    ElMessage.warning('最多添加 10 张图片')
+    return
+  }
+  qwenImages.value.push({ type: 'url', data: url, preview: url, label: url.slice(0, 50), previewError: false })
+  qwenUrlInput.value = ''
+}
+
 const handleQwenFileChange = (file) => {
+  if (qwenImages.value.length >= 10) {
+    ElMessage.warning('最多添加 10 张图片')
+    return
+  }
   const reader = new FileReader()
   reader.onload = (e) => {
-    qwenImageBase64.value = e.target.result
-    qwenImagePreview.value = e.target.result
+    qwenImages.value.push({
+      type: 'file',
+      data: e.target.result,
+      preview: e.target.result,
+      label: file.raw.name,
+      previewError: false
+    })
   }
   reader.readAsDataURL(file.raw)
 }
 
-const clearQwenImage = () => {
-  qwenImageBase64.value = ''
-  qwenImagePreview.value = ''
+const removeQwenImage = (idx) => {
+  qwenImages.value.splice(idx, 1)
 }
 
 const resetQwen = () => {
-  clearQwenImage()
+  qwenImages.value = []
+  qwenUrlInput.value = ''
   qwenPrompt.value = ''
   qwenResultText.value = ''
   qwenUsedModel.value = ''
 }
 
 const submitQwen = async () => {
-  if (!qwenImageBase64.value) {
-    ElMessage.warning('请先上传图片')
+  if (!qwenImages.value.length) {
+    ElMessage.warning('请先添加至少一张图片')
     return
   }
   qwenSubmitting.value = true
   qwenResultText.value = ''
   qwenUsedModel.value = ''
   try {
+    const images = qwenImages.value.map((img) => img.data)
     const resp = await fetch('/api/image-understanding/qwen-vision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        image: qwenImageBase64.value,
+        images,
         prompt: qwenPrompt.value || undefined,
         model: qwenModel.value
       })
@@ -428,7 +495,7 @@ const loadLogs = async () => {
     const offset = (logsPage.value - 1) * logsPageSize
     const url = `/api/image-understanding/qwen-vision/logs?limit=${logsPageSize}&offset=${offset}`
     const resp = await fetch(url, {
-      headers: { 'X-Super-Admin-Password': logsAdminPassword.value }
+      headers: { 'X-Image-Admin-Password': logsAdminPassword.value }
     })
     const data = await parseJsonSafe(resp)
     if (!resp.ok) {
@@ -454,8 +521,17 @@ const handlePaste = (e) => {
         const reader = new FileReader()
         reader.onload = (event) => {
           if (activeMode.value === 'qwen') {
-            qwenImageBase64.value = event.target.result
-            qwenImagePreview.value = event.target.result
+            if (qwenImages.value.length >= 10) {
+              ElMessage.warning('最多添加 10 张图片')
+              return
+            }
+            qwenImages.value.push({
+              type: 'file',
+              data: event.target.result,
+              preview: event.target.result,
+              label: file.name || '粘贴图片',
+              previewError: false
+            })
           } else {
             imageBase64.value = event.target.result
             imagePreview.value = event.target.result
@@ -883,5 +959,80 @@ onUnmounted(() => {
   margin-top: 16px;
   display: flex;
   justify-content: center;
+}
+
+.img-url-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.img-url-row .el-input {
+  flex: 1;
+}
+
+.mt-2 {
+  margin-top: 8px;
+}
+
+.upload-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.qwen-img-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qwen-img-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: #f5f7fa;
+  border-radius: 8px;
+}
+
+.qwen-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #ebeef5;
+  flex-shrink: 0;
+}
+
+.qwen-thumb-url {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e8f4ff;
+  color: #409eff;
+  font-size: 20px;
+}
+
+.qwen-img-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.qwen-img-label {
+  font-size: 12px;
+  color: #606266;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.url-error {
+  font-size: 12px;
+  color: #f56c6c;
+  margin-top: 4px;
 }
 </style>
