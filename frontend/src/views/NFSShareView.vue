@@ -221,10 +221,16 @@ const downloadUrl = computed(() => {
   const base = `/api/nfsshare/${id}`
   return password.value ? `${base}?password=${encodeURIComponent(password.value)}` : base
 })
+const streamUrl = computed(() => {
+  const base = `/api/nfsshare/${id}/stream`
+  return password.value ? `${base}?password=${encodeURIComponent(password.value)}` : base
+})
 const hlsUrl = computed(() => {
   const base = `/api/nfsshare/${id}/hls/index.m3u8`
   return password.value ? `${base}?password=${encodeURIComponent(password.value)}` : base
 })
+// 浏览器原生支持的视频格式，直接流式播放，无需 HLS 转码
+const isNativeVideo = computed(() => !!info.value.is_native_video)
 
 const remainingTag = computed(() => {
   const r = info.value.remaining_views
@@ -277,10 +283,12 @@ async function confirmPassword() {
   passwordChecking.value = true
   passwordError.value = ''
   try {
-    // 用 HLS 或 Access 接口试探密码是否正确（head 请求不消耗次数）
-    const testUrl = info.value.is_video
-      ? `/api/nfsshare/${id}/hls/index.m3u8?password=${encodeURIComponent(pwd)}`
-      : `/api/nfsshare/${id}?password=${encodeURIComponent(pwd)}`
+    // 用 info 接口试探密码无效；改用 stream/hls 接口验证（head 请求不消耗次数）
+    const testUrl = info.value.is_native_video
+      ? `/api/nfsshare/${id}/stream?password=${encodeURIComponent(pwd)}`
+      : info.value.is_video
+        ? `/api/nfsshare/${id}/hls/index.m3u8?password=${encodeURIComponent(pwd)}`
+        : `/api/nfsshare/${id}?password=${encodeURIComponent(pwd)}`
     const res = await fetch(testUrl, { method: 'HEAD' })
     if (res.status === 401 || res.status === 403) {
       passwordError.value = '密码错误，请重试'
@@ -301,15 +309,28 @@ async function confirmPassword() {
 
 // ---- 视频播放器 ----
 async function initPlayer() {
-  transcoding.value = true
-  startHLS()
+  if (isNativeVideo.value) {
+    startNative()
+  } else {
+    transcoding.value = true
+    startHLS()
+  }
+}
+
+function startNative() {
+  transcoding.value = false
+  videoEl.value.src = streamUrl.value
 }
 
 function startHLS() {
   const m3u8 = hlsUrl.value
   if (Hls.isSupported()) {
     if (hls) { hls.destroy(); hls = null }
-    hls = new Hls({ manifestLoadingTimeOut: 30 * 60 * 1000 })
+    hls = new Hls({
+    manifestLoadingTimeOut: 30 * 60 * 1000,
+    manifestLoadingRetryDelay: 2000,   // 转码中每2秒重试一次
+    manifestLoadingMaxRetry: 900,      // 最多重试30分钟
+  })
     hls.loadSource(m3u8)
     hls.attachMedia(videoEl.value)
     hls.on(Hls.Events.MANIFEST_PARSED, () => {

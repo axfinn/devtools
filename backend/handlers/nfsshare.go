@@ -777,6 +777,40 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 	}
 }
 
+// isVideoFile 通过 MIME 类型或扩展名判断是否为视频文件
+func isVideoFile(mimeType, filePath string) bool {
+	if strings.HasPrefix(mimeType, "video/") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".mp4", ".m4v", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".ts", ".m2ts", ".ogv", ".3gp":
+		return true
+	}
+	return false
+}
+
+// nativeVideoMime 浏览器可直接播放的 MIME 类型（无需 HLS 转码）
+var nativeVideoMime = map[string]bool{
+	"video/mp4":       true,
+	"video/webm":      true,
+	"video/ogg":       true,
+	"video/quicktime": true,
+}
+
+// isNativeVideo 判断是否为浏览器原生支持的视频格式
+func isNativeVideo(mimeType, filePath string) bool {
+	if nativeVideoMime[mimeType] {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".mp4", ".m4v", ".webm", ".ogg", ".ogv", ".mov":
+		return true
+	}
+	return false
+}
+
 // Info 返回分享公开信息（不消耗次数）
 func (h *NFSShareHandler) Info(c *gin.Context) {
 	if !h.checkEnabled(c) {
@@ -792,7 +826,7 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 	if remaining < 0 {
 		remaining = 0
 	}
-	isVideo := strings.HasPrefix(share.MimeType, "video/")
+	isVideo := isVideoFile(share.MimeType, share.FilePath)
 	c.JSON(http.StatusOK, gin.H{
 		"id":                     share.ID,
 		"name":                   share.Name,
@@ -806,6 +840,7 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 		"expired":                share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt),
 		"exhausted":              share.MaxViews > 0 && share.Views >= share.MaxViews,
 		"is_video":               isVideo,
+		"is_native_video":        isNativeVideo(share.MimeType, share.FilePath),
 		"disable_video_download": h.cfg.DisableVideoDownload && isVideo,
 		"has_password":           share.Password != "",
 	})
@@ -945,11 +980,105 @@ func (h *NFSShareHandler) Status(c *gin.Context) {
 	})
 }
 
+// Stream 原生视频流式播放（公开，消耗1次view）
+// 用于 MP4/WebM 等浏览器原生支持的格式，不走 HLS 转码，支持 Range 断点续传
+func (h *NFSShareHandler) Stream(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	id := c.Param("id")
+	share, err := h.db.GetNFSShare(id)
+	if err != nil {
+		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "not_found", 0)
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
+		return
+	}
+	if share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "分享已过期"})
+		return
+	}
+	if share.MaxViews > 0 && share.Views >= share.MaxViews {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("分享次数已用完（最大 %d 次）", share.MaxViews)})
+		return
+	}
+	if !checkSharePassword(c, share, c.Query("password")) {
+		return
+	}
+	if !isVideoFile(share.MimeType, share.FilePath) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该分享不是视频文件"})
+		return
+	}
+
+	pp, err := h.parsePath(share.FilePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "挂载点不可用: " + err.Error()})
+		return
+	}
+
+	h.db.IncrementNFSShareViews(id)
+	mimeType := share.MimeType
+	if mimeType == "" || mimeType == "application/octet-stream" {
+		mimeType = detectMimeType(share.FilePath)
+	}
+
+	if strings.ToLower(pp.ms.Config.Type) == "smb" {
+		f, size, err := pp.ms.smb.Open(pp.relPath)
+		if err != nil {
+			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "file_missing", 0)
+			c.JSON(http.StatusNotFound, gin.H{"error": "源文件不存在"})
+			return
+		}
+		defer f.Close()
+		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", size)
+		c.Header("Content-Type", mimeType)
+		c.Header("Content-Length", fmt.Sprintf("%d", size))
+		io.Copy(c.Writer, f)
+	} else {
+		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", share.FileSize)
+		c.Header("Content-Type", mimeType)
+		// 用 http.ServeContent 支持 Range 请求（浏览器 seek）
+		f, err := os.Open(pp.absPath)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "源文件不存在"})
+			return
+		}
+		defer f.Close()
+		stat, err := f.Stat()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取文件失败"})
+			return
+		}
+		http.ServeContent(c.Writer, c.Request, filepath.Base(share.FilePath), stat.ModTime(), f)
+	}
+}
+
 // -------- HLS 转码播放 --------
 
 const transcodDir = "./data/transcode"
 
+// waitForPlayable 等待转码输出目录中至少有2个分片可供播放，或等待转码完成
+// 最多等待 timeout 时间；一旦可播放或完成立即返回
+func waitForPlayable(outDir string, job *hlsJob, timeout time.Duration) error {
+	seg1 := filepath.Join(outDir, "001.ts") // 第2个分片存在 → 已有约20秒内容
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case <-job.done:
+			return job.err
+		case <-ticker.C:
+			if _, err := os.Stat(seg1); err == nil {
+				return nil
+			}
+		case <-deadline:
+			return fmt.Errorf("等待转码超时，请重试")
+		}
+	}
+}
+
 // HLSPlaylist 触发 HLS 转码并返回 m3u8（公开，消耗1次view）
+// 采用流式策略：有前2个分片即可返回，hls.js 作为 event 流继续拉取后续分片
 func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -971,7 +1100,7 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 	if !checkSharePassword(c, share, c.Query("password")) {
 		return
 	}
-	if !strings.HasPrefix(share.MimeType, "video/") {
+	if !isVideoFile(share.MimeType, share.FilePath) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该分享不是视频文件"})
 		return
 	}
@@ -979,20 +1108,19 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 	outDir := filepath.Join(transcodDir, id)
 	m3u8Path := filepath.Join(outDir, "index.m3u8")
 
-	// 已转码缓存命中
-	if _, err := os.Stat(m3u8Path); err == nil {
+	// 已转码完成（m3u8 存在且含 ENDLIST 标记）
+	if data, err := os.ReadFile(m3u8Path); err == nil && strings.Contains(string(data), "#EXT-X-ENDLIST") {
 		h.db.IncrementNFSShareViews(id)
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
 		c.File(m3u8Path)
 		return
 	}
 
-	// 检查是否有进行中的转码 job
+	// 获取或创建转码 job
 	jobVal, loaded := h.hlsJobs.LoadOrStore(id, &hlsJob{done: make(chan struct{})})
 	job := jobVal.(*hlsJob)
 
 	if !loaded {
-		// 本次请求负责启动转码
 		go func() {
 			defer h.hlsJobs.Delete(id)
 			job.err = h.doTranscode(id, share, outDir, m3u8Path)
@@ -1000,16 +1128,9 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		}()
 	}
 
-	// 等待转码完成（最多 30 分钟）
-	select {
-	case <-job.done:
-	case <-time.After(30 * time.Minute):
-		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "转码超时"})
-		return
-	}
-
-	if job.err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "转码失败: " + job.err.Error()})
+	// 等待可播放状态（有2个分片即可，最多等2分钟）
+	if err := waitForPlayable(outDir, job, 2*time.Minute); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "转码失败: " + err.Error()})
 		return
 	}
 
@@ -1051,7 +1172,7 @@ func (h *NFSShareHandler) doTranscode(id string, share *models.NFSShare, outDir,
 		"-c:a", "aac", "-b:a", "128k",
 		"-f", "hls",
 		"-hls_time", "10",
-		"-hls_playlist_type", "vod",
+		"-hls_playlist_type", "event", // event 类型：分片增量写入，完成后追加 EXT-X-ENDLIST
 		"-hls_segment_filename", segPattern,
 		m3u8Path,
 	)

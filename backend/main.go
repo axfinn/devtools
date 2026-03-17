@@ -607,6 +607,7 @@ func main() {
 		{
 			nfsshare.GET("/status", nfsShareHandler.Status)                      // 功能状态（公开）
 			nfsshare.GET("/:id/info", nfsShareHandler.Info)                      // 分享信息（公开，不消耗次数）
+			nfsshare.GET("/:id/stream", nfsShareHandler.Stream)                  // 原生视频流（公开，Range 支持）
 			nfsshare.GET("/:id", nfsShareHandler.Access)                         // 访问/下载文件（公开，消耗次数）
 			nfsshare.GET("/:id/hls/:segment", func(c *gin.Context) {             // HLS 转码播放（公开）
 				if c.Param("segment") == "index.m3u8" {
