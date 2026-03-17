@@ -47,8 +47,7 @@ RUN npm install -g @anthropic-ai/claude-code --unsafe-perm 2>&1 || true
 # Install autodev from clawtest
 RUN git clone --depth=1 https://github.com/axfinn/clawtest.git /opt/clawtest \
     && chmod +x /opt/clawtest/autodev/autodev \
-    && chmod +x /opt/clawtest/autodev/autodev-stop \
-    && ln -sf /opt/clawtest/autodev/autodev /usr/local/bin/autodev
+    && chmod +x /opt/clawtest/autodev/autodev-stop
 
 # Configure Claude Code for autodev
 # Settings without sensitive credentials (tokens are injected at runtime via env vars)
@@ -80,7 +79,7 @@ ENV DB_PATH=/app/data/paste.db
 ENV GIN_MODE=release
 ENV TZ=Asia/Shanghai
 # AutoDev 配置（通过 .env 或 docker-compose environment 覆盖）
-ENV AUTODEV_PATH=/usr/local/bin/autodev
+ENV AUTODEV_PATH=/opt/clawtest/autodev/autodev
 ENV AUTODEV_DATA_DIR=/app/data/autodev
 # Claude API 配置（ANTHROPIC_AUTH_TOKEN 必须在 .env 中设置，不要硬编码在此）
 ENV ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
