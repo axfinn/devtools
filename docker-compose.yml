@@ -7,6 +7,8 @@ services:
         - HTTPS_PROXY=
         - http_proxy=
         - https_proxy=
+    env_file:
+      - .env
     container_name: devtools
     restart: unless-stopped
     ports:
@@ -18,10 +20,11 @@ services:
       - PORT=8082
       - DB_PATH=/app/data/paste.db
       - TZ=Asia/Shanghai
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - OCR_SERVICE_URL=http://ocr-service:8000
       - no_proxy=ocr-service,devtools
       - NO_PROXY=ocr-service,devtools
+      - AUTODEV_PATH=/usr/local/bin/autodev
+      - AUTODEV_DATA_DIR=/app/data/autodev
     depends_on:
       ocr-service:
         condition: service_healthy

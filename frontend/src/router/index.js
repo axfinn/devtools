@@ -70,6 +70,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/autodev',
+    name: 'AutoDev',
+    component: () => import('../views/AutoDevTool.vue'),
+    meta: {
+      title: 'AutoDev AI',
+      icon: 'MagicStick',
+      category: 'dev',
+      description: 'AI 自动开发任务助手'
+    }
+  },
+  {
     path: '/base64',
     name: 'Base64',
     component: () => import('../views/Base64Tool.vue'),

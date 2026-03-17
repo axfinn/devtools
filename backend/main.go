@@ -124,6 +124,11 @@ func main() {
 		log.Fatalf("NFS 分享数据库初始化失败: %v", err)
 	}
 
+	// 初始化 AutoDev 任务数据库表
+	if err := db.InitAutoDevTasks(); err != nil {
+		log.Fatalf("AutoDev 任务数据库初始化失败: %v", err)
+	}
+
 	// 后台预加载背景图（如果缓存目录为空）
 	go func() {
 		// 等待服务器启动完成
@@ -308,6 +313,7 @@ func main() {
 	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler)
 	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg)
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
+	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 
 	// 启动 SSH 会话清理协程
 	terminalHandler.StartCleanupRoutine()
@@ -694,6 +700,22 @@ func main() {
 			apigw.POST("/v1/image/understanding/sse", apiGatewayHandler.ImageUnderstandingSSE)
 			apigw.POST("/v1/image/understanding/sse/file", apiGatewayHandler.ImageUnderstandingSSEFile)
 			apigw.GET("/v1/image/understanding/stream/:id", apiGatewayHandler.ImageUnderstandingStream)
+		}
+
+		// AutoDev AI 任务
+		autodev := api.Group("/autodev")
+		{
+			autodev.POST("/verify", autoDevHandler.VerifyPassword)
+			autodev.POST("/tasks", autoDevHandler.Submit)
+			autodev.GET("/tasks", autoDevHandler.List)
+			autodev.GET("/tasks/:id", autoDevHandler.GetTask)
+			autodev.GET("/tasks/:id/state", autoDevHandler.GetState)
+			autodev.GET("/tasks/:id/files", autoDevHandler.GetFiles)
+			autodev.GET("/tasks/:id/file", autoDevHandler.GetFile)
+			autodev.GET("/tasks/:id/logs", autoDevHandler.GetLogs)
+			autodev.GET("/tasks/:id/download", autoDevHandler.Download)
+			autodev.POST("/tasks/:id/stop", autoDevHandler.StopTask)
+			autodev.DELETE("/tasks/:id", autoDevHandler.DeleteTask)
 		}
 
 		// 背景图 API
