@@ -270,7 +270,12 @@
                       <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block"></span>
                       {{ task.autodev_state.phase_label || '执行中' }}
                     </div>
-                    <div class="flex gap-0.5">
+                    <!-- ask/extend are single-phase: show a single animated bar -->
+                    <div v-if="task.type === 'ask' || task.type === 'extend'" class="flex gap-0.5">
+                      <div class="flex-1 h-1 rounded-full bg-amber-400 animate-pulse" />
+                    </div>
+                    <!-- develop: show 6-segment phase bar -->
+                    <div v-else class="flex gap-0.5">
                       <div v-for="(_, i) in PHASE_NAMES" :key="i"
                         class="flex-1 h-1 rounded-full transition-colors"
                         :class="miniPhaseClass(i, task.autodev_state)" />

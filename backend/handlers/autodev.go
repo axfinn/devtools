@@ -732,6 +732,13 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 	}
 	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
 
+	// ask_project does NOT call mark_phase_start. Write initial state manually
+	// so the frontend progress bar shows something during execution.
+	writeAutoDevState(workDir, map[string]any{
+		"status":      "running",
+		"phase_label": "ASK 问答",
+	})
+
 	waitErr := cmd.Wait()
 	exitCode := 0
 	status := "completed"
@@ -741,6 +748,11 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 		}
 		status = "failed"
 	}
+
+	writeAutoDevState(workDir, map[string]any{
+		"status":      "finished",
+		"phase_label": "ASK 问答",
+	})
 
 	// ask_project writes answers to process/qa.md.
 	// Verify it was created; if not, mark as failed even when exit code is 0.
@@ -796,6 +808,14 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
 	}
 	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
 
+	// extend_project does NOT call mark_phase_start/mark_finished, so state.json
+	// won't have status/phase_label updates. Write initial state manually so the
+	// frontend progress bar shows something during execution.
+	writeAutoDevState(workDir, map[string]any{
+		"status":      "running",
+		"phase_label": "EXTEND 扩展",
+	})
+
 	waitErr := cmd.Wait()
 	exitCode := 0
 	status := "completed"
@@ -806,9 +826,13 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
 		status = "failed"
 	}
 
+	// Mark state as finished so GetTask reflects completion.
+	writeAutoDevState(workDir, map[string]any{
+		"status":      "finished",
+		"phase_label": "EXTEND 扩展",
+	})
+
 	// extend_project writes result to RESULT.md and process/iter-N/result.md.
-	// Note: extend_project does NOT call mark_finished, so state.json won't have
-	// status="finished". We rely on exit code only.
 	resultFile := filepath.Join(workDir, "RESULT.md")
 	h.db.UpdateAutoDevTaskResult(id, resultFile)
 	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
@@ -926,6 +950,23 @@ func readAutoDevState(workDir string) map[string]any {
 		return nil
 	}
 	return state
+}
+
+// writeAutoDevState merges the given fields into state.json, preserving existing keys.
+func writeAutoDevState(workDir string, fields map[string]any) {
+	p := filepath.Join(workDir, ".autodev", "state.json")
+	os.MkdirAll(filepath.Dir(p), 0755)
+
+	state := map[string]any{}
+	if data, err := os.ReadFile(p); err == nil {
+		_ = json.Unmarshal(data, &state)
+	}
+	for k, v := range fields {
+		state[k] = v
+	}
+	if data, err := json.Marshal(state); err == nil {
+		os.WriteFile(p, data, 0644)
+	}
 }
 
 // listTaskFiles recursively walks workDir and returns all relevant files with categories.
