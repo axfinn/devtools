@@ -745,7 +745,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useTheme } from '@/composables/useTheme'
+import { useTheme } from '../composables/useTheme'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 import {
