@@ -723,8 +723,8 @@ func main() {
 			autodev.GET("/ask/:id", autoDevHandler.GetAskResult)
 			// Extend API - extend existing project with new requirements
 			autodev.POST("/extend", autoDevHandler.Extend)
-			// Init API - generate CLAUDE.md context file for ask/extend cold-start
-			autodev.POST("/init", autoDevHandler.InitProject)
+			// Init API - stream CLAUDE.md generation via SSE (GET with query params)
+			autodev.GET("/init/stream", autoDevHandler.InitProject)
 			// SSH key for GitHub access
 			autodev.GET("/sshkey", autoDevHandler.GetSSHKey)
 			autodev.POST("/sshkey/regenerate", autoDevHandler.RegenerateSSHKey)

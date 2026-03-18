@@ -182,68 +182,85 @@ func (h *AutoDevHandler) Extend(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
-// InitProject handles POST /api/autodev/init
-// Runs `autodev init --path <work_dir>` synchronously (pure Python, no claude).
-// Generates CLAUDE.md in the project directory with file list, tech stack,
-// process summaries and iteration history to give ask/extend a cold-start context.
+// InitProject handles GET /api/autodev/init/stream?password=xxx&work_dir=xxx
+// Streams `autodev init --path <work_dir>` output via SSE.
+// init_project is pure Python (no claude), so no UID switch needed.
 func (h *AutoDevHandler) InitProject(c *gin.Context) {
-	var req struct {
-		Password string `json:"password" binding:"required"`
-		WorkDir  string `json:"work_dir" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
-		return
-	}
-	if h.adminPassword == "" || req.Password != h.adminPassword {
+	password := c.Query("password")
+	workDir := c.Query("work_dir")
+
+	if h.adminPassword == "" || password != h.adminPassword {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
 		return
 	}
-
 	if _, err := os.Stat(h.autodevPath); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autodev 未安装，请检查 Docker 配置"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autodev 未安装"})
 		return
 	}
-	if _, err := os.Stat(req.WorkDir); os.IsNotExist(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + req.WorkDir})
+	if workDir == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "work_dir 不能为空"})
 		return
 	}
-
-	cmd := exec.Command(h.autodevPath, "init", "--path", req.WorkDir)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
-	}
-	out, err := cmd.CombinedOutput()
-	output := strings.TrimSpace(string(out))
-
-	claudeMdPath := filepath.Join(req.WorkDir, "CLAUDE.md")
-	claudeMdExists := false
-	if _, statErr := os.Stat(claudeMdPath); statErr == nil {
-		claudeMdExists = true
-	}
-
-	if err != nil {
-		log.Printf("[AutoDev] init failed: workDir=%s, err=%v, output=%s", req.WorkDir, err, output)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":           "init 执行失败: " + err.Error(),
-			"output":          output,
-			"claude_md_exists": claudeMdExists,
-		})
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + workDir})
 		return
 	}
 
-	resp := gin.H{
-		"ok":              true,
-		"output":          output,
-		"claude_md_path":  claudeMdPath,
-		"claude_md_exists": claudeMdExists,
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	sendSSE := func(event, data string) {
+		fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
+		c.Writer.Flush()
 	}
-	if claudeMdExists {
-		if content, err := os.ReadFile(claudeMdPath); err == nil {
-			resp["claude_md_content"] = string(content)
+	sendLog := func(line string) {
+		b, _ := json.Marshal(map[string]string{"line": line})
+		sendSSE("log", string(b))
+	}
+
+	// init_project is pure Python — run as current process user (no UID switch)
+	cmd := exec.Command(h.autodevPath, "init", "--path", workDir)
+
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		sendSSE("done", string(b))
+		return
+	}
+
+	// Stream both stdout and stderr line by line
+	scanLines := func(r io.Reader) {
+		sc := bufio.NewScanner(r)
+		for sc.Scan() {
+			sendLog(sc.Text())
 		}
 	}
-	c.JSON(http.StatusOK, resp)
+	go scanLines(stderr)
+	scanLines(stdout)
+
+	err := cmd.Wait()
+	claudeMdPath := filepath.Join(workDir, "CLAUDE.md")
+	_, statErr := os.Stat(claudeMdPath)
+	claudeMdExists := statErr == nil
+
+	if err != nil {
+		b, _ := json.Marshal(map[string]any{
+			"error":            "init 执行失败: " + err.Error(),
+			"claude_md_exists": claudeMdExists,
+		})
+		sendSSE("done", string(b))
+		return
+	}
+
+	b, _ := json.Marshal(map[string]any{
+		"ok":               true,
+		"claude_md_exists": claudeMdExists,
+		"claude_md_path":   claudeMdPath,
+	})
+	sendSSE("done", string(b))
 }
 
 // VerifyPassword handles POST /api/autodev/verify

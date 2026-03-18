@@ -440,7 +440,7 @@
               <button
                 class="tab-btn"
                 :class="{ 'tab-btn--active': activeTab === 'files' }"
-                @click="activeTab = 'files'; if (!taskFiles.length) loadFiles()"
+                @click="switchToFiles()"
               >
                 <el-icon><FolderOpened /></el-icon>
                 全部文件
@@ -598,6 +598,27 @@
         </div>
       </div>
     </div>
+
+    <!-- ===== Init 初始化 Dialog ===== -->
+    <el-dialog v-model="initDialogVisible" title="初始化项目上下文" width="560px" :close-on-click-modal="!initingProject" destroy-on-close>
+      <div class="init-dialog-body">
+        <p class="text-sm text-slate-400 mb-3">
+          扫描项目目录，生成 <code class="bg-slate-700 px-1 rounded text-xs">CLAUDE.md</code>，为后续 ask/extend 提供冷启动上下文（避免重复安装依赖、重复调研）。
+        </p>
+        <div v-if="initingProject || initLogs.length" class="init-log-box" ref="initLogEl">
+          <div v-if="initLogs.length === 0" class="text-slate-500 text-xs">正在初始化…</div>
+          <div v-for="(line, i) in initLogs" :key="i" class="init-log-line">{{ line }}</div>
+        </div>
+        <div v-if="initResult" class="mt-3 flex items-center gap-2" :class="initResult.ok ? 'text-green-400' : 'text-red-400'">
+          <el-icon><component :is="initResult.ok ? Check : WarningFilled" /></el-icon>
+          <span class="text-sm">{{ initResult.ok ? 'CLAUDE.md 已生成，后续 ask/extend 将自动读取上下文' : '初始化失败: ' + initResult.error }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button v-if="!initingProject" @click="initDialogVisible = false">关闭</el-button>
+        <el-button v-else type="danger" plain @click="initDialogVisible = false">后台运行</el-button>
+      </template>
+    </el-dialog>
 
     <!-- ===== Fullscreen Document Dialog ===== -->
     <el-dialog
@@ -1204,6 +1225,10 @@ const logEl = ref(null)
 const downloading = ref(false)
 const resultContent = ref('')
 const initingProject = ref(false)
+const initDialogVisible = ref(false)
+const initLogs = ref([])
+const initResult = ref(null)
+const initLogEl = ref(null)
 
 // fullscreen
 const fullscreenVisible = ref(false)
@@ -1340,25 +1365,44 @@ function quickExtend(task) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-async function initProject(task) {
+function initProject(task) {
   if (!task?.work_dir) return
+  // Open dialog and start SSE stream
+  initDialogVisible.value = true
+  initLogs.value = []
+  initResult.value = null
   initingProject.value = true
-  try {
-    const res = await fetch(`${API_BASE}/init`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: savedPassword, work_dir: task.work_dir })
-    })
-    const data = await res.json()
-    if (!res.ok) {
-      ElMessage.error('初始化失败: ' + (data.error || res.statusText))
-      return
-    }
-    ElMessage.success('CLAUDE.md 已生成，后续 ask/extend 将自动读取上下文')
-  } catch (e) {
-    ElMessage.error('初始化请求失败: ' + e.message)
-  } finally {
+
+  const params = new URLSearchParams({ password: savedPassword, work_dir: task.work_dir })
+  const es = new EventSource(`${API_BASE}/init/stream?${params}`)
+
+  es.addEventListener('log', (e) => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data.line !== undefined) {
+        initLogs.value.push(data.line)
+        nextTick(() => {
+          if (initLogEl.value) initLogEl.value.scrollTop = initLogEl.value.scrollHeight
+        })
+      }
+    } catch {}
+  })
+
+  es.addEventListener('done', (e) => {
+    es.close()
     initingProject.value = false
+    try {
+      const data = JSON.parse(e.data)
+      initResult.value = data.ok ? { ok: true } : { ok: false, error: data.error || '未知错误' }
+    } catch {
+      initResult.value = { ok: false, error: '解析响应失败' }
+    }
+  })
+
+  es.onerror = () => {
+    es.close()
+    initingProject.value = false
+    if (!initResult.value) initResult.value = { ok: false, error: 'SSE 连接中断' }
   }
 }
 
@@ -1416,6 +1460,11 @@ function scrollLogsToBottom() {
 }
 
 const logLineCount = computed(() => logContent.value ? logContent.value.split('\n').length : 0)
+
+function switchToFiles() {
+  activeTab.value = 'files'
+  if (!taskFiles.value.length) loadFiles()
+}
 
 function switchToLogs() {
   activeTab.value = 'logs'
