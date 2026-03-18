@@ -701,6 +701,13 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 	os.MkdirAll(processDir, 0755)
 	os.Chown(processDir, autodevUID, autodevGID)
 
+	// Redirect stdout/stderr to ask.log so failures are visible via GetLogs
+	logFilePath := filepath.Join(logDir, "ask.log")
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("[AutoDev] runAskTask: failed to open log file: %v", err)
+	}
+
 	// Execute: autodev ask "description" --path workDir
 	// NOTE: must call h.autodevPath directly (shell script), NOT "python3 h.autodevPath"
 	cmd := exec.Command(h.autodevPath, "ask", description, "--path", workDir)
@@ -709,12 +716,21 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
 	}
 	cmd.Env = h.buildEnv()
+	if logFile != nil {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		defer logFile.Close()
+	}
 
 	h.mu.Lock()
 	h.processes[id] = cmd
 	h.mu.Unlock()
 
 	if err := cmd.Start(); err != nil {
+		log.Printf("[AutoDev] runAskTask start error: %v", err)
+		if logFile != nil {
+			fmt.Fprintf(logFile, "[AutoDev] start error: %v\n", err)
+		}
 		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
 		h.mu.Lock()
 		delete(h.processes, id)
@@ -723,11 +739,11 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 	}
 	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
 
-	err := cmd.Wait()
+	waitErr := cmd.Wait()
 	exitCode := 0
 	status := "completed"
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
 		status = "failed"
