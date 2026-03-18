@@ -1414,7 +1414,9 @@ func (h *AutoDevHandler) UpdateClawtest(c *gin.Context) {
 	}
 	sendLine("")
 
-	cmd := exec.Command("git", "-C", repoDir, "pull")
+	// Use fetch + reset --hard to avoid divergent-branch conflicts.
+	// This always brings the local copy in sync with remote HEAD.
+	cmd := exec.Command("git", "-C", repoDir, "fetch", "origin")
 	cmd.Env = os.Environ()
 
 	stdout, err := cmd.StdoutPipe()
@@ -1453,10 +1455,23 @@ func (h *AutoDevHandler) UpdateClawtest(c *gin.Context) {
 	sendLine("")
 
 	if err != nil {
-		sendLine("❌ 更新失败: " + err.Error())
-		sendEvent("done", `{"success":false,"error":"git pull failed"}`)
+		sendLine("❌ fetch 失败: " + err.Error())
+		sendEvent("done", `{"success":false,"error":"git fetch failed"}`)
 		return
 	}
+
+	// Hard reset to origin/HEAD to discard any local divergence
+	sendLine("执行: git reset --hard origin/HEAD")
+	resetCmd := exec.Command("git", "-C", repoDir, "reset", "--hard", "origin/HEAD")
+	resetCmd.Env = os.Environ()
+	if out, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
+		sendLine("❌ reset 失败: " + string(out))
+		sendEvent("done", `{"success":false,"error":"git reset failed"}`)
+		return
+	} else {
+		sendLine(strings.TrimSpace(string(out)))
+	}
+	sendLine("")
 
 	newCommit := ""
 	if out, err2 := exec.Command("git", "-C", repoDir, "rev-parse", "--short", "HEAD").Output(); err2 == nil {
