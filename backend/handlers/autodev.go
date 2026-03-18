@@ -767,6 +767,13 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
 	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
 	os.Chown(logDir, autodevUID, autodevGID)
 
+	// Redirect stdout/stderr to extend.log so failures are visible via GetLogs
+	logFilePath := filepath.Join(logDir, "extend.log")
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("[AutoDev] runExtendTask: failed to open log file: %v", err)
+	}
+
 	// Execute: autodev extend "description" --path workDir
 	// NOTE: must call h.autodevPath directly (shell script), NOT "python3 h.autodevPath"
 	cmd := exec.Command(h.autodevPath, "extend", description, "--path", workDir)
@@ -775,12 +782,21 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
 		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
 	}
 	cmd.Env = h.buildEnv()
+	if logFile != nil {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+		defer logFile.Close()
+	}
 
 	h.mu.Lock()
 	h.processes[id] = cmd
 	h.mu.Unlock()
 
 	if err := cmd.Start(); err != nil {
+		log.Printf("[AutoDev] runExtendTask start error: %v", err)
+		if logFile != nil {
+			fmt.Fprintf(logFile, "[AutoDev] start error: %v\n", err)
+		}
 		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
 		h.mu.Lock()
 		delete(h.processes, id)
