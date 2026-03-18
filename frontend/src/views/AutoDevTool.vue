@@ -341,6 +341,19 @@
               <el-button size="small" type="primary" plain :loading="downloading" @click="downloadTask" class="action-btn">
                 <el-icon><Download /></el-icon> 下载
               </el-button>
+              <!-- Quick ask / extend buttons — available for any task that has a work dir -->
+              <el-tooltip content="在此项目中追问 / 执行小任务" placement="bottom">
+                <el-button size="small" plain @click="quickAsk(selectedTask)" class="action-btn"
+                  :disabled="selectedTask.status === 'running'">
+                  <el-icon><ChatLineRound /></el-icon> 问答
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="在此项目上追加新需求（迭代开发）" placement="bottom">
+                <el-button size="small" plain @click="quickExtend(selectedTask)" class="action-btn"
+                  :disabled="selectedTask.status === 'running'">
+                  <el-icon><Plus /></el-icon> 扩展
+                </el-button>
+              </el-tooltip>
               <el-button v-if="hasSite" size="small" type="success" plain @click="previewSite" class="action-btn">
                 <el-icon><Monitor /></el-icon> 预览
               </el-button>
@@ -394,7 +407,7 @@
                 @click="activeTab = 'result'"
               >
                 <el-icon><Document /></el-icon>
-                结果文档
+                {{ selectedTask.type === 'ask' ? '问答记录' : selectedTask.type === 'extend' ? '迭代报告' : '结果文档' }}
               </button>
               <button
                 class="tab-btn"
@@ -420,7 +433,7 @@
             <div v-show="activeTab === 'result'" class="tab-content">
               <div v-if="!resultContent && !loadingDetail" class="empty-content">
                 <el-icon class="text-4xl text-slate-600 mb-3"><Document /></el-icon>
-                <p class="text-slate-400">{{ selectedTask.status === 'running' ? 'AI 正在生成结果文档…' : '暂无结果文档' }}</p>
+                <p class="text-slate-400">{{ resultEmptyHint }}</p>
                 <p v-if="selectedTask.status === 'running'" class="text-slate-500 text-sm mt-1">执行完成后自动显示</p>
               </div>
               <div v-else-if="loadingDetail" class="empty-content">
@@ -430,7 +443,7 @@
               <div v-else class="result-content">
                 <!-- Toolbar -->
                 <div class="result-toolbar">
-                  <span class="text-xs text-slate-500">RESULT.md</span>
+                  <span class="text-xs text-slate-500">{{ resultDocTitle }}</span>
                   <div class="flex gap-2">
                     <el-button size="small" text class="!text-slate-400" @click="openFullscreen">
                       <el-icon><FullScreen /></el-icon> 全屏
@@ -1124,14 +1137,61 @@ async function loadFiles() {
     const data = await res.json()
     taskFiles.value = data.files || []
     taskHasSite.value = !!data.has_site
-    // Auto-load RESULT.md
-    const result = taskFiles.value.find(f => f.name === 'RESULT.md')
-    if (result) {
-      await loadResultFile(result.path)
-    } else if (!activeFilePath.value && taskFiles.value.length) {
-      await loadFile(taskFiles.value[0].path)
+    // Auto-load the most relevant doc based on task type
+    const type = selectedTask.value.type
+    if (type === 'ask') {
+      // Ask tasks: show process/qa.md as the primary result
+      const qa = taskFiles.value.find(f => f.path === 'process/qa.md')
+      if (qa) await loadResultFile(qa.path)
+    } else if (type === 'extend') {
+      // Extend tasks: RESULT.md accumulates all iteration summaries
+      const result = taskFiles.value.find(f => f.name === 'RESULT.md')
+      if (result) await loadResultFile(result.path)
+      else {
+        // Fallback: latest iter result
+        const iterFiles = taskFiles.value
+          .filter(f => /process\/iter-\d+\/result\.md/.test(f.path))
+          .sort((a, b) => b.path.localeCompare(a.path))
+        if (iterFiles.length) await loadResultFile(iterFiles[0].path)
+      }
+    } else {
+      const result = taskFiles.value.find(f => f.name === 'RESULT.md')
+      if (result) {
+        await loadResultFile(result.path)
+      } else if (!activeFilePath.value && taskFiles.value.length) {
+        await loadFile(taskFiles.value[0].path)
+      }
     }
   }
+}
+
+// ---- computed labels for result tab ----
+const resultDocTitle = computed(() => {
+  const type = selectedTask.value?.type
+  if (type === 'ask') return 'process/qa.md'
+  if (type === 'extend') return 'RESULT.md（含所有迭代记录）'
+  return 'RESULT.md'
+})
+
+const resultEmptyHint = computed(() => {
+  const type = selectedTask.value?.type
+  const running = selectedTask.value?.status === 'running'
+  if (type === 'ask') return running ? 'AI 正在回答问题…' : '暂无问答记录（process/qa.md）'
+  if (type === 'extend') return running ? 'AI 正在执行迭代开发…' : '暂无迭代报告（RESULT.md）'
+  return running ? 'AI 正在生成结果文档…' : '暂无结果文档'
+})
+
+// ---- quick ask / extend from selected task ----
+function quickAsk(task) {
+  activeMode.value = 'ask'
+  newTask.value = { ...newTask.value, description: '', workDir: task.work_dir }
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function quickExtend(task) {
+  activeMode.value = 'extend'
+  newTask.value = { ...newTask.value, description: '', workDir: task.work_dir }
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 async function loadResultFile(path) {
