@@ -343,24 +343,26 @@
 
           <!-- Task Header -->
           <div class="content-header">
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 mb-1">
+            <!-- Row 1: status + title -->
+            <div class="content-header-title-row">
+              <div class="flex items-center gap-2 shrink-0">
                 <el-tag :type="statusType(selectedTask.status)" effect="dark" size="small">
                   <el-icon v-if="selectedTask.status === 'running'" class="is-loading mr-1"><Loading /></el-icon>
                   {{ statusLabel(selectedTask.status) }}
                 </el-tag>
+                <span class="task-type-tag" :class="`task-type-tag--${selectedTask.type || 'develop'}`">{{ typeLabel(selectedTask.type) }}</span>
                 <span class="text-xs text-slate-500 font-mono">#{{ selectedTask.id }}</span>
               </div>
-              <h2 class="text-base font-semibold text-white leading-tight truncate">{{ selectedTask.description }}</h2>
+              <h2 class="content-header-title" :title="selectedTask.description">{{ selectedTask.description }}</h2>
             </div>
-            <div class="flex items-center gap-2 flex-wrap">
+            <!-- Row 2: action buttons (always on own line, never wrapped off-screen) -->
+            <div class="content-header-actions">
               <el-button size="small" :loading="loadingDetail" @click="refreshDetail" class="action-btn" plain>
                 <el-icon><Refresh /></el-icon>
               </el-button>
               <el-button size="small" type="primary" plain :loading="downloading" @click="downloadTask" class="action-btn">
                 <el-icon><Download /></el-icon> 下载
               </el-button>
-              <!-- Quick ask / extend buttons — available for any task that has a work dir -->
               <el-tooltip content="在此项目中追问 / 执行小任务" placement="bottom">
                 <el-button size="small" plain @click="quickAsk(selectedTask)" class="action-btn"
                   :disabled="selectedTask.status === 'running'">
@@ -373,7 +375,7 @@
                   <el-icon><Plus /></el-icon> 扩展
                 </el-button>
               </el-tooltip>
-              <el-tooltip content="生成 CLAUDE.md，为 ask/extend 提供冷启动上下文（避免重复调研/安装依赖）" placement="bottom">
+              <el-tooltip content="生成 CLAUDE.md，为 ask/extend 提供冷启动上下文" placement="bottom">
                 <el-button size="small" plain @click="initProject(selectedTask)" class="action-btn"
                   :loading="initingProject"
                   :disabled="selectedTask.status === 'running'">
@@ -1948,12 +1950,39 @@ onUnmounted(() => {
 
 .content-header {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px;
   background: #1e293b;
   border-bottom: 1px solid #334155;
   flex-shrink: 0;
+}
+
+/* Row 1: status tags + title */
+.content-header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.content-header-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f1f5f9;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Row 2: action buttons — scrollable on very narrow screens */
+.content-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .action-btn {
@@ -2501,6 +2530,7 @@ onUnmounted(() => {
   background: #f8fafc;
   border-bottom-color: #e2e8f0;
 }
+.theme-light .content-header-title { color: #0f172a; }
 .theme-light .action-btn {
   border-color: #cbd5e1 !important;
   color: #64748b !important;
