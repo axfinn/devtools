@@ -805,11 +805,11 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
 	}
 	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
 
-	err := cmd.Wait()
+	waitErr := cmd.Wait()
 	exitCode := 0
 	status := "completed"
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		}
 		status = "failed"
