@@ -58,12 +58,12 @@ func NewAutoDevHandler(db *models.DB, adminPassword, autodevPath, dataDir string
 	return h
 }
 
-// Ask handles POST /api/autodev/ask — submit a quick Q&A request using driver.py ask
+// Ask handles POST /api/autodev/ask — submit a quick Q&A request using `autodev ask`
 func (h *AutoDevHandler) Ask(c *gin.Context) {
 	var req struct {
 		Description string `json:"description" binding:"required"`
 		Password    string `json:"password" binding:"required"`
-		WorkDir     string `json:"work_dir"` // optional: specify working directory for context
+		WorkDir     string `json:"work_dir"` // existing project directory for context
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
@@ -74,7 +74,13 @@ func (h *AutoDevHandler) Ask(c *gin.Context) {
 		return
 	}
 
-	// WorkDir is required for ask
+	// Verify autodev CLI is available
+	if _, err := os.Stat(h.autodevPath); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autodev 未安装，请检查 Docker 配置"})
+		return
+	}
+
+	// WorkDir is required for ask (needs existing project context)
 	if req.WorkDir == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ask 模式需要指定 work_dir"})
 		return
@@ -265,6 +271,8 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 	switch taskType {
 	case models.TaskTypeAsk:
 		go h.runAskTask(task.ID, req.Description, taskDir)
+	case models.TaskTypeExtend:
+		go h.runExtendTask(task.ID, req.Description, taskDir)
 	case models.TaskTypeExport:
 		go h.runExportTask(task.ID, req.Description, taskDir, req.ExportFormat)
 	default:
@@ -687,40 +695,28 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 	h.mu.Unlock()
 }
 
-// runAskTask executes claude ask in a background goroutine
+// runAskTask executes `autodev ask "description" --path workDir` in a background goroutine.
+// The new clawtest supports the `ask` subcommand which appends Q&A to process/qa.md.
 func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
-	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
+	// Ensure directories exist with correct ownership for non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
 	os.MkdirAll(logDir, 0755)
+	os.MkdirAll(filepath.Join(workDir, "process"), 0755)
 	os.Chown(workDir, autodevUID, autodevGID)
 	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
 	os.Chown(logDir, autodevUID, autodevGID)
-
-	// Ensure process directory exists for qa.md
-	processDir := filepath.Join(workDir, "process")
-	os.MkdirAll(processDir, 0755)
-	os.Chown(processDir, autodevUID, autodevGID)
-
-	// Redirect stdout/stderr to ask.log so failures are visible via GetLogs
-	logFilePath := filepath.Join(logDir, "ask.log")
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		log.Printf("[AutoDev] runAskTask: failed to open log file: %v", err)
-	}
+	os.Chown(filepath.Join(workDir, "process"), autodevUID, autodevGID)
 
 	// Execute: autodev ask "description" --path workDir
-	// NOTE: must call h.autodevPath directly (shell script), NOT "python3 h.autodevPath"
+	// Matches the new clawtest driver.py ask subcommand.
 	cmd := exec.Command(h.autodevPath, "ask", description, "--path", workDir)
 	cmd.Dir = workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
 	}
 	cmd.Env = h.buildEnv()
-	if logFile != nil {
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
-		defer logFile.Close()
-	}
+	// Do NOT redirect stdout/stderr — runner.py writes all logs (including claude output)
+	// directly to .autodev/logs/driver.log and ask-N.log, which GetLogs already reads.
 
 	h.mu.Lock()
 	h.processes[id] = cmd
@@ -728,9 +724,6 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 
 	if err := cmd.Start(); err != nil {
 		log.Printf("[AutoDev] runAskTask start error: %v", err)
-		if logFile != nil {
-			fmt.Fprintf(logFile, "[AutoDev] start error: %v\n", err)
-		}
 		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
 		h.mu.Lock()
 		delete(h.processes, id)
@@ -749,8 +742,17 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 		status = "failed"
 	}
 
-	// Record qa.md as result file
-	h.db.UpdateAutoDevTaskResult(id, filepath.Join(workDir, "process", "qa.md"))
+	// ask_project writes answers to process/qa.md.
+	// Verify it was created; if not, mark as failed even when exit code is 0.
+	qaFile := filepath.Join(workDir, "process", "qa.md")
+	if status == "completed" {
+		if _, err := os.Stat(qaFile); err != nil {
+			log.Printf("[AutoDev] runAskTask: qa.md not found after completion, marking failed")
+			status = "failed"
+		}
+	}
+
+	h.db.UpdateAutoDevTaskResult(id, qaFile)
 	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
 
 	h.mu.Lock()
@@ -758,35 +760,27 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 	h.mu.Unlock()
 }
 
-// runExtendTask executes autodev extend in a background goroutine
+// runExtendTask executes `autodev extend "description" --path workDir` in a background goroutine.
+// The new clawtest supports the `extend` subcommand which adds new requirements to existing projects.
+// Each iteration writes to process/iter-N/ and updates RESULT.md.
 func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
-	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
+	// Ensure directories exist with correct ownership for non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
 	os.MkdirAll(logDir, 0755)
 	os.Chown(workDir, autodevUID, autodevGID)
 	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
 	os.Chown(logDir, autodevUID, autodevGID)
 
-	// Redirect stdout/stderr to extend.log so failures are visible via GetLogs
-	logFilePath := filepath.Join(logDir, "extend.log")
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		log.Printf("[AutoDev] runExtendTask: failed to open log file: %v", err)
-	}
-
 	// Execute: autodev extend "description" --path workDir
-	// NOTE: must call h.autodevPath directly (shell script), NOT "python3 h.autodevPath"
+	// Matches the new clawtest driver.py extend subcommand.
 	cmd := exec.Command(h.autodevPath, "extend", description, "--path", workDir)
 	cmd.Dir = workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
 	}
 	cmd.Env = h.buildEnv()
-	if logFile != nil {
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
-		defer logFile.Close()
-	}
+	// Do NOT redirect stdout/stderr — runner.py writes all logs (including claude output)
+	// directly to .autodev/logs/driver.log and extend-iter-N.log, which GetLogs already reads.
 
 	h.mu.Lock()
 	h.processes[id] = cmd
@@ -794,9 +788,6 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
 
 	if err := cmd.Start(); err != nil {
 		log.Printf("[AutoDev] runExtendTask start error: %v", err)
-		if logFile != nil {
-			fmt.Fprintf(logFile, "[AutoDev] start error: %v\n", err)
-		}
 		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
 		h.mu.Lock()
 		delete(h.processes, id)
@@ -815,14 +806,11 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
 		status = "failed"
 	}
 
-	// Check autodev state for actual completion
-	if state := readAutoDevState(workDir); state != nil {
-		if s, ok := state["status"].(string); ok && s == "finished" {
-			status = "completed"
-			exitCode = 0
-		}
-	}
-
+	// extend_project writes result to RESULT.md and process/iter-N/result.md.
+	// Note: extend_project does NOT call mark_finished, so state.json won't have
+	// status="finished". We rely on exit code only.
+	resultFile := filepath.Join(workDir, "RESULT.md")
+	h.db.UpdateAutoDevTaskResult(id, resultFile)
 	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
 
 	h.mu.Lock()
@@ -1335,6 +1323,155 @@ func (h *AutoDevHandler) UpdateClaude(c *gin.Context) {
 	b, _ := json.Marshal(map[string]string{
 		"old_version": oldVersion,
 		"new_version": newVersion,
+	})
+	sendEvent("done", string(b))
+}
+
+// ClawtestInfo holds clawtest repo version info
+type ClawtestInfo struct {
+	Commit      string `json:"commit"`
+	CommitShort string `json:"commit_short"`
+	CommitDate  string `json:"commit_date"`
+	Branch      string `json:"branch"`
+	Path        string `json:"path"`
+	Available   bool   `json:"available"`
+}
+
+// GetClawtestVersion handles GET /api/autodev/clawtest/version?password=xxx
+func (h *AutoDevHandler) GetClawtestVersion(c *gin.Context) {
+	if !h.checkPasswordQuery(c) {
+		return
+	}
+
+	repoDir := filepath.Dir(filepath.Dir(h.autodevPath)) // /opt/clawtest
+	info := ClawtestInfo{Path: repoDir}
+
+	if _, err := os.Stat(repoDir); err != nil {
+		c.JSON(http.StatusOK, info)
+		return
+	}
+	info.Available = true
+
+	if out, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output(); err == nil {
+		info.Commit = strings.TrimSpace(string(out))
+		if len(info.Commit) >= 7 {
+			info.CommitShort = info.Commit[:7]
+		}
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "log", "-1", "--format=%ci").Output(); err == nil {
+		info.CommitDate = strings.TrimSpace(string(out))
+	}
+	if out, err := exec.Command("git", "-C", repoDir, "branch", "--show-current").Output(); err == nil {
+		info.Branch = strings.TrimSpace(string(out))
+	}
+
+	c.JSON(http.StatusOK, info)
+}
+
+// UpdateClawtest handles GET /api/autodev/clawtest/update/stream?password=xxx
+// Streams `git pull` output via SSE to update clawtest in-place.
+func (h *AutoDevHandler) UpdateClawtest(c *gin.Context) {
+	if !h.checkPasswordQuery(c) {
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "不支持流式输出"})
+		return
+	}
+
+	sendEvent := func(event, data string) {
+		fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
+		flusher.Flush()
+	}
+	sendLine := func(line string) {
+		b, _ := json.Marshal(map[string]string{"line": line})
+		sendEvent("log", string(b))
+	}
+
+	repoDir := filepath.Dir(filepath.Dir(h.autodevPath)) // /opt/clawtest
+
+	if _, err := os.Stat(repoDir); err != nil {
+		sendLine("❌ clawtest 目录不存在: " + repoDir)
+		sendEvent("done", `{"success":false}`)
+		return
+	}
+
+	sendLine("🚀 开始更新 clawtest...")
+	sendLine("执行: git pull (目录: " + repoDir + ")")
+
+	// record commit before update
+	oldCommit := ""
+	if out, err := exec.Command("git", "-C", repoDir, "rev-parse", "--short", "HEAD").Output(); err == nil {
+		oldCommit = strings.TrimSpace(string(out))
+		sendLine("当前版本: " + oldCommit)
+	}
+	sendLine("")
+
+	cmd := exec.Command("git", "-C", repoDir, "pull")
+	cmd.Env = os.Environ()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		sendLine("❌ 启动更新失败: " + err.Error())
+		sendEvent("done", `{"success":false}`)
+		return
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		sendLine("❌ 启动更新失败: " + err.Error())
+		sendEvent("done", `{"success":false}`)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		sendLine("❌ 启动 git pull 失败: " + err.Error())
+		sendEvent("done", `{"success":false}`)
+		return
+	}
+
+	done := make(chan struct{}, 2)
+	stream := func(r io.Reader) {
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			sendLine(scanner.Text())
+		}
+		done <- struct{}{}
+	}
+	go stream(stdout)
+	go stream(stderr)
+	<-done
+	<-done
+
+	err = cmd.Wait()
+	sendLine("")
+
+	if err != nil {
+		sendLine("❌ 更新失败: " + err.Error())
+		sendEvent("done", `{"success":false,"error":"git pull failed"}`)
+		return
+	}
+
+	newCommit := ""
+	if out, err2 := exec.Command("git", "-C", repoDir, "rev-parse", "--short", "HEAD").Output(); err2 == nil {
+		newCommit = strings.TrimSpace(string(out))
+	}
+
+	if newCommit != "" && newCommit != oldCommit {
+		sendLine("✅ 更新成功！" + oldCommit + " → " + newCommit)
+	} else {
+		sendLine("✅ 已是最新版本: " + newCommit)
+	}
+
+	b, _ := json.Marshal(map[string]string{
+		"old_commit": oldCommit,
+		"new_commit": newCommit,
 	})
 	sendEvent("done", string(b))
 }

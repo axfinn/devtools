@@ -730,6 +730,9 @@ func main() {
 			autodev.GET("/claude/version", autoDevHandler.GetClaudeVersion)
 			autodev.GET("/claude/test", autoDevHandler.TestModel)
 			autodev.GET("/claude/update/stream", autoDevHandler.UpdateClaude)
+			// clawtest 版本管理
+			autodev.GET("/clawtest/version", autoDevHandler.GetClawtestVersion)
+			autodev.GET("/clawtest/update/stream", autoDevHandler.UpdateClawtest)
 		}
 
 		// 背景图 API

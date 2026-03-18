@@ -689,6 +689,64 @@
           </div>
         </el-card>
 
+        <!-- clawtest Card -->
+        <el-card shadow="never">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-sm">AutoDev 引擎 (clawtest)</span>
+              <el-button size="small" :loading="loadingClawtestInfo" @click="loadClawtestVersion" circle plain>
+                <el-icon><Refresh /></el-icon>
+              </el-button>
+            </div>
+          </template>
+          <div v-if="loadingClawtestInfo" class="text-center py-4"><el-icon class="is-loading text-purple-500 text-xl"><Loading /></el-icon></div>
+          <div v-else-if="clawtestInfo" class="space-y-2 mb-3">
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">状态</span>
+              <el-tag :type="clawtestInfo.available ? 'success' : 'danger'" size="small" effect="dark">{{ clawtestInfo.available ? '已安装' : '未安装' }}</el-tag>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">当前 commit</span>
+              <span class="text-sm font-mono font-semibold text-purple-600">{{ clawtestInfo.commit_short || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">提交时间</span>
+              <span class="text-xs font-mono text-gray-600">{{ clawtestInfo.commit_date || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">分支</span>
+              <span class="text-xs font-mono text-gray-600">{{ clawtestInfo.branch || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5">
+              <span class="text-sm text-gray-500">路径</span>
+              <span class="text-xs font-mono text-gray-600 truncate max-w-[240px]">{{ clawtestInfo.path || '—' }}</span>
+            </div>
+          </div>
+          <div v-else class="text-center text-gray-400 py-4 text-sm mb-3">点击刷新按钮获取版本信息</div>
+          <div class="space-y-3">
+            <div class="bg-gray-50 rounded p-3 text-xs text-gray-600">
+              <p>执行命令：</p>
+              <code class="font-mono text-purple-700">git pull ({{ clawtestInfo?.path || '/opt/clawtest' }})</code>
+            </div>
+            <el-button type="primary" class="w-full" :loading="updatingClawtest" :disabled="updatingClawtest" @click="startClawtestUpdate">
+              <el-icon><Upload /></el-icon>
+              <span class="ml-1">{{ updatingClawtest ? '更新中…' : '更新到最新版本' }}</span>
+            </el-button>
+            <div v-if="clawtestUpdateLogs.length">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-xs text-gray-500">更新输出</span>
+                <el-button size="small" text @click="clawtestUpdateLogs = []">清空</el-button>
+              </div>
+              <pre ref="clawtestUpdateLogEl" class="text-xs bg-gray-900 text-green-400 p-3 rounded overflow-auto max-h-[300px] whitespace-pre-wrap break-all font-mono leading-5">{{ clawtestUpdateLogs.join('\n') }}</pre>
+            </div>
+            <el-result v-if="clawtestUpdateResult" :icon="clawtestUpdateResult.success ? 'success' : 'error'" :title="clawtestUpdateResult.success ? '更新成功' : '更新失败'" :sub-title="clawtestUpdateResult.message">
+              <template #extra>
+                <el-button size="small" @click="loadClawtestVersion">刷新版本信息</el-button>
+              </template>
+            </el-result>
+          </div>
+        </el-card>
+
         <!-- SSH Key Card -->
         <el-card shadow="never">
           <template #header>
@@ -1450,8 +1508,59 @@ async function copySSHKey() {
   } catch { ElMessage.error('复制失败，请手动选择复制') }
 }
 
+// ---- clawtest ----
+const clawtestInfo = ref(null)
+const loadingClawtestInfo = ref(false)
+const updatingClawtest = ref(false)
+const clawtestUpdateLogs = ref([])
+const clawtestUpdateResult = ref(null)
+const clawtestUpdateLogEl = ref(null)
+
+async function loadClawtestVersion() {
+  loadingClawtestInfo.value = true
+  try {
+    const res = await fetch(`${API_BASE}/clawtest/version?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) clawtestInfo.value = await res.json()
+  } catch { ElMessage.error('获取 clawtest 版本失败') }
+  finally { loadingClawtestInfo.value = false }
+}
+
+function startClawtestUpdate() {
+  if (updatingClawtest.value) return
+  updatingClawtest.value = true
+  clawtestUpdateLogs.value = []
+  clawtestUpdateResult.value = null
+  const url = `${API_BASE}/clawtest/update/stream?password=${encodeURIComponent(savedPassword)}`
+  const es = new EventSource(url)
+  es.addEventListener('log', (e) => {
+    try {
+      const data = JSON.parse(e.data)
+      clawtestUpdateLogs.value.push(data.line)
+      nextTick(() => { if (clawtestUpdateLogEl.value) clawtestUpdateLogEl.value.scrollTop = clawtestUpdateLogEl.value.scrollHeight })
+    } catch {}
+  })
+  es.addEventListener('done', (e) => {
+    es.close(); updatingClawtest.value = false
+    try {
+      const data = JSON.parse(e.data)
+      if (data.error) { clawtestUpdateResult.value = { success: false, message: data.error } }
+      else {
+        const msg = data.new_commit && data.new_commit !== data.old_commit
+          ? `${data.old_commit} → ${data.new_commit}` : `已是最新: ${data.new_commit || '未知'}`
+        clawtestUpdateResult.value = { success: true, message: msg }
+        clawtestInfo.value = null
+      }
+    } catch { clawtestUpdateResult.value = { success: true, message: '完成' } }
+  })
+  es.onerror = () => {
+    es.close(); updatingClawtest.value = false
+    if (!clawtestUpdateResult.value) clawtestUpdateResult.value = { success: false, message: '连接中断' }
+  }
+}
+
 function onClaudeDrawerOpen() {
   if (!claudeInfo.value) loadClaudeVersion()
+  if (!clawtestInfo.value) loadClawtestVersion()
   if (!sshKeyInfo.value) loadSSHKey()
 }
 
