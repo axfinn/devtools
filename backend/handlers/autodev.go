@@ -285,8 +285,8 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务目录失败: " + err.Error()})
 			return
 		}
-		// Allow non-root autodev user to write
-		os.Chmod(taskDir, 0777)
+		// Transfer ownership to non-root autodev user so it can create files without permission issues
+		os.Chown(taskDir, autodevUID, autodevGID)
 	}
 
 	opts := models.AutoDevOptions{Publish: req.Publish, Build: req.Build, Push: req.Push}
@@ -654,21 +654,13 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 	cmd := exec.Command(h.autodevPath, args...)
 	cmd.Dir = workDir
 
-	// write stdout+stderr to driver.log
+	// Create log directory and transfer ownership to non-root autodev user (uid 1001).
+	// Chown is more reliable than chmod for cross-user file access.
 	logDir := filepath.Join(workDir, ".autodev", "logs")
-	os.MkdirAll(logDir, 0777)
-	// chmod so non-root autodev user can also write here
-	os.Chmod(workDir, 0777)
-	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
-	os.Chmod(logDir, 0777)
-
-	// Pre-create driver.log and chmod 0666 so the non-root autodev user can open it for append.
-	// The Python script opens this file directly, not through stdout/stderr redirection.
-	logFilePath := filepath.Join(logDir, "driver.log")
-	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
-		f.Close()
-	}
-	os.Chmod(logFilePath, 0666) // explicitly bypass umask so autodev user (uid 1001) can write
+	os.MkdirAll(logDir, 0755)
+	os.Chown(workDir, autodevUID, autodevGID)
+	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
+	os.Chown(logDir, autodevUID, autodevGID)
 
 	// Run as non-root user (uid 1001) so Claude Code allows --dangerously-skip-permissions.
 	// Replace HOME so Claude Code finds the non-root user's config.
@@ -733,22 +725,19 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 
 // runAskTask executes claude ask in a background goroutine
 func (h *AutoDevHandler) runAskTask(id, description, workDir string, background bool) {
-	// Create log directory
+	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
-	os.MkdirAll(logDir, 0777)
-	os.Chmod(workDir, 0777)
-	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
-	os.Chmod(logDir, 0777)
+	os.MkdirAll(logDir, 0755)
+	os.Chown(workDir, autodevUID, autodevGID)
+	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
+	os.Chown(logDir, autodevUID, autodevGID)
 
-	// Pre-create ask.log
 	logFilePath := filepath.Join(logDir, "ask.log")
-	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
-		f.Close()
-	}
-	os.Chmod(logFilePath, 0666)
 
 	// Ensure process directory exists for qa.md
-	os.MkdirAll(filepath.Join(workDir, "process"), 0777)
+	processDir := filepath.Join(workDir, "process")
+	os.MkdirAll(processDir, 0755)
+	os.Chown(processDir, autodevUID, autodevGID)
 
 	// Run driver.py ask command
 	cmd := exec.Command("python3", h.autodevPath, "ask", description, "--path", workDir)
@@ -803,19 +792,12 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir string, background 
 
 // runExtendTask executes autodev extend in a background goroutine
 func (h *AutoDevHandler) runExtendTask(id, description, workDir string, background bool) {
-	// Create log directory
+	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
-	os.MkdirAll(logDir, 0777)
-	os.Chmod(workDir, 0777)
-	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
-	os.Chmod(logDir, 0777)
-
-	// Pre-create extend.log
-	logFilePath := filepath.Join(logDir, "extend.log")
-	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
-		f.Close()
-	}
-	os.Chmod(logFilePath, 0666)
+	os.MkdirAll(logDir, 0755)
+	os.Chown(workDir, autodevUID, autodevGID)
+	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
+	os.Chown(logDir, autodevUID, autodevGID)
 
 	// Run driver.py extend command
 	cmd := exec.Command("python3", h.autodevPath, "extend", description, "--path", workDir)
@@ -842,7 +824,20 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string, backgrou
 		return
 	}
 
-	// Synchronous mode: wait for completion
+	// Synchronous mode: start and wait for completion
+	h.mu.Lock()
+	h.processes[id] = cmd
+	h.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
+		h.mu.Lock()
+		delete(h.processes, id)
+		h.mu.Unlock()
+		return
+	}
+	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
+
 	err := cmd.Wait()
 	exitCode := 0
 	status := "completed"
@@ -903,41 +898,18 @@ func (h *AutoDevHandler) runExportTask(id, description, workDir, exportFormat st
 	cmd := exec.Command(h.autodevPath, args...)
 	cmd.Dir = workDir
 
-	// Create log directory
+	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
-	os.MkdirAll(logDir, 0777)
-	os.Chmod(workDir, 0777)
-	os.Chmod(filepath.Join(workDir, ".autodev"), 0777)
-	os.Chmod(logDir, 0777)
-
-	logFilePath := filepath.Join(logDir, "export.log")
-	if f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
-		f.Close()
-	}
-	os.Chmod(logFilePath, 0666)
+	os.MkdirAll(logDir, 0755)
+	os.Chown(workDir, autodevUID, autodevGID)
+	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
+	os.Chown(logDir, autodevUID, autodevGID)
 
 	// Set up environment
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
 	}
-	env := make([]string, 0, len(os.Environ())+2)
-	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "HOME=") && !strings.HasPrefix(e, "UV_CACHE_DIR=") {
-			env = append(env, e)
-		}
-	}
-	env = append(env, "HOME="+autodevHome)
-	env = append(env, "UV_CACHE_DIR=/tmp/uv-cache-autodev")
-	if gitSSHCmd := h.gitSSHCommand(); gitSSHCmd != "" {
-		filtered := env[:0]
-		for _, e := range env {
-			if !strings.HasPrefix(e, "GIT_SSH_COMMAND=") {
-				filtered = append(filtered, e)
-			}
-		}
-		env = append(filtered, "GIT_SSH_COMMAND="+gitSSHCmd)
-	}
-	cmd.Env = env
+	cmd.Env = h.buildEnv()
 
 	h.mu.Lock()
 	h.processes[id] = cmd

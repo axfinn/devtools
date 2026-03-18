@@ -49,7 +49,7 @@
           <el-icon><SetUp /></el-icon>
           <span class="hidden sm:inline ml-1">Claude 管理</span>
         </el-button>
-        <el-tooltip :content="isDark ? '切换浅色模式' : '切换深色模式'" placement="bottom">
+        <el-tooltip :content="themeMode === 'auto' ? '跟随系统主题' : isDark ? '切换浅色模式' : '切换深色模式'" placement="bottom">
           <el-button size="small" @click="toggleTheme" class="topbar-btn">
             <el-icon><component :is="isDark ? Sunny : MoonNight" /></el-icon>
           </el-button>
@@ -353,7 +353,7 @@
             </div>
           </div>
 
-          <!-- Phase Steps -->
+          <!-- Phase Steps: develop tasks with state.json -->
           <div v-if="taskState" class="phase-steps">
             <div v-for="(ph, i) in PHASE_NAMES" :key="i" class="phase-step">
               <div class="phase-step-dot" :class="phaseStepClass(i, taskState)">
@@ -365,6 +365,24 @@
               <div v-if="i < PHASE_NAMES.length - 1" class="phase-connector"
                 :class="isPhaseCompleted(i, taskState) ? 'bg-green-500' : 'bg-slate-700'" />
             </div>
+          </div>
+          <!-- Simple progress for ask/extend tasks -->
+          <div v-else-if="selectedTask.type === 'ask' || selectedTask.type === 'extend'" class="simple-task-progress">
+            <div class="simple-task-dot"
+              :class="selectedTask.status === 'running' ? 'simple-task-dot--active' : selectedTask.status === 'completed' ? 'simple-task-dot--done' : 'simple-task-dot--pending'">
+              <el-icon v-if="selectedTask.status === 'completed'" class="text-xs"><Check /></el-icon>
+              <el-icon v-else-if="selectedTask.status === 'running'" class="text-xs is-loading"><Loading /></el-icon>
+              <el-icon v-else class="text-xs"><WarningFilled /></el-icon>
+            </div>
+            <span class="simple-task-label">
+              {{ selectedTask.type === 'ask' ? 'ASK 问答执行' : 'EXTEND 迭代扩展' }}
+            </span>
+            <span v-if="selectedTask.status === 'running'" class="ml-2 text-xs text-amber-400 flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block"></span>
+              运行中
+            </span>
+            <span v-else-if="selectedTask.status === 'completed'" class="ml-2 text-xs text-green-400">完成</span>
+            <span v-else class="ml-2 text-xs text-red-400">失败</span>
           </div>
 
           <!-- Content Tabs -->
@@ -435,12 +453,25 @@
               <div v-else class="files-layout">
                 <!-- Grouped File Tree -->
                 <div class="file-tree">
-                  <template v-for="group in fileGroups" :key="group.category">
-                    <div class="file-group-header">
+                  <!-- Search box -->
+                  <div class="file-search-wrap">
+                    <el-input
+                      v-model="fileSearch"
+                      size="small"
+                      placeholder="搜索文件…"
+                      clearable
+                      :prefix-icon="Search"
+                      class="file-search-input"
+                    />
+                  </div>
+                  <template v-for="group in filteredFileGroups" :key="group.category">
+                    <div class="file-group-header" @click="toggleGroupCollapse(group.category)" style="cursor:pointer">
                       <span class="file-group-icon">{{ group.icon }}</span>
                       <span class="file-group-label">{{ group.label }}</span>
                       <span class="file-group-count">{{ group.files.length }}</span>
+                      <el-icon class="ml-auto text-slate-500 text-xs transition-transform" :class="collapsedGroups.has(group.category) ? 'rotate-0' : 'rotate-90'"><ArrowRight /></el-icon>
                     </div>
+                    <template v-if="!collapsedGroups.has(group.category)">
                     <div
                       v-for="file in group.files"
                       :key="file.path"
@@ -455,6 +486,7 @@
                         <span class="file-path-hint" v-if="file.path.includes('/')">{{ file.path.substring(0, file.path.lastIndexOf('/')) }}/</span>
                       </div>
                     </div>
+                    </template>
                   </template>
                 </div>
                 <!-- File Content -->
@@ -713,6 +745,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useTheme } from '@/composables/useTheme'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 import {
@@ -720,7 +753,7 @@ import {
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
   FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
   SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled,
-  Sunny, MoonNight, Key, ChatLineRound, Plus
+  Sunny, MoonNight, Key, ChatLineRound, Plus, Search, ArrowRight, WarningFilled
 } from '@element-plus/icons-vue'
 
 // ---- markdown-it setup ----
@@ -744,32 +777,11 @@ function renderMd(content) {
 }
 
 const SESSION_KEY = 'autodev_password'
-const THEME_KEY = 'autodev_theme'   // 'dark' | 'light' | null (follow system)
 const API_BASE = '/api/autodev'
 
-// ---- theme (follows system, user can override) ----
-const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
-
-function resolveIsDark() {
-  const stored = localStorage.getItem(THEME_KEY)
-  if (stored === 'dark') return true
-  if (stored === 'light') return false
-  return systemDark.matches  // follow system
-}
-
-const isDark = ref(resolveIsDark())
-
-// listen for system theme changes (only applies when no manual override)
-systemDark.addEventListener('change', () => {
-  if (!localStorage.getItem(THEME_KEY)) {
-    isDark.value = systemDark.matches
-  }
-})
-
-function toggleTheme() {
-  isDark.value = !isDark.value
-  localStorage.setItem(THEME_KEY, isDark.value ? 'dark' : 'light')
-}
+// ---- theme: sync with global useTheme composable ----
+const { currentTheme, themeMode, toggleTheme } = useTheme()
+const isDark = computed(() => currentTheme.value === 'dark')
 
 const PHASE_NAMES = [
   { label: 'DISCOVER', short: 'DIS' },
@@ -1245,6 +1257,16 @@ const FILE_GROUP_DEFS = [
   { category: 'state',   icon: '⚙️', label: '运行状态' },
 ]
 
+const fileSearch = ref('')
+const collapsedGroups = ref(new Set())
+
+function toggleGroupCollapse(category) {
+  const s = new Set(collapsedGroups.value)
+  if (s.has(category)) s.delete(category)
+  else s.add(category)
+  collapsedGroups.value = s
+}
+
 const fileGroups = computed(() => {
   const map = {}
   for (const file of taskFiles.value) {
@@ -1256,6 +1278,15 @@ const fileGroups = computed(() => {
     ...g,
     files: map[g.category],
   }))
+})
+
+const filteredFileGroups = computed(() => {
+  const q = fileSearch.value.trim().toLowerCase()
+  if (!q) return fileGroups.value
+  return fileGroups.value.map(g => ({
+    ...g,
+    files: g.files.filter(f => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q)),
+  })).filter(g => g.files.length > 0)
 })
 
 const activeCategoryName = computed(() => {
@@ -1636,6 +1667,29 @@ onUnmounted(() => clearInterval(refreshTimer))
   height: 2px;
 }
 
+/* Simple progress row for ask/extend tasks */
+.simple-task-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid #1e293b;
+}
+.simple-task-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.simple-task-dot--done { background: #16a34a; color: white; }
+.simple-task-dot--active { background: #d97706; color: white; box-shadow: 0 0 0 4px rgba(217,119,6,0.2); }
+.simple-task-dot--pending { background: #334155; color: #64748b; }
+.simple-task-label { font-size: 12px; font-weight: 600; color: #94a3b8; letter-spacing: 0.04em; }
+
 /* ===== Content Tabs ===== */
 .content-tabs {
   display: flex;
@@ -1891,6 +1945,13 @@ onUnmounted(() => clearInterval(refreshTimer))
 .file-group-icon { font-size: 11px; }
 .file-group-label { font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; flex: 1; }
 .file-group-count { font-size: 10px; background: #334155; color: #64748b; border-radius: 8px; padding: 0 5px; }
+.file-group-header:hover { background: #1e293b; border-radius: 6px; }
+
+/* File search */
+.file-search-wrap { padding: 6px 4px 8px; }
+.file-search-input :deep(.el-input__wrapper) { background: #1e293b; box-shadow: none; border: 1px solid #334155; }
+.file-search-input :deep(.el-input__inner) { color: #94a3b8; font-size: 12px; }
+.file-search-input :deep(.el-input__prefix) { color: #475569; }
 
 /* Category badge in file content toolbar */
 .file-category-badge {
