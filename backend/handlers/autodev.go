@@ -281,7 +281,8 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 		taskName := sanitizeTaskName(req.Description)
 		taskDir = filepath.Join(h.dataDir, fmt.Sprintf("%s-%d", taskName, time.Now().Unix()))
 		if err := os.MkdirAll(taskDir, 0777); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务目录失败"})
+			log.Printf("[AutoDev] Create task directory error: dataDir=%s, taskDir=%s, error=%v", h.dataDir, taskDir, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务目录失败: " + err.Error()})
 			return
 		}
 		// Allow non-root autodev user to write
@@ -291,7 +292,8 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 	opts := models.AutoDevOptions{Publish: req.Publish, Build: req.Build, Push: req.Push}
 	task, err := h.db.CreateAutoDevTask(taskType, req.Description, models.MarshalAutoDevOptions(opts), taskDir)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务失败"})
+		log.Printf("[AutoDev] CreateAutoDevTask error: type=%s, description=%s, workDir=%s, error=%v", taskType, req.Description, taskDir, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建任务失败: " + err.Error()})
 		return
 	}
 
@@ -336,6 +338,24 @@ func (h *AutoDevHandler) List(c *gin.Context) {
 		result = append(result, m)
 	}
 	c.JSON(http.StatusOK, gin.H{"tasks": result})
+}
+
+// ListProjects handles GET /api/autodev/projects?password=xxx
+// Returns a list of unique project directories from task history
+func (h *AutoDevHandler) ListProjects(c *gin.Context) {
+	if !h.checkPassword(c) {
+		return
+	}
+	projects, err := h.db.ListAutoDevProjects()
+	if err != nil {
+		log.Printf("[AutoDev] ListAutoDevProjects error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取项目列表失败: " + err.Error()})
+		return
+	}
+	if projects == nil {
+		projects = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"projects": projects})
 }
 
 // GetTask handles GET /api/autodev/tasks/:id?password=xxx

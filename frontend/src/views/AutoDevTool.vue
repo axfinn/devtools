@@ -105,6 +105,20 @@
             >
               <template #prefix><el-icon class="text-slate-400"><Folder /></el-icon></template>
             </el-input>
+            <el-select
+              v-model="newTask.workDir"
+              placeholder="从历史项目选择"
+              clearable
+              filterable
+              class="w-full mb-2"
+            >
+              <el-option
+                v-for="proj in projects"
+                :key="proj"
+                :label="proj"
+                :value="proj"
+              />
+            </el-select>
             <el-checkbox v-model="newTask.background" class="mb-2">后台运行</el-checkbox>
             <div class="output-hint">
               <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
@@ -130,6 +144,20 @@
             >
               <template #prefix><el-icon class="text-slate-400"><Folder /></el-icon></template>
             </el-input>
+            <el-select
+              v-model="newTask.workDir"
+              placeholder="从历史项目选择"
+              clearable
+              filterable
+              class="w-full mb-2"
+            >
+              <el-option
+                v-for="proj in projects"
+                :key="proj"
+                :label="proj"
+                :value="proj"
+              />
+            </el-select>
             <el-checkbox v-model="newTask.background" class="mb-2">后台运行</el-checkbox>
             <div class="output-hint">
               <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
@@ -189,10 +217,14 @@
               <span class="text-xs text-slate-300">push</span>
             </el-checkbox>
           </div>
+          </template>
+
+          <!-- Submit Button (visible for all modes) -->
           <el-button
+            v-if="!resumeTaskId"
             type="primary"
             :loading="submitting"
-            :disabled="!newTask.description.trim()"
+            :disabled="submitDisabled"
             @click="submitTask"
             class="w-full submit-btn"
           >
@@ -202,9 +234,8 @@
               <Plus v-else-if="activeMode === 'extend'" />
               <Download v-else-if="activeMode === 'export'" />
             </el-icon>
-            <span class="ml-1">{{ resumeTaskId ? '恢复执行' : submitButtonText }}</span>
+            <span class="ml-1">开始执行</span>
           </el-button>
-          </template>
         </div>
 
         <!-- Task List -->
@@ -798,6 +829,31 @@ const activeMode = ref('develop') // 'develop' | 'ask' | 'extend' | 'export'
 const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', background: false })
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
 
+// ---- projects list ----
+const projects = ref([])
+
+async function loadProjects() {
+  try {
+    const res = await fetch(`${API_BASE}/projects?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) {
+      const data = await res.json()
+      projects.value = data.projects || []
+    }
+  } catch (e) {
+    console.error('Failed to load projects:', e)
+  }
+}
+
+// Button disabled condition
+const submitDisabled = computed(() => {
+  if (!newTask.value.description.trim()) return true
+  // For ask and extend modes, workDir is required
+  if ((activeMode.value === 'ask' || activeMode.value === 'extend') && !newTask.value.workDir.trim()) {
+    return true
+  }
+  return false
+})
+
 // Button text based on mode
 const submitButtonText = computed(() => {
   if (resumeTaskId.value) return '恢复执行'
@@ -1381,7 +1437,7 @@ function startAutoRefresh() {
 
 onMounted(() => {
   const pw = getPassword()
-  if (pw) { savedPassword = pw; authenticated.value = true; loadTasks() }
+  if (pw) { savedPassword = pw; authenticated.value = true; loadTasks(); loadProjects() }
   startAutoRefresh()
 })
 onUnmounted(() => clearInterval(refreshTimer))

@@ -3,6 +3,7 @@ package models
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"time"
 )
 
@@ -57,7 +58,63 @@ func (db *DB) InitAutoDevTasks() error {
 		CREATE INDEX IF NOT EXISTS idx_autodev_tasks_status ON autodev_tasks(status);
 		CREATE INDEX IF NOT EXISTS idx_autodev_tasks_created_at ON autodev_tasks(created_at);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Run migration to ensure all columns exist
+	return db.migrateAutoDevTasksTable()
+}
+
+// migrateAutoDevTasksTable ensures all required columns exist in the table
+func (db *DB) migrateAutoDevTasksTable() error {
+	// List of columns that should exist in the table
+	requiredColumns := []struct {
+		name    string
+		expr    string
+	}{
+		{"type", "ALTER TABLE autodev_tasks ADD COLUMN type TEXT DEFAULT 'develop'"},
+		{"description", "ALTER TABLE autodev_tasks ADD COLUMN description TEXT"},
+		{"options", "ALTER TABLE autodev_tasks ADD COLUMN options TEXT DEFAULT '{}'"},
+		{"status", "ALTER TABLE autodev_tasks ADD COLUMN status TEXT DEFAULT 'pending'"},
+		{"exit_code", "ALTER TABLE autodev_tasks ADD COLUMN exit_code INTEGER DEFAULT 0"},
+		{"work_dir", "ALTER TABLE autodev_tasks ADD COLUMN work_dir TEXT"},
+		{"pid", "ALTER TABLE autodev_tasks ADD COLUMN pid INTEGER DEFAULT 0"},
+		{"created_at", "ALTER TABLE autodev_tasks ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"},
+		{"started_at", "ALTER TABLE autodev_tasks ADD COLUMN started_at DATETIME"},
+		{"completed_at", "ALTER TABLE autodev_tasks ADD COLUMN completed_at DATETIME"},
+		{"result_file", "ALTER TABLE autodev_tasks ADD COLUMN result_file TEXT"},
+	}
+
+	// Get existing columns
+	rows, err := db.conn.Query("PRAGMA table_info(autodev_tasks)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existingColumns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notnull, dfltValue, pk int
+		if err := rows.Scan(&cid, &name, &colType, &notnull, &dfltValue, &pk); err != nil {
+			continue
+		}
+		existingColumns[name] = true
+	}
+
+	// Add missing columns
+	for _, col := range requiredColumns {
+		if !existingColumns[col.name] {
+			_, err := db.conn.Exec(col.expr)
+			if err != nil {
+				// Log but don't fail - column might already exist in some SQLite versions
+				log.Printf("[AutoDev] Migration: attempted to add column %s, error: %v", col.name, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // CreateAutoDevTask creates a new task record
@@ -67,7 +124,7 @@ func (db *DB) CreateAutoDevTask(taskType, description, options, workDir string) 
 		taskType = TaskTypeDevelop
 	}
 	_, err := db.conn.Exec(
-		`INSERT INTO autodev_tasks (id, type, description, options, work_dir, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
+		`INSERT INTO autodev_tasks (id, "type", description, options, work_dir, status) VALUES (?, ?, ?, ?, ?, 'pending')`,
 		id, taskType, description, options, workDir,
 	)
 	if err != nil {
@@ -80,13 +137,14 @@ func (db *DB) CreateAutoDevTask(taskType, description, options, workDir string) 
 func (db *DB) GetAutoDevTask(id string) (*AutoDevTask, error) {
 	var task AutoDevTask
 	var startedAt, completedAt sql.NullTime
+	var resultFile sql.NullString
 	err := db.conn.QueryRow(
-		`SELECT id, type, description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
+		`SELECT id, "type", description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
 		 FROM autodev_tasks WHERE id = ?`, id,
 	).Scan(
 		&task.ID, &task.Type, &task.Description, &task.Options, &task.Status,
 		&task.ExitCode, &task.WorkDir, &task.PID, &task.CreatedAt,
-		&startedAt, &completedAt, &task.ResultFile,
+		&startedAt, &completedAt, &resultFile,
 	)
 	if err != nil {
 		return nil, err
@@ -100,13 +158,16 @@ func (db *DB) GetAutoDevTask(id string) (*AutoDevTask, error) {
 	if completedAt.Valid {
 		task.CompletedAt = &completedAt.Time
 	}
+	if resultFile.Valid {
+		task.ResultFile = resultFile.String
+	}
 	return &task, nil
 }
 
 // ListAutoDevTasks lists all tasks ordered by creation time desc
 func (db *DB) ListAutoDevTasks() ([]*AutoDevTask, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, type, description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
+		`SELECT id, "type", description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
 		 FROM autodev_tasks ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -118,10 +179,11 @@ func (db *DB) ListAutoDevTasks() ([]*AutoDevTask, error) {
 	for rows.Next() {
 		var task AutoDevTask
 		var startedAt, completedAt sql.NullTime
+		var resultFile sql.NullString
 		if err := rows.Scan(
 			&task.ID, &task.Type, &task.Description, &task.Options, &task.Status,
 			&task.ExitCode, &task.WorkDir, &task.PID, &task.CreatedAt,
-			&startedAt, &completedAt, &task.ResultFile,
+			&startedAt, &completedAt, &resultFile,
 		); err != nil {
 			continue
 		}
@@ -134,9 +196,33 @@ func (db *DB) ListAutoDevTasks() ([]*AutoDevTask, error) {
 		if completedAt.Valid {
 			task.CompletedAt = &completedAt.Time
 		}
+		if resultFile.Valid {
+			task.ResultFile = resultFile.String
+		}
 		tasks = append(tasks, &task)
 	}
 	return tasks, nil
+}
+
+// ListAutoDevProjects returns unique work directories from all tasks
+func (db *DB) ListAutoDevProjects() ([]string, error) {
+	rows, err := db.conn.Query(
+		`SELECT DISTINCT work_dir FROM autodev_tasks WHERE work_dir IS NOT NULL AND work_dir != '' ORDER BY work_dir`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var projects []string
+	for rows.Next() {
+		var workDir string
+		if err := rows.Scan(&workDir); err != nil {
+			continue
+		}
+		projects = append(projects, workDir)
+	}
+	return projects, nil
 }
 
 // UpdateAutoDevTaskStatus updates task status and related fields

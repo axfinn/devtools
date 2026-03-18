@@ -708,6 +708,7 @@ func main() {
 			autodev.POST("/verify", autoDevHandler.VerifyPassword)
 			autodev.POST("/tasks", autoDevHandler.Submit)
 			autodev.GET("/tasks", autoDevHandler.List)
+			autodev.GET("/projects", autoDevHandler.ListProjects)
 			autodev.GET("/tasks/:id", autoDevHandler.GetTask)
 			autodev.GET("/tasks/:id/state", autoDevHandler.GetState)
 			autodev.GET("/tasks/:id/files", autoDevHandler.GetFiles)
