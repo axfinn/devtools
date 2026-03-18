@@ -119,7 +119,6 @@
                 :value="proj"
               />
             </el-select>
-            <el-checkbox v-model="newTask.background" class="mb-2">后台运行</el-checkbox>
             <div class="output-hint">
               <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
               <span>AI 将基于当前项目上下文回答问题，结果保存到 <code class="hint-code">process/qa.md</code></span>
@@ -158,7 +157,6 @@
                 :value="proj"
               />
             </el-select>
-            <el-checkbox v-model="newTask.background" class="mb-2">后台运行</el-checkbox>
             <div class="output-hint">
               <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
               <span>在已有项目上追加新需求，自动走 DESIGN→DO→REVIEW→DELIVER 流程</span>
@@ -851,7 +849,7 @@ const loadingList = ref(false)
 const submitting = ref(false)
 const resumeTaskId = ref('')
 const activeMode = ref('develop') // 'develop' | 'ask' | 'extend' | 'export'
-const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', background: false })
+const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip' })
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
 
 // ---- projects list ----
@@ -927,8 +925,7 @@ async function submitTask() {
         body: JSON.stringify({
           password: savedPassword,
           description: newTask.value.description.trim(),
-          work_dir: newTask.value.workDir.trim(),
-          background: newTask.value.background
+          work_dir: newTask.value.workDir.trim()
         })
       })
       data = await res.json()
@@ -940,8 +937,7 @@ async function submitTask() {
         body: JSON.stringify({
           password: savedPassword,
           description: newTask.value.description.trim(),
-          work_dir: newTask.value.workDir.trim(),
-          background: newTask.value.background
+          work_dir: newTask.value.workDir.trim()
         })
       })
       data = await res.json()
@@ -981,12 +977,12 @@ async function submitTask() {
 
     if (res.ok) {
       const successMsg = resumeTaskId.value ? '已恢复执行' :
-        activeMode.value === 'ask' ? (newTask.value.background ? '问答任务已在后台运行' : '问题已提交，AI 正在思考…') :
-        activeMode.value === 'extend' ? (newTask.value.background ? '扩展任务已在后台运行' : '扩展任务已提交，正在执行…') :
+        activeMode.value === 'ask' ? '问题已提交，AI 正在思考…' :
+        activeMode.value === 'extend' ? '扩展任务已提交，正在执行…' :
         activeMode.value === 'export' ? '导出任务已提交…' : '任务已提交，正在执行…'
       ElMessage.success(successMsg)
       resumeTaskId.value = ''
-      newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', background: false }
+      newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip' }
       await loadTasks()
       selectTask(data)
     } else {

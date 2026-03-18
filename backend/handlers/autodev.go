@@ -64,7 +64,6 @@ func (h *AutoDevHandler) Ask(c *gin.Context) {
 		Description string `json:"description" binding:"required"`
 		Password    string `json:"password" binding:"required"`
 		WorkDir     string `json:"work_dir"` // optional: specify working directory for context
-		Background  bool   `json:"background"` // run in background
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
@@ -94,25 +93,8 @@ func (h *AutoDevHandler) Ask(c *gin.Context) {
 		return
 	}
 
-	// Run ask task (synchronously or in background)
-	if req.Background {
-		go h.runAskTask(task.ID, req.Description, req.WorkDir, true)
-		c.JSON(http.StatusOK, gin.H{
-			"id":          task.ID,
-			"description": task.Description,
-			"status":      "running",
-			"work_dir":    task.WorkDir,
-			"message":     "task running in background",
-		})
-	} else {
-		go h.runAskTask(task.ID, req.Description, req.WorkDir, false)
-		c.JSON(http.StatusOK, gin.H{
-			"id":          task.ID,
-			"description": task.Description,
-			"status":      task.Status,
-			"work_dir":    task.WorkDir,
-		})
-	}
+	go h.runAskTask(task.ID, req.Description, req.WorkDir)
+	c.JSON(http.StatusOK, task)
 }
 
 // GetAskResult handles GET /api/autodev/ask/:id?password=xxx
@@ -161,7 +143,6 @@ func (h *AutoDevHandler) Extend(c *gin.Context) {
 		Description string `json:"description" binding:"required"`
 		Password    string `json:"password" binding:"required"`
 		WorkDir     string `json:"work_dir" binding:"required"` // existing project directory
-		Background  bool   `json:"background"`                  // run in background
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
@@ -191,25 +172,8 @@ func (h *AutoDevHandler) Extend(c *gin.Context) {
 		return
 	}
 
-	// Run extend task
-	if req.Background {
-		go h.runExtendTask(task.ID, req.Description, req.WorkDir, true)
-		c.JSON(http.StatusOK, gin.H{
-			"id":          task.ID,
-			"description": task.Description,
-			"status":      "running",
-			"work_dir":    task.WorkDir,
-			"message":     "extend task running in background",
-		})
-	} else {
-		go h.runExtendTask(task.ID, req.Description, req.WorkDir, false)
-		c.JSON(http.StatusOK, gin.H{
-			"id":          task.ID,
-			"description": task.Description,
-			"status":      task.Status,
-			"work_dir":    task.WorkDir,
-		})
-	}
+	go h.runExtendTask(task.ID, req.Description, req.WorkDir)
+	c.JSON(http.StatusOK, task)
 }
 
 // VerifyPassword handles POST /api/autodev/verify
@@ -300,7 +264,7 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 	// Execute task based on type
 	switch taskType {
 	case models.TaskTypeAsk:
-		go h.runAskTask(task.ID, req.Description, taskDir, false)
+		go h.runAskTask(task.ID, req.Description, taskDir)
 	case models.TaskTypeExport:
 		go h.runExportTask(task.ID, req.Description, taskDir, req.ExportFormat)
 	default:
@@ -724,107 +688,28 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 }
 
 // runAskTask executes claude ask in a background goroutine
-func (h *AutoDevHandler) runAskTask(id, description, workDir string, background bool) {
+func (h *AutoDevHandler) runAskTask(id, description, workDir string) {
 	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
 	os.MkdirAll(logDir, 0755)
 	os.Chown(workDir, autodevUID, autodevGID)
 	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
 	os.Chown(logDir, autodevUID, autodevGID)
-
-	logFilePath := filepath.Join(logDir, "ask.log")
 
 	// Ensure process directory exists for qa.md
 	processDir := filepath.Join(workDir, "process")
 	os.MkdirAll(processDir, 0755)
 	os.Chown(processDir, autodevUID, autodevGID)
 
-	// Run driver.py ask command
-	cmd := exec.Command("python3", h.autodevPath, "ask", description, "--path", workDir)
+	// Execute: autodev ask "description" --path workDir
+	// NOTE: must call h.autodevPath directly (shell script), NOT "python3 h.autodevPath"
+	cmd := exec.Command(h.autodevPath, "ask", description, "--path", workDir)
 	cmd.Dir = workDir
-
-	// Set up environment for non-root user
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
 	}
-	env := h.buildEnv()
-	cmd.Env = env
+	cmd.Env = h.buildEnv()
 
-	// If background mode, start the process and return immediately
-	if background {
-		h.mu.Lock()
-		h.processes[id] = cmd
-		h.mu.Unlock()
-
-		if err := cmd.Start(); err != nil {
-			h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
-			return
-		}
-		h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
-		return
-	}
-
-	// Synchronous mode: wait for completion
-	output, err := cmd.CombinedOutput()
-	outputStr := string(output)
-
-	// Update task status
-	exitCode := 0
-	status := "completed"
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		status = "failed"
-	}
-
-	// Find the qa.md file (in process/qa.md)
-	qaFilePath := filepath.Join(workDir, "process", "qa.md")
-
-	// Store result file path
-	h.db.UpdateAutoDevTaskResult(id, qaFilePath)
-	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
-
-	// Append logs to ask.log
-	logContent := fmt.Sprintf("[%s] Ask completed with status: %s\nOutput: %s\n", time.Now().Format(time.RFC3339), status, outputStr)
-	os.WriteFile(logFilePath, []byte(logContent), 0666)
-}
-
-// runExtendTask executes autodev extend in a background goroutine
-func (h *AutoDevHandler) runExtendTask(id, description, workDir string, background bool) {
-	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
-	logDir := filepath.Join(workDir, ".autodev", "logs")
-	os.MkdirAll(logDir, 0755)
-	os.Chown(workDir, autodevUID, autodevGID)
-	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
-	os.Chown(logDir, autodevUID, autodevGID)
-
-	// Run driver.py extend command
-	cmd := exec.Command("python3", h.autodevPath, "extend", description, "--path", workDir)
-	cmd.Dir = workDir
-
-	// Set up environment for non-root user
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
-	}
-	env := h.buildEnv()
-	cmd.Env = env
-
-	// If background mode, start the process and return immediately
-	if background {
-		h.mu.Lock()
-		h.processes[id] = cmd
-		h.mu.Unlock()
-
-		if err := cmd.Start(); err != nil {
-			h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
-			return
-		}
-		h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
-		return
-	}
-
-	// Synchronous mode: start and wait for completion
 	h.mu.Lock()
 	h.processes[id] = cmd
 	h.mu.Unlock()
@@ -848,7 +733,57 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir string, backgrou
 		status = "failed"
 	}
 
-	// Check autodev state for actual completion status
+	// Record qa.md as result file
+	h.db.UpdateAutoDevTaskResult(id, filepath.Join(workDir, "process", "qa.md"))
+	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
+
+	h.mu.Lock()
+	delete(h.processes, id)
+	h.mu.Unlock()
+}
+
+// runExtendTask executes autodev extend in a background goroutine
+func (h *AutoDevHandler) runExtendTask(id, description, workDir string) {
+	// Create log directory and transfer ownership to non-root autodev user (uid 1001)
+	logDir := filepath.Join(workDir, ".autodev", "logs")
+	os.MkdirAll(logDir, 0755)
+	os.Chown(workDir, autodevUID, autodevGID)
+	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
+	os.Chown(logDir, autodevUID, autodevGID)
+
+	// Execute: autodev extend "description" --path workDir
+	// NOTE: must call h.autodevPath directly (shell script), NOT "python3 h.autodevPath"
+	cmd := exec.Command(h.autodevPath, "extend", description, "--path", workDir)
+	cmd.Dir = workDir
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
+	}
+	cmd.Env = h.buildEnv()
+
+	h.mu.Lock()
+	h.processes[id] = cmd
+	h.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
+		h.mu.Lock()
+		delete(h.processes, id)
+		h.mu.Unlock()
+		return
+	}
+	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
+
+	err := cmd.Wait()
+	exitCode := 0
+	status := "completed"
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		status = "failed"
+	}
+
+	// Check autodev state for actual completion
 	if state := readAutoDevState(workDir); state != nil {
 		if s, ok := state["status"].(string); ok && s == "finished" {
 			status = "completed"
