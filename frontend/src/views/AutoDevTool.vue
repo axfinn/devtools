@@ -241,13 +241,21 @@
           <div class="sidebar-card-header">
             <el-icon class="text-slate-400 text-sm"><List /></el-icon>
             <span>任务列表</span>
-            <el-button size="small" :loading="loadingList" @click="loadTasks" circle text class="ml-auto !text-slate-400">
+            <span v-if="taskTotal > 0" class="text-xs text-slate-500 ml-1">({{ taskTotal }})</span>
+            <el-button size="small" :loading="loadingList" @click="loadTasks(true)" circle text class="ml-auto !text-slate-400">
               <el-icon><Refresh /></el-icon>
             </el-button>
           </div>
-          <div v-if="tasks.length === 0" class="text-center text-slate-500 py-8">
+          <!-- Filter pills -->
+          <div class="filter-bar">
+            <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === '' }" @click="setStatusFilter('')">全部</button>
+            <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'running' }" @click="setStatusFilter('running')">运行中</button>
+            <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'completed' }" @click="setStatusFilter('completed')">已完成</button>
+            <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'failed' }" @click="setStatusFilter('failed')">失败</button>
+          </div>
+          <div v-if="tasks.length === 0 && !loadingList" class="text-center text-slate-500 py-8">
             <el-icon class="text-3xl mb-2 text-slate-600"><DocumentRemove /></el-icon>
-            <p class="text-sm">暂无任务</p>
+            <p class="text-sm">{{ listFilter.status ? '无匹配任务' : '暂无任务' }}</p>
           </div>
           <div v-else class="task-list">
             <div
@@ -263,18 +271,19 @@
                   <p class="text-sm font-medium text-slate-200 truncate leading-tight" :title="task.description">
                     {{ task.description }}
                   </p>
-                  <p class="text-xs text-slate-500 mt-0.5">{{ formatTime(task.created_at) }}</p>
+                  <div class="flex items-center gap-1.5 mt-0.5">
+                    <span class="task-type-tag" :class="`task-type-tag--${task.type || 'develop'}`">{{ typeLabel(task.type) }}</span>
+                    <p class="text-xs text-slate-500">{{ formatTime(task.created_at) }}</p>
+                  </div>
                   <!-- Running phase -->
                   <div v-if="task.status === 'running' && task.autodev_state" class="mt-1.5">
                     <div class="text-xs text-amber-400 flex items-center gap-1 mb-1">
                       <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block"></span>
                       {{ task.autodev_state.phase_label || '执行中' }}
                     </div>
-                    <!-- ask/extend are single-phase: show a single animated bar -->
                     <div v-if="task.type === 'ask' || task.type === 'extend'" class="flex gap-0.5">
                       <div class="flex-1 h-1 rounded-full bg-amber-400 animate-pulse" />
                     </div>
-                    <!-- develop: show 6-segment phase bar -->
                     <div v-else class="flex gap-0.5">
                       <div v-for="(_, i) in PHASE_NAMES" :key="i"
                         class="flex-1 h-1 rounded-full transition-colors"
@@ -306,6 +315,13 @@
                 </div>
               </div>
             </div>
+            <!-- Load more -->
+            <div v-if="tasks.length < taskTotal" class="py-2 text-center">
+              <el-button size="small" text :loading="loadingMore" @click="loadMore" class="!text-slate-400 !text-xs">
+                加载更多（{{ tasks.length }}/{{ taskTotal }}）
+              </el-button>
+            </div>
+            <div v-else-if="tasks.length > 0" class="py-1 text-center text-xs text-slate-600">全部 {{ taskTotal }} 条已加载</div>
           </div>
         </div>
       </div>
@@ -355,6 +371,13 @@
                 <el-button size="small" plain @click="quickExtend(selectedTask)" class="action-btn"
                   :disabled="selectedTask.status === 'running'">
                   <el-icon><Plus /></el-icon> 扩展
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="生成 CLAUDE.md，为 ask/extend 提供冷启动上下文（避免重复调研/安装依赖）" placement="bottom">
+                <el-button size="small" plain @click="initProject(selectedTask)" class="action-btn"
+                  :loading="initingProject"
+                  :disabled="selectedTask.status === 'running'">
+                  <el-icon v-if="!initingProject"><DocumentChecked /></el-icon> 初始化
                 </el-button>
               </el-tooltip>
               <el-button v-if="hasSite" size="small" type="success" plain @click="previewSite" class="action-btn">
@@ -415,7 +438,7 @@
               <button
                 class="tab-btn"
                 :class="{ 'tab-btn--active': activeTab === 'files' }"
-                @click="activeTab = 'files'"
+                @click="activeTab = 'files'; if (!taskFiles.length) loadFiles()"
               >
                 <el-icon><FolderOpened /></el-icon>
                 全部文件
@@ -827,7 +850,8 @@ import {
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
   FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
   SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled,
-  Sunny, MoonNight, Key, ChatLineRound, Plus, Search, ArrowRight, WarningFilled
+  Sunny, MoonNight, Key, ChatLineRound, Plus, Search, ArrowRight, WarningFilled,
+  DocumentChecked
 } from '@element-plus/icons-vue'
 
 // ---- markdown-it setup ----
@@ -908,12 +932,28 @@ function logout() {
 
 // ---- tasks ----
 const tasks = ref([])
+const taskTotal = ref(0)
 const loadingList = ref(false)
+const loadingMore = ref(false)
 const submitting = ref(false)
 const resumeTaskId = ref('')
 const activeMode = ref('develop') // 'develop' | 'ask' | 'extend' | 'export'
 const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip' })
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
+
+// ---- list filter & pagination ----
+const LIST_PAGE_SIZE = 20
+const listFilter = ref({ status: '', type: '' })
+
+function setStatusFilter(status) {
+  listFilter.value.status = status
+  loadTasks(true)
+}
+
+function typeLabel(type) {
+  const map = { develop: '开发', ask: '问答', extend: '扩展', export: '导出', init: '初始化' }
+  return map[type] || type || '开发'
+}
 
 // ---- projects list ----
 const projects = ref([])
@@ -951,22 +991,58 @@ const submitButtonText = computed(() => {
   }
 })
 
-async function loadTasks() {
+async function loadTasks(reset = false) {
   loadingList.value = true
   try {
-    const res = await fetch(`${API_BASE}/tasks?password=${encodeURIComponent(savedPassword)}`)
+    const { status, type } = listFilter.value
+    const params = new URLSearchParams({
+      password: savedPassword,
+      limit: LIST_PAGE_SIZE,
+      offset: 0,
+    })
+    if (status) params.set('status', status)
+    if (type) params.set('type', type)
+    const res = await fetch(`${API_BASE}/tasks?${params}`)
     if (res.ok) {
       const data = await res.json()
       tasks.value = data.tasks || []
+      taskTotal.value = data.total || 0
+      // Sync selected task status from list (lightweight state update)
       if (selectedTask.value) {
         const found = tasks.value.find(t => t.id === selectedTask.value.id)
         if (found) {
-          selectedTask.value = found
-          taskState.value = found.autodev_state || null
+          // Update status/autodev_state without replacing the whole object (avoids re-render flicker)
+          selectedTask.value.status = found.status
+          selectedTask.value.exit_code = found.exit_code
+          if (found.autodev_state) taskState.value = found.autodev_state
         }
       }
     }
   } finally { loadingList.value = false }
+}
+
+async function loadMore() {
+  if (loadingMore.value || tasks.value.length >= taskTotal.value) return
+  loadingMore.value = true
+  try {
+    const { status, type } = listFilter.value
+    const params = new URLSearchParams({
+      password: savedPassword,
+      limit: LIST_PAGE_SIZE,
+      offset: tasks.value.length,
+    })
+    if (status) params.set('status', status)
+    if (type) params.set('type', type)
+    const res = await fetch(`${API_BASE}/tasks?${params}`)
+    if (res.ok) {
+      const data = await res.json()
+      const newTasks = data.tasks || []
+      // Deduplicate by id before appending
+      const existingIds = new Set(tasks.value.map(t => t.id))
+      tasks.value.push(...newTasks.filter(t => !existingIds.has(t.id)))
+      taskTotal.value = data.total || taskTotal.value
+    }
+  } finally { loadingMore.value = false }
 }
 
 async function submitTask() {
@@ -1125,6 +1201,7 @@ const loadingLogs = ref(false)
 const logEl = ref(null)
 const downloading = ref(false)
 const resultContent = ref('')
+const initingProject = ref(false)
 
 // fullscreen
 const fullscreenVisible = ref(false)
@@ -1163,6 +1240,7 @@ async function copyCurrentFile() {
 async function selectTask(task) {
   selectedTask.value = task
   taskState.value = task.autodev_state || null
+  // Reset all content — lazy loaded per tab
   activeTab.value = 'result'
   activeFilePath.value = null
   activeFileContent.value = ''
@@ -1172,6 +1250,7 @@ async function selectTask(task) {
   resultContent.value = ''
   availableLogPhases.value = ['driver']
   activeLogPhase.value = 'driver'
+  // Fetch task detail (lightweight: no file walk)
   await refreshDetail()
 }
 
@@ -1185,8 +1264,39 @@ async function refreshDetail() {
       selectedTask.value = data
       taskState.value = data.autodev_state || null
     }
-    await loadFiles()
+    // Load result content for the active tab (lazy: only if result tab is visible)
+    if (activeTab.value === 'result') await loadResultForTask()
+    else if (activeTab.value === 'files') await loadFiles()
   } finally { loadingDetail.value = false }
+}
+
+// loadResultForTask: loads the primary result file for the selected task type
+async function loadResultForTask() {
+  if (!selectedTask.value) return
+  // Need file list to find the right file path
+  const res = await fetch(`${API_BASE}/tasks/${selectedTask.value.id}/files?password=${encodeURIComponent(savedPassword)}`)
+  if (!res.ok) return
+  const data = await res.json()
+  taskFiles.value = data.files || []
+  taskHasSite.value = !!data.has_site
+
+  const type = selectedTask.value.type
+  if (type === 'ask') {
+    const qa = taskFiles.value.find(f => f.path === 'process/qa.md')
+    if (qa) await loadResultFile(qa.path)
+  } else if (type === 'extend') {
+    const result = taskFiles.value.find(f => f.name === 'RESULT.md')
+    if (result) await loadResultFile(result.path)
+    else {
+      const iterFiles = taskFiles.value
+        .filter(f => /process\/iter-\d+\/result\.md/.test(f.path))
+        .sort((a, b) => b.path.localeCompare(a.path))
+      if (iterFiles.length) await loadResultFile(iterFiles[0].path)
+    }
+  } else {
+    const result = taskFiles.value.find(f => f.name === 'RESULT.md')
+    if (result) await loadResultFile(result.path)
+  }
 }
 
 async function loadFiles() {
@@ -1196,31 +1306,6 @@ async function loadFiles() {
     const data = await res.json()
     taskFiles.value = data.files || []
     taskHasSite.value = !!data.has_site
-    // Auto-load the most relevant doc based on task type
-    const type = selectedTask.value.type
-    if (type === 'ask') {
-      // Ask tasks: show process/qa.md as the primary result
-      const qa = taskFiles.value.find(f => f.path === 'process/qa.md')
-      if (qa) await loadResultFile(qa.path)
-    } else if (type === 'extend') {
-      // Extend tasks: RESULT.md accumulates all iteration summaries
-      const result = taskFiles.value.find(f => f.name === 'RESULT.md')
-      if (result) await loadResultFile(result.path)
-      else {
-        // Fallback: latest iter result
-        const iterFiles = taskFiles.value
-          .filter(f => /process\/iter-\d+\/result\.md/.test(f.path))
-          .sort((a, b) => b.path.localeCompare(a.path))
-        if (iterFiles.length) await loadResultFile(iterFiles[0].path)
-      }
-    } else {
-      const result = taskFiles.value.find(f => f.name === 'RESULT.md')
-      if (result) {
-        await loadResultFile(result.path)
-      } else if (!activeFilePath.value && taskFiles.value.length) {
-        await loadFile(taskFiles.value[0].path)
-      }
-    }
   }
 }
 
@@ -1251,6 +1336,28 @@ function quickExtend(task) {
   activeMode.value = 'extend'
   newTask.value = { ...newTask.value, description: '', workDir: task.work_dir }
   window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+async function initProject(task) {
+  if (!task?.work_dir) return
+  initingProject.value = true
+  try {
+    const res = await fetch(`${API_BASE}/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: savedPassword, work_dir: task.work_dir })
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      ElMessage.error('初始化失败: ' + (data.error || res.statusText))
+      return
+    }
+    ElMessage.success('CLAUDE.md 已生成，后续 ask/extend 将自动读取上下文')
+  } catch (e) {
+    ElMessage.error('初始化请求失败: ' + e.message)
+  } finally {
+    initingProject.value = false
+  }
 }
 
 async function loadResultFile(path) {
@@ -1313,8 +1420,12 @@ function switchToLogs() {
   loadLogs()
 }
 
+// Lazy-load content when switching tabs
 watch(activeTab, tab => {
+  if (!selectedTask.value) return
   if (tab === 'logs') loadLogs()
+  else if (tab === 'files' && taskFiles.value.length === 0) loadFiles()
+  else if (tab === 'result' && !resultContent.value) loadResultForTask()
 })
 
 async function downloadTask() {
@@ -1623,17 +1734,44 @@ function startUpdate() {
 }
 
 // ---- auto-refresh ----
-let refreshTimer = null
-function startAutoRefresh() {
-  refreshTimer = setInterval(async () => {
-    if (tasks.value.some(t => t.status === 'running')) {
-      await loadTasks()
-      if (selectedTask.value?.status === 'running') {
-        await loadFiles()
-        if (activeTab.value === 'logs') await loadLogs()
+// Strategy:
+//   - Every 4s: If selected task is running, refresh only that task's state (1 API call)
+//               + refresh logs if logs tab is active
+//   - Every 15s: Reload the task list (to pick up status changes of non-selected tasks)
+let refreshStateTimer = null
+let refreshListTimer = null
+
+async function refreshSelectedTaskState() {
+  const task = selectedTask.value
+  if (!task || task.status !== 'running') return
+  try {
+    const res = await fetch(`${API_BASE}/tasks/${task.id}/state?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) {
+      const state = await res.json()
+      taskState.value = state
+      // Sync status from state.json (running tasks may complete)
+      if (state.status === 'finished' || state.status === 'completed') {
+        selectedTask.value.status = 'completed'
+      } else if (state.status === 'failed') {
+        selectedTask.value.status = 'failed'
       }
     }
-  }, 4000)
+  } catch {}
+  if (activeTab.value === 'logs') await loadLogs()
+  // Auto-reload result when task finishes
+  if (selectedTask.value?.status !== 'running') {
+    await loadResultForTask()
+    loadTasks(true)
+  }
+}
+
+function startAutoRefresh() {
+  // Fast: refresh selected running task state every 4s
+  refreshStateTimer = setInterval(refreshSelectedTaskState, 4000)
+  // Slow: refresh full task list every 15s (catches status changes for non-selected tasks)
+  refreshListTimer = setInterval(() => {
+    if (tasks.value.some(t => t.status === 'running')) loadTasks()
+  }, 15000)
 }
 
 onMounted(() => {
@@ -1641,7 +1779,10 @@ onMounted(() => {
   if (pw) { savedPassword = pw; authenticated.value = true; loadTasks(); loadProjects() }
   startAutoRefresh()
 })
-onUnmounted(() => clearInterval(refreshTimer))
+onUnmounted(() => {
+  clearInterval(refreshStateTimer)
+  clearInterval(refreshListTimer)
+})
 </script>
 
 <style>
@@ -1727,6 +1868,43 @@ onUnmounted(() => clearInterval(refreshTimer))
   border-radius: 8px !important;
   font-weight: 600 !important;
 }
+
+/* ===== Filter Bar ===== */
+.filter-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #1e293b;
+}
+.filter-pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid #334155;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.filter-pill:hover { border-color: #7c3aed; color: #a78bfa; }
+.filter-pill--active { background: #4c1d95; border-color: #7c3aed; color: #c4b5fd; }
+
+/* ===== Task Type Tag ===== */
+.task-type-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.task-type-tag--develop { background: #1e3a5f; color: #60a5fa; }
+.task-type-tag--ask     { background: #1a3a2a; color: #34d399; }
+.task-type-tag--extend  { background: #3b1f5e; color: #c084fc; }
+.task-type-tag--export  { background: #3a2b00; color: #fbbf24; }
+.task-type-tag--init    { background: #1a2f3a; color: #38bdf8; }
 
 /* ===== Task List ===== */
 .task-list {
@@ -2313,6 +2491,10 @@ onUnmounted(() => clearInterval(refreshTimer))
 .theme-light .task-item--active { background: #f5f3ff; border-color: #7c3aed !important; }
 .theme-light .task-item p.text-slate-200 { color: #1e293b !important; }
 .theme-light .task-item p.text-slate-500 { color: #94a3b8 !important; }
+.theme-light .filter-bar { border-bottom-color: #e2e8f0; }
+.theme-light .filter-pill { border-color: #e2e8f0; color: #94a3b8; }
+.theme-light .filter-pill:hover { border-color: #7c3aed; color: #7c3aed; }
+.theme-light .filter-pill--active { background: #ede9fe; border-color: #7c3aed; color: #6d28d9; }
 
 .theme-light .content-panel { background: #ffffff; }
 .theme-light .content-header {

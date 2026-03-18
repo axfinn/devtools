@@ -182,6 +182,70 @@ func (h *AutoDevHandler) Extend(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
+// InitProject handles POST /api/autodev/init
+// Runs `autodev init --path <work_dir>` synchronously (pure Python, no claude).
+// Generates CLAUDE.md in the project directory with file list, tech stack,
+// process summaries and iteration history to give ask/extend a cold-start context.
+func (h *AutoDevHandler) InitProject(c *gin.Context) {
+	var req struct {
+		Password string `json:"password" binding:"required"`
+		WorkDir  string `json:"work_dir" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+	if h.adminPassword == "" || req.Password != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return
+	}
+
+	if _, err := os.Stat(h.autodevPath); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "autodev 未安装，请检查 Docker 配置"})
+		return
+	}
+	if _, err := os.Stat(req.WorkDir); os.IsNotExist(err) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + req.WorkDir})
+		return
+	}
+
+	cmd := exec.Command(h.autodevPath, "init", "--path", req.WorkDir)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Credential: &syscall.Credential{Uid: autodevUID, Gid: autodevGID},
+	}
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+
+	claudeMdPath := filepath.Join(req.WorkDir, "CLAUDE.md")
+	claudeMdExists := false
+	if _, statErr := os.Stat(claudeMdPath); statErr == nil {
+		claudeMdExists = true
+	}
+
+	if err != nil {
+		log.Printf("[AutoDev] init failed: workDir=%s, err=%v, output=%s", req.WorkDir, err, output)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":           "init 执行失败: " + err.Error(),
+			"output":          output,
+			"claude_md_exists": claudeMdExists,
+		})
+		return
+	}
+
+	resp := gin.H{
+		"ok":              true,
+		"output":          output,
+		"claude_md_path":  claudeMdPath,
+		"claude_md_exists": claudeMdExists,
+	}
+	if claudeMdExists {
+		if content, err := os.ReadFile(claudeMdPath); err == nil {
+			resp["claude_md_content"] = string(content)
+		}
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // VerifyPassword handles POST /api/autodev/verify
 func (h *AutoDevHandler) VerifyPassword(c *gin.Context) {
 	var req struct {
@@ -286,12 +350,22 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 	c.JSON(http.StatusOK, task)
 }
 
-// List handles GET /api/autodev/tasks?password=xxx
+// List handles GET /api/autodev/tasks?password=xxx&limit=20&offset=0&status=&type=
+// Only running tasks get their autodev_state included to avoid expensive disk reads for every task.
 func (h *AutoDevHandler) List(c *gin.Context) {
 	if !h.checkPassword(c) {
 		return
 	}
-	tasks, err := h.db.ListAutoDevTasks()
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	statusFilter := c.Query("status")
+	typeFilter := c.Query("type")
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+
+	tasks, err := h.db.ListAutoDevTasks(limit, offset, statusFilter, typeFilter)
 	if err != nil {
 		log.Printf("[AutoDev] ListAutoDevTasks error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务列表失败: " + err.Error()})
@@ -300,16 +374,21 @@ func (h *AutoDevHandler) List(c *gin.Context) {
 	if tasks == nil {
 		tasks = []*models.AutoDevTask{}
 	}
-	// enrich each task with state.json info
+
+	total, _ := h.db.CountAutoDevTasks(statusFilter, typeFilter)
+
+	// Only include autodev_state for running tasks — avoids reading state.json for every task
 	result := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		m := taskToMap(t)
-		if state := readAutoDevState(t.WorkDir); state != nil {
-			m["autodev_state"] = state
+		if t.Status == "running" {
+			if state := readAutoDevState(t.WorkDir); state != nil {
+				m["autodev_state"] = state
+			}
 		}
 		result = append(result, m)
 	}
-	c.JSON(http.StatusOK, gin.H{"tasks": result})
+	c.JSON(http.StatusOK, gin.H{"tasks": result, "total": total, "limit": limit, "offset": offset})
 }
 
 // ListProjects handles GET /api/autodev/projects?password=xxx

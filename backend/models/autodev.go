@@ -13,6 +13,7 @@ const (
 	TaskTypeAsk     = "ask"
 	TaskTypeExport  = "export"
 	TaskTypeExtend  = "extend"
+	TaskTypeInit    = "init"
 )
 
 // AutoDevTask represents an autodev execution task
@@ -164,12 +165,44 @@ func (db *DB) GetAutoDevTask(id string) (*AutoDevTask, error) {
 	return &task, nil
 }
 
-// ListAutoDevTasks lists all tasks ordered by creation time desc
-func (db *DB) ListAutoDevTasks() ([]*AutoDevTask, error) {
-	rows, err := db.conn.Query(
-		`SELECT id, "type", description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
-		 FROM autodev_tasks ORDER BY created_at DESC`,
-	)
+// CountAutoDevTasks returns total task count, optionally filtered by status/type.
+// Empty string means "no filter".
+func (db *DB) CountAutoDevTasks(status, taskType string) (int, error) {
+	query := `SELECT COUNT(*) FROM autodev_tasks WHERE 1=1`
+	var args []any
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	if taskType != "" {
+		query += ` AND "type" = ?`
+		args = append(args, taskType)
+	}
+	var count int
+	err := db.conn.QueryRow(query, args...).Scan(&count)
+	return count, err
+}
+
+// ListAutoDevTasks lists tasks ordered by creation time desc with optional pagination/filter.
+// limit=0 means no limit (returns all).
+func (db *DB) ListAutoDevTasks(limit, offset int, status, taskType string) ([]*AutoDevTask, error) {
+	query := `SELECT id, "type", description, options, status, exit_code, work_dir, pid, created_at, started_at, completed_at, result_file
+		 FROM autodev_tasks WHERE 1=1`
+	var args []any
+	if status != "" {
+		query += ` AND status = ?`
+		args = append(args, status)
+	}
+	if taskType != "" {
+		query += ` AND "type" = ?`
+		args = append(args, taskType)
+	}
+	query += ` ORDER BY created_at DESC`
+	if limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	}
+	rows, err := db.conn.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
