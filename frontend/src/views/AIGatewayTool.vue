@@ -430,9 +430,17 @@
         <el-tabs>
           <el-tab-pane label="MiniMax">
             <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.minimax.request, null, 2) }}</pre>
+            <div style="margin-top: 12px;">
+              <el-divider>Claude Code 配置 (MiniMax)</el-divider>
+              <pre class="doc-code">{{ anthropicDocs.examples.minimax.claude_code_config.code }}</pre>
+            </div>
           </el-tab-pane>
           <el-tab-pane label="DashScope">
             <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.dashscope.request, null, 2) }}</pre>
+            <div style="margin-top: 12px;">
+              <el-divider>Claude Code 配置 (DashScope)</el-divider>
+              <pre class="doc-code">{{ anthropicDocs.examples.dashscope.claude_code_config.code }}</pre>
+            </div>
           </el-tab-pane>
         </el-tabs>
 
@@ -446,9 +454,6 @@
           </el-tab-pane>
           <el-tab-pane label="cURL">
             <pre class="doc-code">{{ anthropicDocs.examples.curl.code }}</pre>
-          </el-tab-pane>
-          <el-tab-pane label="Claude Code">
-            <pre class="doc-code">{{ anthropicDocs.examples.claude_code_config.code }}</pre>
           </el-tab-pane>
         </el-tabs>
       </div>

@@ -173,6 +173,28 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 					},
 					"max_tokens": 1024,
 				},
+				"claude_code_config": gin.H{
+					"language": "Claude Code",
+					"description": "Claude Code MiniMax 配置示例",
+					"code": `{
+  "skills": {
+    "paths": [
+      "~/.claude/skills"
+    ]
+  },
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/minimax/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
+    "API_TIMEOUT_MS": "300000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    "ANTHROPIC_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
+  }
+}`,
+				},
 			},
 			"dashscope": gin.H{
 				"description": "使用 DashScope 上游",
@@ -182,6 +204,28 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 						{"role": "user", "content": "你好"},
 					},
 					"max_tokens": 1024,
+				},
+				"claude_code_config": gin.H{
+					"language": "Claude Code",
+					"description": "Claude Code DashScope 配置示例",
+					"code": `{
+  "skills": {
+    "paths": [
+      "~/.claude/skills"
+    ]
+  },
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/dashscope/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
+    "API_TIMEOUT_MS": "300000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    "ANTHROPIC_MODEL": "qwen3.5-plus",
+    "ANTHROPIC_SMALL_FAST_MODEL": "qwen3-coder-next",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "qwen3.5-plus",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen3-max-2026-01-23",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3-coder-plus"
+  }
+}`,
 				},
 			},
 			"python_sdk": gin.H{
@@ -230,28 +274,6 @@ main();`,
     "messages": [{"role": "user", "content": "Hello"}],
     "max_tokens": 1024
   }'`,
-			},
-			"claude_code_config": gin.H{
-				"language": "Claude Code",
-				"description": "Claude Code 配置文件示例 (~/.claude/settings.json)",
-				"code": `{
-  "skills": {
-    "paths": [
-      "~/.claude/skills"
-    ]
-  },
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/minimax/anthropic",
-    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
-    "API_TIMEOUT_MS": "300000",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
-    "ANTHROPIC_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
-  }
-}`,
 			},
 		},
 	})
