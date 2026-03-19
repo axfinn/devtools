@@ -2498,6 +2498,21 @@ onUnmounted(() => {
   margin: 0;
 }
 
+/* ===== Init Dialog ===== */
+.init-dialog-body { padding: 4px 0; }
+.init-log-box {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.init-log-line { color: #94a3b8; white-space: pre-wrap; word-break: break-all; }
+
 /* ===== Fullscreen Dialog ===== */
 .fullscreen-dialog :deep(.el-dialog__body) {
   padding: 0;
