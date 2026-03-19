@@ -134,6 +134,107 @@ func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 	})
 }
 
+// GetAnthropicDocs 返回 Anthropic 协议接入文档
+func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"title":   "Anthropic 协议接入文档",
+		"summary": "通过 AI Gateway 使用 Anthropic 兼容协议调用 MiniMax 或 DashScope 上游，支持标准 Anthropic SDK。",
+		"auth": gin.H{
+			"api_key": "Authorization: Bearer dtk_ai_xxx",
+		},
+		"providers": []gin.H{
+			{
+				"name":        "MiniMax",
+				"base_url":    "/api/minimax/anthropic",
+				"upstream":    "https://api.minimaxi.com/anthropic",
+				"models":      []string{"MiniMax-M2.5", "MiniMax-M2.7"},
+				"description": "MiniMax Anthropic 兼容端点",
+			},
+			{
+				"name":        "DashScope",
+				"base_url":    "/api/dashscope/anthropic",
+				"upstream":    "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+				"models":      []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M2.5"},
+				"description": "DashScope Anthropic 兼容端点（阿里云百炼）",
+			},
+		},
+		"routes": []gin.H{
+			{"method": "GET", "path": "/api/ai-gateway/docs/anthropic", "description": "获取本文档"},
+			{"method": "POST", "path": "/api/minimax/anthropic/v1/messages", "description": "MiniMax Anthropic 接口"},
+			{"method": "POST", "path": "/api/dashscope/anthropic/v1/messages", "description": "DashScope Anthropic 接口"},
+		},
+		"examples": gin.H{
+			"minimax": gin.H{
+				"description": "使用 MiniMax 上游",
+				"request": gin.H{
+					"model": "MiniMax-M2.5",
+					"messages": []gin.H{
+						{"role": "user", "content": "你好"},
+					},
+					"max_tokens": 1024,
+				},
+			},
+			"dashscope": gin.H{
+				"description": "使用 DashScope 上游",
+				"request": gin.H{
+					"model": "qwen3.5-plus",
+					"messages": []gin.H{
+						{"role": "user", "content": "你好"},
+					},
+					"max_tokens": 1024,
+				},
+			},
+			"python_sdk": gin.H{
+				"language": "Python",
+				"code": `from anthropic import Anthropic
+
+client = Anthropic(
+    base_url="http://your-devtools:8080/api/minimax/anthropic/v1",
+    api_key="dtk_ai_xxx"  # 你的 AI Gateway API Key
+)
+
+response = client.messages.create(
+    model="MiniMax-M2.5",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}]
+)
+print(response.content[0].text)`,
+			},
+			"javascript_sdk": gin.H{
+				"language": "JavaScript/TypeScript",
+				"code": `import { Anthropic } from '@anthropic-ai/sdk';
+
+const client = new Anthropic({
+  baseURL: 'http://your-devtools:8080/api/minimax/anthropic/v1',
+  apiKey: 'dtk_ai_xxx', // 你的 AI Gateway API Key
+});
+
+async function main() {
+  const message = await client.messages.create({
+    model: 'MiniMax-M2.5',
+    max_tokens: 1024,
+    messages: [{ role: 'user', content: 'Hello' }],
+  });
+  console.log(message.content[0].text);
+}
+main();`,
+			},
+			"curl": gin.H{
+				"language": "cURL",
+				"code": `curl -X POST http://your-devtools:8080/api/minimax/anthropic/v1/messages \\
+  -H "Authorization: Bearer dtk_ai_xxx" \\
+  -H "Content-Type: application/json" \\
+  -H "Anthropic-Version: 2023-06-01" \\
+  -d '{
+    "model": "MiniMax-M2.5",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_tokens": 1024
+  }'`,
+			},
+		},
+	})
+}
+
 func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
 	catalog := make([]gin.H, 0)
 	if h.cfg.DeepSeek.APIKey != "" {
@@ -1000,6 +1101,92 @@ func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[st
 	return result, raw, nil
 }
 
+// ProxyMinimaxAnthropic 转发 Anthropic 协议格式的请求到 MiniMax Anthropic 兼容端点
+// POST /api/minimax/anthropic/v1/messages
+func (h *AIGatewayHandler) ProxyMinimaxAnthropic(c *gin.Context) {
+	h.proxyAnthropic(c, "https://api.minimaxi.com/anthropic", h.cfg.MiniMax.APIKey, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.5", "MiniMax-M2.7"})
+}
+
+// ProxyDashScopeAnthropic 转发 Anthropic 协议格式的请求到 DashScope Anthropic 兼容端点
+// POST /api/dashscope/anthropic/v1/messages
+func (h *AIGatewayHandler) ProxyDashScopeAnthropic(c *gin.Context) {
+	h.proxyAnthropic(c, "https://coding.dashscope.aliyuncs.com/apps/anthropic", h.cfg.DashScope.APIKey, "/api/dashscope/anthropic/v1/messages", []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M2.5"})
+}
+
+// proxyAnthropic 转发 Anthropic 协议请求到指定上游
+func (h *AIGatewayHandler) proxyAnthropic(c *gin.Context, upstreamBase, apiKey, logPath string, allowedModels []string) {
+	key, ok := h.authenticateAPIKey(c, "chat")
+	if !ok {
+		return
+	}
+
+	// 直接透传请求体到上游
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+		return
+	}
+
+	if len(bodyBytes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体为空"})
+		return
+	}
+
+	// 解析 model 字段用于校验和日志
+	var bodyMap map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &bodyMap); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体 JSON 格式错误"})
+		return
+	}
+
+	model, _ := bodyMap["model"].(string)
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 model 字段"})
+		return
+	}
+
+	// 校验模型是否在允许列表中
+	if !isModelAllowed(model, allowedModels) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("该端点不支持模型 %s，允许的模型: %v", model, allowedModels)})
+		return
+	}
+
+	if !h.ensureModelAllowed(c, key, model) {
+		return
+	}
+
+	start := time.Now()
+	upstreamURL := strings.TrimRight(upstreamBase, "/") + "/v1/messages"
+
+	if apiKey == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置上游 API Key"})
+		return
+	}
+
+	// 转发到上游 Anthropic 端点
+	raw, err := h.doRawRequest(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
+	if err != nil {
+		h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusOK, true, "", string(bodyBytes), string(raw), c.ClientIP(), time.Since(start), usageSummary{})
+
+	// 返回原始响应
+	c.Data(http.StatusOK, "application/json", raw)
+}
+
+// isModelAllowed 检查模型是否在允许列表中
+func isModelAllowed(model string, allowed []string) bool {
+	for _, m := range allowed {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *AIGatewayHandler) callProxyChat(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
 	if strings.TrimSpace(h.cfg.AIGateway.Proxy.APIURL) == "" || strings.TrimSpace(h.cfg.AIGateway.Proxy.APIKey) == "" {
 		return nil, nil, fmt.Errorf("未配置 ai_gateway.proxy.api_url 或 ai_gateway.proxy.api_key")
@@ -1063,6 +1250,35 @@ func (h *AIGatewayHandler) doJSONRequest(url, apiKey string, bodyMap map[string]
 		return payload, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
 	}
 	return payload, nil
+}
+
+// doRawRequest 转发原始请求到上游
+func (h *AIGatewayHandler) doRawRequest(url, apiKey, method string, body []byte, headers http.Header) ([]byte, error) {
+	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	// 透传必要的 headers
+	for key, values := range headers {
+		if key == "Content-Type" || key == "Authorization" || key == "Accept" {
+			continue
+		}
+		for _, v := range values {
+			req.Header.Add(key, v)
+		}
+	}
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return respBody, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+	}
+	return respBody, nil
 }
 
 func (h *AIGatewayHandler) authenticateAPIKey(c *gin.Context, scope string) (*models.AIAPIKey, bool) {

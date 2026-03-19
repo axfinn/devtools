@@ -15,6 +15,7 @@
         />
         <el-button type="primary" @click="init">进入管理</el-button>
         <el-button @click="loadDocs">查看文档</el-button>
+        <el-button type="success" @click="loadAnthropicDocs">Anthropic 接入</el-button>
       </div>
     </div>
 
@@ -386,6 +387,69 @@
         <pre class="doc-json">{{ prettyJSON(docs.examples) }}</pre>
       </div>
     </el-dialog>
+
+    <!-- Anthropic 协议接入文档对话框 -->
+    <el-dialog v-model="anthropicDocsVisible" width="960px" title="Anthropic 协议接入文档">
+      <div v-if="anthropicDocs" class="docs-content">
+        <el-alert :title="anthropicDocs.summary" type="info" :closable="false" />
+
+        <h4 style="margin-top: 16px;">支持的提供商</h4>
+        <el-table :data="anthropicDocs.providers" size="small" stripe>
+          <el-table-column prop="name" label="提供商" width="120">
+            <template #default="{ row }">
+              <el-tag size="small" type="success">{{ row.name }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="base_url" label="DevTools 端点" min-width="200">
+            <template #default="{ row }">
+              <code style="font-size: 12px;">{{ row.base_url }}/v1/messages</code>
+            </template>
+          </el-table-column>
+          <el-table-column prop="upstream" label="上游地址" min-width="220">
+            <template #default="{ row }">
+              <code style="font-size: 11px; color: #909399;">{{ row.upstream }}</code>
+            </template>
+          </el-table-column>
+          <el-table-column label="支持模型" min-width="280">
+            <template #default="{ row }">
+              <el-tag v-for="m in row.models" :key="m" size="small" style="margin-right: 4px; margin-bottom: 2px;">{{ m }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-divider />
+
+        <h4>API 路由</h4>
+        <el-descriptions :column="1" border>
+          <el-descriptions-item v-for="route in anthropicDocs.routes" :key="route.path" :label="`${route.method} ${route.path}`">
+            {{ route.description }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <h4 style="margin-top: 16px;">请求示例</h4>
+        <el-tabs>
+          <el-tab-pane label="MiniMax">
+            <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.minimax.request, null, 2) }}</pre>
+          </el-tab-pane>
+          <el-tab-pane label="DashScope">
+            <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.dashscope.request, null, 2) }}</pre>
+          </el-tab-pane>
+        </el-tabs>
+
+        <h4 style="margin-top: 16px;">SDK 调用示例</h4>
+        <el-tabs>
+          <el-tab-pane label="Python SDK">
+            <pre class="doc-code">{{ anthropicDocs.examples.python_sdk.code }}</pre>
+          </el-tab-pane>
+          <el-tab-pane label="JavaScript SDK">
+            <pre class="doc-code">{{ anthropicDocs.examples.javascript_sdk.code }}</pre>
+          </el-tab-pane>
+          <el-tab-pane label="cURL">
+            <pre class="doc-code">{{ anthropicDocs.examples.curl.code }}</pre>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -407,6 +471,8 @@ const alerts = ref([])
 const detailVisible = ref(false)
 const docsVisible = ref(false)
 const docs = ref(null)
+const anthropicDocsVisible = ref(false)
+const anthropicDocs = ref(null)
 const createdPlainKey = ref('')
 const modelsText = ref('')
 
@@ -593,6 +659,13 @@ const loadDocs = async (showDialog = true) => {
   if (showDialog) {
     docsVisible.value = true
   }
+}
+
+const loadAnthropicDocs = async () => {
+  const res = await fetch(`${API_BASE}/docs/anthropic`)
+  const data = await res.json()
+  anthropicDocs.value = data
+  anthropicDocsVisible.value = true
 }
 
 const copyPlainKey = async () => {

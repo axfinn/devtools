@@ -672,6 +672,7 @@ func main() {
 		aigw := api.Group("/ai-gateway")
 		{
 			aigw.GET("/docs", aiGatewayHandler.GetDocs)
+			aigw.GET("/docs/anthropic", aiGatewayHandler.GetAnthropicDocs)
 			aigw.GET("/catalog", aiGatewayHandler.GetCatalog)
 			aigw.POST("/admin/keys", aiGatewayHandler.AdminCreateKey)
 			aigw.GET("/admin/keys", aiGatewayHandler.AdminListKeys)
@@ -688,6 +689,12 @@ func main() {
 			aigw.GET("/v1/media/tasks", aiGatewayHandler.ListMediaTasks)
 			aigw.GET("/v1/media/tasks/:id", aiGatewayHandler.GetMediaTask)
 		}
+
+		// MiniMax Anthropic 协议代理
+		api.POST("/minimax/anthropic/v1/messages", aiGatewayHandler.ProxyMinimaxAnthropic)
+
+		// DashScope Anthropic 协议代理
+		api.POST("/dashscope/anthropic/v1/messages", aiGatewayHandler.ProxyDashScopeAnthropic)
 
 		// 通用 API Gateway 代理
 		apigw := api.Group("/api-gateway")
