@@ -447,6 +447,9 @@
           <el-tab-pane label="cURL">
             <pre class="doc-code">{{ anthropicDocs.examples.curl.code }}</pre>
           </el-tab-pane>
+          <el-tab-pane label="Claude Code">
+            <pre class="doc-code">{{ anthropicDocs.examples.claude_code_config.code }}</pre>
+          </el-tab-pane>
         </el-tabs>
       </div>
     </el-dialog>
