@@ -1260,9 +1260,18 @@ func (h *AIGatewayHandler) doRawRequest(url, apiKey, method string, body []byte,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	// 透传必要的 headers
+	// 透传必要的 headers（过滤掉代理相关和可能导致 HTTP/2 问题的 headers）
+	skipHeaders := map[string]bool{
+		"Content-Type":     true,
+		"Authorization":    true,
+		"Accept":           true,
+		"Connection":       true,
+		"Proxy-Connection": true,
+		"Upgrade":          true,
+		"Keep-Alive":       true,
+	}
 	for key, values := range headers {
-		if key == "Content-Type" || key == "Authorization" || key == "Accept" {
+		if skipHeaders[key] {
 			continue
 		}
 		for _, v := range values {
