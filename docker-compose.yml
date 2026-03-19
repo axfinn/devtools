@@ -15,6 +15,7 @@ services:
       - "${HOST_PORT:-8082}:8082"
     volumes:
       - devtools-data:/app/data
+      - autodev-claude-data:/home/autodev/.claude
       - ./backend/config.yaml:/app/config.yaml:ro
     environment:
       - PORT=8082
@@ -23,7 +24,7 @@ services:
       - OCR_SERVICE_URL=http://ocr-service:8000
       - no_proxy=ocr-service,devtools
       - NO_PROXY=ocr-service,devtools
-      - AUTODEV_PATH=/opt/clawtest/autodev/autodev
+      - AUTODEV_PATH=/app/data/clawtest/autodev/autodev
       - AUTODEV_DATA_DIR=/app/data/autodev
     depends_on:
       ocr-service:
@@ -51,6 +52,9 @@ services:
 
 volumes:
   devtools-data:
+    driver: local
+  # 持久化 autodev 用户的 Claude 配置和 skills，重建镜像不丢失
+  autodev-claude-data:
     driver: local
   ocr-model-cache:
     driver: local

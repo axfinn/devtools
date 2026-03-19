@@ -44,15 +44,14 @@ RUN uvx minimax-coding-plan-mcp -y --help >/dev/null 2>&1 || true
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code --unsafe-perm 2>&1 || true
 
-# Install autodev from clawtest
-RUN git clone --depth=1 https://github.com/axfinn/clawtest.git /opt/clawtest \
-    && chmod +x /opt/clawtest/autodev/autodev \
-    && chmod +x /opt/clawtest/autodev/autodev-stop
+# Create non-root user for running autodev tasks
+# Claude Code refuses --dangerously-skip-permissions when running as root
+RUN addgroup -g 1001 autodev && \
+    adduser -D -u 1001 -G autodev autodev
 
-# Configure Claude Code for autodev
-# Settings without sensitive credentials (tokens are injected at runtime via env vars)
-RUN mkdir -p /root/.claude
-RUN cat > /root/.claude/settings.json << 'EOF'
+# Save Claude Code settings as a template; entrypoint copies to volume on first run
+# (volume-mounted /home/autodev/.claude persists skills across container rebuilds)
+RUN cat > /app/claude-settings-template.json << 'EOF'
 {
   "skills": {
     "paths": ["~/.claude/skills"]
@@ -69,28 +68,20 @@ RUN cat > /root/.claude/settings.json << 'EOF'
 }
 EOF
 
-# Create non-root user for running autodev tasks
-# Claude Code refuses --dangerously-skip-permissions when running as root
-RUN addgroup -g 1001 autodev && \
-    adduser -D -u 1001 -G autodev autodev && \
-    mkdir -p /home/autodev/.claude && \
-    cp /root/.claude/settings.json /home/autodev/.claude/settings.json && \
-    chown -R autodev:autodev /home/autodev && \
-    chmod -R 755 /home/autodev/.claude
-
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=frontend-builder /app/frontend/dist ./dist
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
-RUN mkdir -p /app/data/autodev && chmod 777 /app/data/autodev
+RUN mkdir -p /app/data/autodev /app/data/clawtest && chmod 777 /app/data/autodev /app/data/clawtest
 
 ENV PORT=8082
 ENV DB_PATH=/app/data/paste.db
 ENV GIN_MODE=release
 ENV TZ=Asia/Shanghai
 # AutoDev 配置（通过 .env 或 docker-compose environment 覆盖）
-ENV AUTODEV_PATH=/opt/clawtest/autodev/autodev
+# clawtest 存储在 data volume 中，entrypoint 启动时自动 clone/pull 到最新版
+ENV AUTODEV_PATH=/app/data/clawtest/autodev/autodev
 ENV AUTODEV_DATA_DIR=/app/data/autodev
 # Claude API 配置（ANTHROPIC_AUTH_TOKEN 必须在 .env 中设置，不要硬编码在此）
 ENV ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
