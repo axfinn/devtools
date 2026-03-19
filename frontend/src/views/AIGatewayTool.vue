@@ -664,7 +664,10 @@ const loadDocs = async (showDialog = true) => {
 const loadAnthropicDocs = async () => {
   const res = await fetch(`${API_BASE}/docs/anthropic`)
   const data = await res.json()
-  anthropicDocs.value = data
+  // 替换文档中的占位符为当前域名
+  const docStr = JSON.stringify(data)
+  const replaced = docStr.replace(/your-devtools:8080/g, window.location.host)
+  anthropicDocs.value = JSON.parse(replaced)
   anthropicDocsVisible.value = true
 }
 
