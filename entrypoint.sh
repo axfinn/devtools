@@ -21,12 +21,35 @@ if [ -f "${CLAWTEST_DIR}/autodev/autodev" ]; then
     chmod +x "${CLAWTEST_DIR}/autodev/autodev-stop"
 fi
 
-# 2. 初始化 /home/autodev/.claude（volume 首次挂载时为空）
-if [ ! -f "${CLAUDE_HOME}/settings.json" ]; then
-    echo "[entrypoint] Initializing ${CLAUDE_HOME}..."
-    mkdir -p "${CLAUDE_HOME}/skills"
-    cp /app/claude-settings-template.json "${CLAUDE_HOME}/settings.json"
-fi
+# 2. 每次启动重新生成 settings.json，确保 MINIMAX_API_KEY 等 env 变量实时生效
+echo "[entrypoint] Writing ${CLAUDE_HOME}/settings.json..."
+mkdir -p "${CLAUDE_HOME}/skills"
+cat > "${CLAUDE_HOME}/settings.json" << EOF
+{
+  "skills": {
+    "paths": ["~/.claude/skills"]
+  },
+  "mcpServers": {
+    "MiniMax": {
+      "command": "uvx",
+      "args": ["minimax-coding-plan-mcp", "-y"],
+      "env": {
+        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}",
+        "MINIMAX_API_HOST": "https://api.minimaxi.com"
+      }
+    }
+  },
+  "env": {
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "ANTHROPIC_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
+  }
+}
+EOF
 
 # 每次启动修正权限（防止重建镜像后 UID 变化）
 chown -R autodev:autodev "${CLAUDE_HOME}"

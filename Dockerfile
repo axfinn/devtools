@@ -49,24 +49,7 @@ RUN npm install -g @anthropic-ai/claude-code --unsafe-perm 2>&1 || true
 RUN addgroup -g 1001 autodev && \
     adduser -D -u 1001 -G autodev autodev
 
-# Save Claude Code settings as a template; entrypoint copies to volume on first run
-# (volume-mounted /home/autodev/.claude persists skills across container rebuilds)
-RUN cat > /app/claude-settings-template.json << 'EOF'
-{
-  "skills": {
-    "paths": ["~/.claude/skills"]
-  },
-  "env": {
-    "API_TIMEOUT_MS": "3000000",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "ANTHROPIC_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
-  }
-}
-EOF
+# Claude settings are generated dynamically in entrypoint.sh with runtime env vars (e.g. MINIMAX_API_KEY)
 
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=frontend-builder /app/frontend/dist ./dist
