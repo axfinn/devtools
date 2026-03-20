@@ -32,9 +32,21 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
     nodejs npm git bash openssh-client hugo
 
-# Install edge-tts + FastAPI HTTP service dependencies
-RUN pip3 install --break-system-packages edge-tts fastapi uvicorn 2>/dev/null || \
-    pip3 install edge-tts fastapi uvicorn
+# Install kokoro-onnx TTS (offline, no external dependencies)
+RUN pip3 install --break-system-packages kokoro-onnx soundfile numpy fastapi uvicorn 2>/dev/null || \
+    pip3 install kokoro-onnx soundfile numpy fastapi uvicorn
+
+# Download kokoro TTS model files at build time (so runtime is fully offline)
+# model: ~300MB, voices: ~10MB
+RUN python3 -c "\
+import urllib.request, os; \
+os.makedirs('/app/tts-models', exist_ok=True); \
+print('Downloading kokoro model...'); \
+urllib.request.urlretrieve('https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx', '/app/tts-models/kokoro-v1.0.onnx'); \
+print('Downloading kokoro voices...'); \
+urllib.request.urlretrieve('https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin', '/app/tts-models/voices-v1.0.bin'); \
+print('TTS models downloaded successfully') \
+" || echo "[warn] TTS model download failed, TTS will be unavailable"
 
 # Install uv (provides uvx) for MCP runtime
 RUN curl -Ls https://astral.sh/uv/install.sh | sh
