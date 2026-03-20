@@ -70,6 +70,9 @@
           <el-tag v-if="botConfig?.enabled" type="success" size="small" class="bot-online-tag">
             {{ botConfig.nickname }} 在线
           </el-tag>
+          <el-tooltip v-if="botConfig?.enabled" content="中断当前 bot 回复" placement="bottom">
+            <el-button size="small" type="warning" @click="stopBotReply" :loading="stoppingBot">⏹</el-button>
+          </el-tooltip>
           <el-button size="small" @click="openBotDialog">
             🤖 {{ botConfig?.enabled ? '管理机器人' : '添加机器人' }}
           </el-button>
@@ -508,6 +511,7 @@ const botTemplates = ref([])
 const botHasKey = ref(false)
 const selectedRole = ref('')
 const addingBot = ref(false)
+const stoppingBot = ref(false)
 const customBotNickname = ref('')
 const customSystemPrompt = ref('')
 const showBotAdvanced = ref([])
@@ -1202,6 +1206,20 @@ const removeBot = async () => {
     ElMessage.error(e.message)
   } finally {
     addingBot.value = false
+  }
+}
+
+const stopBotReply = async () => {
+  if (!currentRoom.value) return
+  stoppingBot.value = true
+  try {
+    await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot/stop`, { method: 'POST' })
+    stopTTSAudio()
+    ElMessage.success('已中断机器人回复')
+  } catch (e) {
+    ElMessage.error('中断失败')
+  } finally {
+    stoppingBot.value = false
   }
 }
 

@@ -393,6 +393,7 @@ func main() {
 			chat.GET("/room/:id/bot", chatHandler.GetBotConfig)
 			chat.POST("/room/:id/bot", chatHandler.AddBot)
 			chat.DELETE("/room/:id/bot", chatHandler.RemoveBot)
+			chat.POST("/room/:id/bot/stop", chatHandler.StopBot)
 		}
 
 		// 短链 API

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -109,11 +110,12 @@ type ChatHandler struct {
 }
 
 type Room struct {
-	ID      string
-	clients map[*Client]bool
-	mu      sync.RWMutex
-	bot     *BotConfig
-	history []botMessage // 最近 20 条对话上下文
+	ID         string
+	clients    map[*Client]bool
+	mu         sync.RWMutex
+	bot        *BotConfig
+	history    []botMessage    // 最近 20 条对话上下文
+	botCancel  context.CancelFunc // 取消当前正在进行的 bot 回复
 }
 
 type Client struct {
@@ -428,9 +430,27 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 			}
 			h.broadcast(client.room, broadcastMsg, nil)
 
-			// 异步触发机器人回复（仅文本消息）
+			// 异步触发机器人回复（仅文本消息，且发送者不是机器人本身）
 			if chatMsg.MsgType == "text" || chatMsg.MsgType == "" {
-				go h.triggerBotReply(client.room, roomID, client.nickname, msg.Content)
+				r := client.room
+				r.mu.RLock()
+				bot := r.bot
+				r.mu.RUnlock()
+				if bot != nil && bot.Enabled && client.nickname != bot.Nickname {
+					// 取消上一条还未完成的 bot 回复
+					r.mu.Lock()
+					if r.botCancel != nil {
+						r.botCancel()
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					r.botCancel = cancel
+					r.mu.Unlock()
+
+					go func() {
+						defer cancel()
+						h.triggerBotReply(ctx, r, roomID, client.nickname, msg.Content)
+					}()
+				}
 			}
 		}
 	}
@@ -816,6 +836,11 @@ func (h *ChatHandler) RemoveBot(c *gin.Context) {
 			room.bot = nil
 			room.history = nil
 		}
+		// 取消正在进行的 bot 回复
+		if room.botCancel != nil {
+			room.botCancel()
+			room.botCancel = nil
+		}
 		room.mu.Unlock()
 
 		if nickname != "" {
@@ -827,13 +852,43 @@ func (h *ChatHandler) RemoveBot(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "机器人已移除"})
 }
 
-// triggerBotReply 异步生成机器人回复并广播
-func (h *ChatHandler) triggerBotReply(room *Room, roomID, userNickname, userMsg string) {
+// StopBot 中断当前正在进行的 bot 回复
+func (h *ChatHandler) StopBot(c *gin.Context) {
+	roomID := c.Param("id")
+
+	h.mu.RLock()
+	room := h.rooms[roomID]
+	h.mu.RUnlock()
+
+	if room == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "无正在进行的回复"})
+		return
+	}
+
+	room.mu.Lock()
+	if room.botCancel != nil {
+		room.botCancel()
+		room.botCancel = nil
+	}
+	room.mu.Unlock()
+
+	c.JSON(http.StatusOK, gin.H{"message": "已中断机器人回复"})
+}
+
+// triggerBotReply 异步生成机器人回复并广播，支持通过 ctx 取消
+func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, userNickname, userMsg string) {
 	room.mu.RLock()
 	bot := room.bot
 	room.mu.RUnlock()
 	if bot == nil || !bot.Enabled {
 		return
+	}
+
+	// 检查是否已取消
+	select {
+	case <-ctx.Done():
+		return
+	default:
 	}
 
 	// 更新对话历史
@@ -846,10 +901,26 @@ func (h *ChatHandler) triggerBotReply(room *Room, roomID, userNickname, userMsg 
 	copy(historyCopy, room.history)
 	room.mu.Unlock()
 
-	reply, err := h.callMiniMax(bot.SystemPrompt, historyCopy)
-	if err != nil {
+	// 调用 MiniMax（可被 ctx 取消）
+	replyCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		reply, err := h.callMiniMax(bot.SystemPrompt, historyCopy)
+		if err != nil {
+			errCh <- err
+		} else {
+			replyCh <- reply
+		}
+	}()
+
+	var reply string
+	select {
+	case <-ctx.Done():
+		return
+	case err := <-errCh:
 		log.Printf("Bot MiniMax error (room=%s): %v", roomID, err)
 		return
+	case reply = <-replyCh:
 	}
 
 	// 保存并广播机器人回复
