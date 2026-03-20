@@ -53,8 +53,9 @@ type BotConfig struct {
 	Nickname     string `json:"nickname"`
 	Role         string `json:"role"`
 	SystemPrompt string `json:"system_prompt"`
-	EnableTTS    bool   `json:"enable_tts"`  // 是否开启语音朗读
-	TTSVoice     string `json:"tts_voice"`   // edge-tts 语音，留空用角色默认
+	EnableTTS    bool   `json:"enable_tts"`   // 是否开启语音朗读
+	TTSVoice     string `json:"tts_voice"`    // 语音名，留空用角色默认
+	TTSEngine    string `json:"tts_engine"`   // "auto" | "kokoro" | "edge-tts"
 }
 
 // 角色默认 edge-tts 语音映射
@@ -714,6 +715,7 @@ type AddBotRequest struct {
 	SystemPrompt string `json:"system_prompt"`
 	EnableTTS    bool   `json:"enable_tts"`
 	TTSVoice     string `json:"tts_voice"`
+	TTSEngine    string `json:"tts_engine"` // "auto" | "kokoro" | "edge-tts"
 }
 
 // AddBot 添加/更新房间机器人
@@ -754,6 +756,7 @@ func (h *ChatHandler) AddBot(c *gin.Context) {
 		SystemPrompt: tmpl.SystemPrompt,
 		EnableTTS:    req.EnableTTS,
 		TTSVoice:     botRoleVoices[req.Role],
+		TTSEngine:    "auto",
 	}
 	if req.Nickname != "" {
 		bc.Nickname = req.Nickname
@@ -763,6 +766,9 @@ func (h *ChatHandler) AddBot(c *gin.Context) {
 	}
 	if req.TTSVoice != "" {
 		bc.TTSVoice = req.TTSVoice
+	}
+	if req.TTSEngine != "" {
+		bc.TTSEngine = req.TTSEngine
 	}
 
 	// 更新内存中的房间
@@ -873,7 +879,11 @@ func (h *ChatHandler) triggerBotReply(room *Room, roomID, userNickname, userMsg 
 		if voice == "" {
 			voice = "zh-CN-XiaoxiaoNeural"
 		}
-		if url, ttsErr := h.callEdgeTTS(reply, voice); ttsErr != nil {
+		engine := bot.TTSEngine
+		if engine == "" {
+			engine = "auto"
+		}
+		if url, ttsErr := h.callEdgeTTS(reply, voice, engine); ttsErr != nil {
 			log.Printf("TTS error (room=%s): %v", roomID, ttsErr)
 		} else {
 			audioURL = url
@@ -937,7 +947,7 @@ func cleanTextForTTS(text string) string {
 }
 
 // callEdgeTTS 通过 TTS HTTP 服务合成语音，返回可访问的 URL
-func (h *ChatHandler) callEdgeTTS(text, voice string) (string, error) {
+func (h *ChatHandler) callEdgeTTS(text, voice, engine string) (string, error) {
 	ttsText := cleanTextForTTS(text)
 	if ttsText == "" {
 		return "", fmt.Errorf("empty text after clean")
@@ -948,8 +958,9 @@ func (h *ChatHandler) callEdgeTTS(text, voice string) (string, error) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]string{
-		"text":  ttsText,
-		"voice": voice,
+		"text":   ttsText,
+		"voice":  voice,
+		"engine": engine,
 	})
 
 	resp, err := http.Post(h.ttsServiceURL+"/tts", "application/json", bytes.NewReader(reqBody))

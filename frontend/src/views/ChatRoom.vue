@@ -346,6 +346,15 @@
           <el-switch v-model="enableTTS" active-text="🔊 语音朗读" inactive-text="静音" />
           <span class="bot-tts-tip">开启后机器人回复将自动朗读</span>
         </div>
+        <!-- TTS 引擎选择（开启 TTS 时显示） -->
+        <div v-if="enableTTS" class="bot-tts-engine-row">
+          <span class="bot-tts-engine-label">引擎：</span>
+          <el-radio-group v-model="ttsEngine" size="small">
+            <el-radio-button value="auto">🤖 自动</el-radio-button>
+            <el-radio-button value="kokoro">🐸 Kokoro（离线）</el-radio-button>
+            <el-radio-button value="edge-tts">☁️ Edge TTS（联网）</el-radio-button>
+          </el-radio-group>
+        </div>
         <!-- 高级选项 -->
         <el-collapse v-model="showBotAdvanced" class="bot-advanced">
           <el-collapse-item title="自定义设置（可选）" name="advanced">
@@ -512,6 +521,7 @@ const customBotNickname = ref('')
 const customSystemPrompt = ref('')
 const showBotAdvanced = ref([])
 const enableTTS = ref(false)   // 添加机器人时的 TTS 开关
+const ttsEngine = ref('auto')  // 添加机器人时的引擎选择
 const ttsEnabled = ref(false)  // 当前已有机器人的 TTS 状态（本地）
 let ttsAudio = null            // 当前播放的 TTS 音频实例
 
@@ -1160,7 +1170,7 @@ const addBot = async () => {
   if (!selectedRole.value) return
   addingBot.value = true
   try {
-    const body = { role: selectedRole.value, enable_tts: enableTTS.value }
+    const body = { role: selectedRole.value, enable_tts: enableTTS.value, tts_engine: ttsEngine.value }
     if (customBotNickname.value.trim()) body.nickname = customBotNickname.value.trim()
     if (customSystemPrompt.value.trim()) body.system_prompt = customSystemPrompt.value.trim()
     const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
@@ -1216,6 +1226,7 @@ const toggleTTS = async (val) => {
       nickname: botConfig.value.nickname,
       system_prompt: botConfig.value.system_prompt,
       enable_tts: val,
+      tts_engine: botConfig.value.tts_engine || ttsEngine.value,
     }
     const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
       method: 'POST',
@@ -1884,6 +1895,19 @@ onUnmounted(() => {
 .bot-tts-tip {
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.bot-tts-engine-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 8px;
+}
+
+.bot-tts-engine-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .bot-advanced {
