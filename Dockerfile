@@ -33,8 +33,7 @@ RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffm
     nodejs npm git bash openssh-client hugo
 
 # Install kokoro-onnx TTS (offline, no external dependencies)
-RUN pip3 install --break-system-packages kokoro-onnx soundfile numpy fastapi uvicorn 2>/dev/null || \
-    pip3 install kokoro-onnx soundfile numpy fastapi uvicorn
+RUN pip3 install --break-system-packages kokoro-onnx soundfile numpy fastapi uvicorn
 
 # Download kokoro TTS model files at build time (so runtime is fully offline)
 # model: ~300MB, voices: ~10MB
