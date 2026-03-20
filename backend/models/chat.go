@@ -77,6 +77,17 @@ func (db *DB) InitChat() error {
 		}
 	}
 
+	// 检查 bot_config 字段是否存在
+	var botConfigExists bool
+	row = db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_rooms') WHERE name='bot_config'")
+	row.Scan(&botConfigExists)
+	if !botConfigExists {
+		_, err = db.conn.Exec("ALTER TABLE chat_rooms ADD COLUMN bot_config TEXT DEFAULT ''")
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -205,6 +216,17 @@ func (db *DB) CleanExpiredMessages(days int) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+func (db *DB) SaveBotConfig(roomID string, botConfigJSON string) error {
+	_, err := db.conn.Exec("UPDATE chat_rooms SET bot_config = ? WHERE id = ?", botConfigJSON, roomID)
+	return err
+}
+
+func (db *DB) LoadBotConfig(roomID string) (string, error) {
+	var botConfig string
+	err := db.conn.QueryRow("SELECT COALESCE(bot_config, '') FROM chat_rooms WHERE id = ?", roomID).Scan(&botConfig)
+	return botConfig, err
 }
 
 func (db *DB) RoomExists(id string) bool {

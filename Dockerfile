@@ -32,6 +32,9 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
     nodejs npm git bash openssh-client hugo
 
+# Install edge-tts for bot TTS voice synthesis
+RUN pip3 install --break-system-packages edge-tts 2>/dev/null || pip3 install edge-tts
+
 # Install uv (provides uvx) for MCP runtime
 RUN curl -Ls https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"

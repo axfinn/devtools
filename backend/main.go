@@ -270,7 +270,7 @@ func main() {
 	// 处理器
 	pasteHandler := handlers.NewPasteHandler(db)
 	dnsHandler := handlers.NewDNSHandler()
-	chatHandler := handlers.NewChatHandler(db, cfg.Chat.AdminPassword)
+	chatHandler := handlers.NewChatHandler(db, cfg.Chat.AdminPassword, cfg.MiniMax)
 	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
 	mockAPIHandler := handlers.NewMockAPIHandler(db)
 	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)
@@ -389,6 +389,10 @@ func main() {
 			// 管理员 API
 			chat.GET("/admin/rooms", chatHandler.AdminListRooms)
 			chat.DELETE("/admin/room/:id", chatHandler.AdminDeleteRoom)
+			// 机器人 API
+			chat.GET("/room/:id/bot", chatHandler.GetBotConfig)
+			chat.POST("/room/:id/bot", chatHandler.AddBot)
+			chat.DELETE("/room/:id/bot", chatHandler.RemoveBot)
 		}
 
 		// 短链 API

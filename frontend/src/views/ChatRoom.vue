@@ -66,6 +66,13 @@
           </span>
         </div>
         <div class="header-actions">
+          <!-- 机器人状态 + 按钮 -->
+          <el-tag v-if="botConfig?.enabled" type="success" size="small" class="bot-online-tag">
+            {{ botConfig.nickname }} 在线
+          </el-tag>
+          <el-button size="small" @click="openBotDialog">
+            🤖 {{ botConfig?.enabled ? '管理机器人' : '添加机器人' }}
+          </el-button>
           <el-button @click="showQRCode" size="small" type="primary">
             <el-icon><Tickets /></el-icon>
             扫码进房
@@ -125,6 +132,18 @@
                 </a>
               </template>
               <template v-else>{{ msg.content }}</template>
+            </div>
+            <!-- 消息操作按钮（hover 显示） -->
+            <div class="message-actions">
+              <el-tooltip content="复制" placement="top" v-if="!msg.msg_type || msg.msg_type === 'text'">
+                <el-icon class="action-icon" @click.stop="copyText(msg.content)"><CopyDocument /></el-icon>
+              </el-tooltip>
+              <el-tooltip content="复制链接" placement="top" v-if="msg.msg_type === 'image'">
+                <el-icon class="action-icon" @click.stop="copyText(msg.content)"><CopyDocument /></el-icon>
+              </el-tooltip>
+              <el-tooltip content="下载" placement="top" v-if="['image','video','audio','file'].includes(msg.msg_type)">
+                <el-icon class="action-icon" @click.stop="downloadFile(msg)"><Download /></el-icon>
+              </el-tooltip>
             </div>
           </template>
         </div>
@@ -287,6 +306,77 @@
       </div>
     </el-dialog>
 
+    <!-- 机器人管理对话框 -->
+    <el-dialog v-model="showBotDialog" title="🤖 AI 机器人" width="520px">
+      <!-- 已有机器人：显示当前配置 -->
+      <div v-if="botConfig?.enabled" class="bot-active-panel">
+        <div class="bot-current">
+          <span class="bot-avatar">{{ botConfig.nickname }}</span>
+          <div class="bot-info">
+            <div class="bot-name">{{ botConfig.nickname }}</div>
+            <div class="bot-role-label">{{ getBotTemplateName(botConfig.role) }}</div>
+          </div>
+        </div>
+        <el-button type="danger" size="small" @click="removeBot" :loading="addingBot">移除机器人</el-button>
+      </div>
+      <!-- 已有机器人时的 TTS 开关 -->
+      <div v-if="botConfig?.enabled" class="bot-tts-row">
+        <el-switch v-model="ttsEnabled" @change="toggleTTS" active-text="🔊 语音朗读" inactive-text="静音" />
+        <span class="bot-tts-tip">{{ ttsEnabled ? '机器人回复将自动朗读' : '已静音' }}</span>
+      </div>
+      <!-- 未有机器人：显示模板选择 -->
+      <div v-else>
+        <div class="bot-hint">选择一个角色加入聊天室，机器人将自动回复所有消息</div>
+        <div v-if="!botHasKey" class="bot-no-key-tip">
+          ⚠️ 未配置 MINIMAX_API_KEY，机器人功能不可用
+        </div>
+        <div class="bot-templates">
+          <div
+            v-for="tmpl in botTemplates"
+            :key="tmpl.key"
+            :class="['bot-template-card', selectedRole === tmpl.key ? 'selected' : '']"
+            @click="selectedRole = tmpl.key"
+          >
+            <div class="bot-template-icon">{{ tmpl.nickname.split(' ')[0] }}</div>
+            <div class="bot-template-name">{{ tmpl.name }}</div>
+          </div>
+        </div>
+        <!-- TTS 语音开关 -->
+        <div class="bot-tts-row">
+          <el-switch v-model="enableTTS" active-text="🔊 语音朗读" inactive-text="静音" />
+          <span class="bot-tts-tip">开启后机器人回复将自动朗读</span>
+        </div>
+        <!-- 高级选项 -->
+        <el-collapse v-model="showBotAdvanced" class="bot-advanced">
+          <el-collapse-item title="自定义设置（可选）" name="advanced">
+            <el-form label-width="80px" size="small">
+              <el-form-item label="昵称">
+                <el-input v-model="customBotNickname" placeholder="留空使用模板默认昵称" maxlength="20" />
+              </el-form-item>
+              <el-form-item label="人设提示">
+                <el-input
+                  v-model="customSystemPrompt"
+                  type="textarea"
+                  :rows="3"
+                  placeholder="留空使用模板默认人设"
+                />
+              </el-form-item>
+            </el-form>
+          </el-collapse-item>
+        </el-collapse>
+      </div>
+      <template #footer>
+        <el-button @click="showBotDialog = false">取消</el-button>
+        <el-button
+          v-if="!botConfig?.enabled"
+          type="primary"
+          @click="addBot"
+          :loading="addingBot"
+          :disabled="!selectedRole || !botHasKey"
+        >加入房间</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 管理员密码输入对话框 -->
     <el-dialog v-model="showAdminPasswordDialog" title="管理员登录" width="400px">
       <el-form label-width="80px">
@@ -410,6 +500,20 @@ let screenChunks = []
 
 const createForm = ref({ name: '', password: '' })
 const joinForm = ref({ nickname: '', password: '', needPassword: false, roomId: '' })
+
+// 机器人相关
+const showBotDialog = ref(false)
+const botConfig = ref(null)
+const botTemplates = ref([])
+const botHasKey = ref(false)
+const selectedRole = ref('')
+const addingBot = ref(false)
+const customBotNickname = ref('')
+const customSystemPrompt = ref('')
+const showBotAdvanced = ref([])
+const enableTTS = ref(false)   // 添加机器人时的 TTS 开关
+const ttsEnabled = ref(false)  // 当前已有机器人的 TTS 状态（本地）
+let ttsAudio = null            // 当前播放的 TTS 音频实例
 
 const messagesContainer = ref(null)
 const fileInput = ref(null)
@@ -544,8 +648,9 @@ const confirmJoin = async () => {
     showJoinDialog.value = false
     reconnectAttempts.value = 0
 
-    // 加载历史消息
+    // 加载历史消息 + 机器人配置
     await loadHistoryMessages()
+    loadBotConfig()
 
     connectWebSocket()
 
@@ -604,6 +709,10 @@ const connectWebSocket = () => {
       nextTick(() => {
         scrollToBottom()
       })
+      // 机器人 TTS 自动播放
+      if (msg.type === 'message' && msg.audio_url && msg.nickname !== nickname.value) {
+        playTTSAudio(msg.audio_url)
+      }
     } catch (error) {
       console.error('消息解析失败:', error)
     }
@@ -1019,6 +1128,134 @@ const stopScreenRecording = () => {
   screenChunks = []
 }
 
+// ========== 机器人管理 ==========
+const openBotDialog = async () => {
+  await loadBotConfig()
+  showBotDialog.value = true
+}
+
+const loadBotConfig = async () => {
+  if (!currentRoom.value) return
+  try {
+    const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`)
+    const data = await res.json()
+    botConfig.value = data.bot || null
+    botTemplates.value = data.templates || []
+    botHasKey.value = data.has_key === true
+    if (!selectedRole.value && botTemplates.value.length) {
+      selectedRole.value = botTemplates.value[0].key
+    }
+  } catch (e) {
+    console.error('加载机器人配置失败', e)
+  }
+}
+
+const getBotTemplateName = (key) => {
+  return botTemplates.value.find(t => t.key === key)?.name || key
+}
+
+const addBot = async () => {
+  if (!selectedRole.value) return
+  addingBot.value = true
+  try {
+    const body = { role: selectedRole.value, enable_tts: enableTTS.value }
+    if (customBotNickname.value.trim()) body.nickname = customBotNickname.value.trim()
+    if (customSystemPrompt.value.trim()) body.system_prompt = customSystemPrompt.value.trim()
+    const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '添加失败')
+    botConfig.value = data.bot
+    ttsEnabled.value = enableTTS.value
+    showBotDialog.value = false
+    customBotNickname.value = ''
+    customSystemPrompt.value = ''
+    enableTTS.value = false
+    showBotAdvanced.value = []
+    ElMessage.success(`${data.bot.nickname} 已加入房间`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    addingBot.value = false
+  }
+}
+
+const removeBot = async () => {
+  addingBot.value = true
+  try {
+    const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
+      method: 'DELETE'
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '移除失败')
+    const oldNickname = botConfig.value?.nickname
+    botConfig.value = null
+    showBotDialog.value = false
+    ElMessage.success(`${oldNickname} 已移除`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    addingBot.value = false
+  }
+}
+
+// ========== TTS 语音 ==========
+const toggleTTS = async (val) => {
+  if (!botConfig.value) return
+  // 本地状态切换（服务端 enable_tts 随下次 addBot 更新，无需额外 API）
+  ttsEnabled.value = val
+  if (!val) stopTTSAudio()
+}
+
+const playTTSAudio = (audioUrl) => {
+  if (!ttsEnabled.value || !audioUrl) return
+  stopTTSAudio()
+  const url = audioUrl.startsWith('/') ? `${location.origin}${audioUrl}` : audioUrl
+  ttsAudio = new Audio(url)
+  ttsAudio.play().catch(e => console.warn('TTS play failed:', e))
+}
+
+const stopTTSAudio = () => {
+  if (ttsAudio) {
+    ttsAudio.pause()
+    ttsAudio.src = ''
+    ttsAudio = null
+  }
+}
+
+// ========== 复制/下载 ==========
+const copyText = async (text) => {
+  try {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    ElMessage.success('已复制')
+  } catch (e) {
+    ElMessage.error('复制失败')
+  }
+}
+
+const downloadFile = (msg) => {
+  const url = msg.content.startsWith('/') ? `${API_BASE}${msg.content}` : msg.content
+  const a = document.createElement('a')
+  a.href = url
+  a.download = msg.original_name || msg.content.split('/').pop() || 'file'
+  a.target = '_blank'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
 const leaveRoom = () => {
   // 停止所有录制
   cancelAudioRecording()
@@ -1029,8 +1266,11 @@ const leaveRoom = () => {
     ws.close()
     ws = null
   }
+  stopTTSAudio()
   currentRoom.value = null
   messages.value = []
+  botConfig.value = null
+  ttsEnabled.value = false
   connectionStatus.value = 'disconnected'
   reconnectAttempts.value = 0
   loadRooms()
@@ -1222,6 +1462,7 @@ onUnmounted(() => {
   cancelAudioRecording()
   closeCamera()
   stopScreenRecording()
+  stopTTSAudio()
   if (ws) {
     ws.close()
     ws = null
@@ -1404,6 +1645,7 @@ onUnmounted(() => {
 
 .message-item {
   margin-bottom: 16px;
+  position: relative;
 }
 
 .system-message {
@@ -1486,6 +1728,148 @@ onUnmounted(() => {
 
 .message-file:hover {
   background: var(--bg-hover);
+}
+
+/* 消息操作按钮 */
+.message-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.message-item:hover .message-actions {
+  opacity: 1;
+}
+
+.action-icon {
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-tertiary);
+  padding: 3px 5px;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background 0.15s;
+}
+
+.action-icon:hover {
+  color: var(--color-primary);
+  background: var(--bg-hover);
+}
+
+/* 机器人相关 */
+.bot-online-tag {
+  font-size: 12px;
+}
+
+.bot-active-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  margin-bottom: 8px;
+}
+
+.bot-current {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bot-avatar {
+  font-size: 24px;
+}
+
+.bot-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.bot-role-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.bot-hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.bot-no-key-tip {
+  background: var(--warning-light);
+  color: var(--color-warning);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.bot-templates {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.bot-template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  text-align: center;
+}
+
+.bot-template-card:hover {
+  border-color: var(--color-primary);
+  background: var(--bg-hover);
+}
+
+.bot-template-card.selected {
+  border-color: var(--color-primary);
+  background: var(--primary-light, #ecf5ff);
+}
+
+.bot-template-icon {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.bot-template-name {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.bot-tts-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 8px;
+  border-top: 1px solid var(--border-light);
+  margin-top: 8px;
+}
+
+.bot-tts-tip {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.bot-advanced {
+  margin-top: 8px;
+}
+
+@media (max-width: 480px) {
+  .bot-templates {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 .input-area {

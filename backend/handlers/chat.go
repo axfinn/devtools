@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -9,11 +10,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"devtools/config"
 	"devtools/models"
 	"devtools/utils"
 
@@ -45,17 +48,71 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 4096,
 }
 
+// BotConfig 机器人配置
+type BotConfig struct {
+	Enabled      bool   `json:"enabled"`
+	Nickname     string `json:"nickname"`
+	Role         string `json:"role"`
+	SystemPrompt string `json:"system_prompt"`
+	EnableTTS    bool   `json:"enable_tts"`  // 是否开启语音朗读
+	TTSVoice     string `json:"tts_voice"`   // edge-tts 语音，留空用角色默认
+}
+
+// 角色默认 edge-tts 语音映射
+var botRoleVoices = map[string]string{
+	"general":      "zh-CN-XiaoxiaoNeural",
+	"code":         "zh-CN-YunxiNeural",
+	"translate":    "zh-CN-XiaoyiNeural",
+	"customer":     "zh-CN-XiaoxiaoNeural",
+	"psychology":   "zh-CN-XiaomouNeural",
+	"student_girl": "zh-CN-XiaoyiNeural",
+	"college":      "zh-CN-YunxiNeural",
+	"girlfriend":   "zh-CN-XiaoxiaoNeural",
+	"uncle":        "zh-CN-YunyangNeural",
+	"kid":          "zh-CN-YunxiNeural",
+}
+
+// BotRoleTemplate 预设角色模板
+type BotRoleTemplate struct {
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	Nickname     string `json:"nickname"`
+	SystemPrompt string `json:"system_prompt"`
+}
+
+var botRoleTemplates = []BotRoleTemplate{
+	{Key: "general", Name: "通用助手", Nickname: "🤖 小助手", SystemPrompt: "你是一个友好的通用助手，用简洁清晰的语言回答用户问题。"},
+	{Key: "code", Name: "代码助手", Nickname: "🤖 码农", SystemPrompt: "你是一个专业的编程助手，帮助用户解决代码问题，回复中适当使用代码块。"},
+	{Key: "translate", Name: "翻译助手", Nickname: "🤖 译者", SystemPrompt: "你是一个翻译助手。用户发中文时翻译成英文，发英文时翻译成中文，其他语言翻译成中文，只输出译文。"},
+	{Key: "customer", Name: "客服助手", Nickname: "🤖 客服", SystemPrompt: "你是一个礼貌专业的客服助手，耐心回答用户问题，语气温和友善。"},
+	{Key: "psychology", Name: "心理咨询师", Nickname: "🧠 心理咨询师", SystemPrompt: "你是一位专业的心理咨询师，擅长倾听、共情，用温暖支持的语言帮助用户疏导情绪，不做诊断，鼓励专业就医。"},
+	{Key: "student_girl", Name: "学生妹", Nickname: "🎀 学生妹", SystemPrompt: "你是一个活泼可爱的女大学生，说话带点俏皮和学生气息，喜欢用emoji，对什么都充满好奇。"},
+	{Key: "college", Name: "大学生", Nickname: "🎓 大学生", SystemPrompt: "你是一个普通的男大学生，说话随意接地气，偶尔夹带网络用语，聊天风格轻松幽默。"},
+	{Key: "girlfriend", Name: "电子女朋友", Nickname: "💕 小甜甜", SystemPrompt: "你是用户的电子女朋友，温柔体贴、善解人意，会撒娇，关心用户的日常生活和情绪，语气甜蜜可爱。"},
+	{Key: "uncle", Name: "大叔", Nickname: "🧔 大叔", SystemPrompt: "你是一个阅历丰富的大叔，说话沉稳有见地，偶尔唠叨，但都是真心话，会用生活经验给年轻人一些建议。"},
+	{Key: "kid", Name: "小屁孩", Nickname: "👦 小屁孩", SystemPrompt: "你是一个七八岁的小孩，说话天真烂漫，喜欢问为什么，喜欢玩，会用儿童视角看世界，偶尔冒出令人捧腹的童言童语。"},
+}
+
+// botMessage MiniMax 对话历史条目
+type botMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type ChatHandler struct {
 	db            *models.DB
 	rooms         map[string]*Room
 	mu            sync.RWMutex
 	adminPassword string
+	minimax       config.MiniMaxConfig
 }
 
 type Room struct {
 	ID      string
 	clients map[*Client]bool
 	mu      sync.RWMutex
+	bot     *BotConfig
+	history []botMessage // 最近 20 条对话上下文
 }
 
 type Client struct {
@@ -73,13 +130,15 @@ type WSMessage struct {
 	CreatedAt    string `json:"created_at,omitempty"`
 	MsgType      string `json:"msg_type,omitempty"`
 	OriginalName string `json:"original_name,omitempty"`
+	AudioURL     string `json:"audio_url,omitempty"` // TTS 音频 URL（仅 bot 消息，不持久化）
 }
 
-func NewChatHandler(db *models.DB, adminPassword string) *ChatHandler {
+func NewChatHandler(db *models.DB, adminPassword string, minimax config.MiniMaxConfig) *ChatHandler {
 	return &ChatHandler{
 		db:            db,
 		rooms:         make(map[string]*Room),
 		adminPassword: adminPassword,
+		minimax:       minimax,
 	}
 }
 
@@ -271,6 +330,13 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 			ID:      roomID,
 			clients: make(map[*Client]bool),
 		}
+		// 从数据库恢复机器人配置
+		if botJSON, err := h.db.LoadBotConfig(roomID); err == nil && botJSON != "" {
+			var bc BotConfig
+			if json.Unmarshal([]byte(botJSON), &bc) == nil {
+				room.bot = &bc
+			}
+		}
 		h.rooms[roomID] = room
 	}
 	h.mu.Unlock()
@@ -359,6 +425,11 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 				CreatedAt:    chatMsg.CreatedAt.Format(time.RFC3339),
 			}
 			h.broadcast(client.room, broadcastMsg, nil)
+
+			// 异步触发机器人回复（仅文本消息）
+			if chatMsg.MsgType == "text" || chatMsg.MsgType == "" {
+				go h.triggerBotReply(client.room, roomID, client.nickname, msg.Content)
+			}
 		}
 	}
 }
@@ -608,6 +679,301 @@ func (h *ChatHandler) AdminListRooms(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"rooms": rooms, "total": len(rooms)})
+}
+
+// GetBotConfig 获取房间机器人配置及所有预设模板
+func (h *ChatHandler) GetBotConfig(c *gin.Context) {
+	roomID := c.Param("id")
+	if !h.db.RoomExists(roomID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "房间不存在", "code": 404})
+		return
+	}
+
+	h.mu.RLock()
+	room := h.rooms[roomID]
+	h.mu.RUnlock()
+
+	var bot *BotConfig
+	if room != nil {
+		room.mu.RLock()
+		bot = room.bot
+		room.mu.RUnlock()
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"bot":       bot,
+		"templates": botRoleTemplates,
+		"has_key":   h.minimax.APIKey != "",
+	})
+}
+
+type AddBotRequest struct {
+	Role         string `json:"role" binding:"required"`
+	Nickname     string `json:"nickname"`
+	SystemPrompt string `json:"system_prompt"`
+	EnableTTS    bool   `json:"enable_tts"`
+	TTSVoice     string `json:"tts_voice"`
+}
+
+// AddBot 添加/更新房间机器人
+func (h *ChatHandler) AddBot(c *gin.Context) {
+	roomID := c.Param("id")
+	if !h.db.RoomExists(roomID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "房间不存在", "code": 404})
+		return
+	}
+	if h.minimax.APIKey == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "MiniMax API Key 未配置", "code": 503})
+		return
+	}
+
+	var req AddBotRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "角色不能为空", "code": 400})
+		return
+	}
+
+	// 查找预设模板
+	var tmpl *BotRoleTemplate
+	for i := range botRoleTemplates {
+		if botRoleTemplates[i].Key == req.Role {
+			tmpl = &botRoleTemplates[i]
+			break
+		}
+	}
+	if tmpl == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未知的角色模板", "code": 400})
+		return
+	}
+
+	bc := &BotConfig{
+		Enabled:      true,
+		Role:         req.Role,
+		Nickname:     tmpl.Nickname,
+		SystemPrompt: tmpl.SystemPrompt,
+		EnableTTS:    req.EnableTTS,
+		TTSVoice:     botRoleVoices[req.Role],
+	}
+	if req.Nickname != "" {
+		bc.Nickname = req.Nickname
+	}
+	if req.SystemPrompt != "" {
+		bc.SystemPrompt = req.SystemPrompt
+	}
+	if req.TTSVoice != "" {
+		bc.TTSVoice = req.TTSVoice
+	}
+
+	// 更新内存中的房间
+	h.mu.Lock()
+	room, exists := h.rooms[roomID]
+	if !exists {
+		room = &Room{ID: roomID, clients: make(map[*Client]bool)}
+		h.rooms[roomID] = room
+	}
+	h.mu.Unlock()
+
+	room.mu.Lock()
+	room.bot = bc
+	room.history = nil
+	room.mu.Unlock()
+
+	// 持久化到数据库
+	if data, err := json.Marshal(bc); err == nil {
+		h.db.SaveBotConfig(roomID, string(data))
+	}
+
+	// 广播机器人加入消息
+	h.broadcast(room, WSMessage{Type: "system", Content: bc.Nickname + " 加入了房间"}, nil)
+
+	c.JSON(http.StatusOK, gin.H{"bot": bc})
+}
+
+// RemoveBot 移除房间机器人
+func (h *ChatHandler) RemoveBot(c *gin.Context) {
+	roomID := c.Param("id")
+	if !h.db.RoomExists(roomID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "房间不存在", "code": 404})
+		return
+	}
+
+	h.mu.RLock()
+	room := h.rooms[roomID]
+	h.mu.RUnlock()
+
+	var nickname string
+	if room != nil {
+		room.mu.Lock()
+		if room.bot != nil {
+			nickname = room.bot.Nickname
+			room.bot = nil
+			room.history = nil
+		}
+		room.mu.Unlock()
+
+		if nickname != "" {
+			h.broadcast(room, WSMessage{Type: "system", Content: nickname + " 离开了房间"}, nil)
+		}
+	}
+
+	h.db.SaveBotConfig(roomID, "")
+	c.JSON(http.StatusOK, gin.H{"message": "机器人已移除"})
+}
+
+// triggerBotReply 异步生成机器人回复并广播
+func (h *ChatHandler) triggerBotReply(room *Room, roomID, userNickname, userMsg string) {
+	room.mu.RLock()
+	bot := room.bot
+	room.mu.RUnlock()
+	if bot == nil || !bot.Enabled {
+		return
+	}
+
+	// 更新对话历史
+	room.mu.Lock()
+	room.history = append(room.history, botMessage{Role: "user", Content: userNickname + ": " + userMsg})
+	if len(room.history) > 20 {
+		room.history = room.history[len(room.history)-20:]
+	}
+	historyCopy := make([]botMessage, len(room.history))
+	copy(historyCopy, room.history)
+	room.mu.Unlock()
+
+	reply, err := h.callMiniMax(bot.SystemPrompt, historyCopy)
+	if err != nil {
+		log.Printf("Bot MiniMax error (room=%s): %v", roomID, err)
+		return
+	}
+
+	// 保存并广播机器人回复
+	botMsg := &models.ChatMessage{
+		RoomID:   roomID,
+		Nickname: bot.Nickname,
+		Content:  reply,
+		MsgType:  "text",
+	}
+	h.db.CreateMessage(botMsg)
+
+	// 把机器人回复追加到历史
+	room.mu.Lock()
+	room.history = append(room.history, botMessage{Role: "assistant", Content: reply})
+	if len(room.history) > 20 {
+		room.history = room.history[len(room.history)-20:]
+	}
+	room.mu.Unlock()
+
+	// 可选：TTS 生成音频
+	var audioURL string
+	if bot.EnableTTS {
+		voice := bot.TTSVoice
+		if voice == "" {
+			voice = botRoleVoices[bot.Role]
+		}
+		if voice == "" {
+			voice = "zh-CN-XiaoxiaoNeural"
+		}
+		if url, ttsErr := h.callEdgeTTS(reply, voice); ttsErr != nil {
+			log.Printf("TTS error (room=%s): %v", roomID, ttsErr)
+		} else {
+			audioURL = url
+		}
+	}
+
+	h.broadcast(room, WSMessage{
+		Type:      "message",
+		ID:        botMsg.ID,
+		Nickname:  bot.Nickname,
+		Content:   reply,
+		MsgType:   "text",
+		AudioURL:  audioURL,
+		CreatedAt: botMsg.CreatedAt.Format(time.RFC3339),
+	}, nil)
+}
+
+// callEdgeTTS 调用 edge-tts 生成音频文件，返回可访问的 URL
+func (h *ChatHandler) callEdgeTTS(text, voice string) (string, error) {
+	randomBytes := make([]byte, 8)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", err
+	}
+	filename := fmt.Sprintf("tts_%s.mp3", hex.EncodeToString(randomBytes))
+	filePath := filepath.Join(uploadDir, filename)
+
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command("edge-tts",
+		"--voice", voice,
+		"--text", text,
+		"--write-media", filePath,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("edge-tts failed: %v, output: %s", err, string(out))
+	}
+	return "/api/chat/uploads/" + filename, nil
+}
+
+// callMiniMax 调用 MiniMax API（兼容 Anthropic 格式）
+func (h *ChatHandler) callMiniMax(systemPrompt string, history []botMessage) (string, error) {
+	type message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	var msgs []message
+	msgs = append(msgs, message{Role: "system", Content: systemPrompt})
+	for _, m := range history {
+		msgs = append(msgs, message{Role: m.Role, Content: m.Content})
+	}
+
+	model := h.minimax.Model
+	if model == "" {
+		model = "abab6.5s-chat"
+	}
+	reqBody := map[string]interface{}{
+		"model":      model,
+		"max_tokens": 1024,
+		"messages":   msgs,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+
+	apiURL := "https://api.minimaxi.com/anthropic/v1/messages"
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", h.minimax.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.Error != nil {
+		return "", fmt.Errorf("MiniMax API error: %s", result.Error.Message)
+	}
+	for _, c := range result.Content {
+		if c.Type == "text" {
+			return c.Text, nil
+		}
+	}
+	return "", fmt.Errorf("empty response from MiniMax")
 }
 
 // AdminDeleteRoom 管理员删除房间
