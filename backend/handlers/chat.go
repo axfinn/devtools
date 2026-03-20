@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -105,6 +104,7 @@ type ChatHandler struct {
 	mu            sync.RWMutex
 	adminPassword string
 	minimax       config.MiniMaxConfig
+	ttsServiceURL string
 }
 
 type Room struct {
@@ -130,15 +130,16 @@ type WSMessage struct {
 	CreatedAt    string `json:"created_at,omitempty"`
 	MsgType      string `json:"msg_type,omitempty"`
 	OriginalName string `json:"original_name,omitempty"`
-	AudioURL     string `json:"audio_url,omitempty"` // TTS 音频 URL（仅 bot 消息，不持久化）
+	AudioURL     string `json:"audio_url,omitempty"` // TTS 音频 URL（仅 bot 消息）
 }
 
-func NewChatHandler(db *models.DB, adminPassword string, minimax config.MiniMaxConfig) *ChatHandler {
+func NewChatHandler(db *models.DB, adminPassword string, minimax config.MiniMaxConfig, ttsServiceURL string) *ChatHandler {
 	return &ChatHandler{
 		db:            db,
 		rooms:         make(map[string]*Room),
 		adminPassword: adminPassword,
 		minimax:       minimax,
+		ttsServiceURL: ttsServiceURL,
 	}
 }
 
@@ -890,28 +891,85 @@ func (h *ChatHandler) triggerBotReply(room *Room, roomID, userNickname, userMsg 
 	}, nil)
 }
 
-// callEdgeTTS 调用 edge-tts 生成音频文件，返回可访问的 URL
+// cleanTextForTTS 清洗文本，移除 Markdown 和特殊字符，避免 edge-tts NoAudioReceived
+func cleanTextForTTS(text string) string {
+	// 移除代码块
+	for strings.Contains(text, "```") {
+		start := strings.Index(text, "```")
+		end := strings.Index(text[start+3:], "```")
+		if end == -1 {
+			text = text[:start]
+			break
+		}
+		text = text[:start] + " 代码块 " + text[start+3+end+3:]
+	}
+	// 移除行内代码
+	for strings.Contains(text, "`") {
+		s := strings.Index(text, "`")
+		e := strings.Index(text[s+1:], "`")
+		if e == -1 {
+			text = strings.ReplaceAll(text, "`", "")
+			break
+		}
+		text = text[:s] + text[s+1:s+1+e] + text[s+1+e+1:]
+	}
+	// 移除 URL
+	for _, prefix := range []string{"https://", "http://"} {
+		for strings.Contains(text, prefix) {
+			s := strings.Index(text, prefix)
+			e := s
+			for e < len(text) && text[e] != ' ' && text[e] != '\n' && text[e] != ')' {
+				e++
+			}
+			text = text[:s] + "链接" + text[e:]
+		}
+	}
+	// 移除 Markdown 格式符
+	for _, ch := range []string{"**", "__", "~~", "##", "#", ">", "- ", "* "} {
+		text = strings.ReplaceAll(text, ch, "")
+	}
+	// 限制长度（edge-tts 超长会失败）
+	runes := []rune(text)
+	if len(runes) > 300 {
+		text = string(runes[:300]) + "……"
+	}
+	return strings.TrimSpace(text)
+}
+
+// callEdgeTTS 通过 TTS HTTP 服务合成语音，返回可访问的 URL
 func (h *ChatHandler) callEdgeTTS(text, voice string) (string, error) {
-	randomBytes := make([]byte, 8)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return "", err
-	}
-	filename := fmt.Sprintf("tts_%s.mp3", hex.EncodeToString(randomBytes))
-	filePath := filepath.Join(uploadDir, filename)
-
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		return "", err
+	ttsText := cleanTextForTTS(text)
+	if ttsText == "" {
+		return "", fmt.Errorf("empty text after clean")
 	}
 
-	cmd := exec.Command("edge-tts",
-		"--voice", voice,
-		"--text", text,
-		"--write-media", filePath,
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("edge-tts failed: %v, output: %s", err, string(out))
+	if h.ttsServiceURL == "" {
+		return "", fmt.Errorf("TTS service not configured")
 	}
-	return "/api/chat/uploads/" + filename, nil
+
+	reqBody, _ := json.Marshal(map[string]string{
+		"text":  ttsText,
+		"voice": voice,
+	})
+
+	resp, err := http.Post(h.ttsServiceURL+"/tts", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("TTS service unavailable: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("TTS service error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("TTS response decode error: %v", err)
+	}
+	return result.URL, nil
 }
 
 // callMiniMax 调用 MiniMax API（兼容 Anthropic 格式）

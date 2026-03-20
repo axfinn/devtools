@@ -55,4 +55,19 @@ EOF
 chown -R autodev:autodev "${CLAUDE_HOME}"
 
 cd /app
+
+# Start TTS HTTP service in background (edge-tts via FastAPI on 127.0.0.1:8083)
+echo "[entrypoint] Starting TTS service on port 8083..."
+TTS_OUTPUT_DIR=/app/data/uploads python3 /app/tts_server.py &
+TTS_PID=$!
+
+# Wait for TTS service to be ready (max 10s)
+for i in $(seq 1 10); do
+    if wget -q --spider http://127.0.0.1:8083/health 2>/dev/null; then
+        echo "[entrypoint] TTS service ready"
+        break
+    fi
+    sleep 1
+done
+
 exec ./server

@@ -270,7 +270,7 @@ func main() {
 	// 处理器
 	pasteHandler := handlers.NewPasteHandler(db)
 	dnsHandler := handlers.NewDNSHandler()
-	chatHandler := handlers.NewChatHandler(db, cfg.Chat.AdminPassword, cfg.MiniMax)
+	chatHandler := handlers.NewChatHandler(db, cfg.Chat.AdminPassword, cfg.MiniMax, cfg.Chat.TTSServiceURL)
 	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
 	mockAPIHandler := handlers.NewMockAPIHandler(db)
 	mdShareHandler := handlers.NewMDShareHandler(db, cfg.MDShare.AdminPassword, cfg.MDShare.DefaultMaxViews, cfg.MDShare.DefaultExpiresDays)

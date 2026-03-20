@@ -32,8 +32,9 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
     nodejs npm git bash openssh-client hugo
 
-# Install edge-tts for bot TTS voice synthesis
-RUN pip3 install --break-system-packages edge-tts 2>/dev/null || pip3 install edge-tts
+# Install edge-tts + FastAPI HTTP service dependencies
+RUN pip3 install --break-system-packages edge-tts fastapi uvicorn 2>/dev/null || \
+    pip3 install edge-tts fastapi uvicorn
 
 # Install uv (provides uvx) for MCP runtime
 RUN curl -Ls https://astral.sh/uv/install.sh | sh
@@ -57,6 +58,7 @@ RUN addgroup -g 1001 autodev && \
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=frontend-builder /app/frontend/dist ./dist
 COPY entrypoint.sh ./entrypoint.sh
+COPY tts-service/server.py ./tts_server.py
 RUN chmod +x ./entrypoint.sh
 
 RUN mkdir -p /app/data/autodev /app/data/clawtest && chmod 777 /app/data/autodev /app/data/clawtest
@@ -65,6 +67,7 @@ ENV PORT=8082
 ENV DB_PATH=/app/data/paste.db
 ENV GIN_MODE=release
 ENV TZ=Asia/Shanghai
+ENV TTS_SERVICE_URL=http://127.0.0.1:8083
 # AutoDev 配置（通过 .env 或 docker-compose environment 覆盖）
 # clawtest 存储在 data volume 中，entrypoint 启动时自动 clone/pull 到最新版
 ENV AUTODEV_PATH=/app/data/clawtest/autodev/autodev

@@ -121,7 +121,8 @@ type PasteConfig struct {
 
 // ChatConfig 聊天室配置
 type ChatConfig struct {
-	AdminPassword string `yaml:"admin_password"` // 管理员密码，可管理所有聊天室
+	AdminPassword  string `yaml:"admin_password"`   // 管理员密码，可管理所有聊天室
+	TTSServiceURL  string `yaml:"tts_service_url"`  // TTS HTTP 服务地址，默认 http://127.0.0.1:8083
 }
 
 // MDShareConfig Markdown 分享配置
@@ -464,6 +465,13 @@ func Load(path string) (*Config, error) {
 	}
 	if autodevDataDir := os.Getenv("AUTODEV_DATA_DIR"); autodevDataDir != "" {
 		cfg.AutoDev.DataDir = autodevDataDir
+	}
+	// TTS 服务地址支持环境变量覆盖
+	if ttsURL := os.Getenv("TTS_SERVICE_URL"); ttsURL != "" {
+		cfg.Chat.TTSServiceURL = ttsURL
+	}
+	if cfg.Chat.TTSServiceURL == "" {
+		cfg.Chat.TTSServiceURL = "http://127.0.0.1:8083"
 	}
 
 	globalConfig = cfg
