@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, URL shortening, Mock API testing, Excalidraw drawing, and SSH Terminal.
+DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms (with AI bots and TTS), URL shortening, Mock API testing, Excalidraw drawing, and SSH Terminal.
 
 **Tech Stack:**
 - Frontend: Vue 3 + Vite + Element Plus + TailwindCSS
@@ -27,6 +27,13 @@ npm run preview          # Preview production build
 cd backend
 go mod tidy              # Install/update dependencies
 go run main.go           # Start backend server (default: :8080 or :8082)
+```
+
+### TTS Service (local dev)
+```bash
+# Required for chat bot TTS (runs on :8083)
+pip install edge-tts fastapi uvicorn
+TTS_OUTPUT_DIR=./backend/data/uploads python3 tts-service/server.py
 ```
 
 ### Docker Deployment
@@ -68,6 +75,15 @@ Docker exposes the backend on port 8082.
   - In-memory room/client management with sync.RWMutex
   - Image/video upload (5MB/50MB limits)
   - Password-protected rooms with SHA256 hashing
+  - **AI Bot**: per-room AI bot with 10 preset role templates, powered by MiniMax API
+    - Bot config persisted in `chat_rooms.bot_config` (JSON), survives restarts
+    - Async reply: `go triggerBotReply(...)` to avoid blocking message broadcast
+    - Conversation history: last 20 messages kept in memory per room
+  - **TTS**: bot replies optionally synthesized to audio via TTS HTTP service (:8083)
+    - `callEdgeTTS()` calls `POST http://127.0.0.1:8083/tts`, returns mp3 URL
+    - `cleanTextForTTS()` strips Markdown/code/URLs before synthesis
+    - `audio_url` field in WebSocket message triggers browser auto-play
+  - **Message actions**: copy text, download media files (image/video/audio/file)
 - **handlers/shorturl.go**: URL shortener handlers
   - Rate limiting: 10 per IP per hour
   - Default 30-day expiration, 1000 max clicks
@@ -122,6 +138,9 @@ Docker exposes the backend on port 8082.
 - `POST /api/chat/room/:id/join`: Join room (requires `nickname`, optional `password`)
 - `GET /api/chat/room/:id/ws?nickname=xxx`: WebSocket connection for real-time chat
 - `POST /api/chat/upload`: Upload image/video (max 5MB image, 50MB video)
+- `GET /api/chat/room/:id/bot`: Get current bot config + available role templates
+- `POST /api/chat/room/:id/bot`: Add/update bot (`role`, optional `nickname`, `system_prompt`, `enable_tts`)
+- `DELETE /api/chat/room/:id/bot`: Remove bot from room
 
 **Short URL:**
 - `POST /api/shorturl`: Create short URL (requires `original_url`, optional `expires_in`, `max_clicks`, `custom_id`, `password`)
@@ -196,7 +215,9 @@ Docker exposes the backend on port 8082.
 The Dockerfile uses multi-stage builds:
 1. **frontend-builder**: Node 20 Alpine - builds Vue app
 2. **backend-builder**: Go 1.21 Alpine - compiles static binary with CGO for SQLite
-3. **Production**: Alpine with ca-certificates and tzdata, copies both artifacts
+3. **Production**: Alpine with ca-certificates, tzdata, Python + edge-tts + FastAPI, copies all artifacts
+
+`entrypoint.sh` starts the TTS service (`python3 tts_server.py`) in the background before launching the Go server. The TTS service binds to `127.0.0.1:8083` (not exposed externally).
 
 ### Environment Variables
 - `PORT`: Backend server port (default: 8080 in dev, 8082 in Docker)
@@ -207,6 +228,8 @@ The Dockerfile uses multi-stage builds:
 - `HOST_PORT`: Host port for Docker exposure (default: 8082)
 - `OCR_SERVICE_URL`: OCR 服务地址 (default: http://ocr-service:8000)
 - `DEEPSEEK_API_KEY`: DeepSeek API 密钥 (用于记账 AI 分析)
+- `MINIMAX_API_KEY`: MiniMax API 密钥 (用于聊天室 AI 机器人)
+- `TTS_SERVICE_URL`: TTS HTTP 服务地址 (default: http://127.0.0.1:8083)
 
 ### Configuration File
 Copy `backend/config.example.yaml` to `backend/config.yaml`:
@@ -223,6 +246,10 @@ excalidraw:
   admin_password: ""         # 管理员密码（可永久保存）
   default_expires_days: 30   # 默认过期天数
   max_content_size: 10485760 # 最大内容大小（10MB）
+
+chat:
+  admin_password: ""         # 管理员密码
+  tts_service_url: "http://127.0.0.1:8083"  # TTS 服务地址
 ```
 
 **Short URL modes:**
@@ -262,7 +289,7 @@ excalidraw:
 
 ## Database Schema
 
-The SQLite database contains seven main tables: `pastes`, `chat_rooms`, `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), `markdown_shares`, and `excalidraw_shares`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
+The SQLite database contains seven main tables: `pastes`, `chat_rooms` (with `bot_config` column for AI bot persistence), `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), `markdown_shares`, and `excalidraw_shares`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
 
 ## Common Tasks
 
@@ -362,6 +389,54 @@ The chat system uses in-memory state management with gorilla/websocket:
 - **File Uploads**: Images/videos are stored in `./data/uploads` with 7-day auto-cleanup
 - **Connection Handling**: Each WebSocket connection runs in its own goroutine with read/write loops
 - **Cleanup**: Rooms inactive for 7+ days and messages older than 7 days are auto-deleted
+
+### Chat Room AI Bot
+
+Each room can have one bot. Bot config is stored in `chat_rooms.bot_config` (JSON) so it survives container restarts.
+
+**10 preset role templates** (key → nickname):
+| Key | Nickname | Voice |
+|-----|----------|-------|
+| `general` | 🤖 小助手 | XiaoxiaoNeural |
+| `code` | 🤖 码农 | YunxiNeural |
+| `translate` | 🤖 译者 | XiaoyiNeural |
+| `customer` | 🤖 客服 | XiaoxiaoNeural |
+| `psychology` | 🤖 心理咨询师 | XiaomouNeural |
+| `student_girl` | 🤖 学生妹 | XiaoyiNeural |
+| `college` | 🤖 大学生 | YunxiNeural |
+| `girlfriend` | 🤖 电子女朋友 | XiaoxiaoNeural |
+| `uncle` | 🤖 大叔 | YunyangNeural |
+| `kid` | 🤖 小屁孩 | YunxiNeural |
+
+**API:**
+```bash
+# Add bot (role required, nickname/system_prompt/enable_tts optional)
+curl -X POST http://localhost:8082/api/chat/room/{id}/bot \
+  -H "Content-Type: application/json" \
+  -d '{"role":"girlfriend","enable_tts":true}'
+
+# Get bot config + templates
+curl http://localhost:8082/api/chat/room/{id}/bot
+
+# Remove bot
+curl -X DELETE http://localhost:8082/api/chat/room/{id}/bot
+```
+
+### TTS (Text-to-Speech) Architecture
+
+```
+Bot reply text
+  → cleanTextForTTS()          # strip Markdown/code/URLs, limit 300 chars
+  → POST 127.0.0.1:8083/tts   # FastAPI + edge-tts (tts-service/server.py)
+  → saves tts_xxx.mp3 to ./data/uploads/
+  → returns {"url": "/api/chat/uploads/tts_xxx.mp3"}
+  → Go puts audio_url in WebSocket message
+  → Frontend: new Audio(url).play()  (only when ttsEnabled == true)
+```
+
+Two independent on/off switches:
+- **Server-side** (`enable_tts` in bot config): controls whether mp3 is generated
+- **Client-side** (`ttsEnabled` in frontend): controls whether browser plays audio
 
 ## Module Path
 

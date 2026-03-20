@@ -1142,6 +1142,8 @@ const loadBotConfig = async () => {
     botConfig.value = data.bot || null
     botTemplates.value = data.templates || []
     botHasKey.value = data.has_key === true
+    // 同步服务端 enable_tts 到前端开关
+    ttsEnabled.value = data.bot?.enable_tts === true
     if (!selectedRole.value && botTemplates.value.length) {
       selectedRole.value = botTemplates.value[0].key
     }
@@ -1169,7 +1171,7 @@ const addBot = async () => {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || '添加失败')
     botConfig.value = data.bot
-    ttsEnabled.value = enableTTS.value
+    ttsEnabled.value = data.bot?.enable_tts === true
     showBotDialog.value = false
     customBotNickname.value = ''
     customSystemPrompt.value = ''
@@ -1205,9 +1207,26 @@ const removeBot = async () => {
 // ========== TTS 语音 ==========
 const toggleTTS = async (val) => {
   if (!botConfig.value) return
-  // 本地状态切换（服务端 enable_tts 随下次 addBot 更新，无需额外 API）
   ttsEnabled.value = val
   if (!val) stopTTSAudio()
+  // 同步更新服务端 bot 的 enable_tts
+  try {
+    const body = {
+      role: botConfig.value.role,
+      nickname: botConfig.value.nickname,
+      system_prompt: botConfig.value.system_prompt,
+      enable_tts: val,
+    }
+    const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (res.ok) botConfig.value = data.bot
+  } catch (e) {
+    console.warn('同步 TTS 状态失败:', e)
+  }
 }
 
 const playTTSAudio = (audioUrl) => {

@@ -5,15 +5,12 @@ Provides a simple REST API for text-to-speech synthesis using edge-tts.
 Runs on 127.0.0.1:8083 inside the container.
 """
 
-import asyncio
 import os
 import uuid
 from pathlib import Path
 
 import edge_tts
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 app = FastAPI(title="TTS Service", docs_url=None, redoc_url=None)
