@@ -1229,19 +1229,24 @@ const stopTTSAudio = () => {
 // ========== 复制/下载 ==========
 const copyText = async (text) => {
   try {
-    if (navigator.clipboard) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text)
     } else {
+      // 兼容 HTTP / 旧浏览器
       const ta = document.createElement('textarea')
       ta.value = text
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none'
       document.body.appendChild(ta)
+      ta.focus()
       ta.select()
-      document.execCommand('copy')
+      const ok = document.execCommand('copy')
       document.body.removeChild(ta)
+      if (!ok) throw new Error('execCommand failed')
     }
     ElMessage.success('已复制')
   } catch (e) {
-    ElMessage.error('复制失败')
+    // 最后兜底：提示用户手动复制
+    ElMessage.warning('自动复制失败，请手动选中文字后 Ctrl+C')
   }
 }
 
@@ -1735,7 +1740,7 @@ onUnmounted(() => {
   display: flex;
   gap: 6px;
   margin-top: 4px;
-  opacity: 0;
+  opacity: 0.35;
   transition: opacity 0.15s;
 }
 
