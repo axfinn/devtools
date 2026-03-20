@@ -58,18 +58,18 @@ type BotConfig struct {
 	TTSEngine    string `json:"tts_engine"`   // "auto" | "kokoro" | "edge-tts"
 }
 
-// 角色默认 edge-tts 语音映射
+// 角色默认 edge-tts 语音映射（zh-CN Microsoft Neural voices）
 var botRoleVoices = map[string]string{
-	"general":      "zh-CN-XiaoxiaoNeural",
-	"code":         "zh-CN-YunxiNeural",
-	"translate":    "zh-CN-XiaoyiNeural",
-	"customer":     "zh-CN-XiaoxiaoNeural",
-	"psychology":   "zh-CN-XiaomouNeural",
-	"student_girl": "zh-CN-XiaoyiNeural",
-	"college":      "zh-CN-YunxiNeural",
-	"girlfriend":   "zh-CN-XiaoxiaoNeural",
-	"uncle":        "zh-CN-YunyangNeural",
-	"kid":          "zh-CN-YunxiNeural",
+	"general":      "zh-CN-XiaoxiaoNeural",  // 晓晓，温柔通用
+	"code":         "zh-CN-YunxiNeural",     // 云希，阳光男声
+	"translate":    "zh-CN-XiaohanNeural",   // 晓涵，知性女声
+	"customer":     "zh-CN-XiaoxuanNeural",  // 晓萱，轻松客服
+	"psychology":   "zh-CN-XiaoruiNeural",   // 晓睿，沉稳女声
+	"student_girl": "zh-CN-XiaoyiNeural",    // 晓伊，活泼女生
+	"college":      "zh-CN-YunjianNeural",   // 云健，运动男声
+	"girlfriend":   "zh-CN-XiaoxiaoNeural",  // 晓晓，温柔女友
+	"uncle":        "zh-CN-YunyangNeural",   // 云扬，成熟男声
+	"kid":          "zh-CN-XiaoshuangNeural",// 晓双，儿童音色
 }
 
 // BotRoleTemplate 预设角色模板
@@ -879,11 +879,7 @@ func (h *ChatHandler) triggerBotReply(room *Room, roomID, userNickname, userMsg 
 		if voice == "" {
 			voice = "zh-CN-XiaoxiaoNeural"
 		}
-		engine := bot.TTSEngine
-		if engine == "" {
-			engine = "auto"
-		}
-		if url, ttsErr := h.callEdgeTTS(reply, voice, engine); ttsErr != nil {
+		if url, ttsErr := h.callEdgeTTS(reply, voice); ttsErr != nil {
 			log.Printf("TTS error (room=%s): %v", roomID, ttsErr)
 		} else {
 			audioURL = url
@@ -947,7 +943,7 @@ func cleanTextForTTS(text string) string {
 }
 
 // callEdgeTTS 通过 TTS HTTP 服务合成语音，返回可访问的 URL
-func (h *ChatHandler) callEdgeTTS(text, voice, engine string) (string, error) {
+func (h *ChatHandler) callEdgeTTS(text, voice string) (string, error) {
 	ttsText := cleanTextForTTS(text)
 	if ttsText == "" {
 		return "", fmt.Errorf("empty text after clean")
@@ -958,9 +954,8 @@ func (h *ChatHandler) callEdgeTTS(text, voice, engine string) (string, error) {
 	}
 
 	reqBody, _ := json.Marshal(map[string]string{
-		"text":   ttsText,
-		"voice":  voice,
-		"engine": engine,
+		"text":  ttsText,
+		"voice": voice,
 	})
 
 	resp, err := http.Post(h.ttsServiceURL+"/tts", "application/json", bytes.NewReader(reqBody))

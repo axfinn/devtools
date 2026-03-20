@@ -344,16 +344,7 @@
         <!-- TTS 语音开关 -->
         <div class="bot-tts-row">
           <el-switch v-model="enableTTS" active-text="🔊 语音朗读" inactive-text="静音" />
-          <span class="bot-tts-tip">开启后机器人回复将自动朗读</span>
-        </div>
-        <!-- TTS 引擎选择（开启 TTS 时显示） -->
-        <div v-if="enableTTS" class="bot-tts-engine-row">
-          <span class="bot-tts-engine-label">引擎：</span>
-          <el-radio-group v-model="ttsEngine" size="small">
-            <el-radio-button value="auto">🤖 自动</el-radio-button>
-            <el-radio-button value="kokoro">🐸 Kokoro（离线）</el-radio-button>
-            <el-radio-button value="edge-tts">☁️ Edge TTS（联网）</el-radio-button>
-          </el-radio-group>
+          <span class="bot-tts-tip">开启后机器人回复将自动朗读（微软 Neural TTS）</span>
         </div>
         <!-- 高级选项 -->
         <el-collapse v-model="showBotAdvanced" class="bot-advanced">

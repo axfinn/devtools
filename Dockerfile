@@ -30,16 +30,12 @@ FROM docker.m.daocloud.io/library/alpine:latest
 WORKDIR /app
 
 RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
-    nodejs npm git bash openssh-client hugo python3-dev
+    nodejs npm git bash openssh-client hugo
 
-# Create isolated venv for TTS service to avoid system package conflicts
+# Create isolated venv for TTS service (edge-tts + FastAPI)
 RUN python3 -m venv /app/tts-venv && \
     /app/tts-venv/bin/pip install --upgrade pip && \
-    /app/tts-venv/bin/pip install edge-tts fastapi uvicorn && \
-    /app/tts-venv/bin/pip install kokoro-onnx soundfile numpy || \
-    echo "[warn] kokoro-onnx install failed, edge-tts only mode"
-
-# (kokoro models are downloaded at runtime to data volume, see entrypoint.sh)
+    /app/tts-venv/bin/pip install edge-tts fastapi uvicorn
 
 # Install uv (provides uvx) for MCP runtime
 RUN curl -Ls https://astral.sh/uv/install.sh | sh
@@ -72,7 +68,6 @@ ENV PORT=8082
 ENV DB_PATH=/app/data/paste.db
 ENV GIN_MODE=release
 ENV TZ=Asia/Shanghai
-ENV TTS_MODEL_DIR=/app/data/tts-models
 ENV TTS_SERVICE_URL=http://127.0.0.1:8083
 # AutoDev 配置（通过 .env 或 docker-compose environment 覆盖）
 # clawtest 存储在 data volume 中，entrypoint 启动时自动 clone/pull 到最新版

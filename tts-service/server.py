@@ -1,146 +1,103 @@
 #!/usr/bin/env python3
 """
-Multi-engine TTS HTTP service
-Supports: kokoro-onnx (offline) | edge-tts (cloud, Microsoft)
+edge-tts HTTP service (fully cloud-based, Microsoft Neural TTS)
 Runs on 127.0.0.1:8083 inside the container.
+
+Supported Chinese voices (zh-CN):
+  zh-CN-XiaoxiaoNeural   - 晓晓 (女, 温柔)
+  zh-CN-XiaoyiNeural     - 晓伊 (女, 活泼)
+  zh-CN-XiaohanNeural    - 晓涵 (女, 知性)
+  zh-CN-XiaomouNeural    - 晓墨 (女, 戏剧)
+  zh-CN-XiaoruiNeural    - 晓睿 (女, 老年)
+  zh-CN-XiaoshuangNeural - 晓双 (女/童, 儿童)
+  zh-CN-XiaoxuanNeural   - 晓萱 (女, 轻松)
+  zh-CN-XiaoyanNeural    - 晓颜 (女)
+  zh-CN-XiaozhenNeural   - 晓甄 (女, 激情)
+  zh-CN-YunxiNeural      - 云希 (男, 阳光)
+  zh-CN-YunjianNeural    - 云健 (男, 运动)
+  zh-CN-YunyangNeural    - 云扬 (男, 新闻)
+  zh-CN-YunzeNeural      - 云泽 (男, 老年)
 """
 
 import os
 import uuid
 import asyncio
-import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE = True
+except ImportError:
+    EDGE_TTS_AVAILABLE = False
 
-MODEL_DIR = Path(os.environ.get("TTS_MODEL_DIR", "/app/tts-models"))
 UPLOAD_DIR = Path(os.environ.get("TTS_OUTPUT_DIR", "/app/data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="TTS Service", docs_url=None, redoc_url=None)
 
-# ── kokoro engine ──────────────────────────────────────────────────────────────
-_kokoro = None
-_kokoro_available = False
+# 完整中文音色列表（角色 → voice name 映射用）
+ZH_VOICES = [
+    {"id": "zh-CN-XiaoxiaoNeural",   "name": "晓晓", "gender": "female", "style": "温柔"},
+    {"id": "zh-CN-XiaoyiNeural",     "name": "晓伊", "gender": "female", "style": "活泼"},
+    {"id": "zh-CN-XiaohanNeural",    "name": "晓涵", "gender": "female", "style": "知性"},
+    {"id": "zh-CN-XiaomouNeural",    "name": "晓墨", "gender": "female", "style": "戏剧"},
+    {"id": "zh-CN-XiaoruiNeural",    "name": "晓睿", "gender": "female", "style": "老年"},
+    {"id": "zh-CN-XiaoshuangNeural", "name": "晓双", "gender": "female", "style": "儿童"},
+    {"id": "zh-CN-XiaoxuanNeural",   "name": "晓萱", "gender": "female", "style": "轻松"},
+    {"id": "zh-CN-XiaoyanNeural",    "name": "晓颜", "gender": "female", "style": ""},
+    {"id": "zh-CN-XiaozhenNeural",   "name": "晓甄", "gender": "female", "style": "激情"},
+    {"id": "zh-CN-YunxiNeural",      "name": "云希", "gender": "male",   "style": "阳光"},
+    {"id": "zh-CN-YunjianNeural",    "name": "云健", "gender": "male",   "style": "运动"},
+    {"id": "zh-CN-YunyangNeural",    "name": "云扬", "gender": "male",   "style": "新闻"},
+    {"id": "zh-CN-YunzeNeural",      "name": "云泽", "gender": "male",   "style": "老年"},
+]
 
-def _init_kokoro():
-    global _kokoro, _kokoro_available
-    try:
-        from kokoro_onnx import Kokoro
-        model_path = MODEL_DIR / "kokoro-v1.0.onnx"
-        voices_path = MODEL_DIR / "voices-v1.0.bin"
-        if not model_path.exists() or not voices_path.exists():
-            logger.warning(f"[kokoro] model files not found in {MODEL_DIR}, skipping")
-            return
-        _kokoro = Kokoro(str(model_path), str(voices_path))
-        _kokoro_available = True
-        logger.info("[kokoro] model loaded successfully")
-    except Exception as e:
-        logger.warning(f"[kokoro] init failed: {e}")
 
-# edge-tts voice → kokoro voice
-KOKORO_VOICE_MAP = {
-    "zh-CN-XiaoxiaoNeural": "zh_f_xiaobei",
-    "zh-CN-XiaoyiNeural":   "zh_f_xiaoni",
-    "zh-CN-YunxiNeural":    "zh_m_yunxi",
-    "zh-CN-YunyangNeural":  "zh_m_yunjian",
-    "zh-CN-XiaomouNeural":  "zh_f_xiaobei",
-}
-KOKORO_DEFAULT_VOICE = "zh_f_xiaobei"
-
-def _synth_kokoro(text: str, voice: str) -> Path:
-    import soundfile as sf
-    kokoro_voice = KOKORO_VOICE_MAP.get(voice, KOKORO_DEFAULT_VOICE)
-    samples, sample_rate = _kokoro.create(text, voice=kokoro_voice, speed=1.0, lang="zh")
-    filename = f"tts_{uuid.uuid4().hex[:16]}.wav"
-    out = UPLOAD_DIR / filename
-    sf.write(str(out), samples, sample_rate)
-    return out
-
-# ── edge-tts engine ────────────────────────────────────────────────────────────
-_edge_tts_available = False
-
-def _init_edge_tts():
-    global _edge_tts_available
-    try:
-        import edge_tts  # noqa
-        _edge_tts_available = True
-        logger.info("[edge-tts] available")
-    except ImportError:
-        logger.warning("[edge-tts] not installed")
-
-async def _synth_edge_tts(text: str, voice: str) -> Path:
-    import edge_tts
-    filename = f"tts_{uuid.uuid4().hex[:16]}.mp3"
-    out = UPLOAD_DIR / filename
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(str(out))
-    return out
-
-# ── API ────────────────────────────────────────────────────────────────────────
 class TTSRequest(BaseModel):
     text: str
     voice: str = "zh-CN-XiaoxiaoNeural"
-    engine: str = "auto"   # "auto" | "kokoro" | "edge-tts"
 
 
 @app.post("/tts")
 async def synthesize(req: TTSRequest):
+    if not EDGE_TTS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="edge-tts not installed")
+
     text = req.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is empty")
     if len(text) > 500:
         text = text[:500]
 
-    engine = req.engine
-    # auto: 优先 kokoro（离线），fallback edge-tts
-    if engine == "auto":
-        engine = "kokoro" if _kokoro_available else "edge-tts"
+    filename = f"tts_{uuid.uuid4().hex[:16]}.mp3"
+    output_path = UPLOAD_DIR / filename
 
-    out: Path | None = None
+    communicate = edge_tts.Communicate(text, req.voice)
+    try:
+        await communicate.save(str(output_path))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS synthesis failed: {e}")
 
-    if engine == "kokoro":
-        if not _kokoro_available:
-            raise HTTPException(status_code=503, detail="kokoro engine not available (model files missing)")
-        try:
-            out = _synth_kokoro(text, req.voice)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"kokoro synthesis failed: {e}")
-
-    elif engine == "edge-tts":
-        if not _edge_tts_available:
-            raise HTTPException(status_code=503, detail="edge-tts engine not available (not installed)")
-        try:
-            out = await _synth_edge_tts(text, req.voice)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"edge-tts synthesis failed: {e}")
-
-    else:
-        raise HTTPException(status_code=400, detail=f"unknown engine: {engine}")
-
-    if not out or not out.exists() or out.stat().st_size == 0:
+    if not output_path.exists() or output_path.stat().st_size == 0:
         raise HTTPException(status_code=500, detail="TTS produced no audio")
 
-    return {"url": f"/api/chat/uploads/{out.name}", "engine": engine}
+    return {"url": f"/api/chat/uploads/{filename}"}
+
+
+@app.get("/voices")
+def list_voices():
+    return {"voices": ZH_VOICES}
 
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "engines": {
-            "kokoro": _kokoro_available,
-            "edge-tts": _edge_tts_available,
-        }
-    }
+    return {"status": "ok", "edge_tts": EDGE_TTS_AVAILABLE}
 
 
 if __name__ == "__main__":
     import uvicorn
-    _init_kokoro()
-    _init_edge_tts()
+    print(f"[tts] edge-tts available: {EDGE_TTS_AVAILABLE}")
     uvicorn.run(app, host="127.0.0.1", port=8083, log_level="warning")
