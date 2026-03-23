@@ -16,6 +16,7 @@
         <el-button type="primary" @click="init">进入管理</el-button>
         <el-button @click="loadDocs">查看文档</el-button>
         <el-button type="success" @click="loadAnthropicDocs">Anthropic 接入</el-button>
+        <el-button type="info" @click="loadMinimaxDocs">MiniMax 接入</el-button>
       </div>
     </div>
 
@@ -458,6 +459,105 @@
         </el-tabs>
       </div>
     </el-dialog>
+
+    <!-- MiniMax Token Plan 接入文档对话框 -->
+    <el-dialog v-model="minimaxDocsVisible" width="960px" title="MiniMax Token Plan 接入文档">
+      <div v-if="minimaxDocs" class="docs-content">
+        <el-alert :title="minimaxDocs.summary" type="info" :closable="false" />
+
+        <h4 style="margin-top: 16px;">支持的模型</h4>
+        <el-table :data="Object.entries(minimaxDocs.model_descriptions || {}).map(([model, desc]) => ({ model, description: desc }))" size="small" stripe>
+          <el-table-column prop="model" label="模型" width="160">
+            <template #default="{ row }">
+              <el-tag size="small" type="success">{{ row.model }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" label="说明" min-width="300" />
+        </el-table>
+
+        <el-divider />
+
+        <h4>认证方式</h4>
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="鉴权 Header">Authorization: Bearer &lt;API_KEY&gt;</el-descriptions-item>
+          <el-descriptions-item label="Required Scope">media</el-descriptions-item>
+          <el-descriptions-item label="Base URL">/api/minimax/token-plan</el-descriptions-item>
+          <el-descriptions-item label="上游地址">{{ minimaxDocs.upstream }}</el-descriptions-item>
+        </el-descriptions>
+
+        <el-divider />
+
+        <h4>API 路由</h4>
+        <el-descriptions :column="1" border>
+          <el-descriptions-item v-for="route in minimaxDocs.routes" :key="route.path" :label="`${route.method} ${route.path}`">
+            {{ route.description }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <h4 style="margin-top: 16px;">模型请求示例</h4>
+        <el-tabs>
+          <el-tab-pane label="TTS HD">
+            <pre class="doc-json">{{ JSON.stringify(minimaxDocs.examples?.tts_hd_request || {}, null, 2) }}</pre>
+          </el-tab-pane>
+          <el-tab-pane label="Hailuo 视频">
+            <pre class="doc-json">{{ JSON.stringify(minimaxDocs.examples?.hailuo_request || {}, null, 2) }}</pre>
+          </el-tab-pane>
+          <el-tab-pane label="Music">
+            <pre class="doc-json">{{ JSON.stringify(minimaxDocs.examples?.music_request || {}, null, 2) }}</pre>
+          </el-tab-pane>
+          <el-tab-pane label="Image">
+            <pre class="doc-json">{{ JSON.stringify(minimaxDocs.examples?.image_request || {}, null, 2) }}</pre>
+          </el-tab-pane>
+        </el-tabs>
+
+        <h4 style="margin-top: 16px;">SDK 调用示例</h4>
+        <el-tabs>
+          <el-tab-pane label="cURL">
+            <pre class="doc-code">{{ minimaxDocs.examples?.curl?.code || '' }}</pre>
+          </el-tab-pane>
+          <el-tab-pane label="Python">
+            <pre class="doc-code">import requests
+
+resp = requests.post(
+    "${origin}/api/minimax/token-plan/v1/generations",
+    headers={
+        "Authorization": "Bearer dtk_ai_xxx",
+        "Content-Type": "application/json",
+    },
+    json={
+        "model": "speech-2.8-hd",
+        "text": "你好，这是语音合成测试",
+    },
+    timeout=120,
+)
+# 音频响应
+with open("output.mp3", "wb") as f:
+    f.write(resp.content)</pre>
+          </el-tab-pane>
+          <el-tab-pane label="JavaScript">
+            <pre class="doc-code">const response = await fetch("${origin}/api/minimax/token-plan/v1/generations", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer dtk_ai_xxx",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    model: "speech-2.8-hd",
+    text: "你好，这是语音合成测试"
+  })
+});
+
+// 音频响应
+const blob = await response.blob();
+const url = URL.createObjectURL(blob);
+const a = document.createElement("a");
+a.href = url;
+a.download = "output.mp3";
+a.click();</pre>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -481,6 +581,8 @@ const docsVisible = ref(false)
 const docs = ref(null)
 const anthropicDocsVisible = ref(false)
 const anthropicDocs = ref(null)
+const minimaxDocsVisible = ref(false)
+const minimaxDocs = ref(null)
 const createdPlainKey = ref('')
 const modelsText = ref('')
 
@@ -677,6 +779,16 @@ const loadAnthropicDocs = async () => {
   const replaced = docStr.replace(/your-devtools:8080/g, window.location.host)
   anthropicDocs.value = JSON.parse(replaced)
   anthropicDocsVisible.value = true
+}
+
+const loadMinimaxDocs = async () => {
+  const res = await fetch(`/api/minimax/token-plan/docs`)
+  const data = await res.json()
+  // 替换文档中的占位符为当前域名
+  const docStr = JSON.stringify(data)
+  const replaced = docStr.replace(/your-devtools:8080/g, window.location.host)
+  minimaxDocs.value = JSON.parse(replaced)
+  minimaxDocsVisible.value = true
 }
 
 const copyPlainKey = async () => {
