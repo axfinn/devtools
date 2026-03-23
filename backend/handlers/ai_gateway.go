@@ -98,6 +98,24 @@ var TokenPlanAllowedModels = []string{
 	"image-01",
 }
 
+// TokenPlanAsyncModels 需要异步轮询的模型（视频、音乐、图片生成）
+var TokenPlanAsyncModels = []string{
+	"Hailuo-2.3-Fast",
+	"Hailuo-2.3",
+	"Music-2.5",
+	"image-01",
+}
+
+// isTokenPlanAsyncModel 判断模型是否需要异步轮询
+func isTokenPlanAsyncModel(model string) bool {
+	for _, m := range TokenPlanAsyncModels {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
 // TokenPlanRequest MiniMax Token Plan 通用请求
 type TokenPlanRequest struct {
 	Model    string                 `json:"model" binding:"required"`
@@ -1263,7 +1281,7 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 	}
 
 	start := time.Now()
-	upstreamURL := strings.TrimRight(baseURL, "/") + "/t2a_v2"
+	upstreamURL := strings.TrimRight(baseURL, "/") + "/v1/t"
 
 	// 使用 doRawRequest 透传二进制响应
 	respBody, err := h.doRawRequest(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
@@ -1294,7 +1312,7 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
 			"scope":   "media",
 		},
 		"base_url":  "/api/minimax/tts",
-		"upstream":  "https://api.minimaxi.com/t2a_v2",
+		"upstream":  "https://api.minimaxi.com/v1/t",
 		"models":    TTSAllowedModels,
 		"routes": []gin.H{
 			{"method": "GET", "path": "/api/minimax/tts/docs", "description": "获取本文档"},
@@ -1335,18 +1353,18 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
 // resolveTokenPlanModelEndpoint 根据模型返回对应的上游 API 路径
 func resolveTokenPlanModelEndpoint(model string) string {
 	switch model {
-	// TTS HD
+	// TTS HD - 正确端点: /v1/t
 	case "speech-2.8-hd", "speech-2.6-hd", "speech-02-hd":
-		return "/t2a_v2"
-	// Hailuo 视频
+		return "/v1/t"
+	// Hailuo 视频 - 正确端点: /v1/video_generation
 	case "Hailuo-2.3-Fast", "Hailuo-2.3":
-		return "/v1/hailuo/generation"
-	// Music
+		return "/v1/video_generation"
+	// Music - 正确端点: /v1/music_generation
 	case "Music-2.5":
-		return "/v1/music/generation"
-	// Image
+		return "/v1/music_generation"
+	// Image - 正确端点: /v1/image_generation
 	case "image-01":
-		return "/v1/image/generation"
+		return "/v1/image_generation"
 	default:
 		return ""
 	}
@@ -1420,7 +1438,18 @@ func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
 	start := time.Now()
 	upstreamURL := strings.TrimRight(baseURL, "/") + upstreamPath
 
-	// 使用 doRawRequestWithResp 透传请求，获取实际的 Content-Type
+	// 判断是否为异步模型（视频、音乐、图片生成需要轮询）
+	if isTokenPlanAsyncModel(model) {
+		h.handleAsyncTokenPlanRequest(c, key, model, apiKey, baseURL, upstreamURL, bodyBytes, bodyMap, start)
+		return
+	}
+
+	// 同步模型（TTS）：直接透传请求
+	h.handleSyncTokenPlanRequest(c, key, model, apiKey, upstreamURL, bodyBytes, bodyMap, start)
+}
+
+// handleSyncTokenPlanRequest 处理同步 Token Plan 请求（TTS）
+func (h *AIGatewayHandler) handleSyncTokenPlanRequest(c *gin.Context, key *models.AIAPIKey, model, apiKey, upstreamURL string, bodyBytes []byte, bodyMap map[string]interface{}, start time.Time) {
 	respBody, respContentType, err := h.doRawRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
 	if err != nil {
 		h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
@@ -1428,22 +1457,479 @@ func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
 		return
 	}
 
-	// 计算使用量（按请求计费）
 	usage := h.buildMediaUsage(model)
-
-	// 记录请求日志（音频数据不记录完整响应内容）
 	logRespBody := ""
 	if !strings.HasPrefix(respContentType, "audio/") {
 		logRespBody = string(respBody)
 	}
-
 	h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), logRespBody, c.ClientIP(), time.Since(start), usage)
 
-	// 根据实际 Content-Type 返回响应
 	if strings.HasPrefix(respContentType, "audio/") {
 		c.DataFromReader(http.StatusOK, int64(len(respBody)), respContentType, nil, nil)
 	} else {
 		c.Data(http.StatusOK, respContentType, respBody)
+	}
+}
+
+// handleAsyncTokenPlanRequest 处理异步 Token Plan 请求（视频/音乐/图片生成）
+func (h *AIGatewayHandler) handleAsyncTokenPlanRequest(c *gin.Context, key *models.AIAPIKey, model, apiKey, baseURL, upstreamURL string, bodyBytes []byte, bodyMap map[string]interface{}, start time.Time) {
+	// 创建本地任务记录
+	taskID := "mmt_" + utils.GenerateHexKey(12)
+	task := &models.MiniMaxMediaTask{
+		ID:           taskID,
+		APIKeyID:     key.ID,
+		Model:        model,
+		Provider:     "minimax",
+		Status:       "pending",
+		RequestBody:  truncateString(string(bodyBytes), 50000),
+		ClientIP:     c.ClientIP(),
+	}
+	if err := h.db.CreateMiniMaxMediaTask(task); err != nil {
+		h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusInternalServerError, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "任务创建失败", "code": 500})
+		return
+	}
+
+	// 立即返回任务ID，让客户端可以轮询
+	c.JSON(http.StatusOK, gin.H{
+		"task_id":     taskID,
+		"model":       model,
+		"status":      "pending",
+		"created_at":  task.CreatedAt.Format(time.RFC3339),
+		"message":     "任务已提交，请通过 GET /api/minimax/token-plan/tasks/" + taskID + " 查询状态",
+	})
+
+	// 异步提交到 MiniMax API 并轮询结果
+	go h.runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, upstreamURL, bodyBytes, model, key.ID)
+}
+
+// runAsyncMinimaxMediaTask 后台异步执行 MiniMax 媒体任务并轮询结果
+func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, upstreamURL string, bodyBytes []byte, model, apiKeyID string) {
+	task, err := h.db.GetMiniMaxMediaTask(taskID)
+	if err != nil {
+		return
+	}
+
+	// 1. 提交任务到 MiniMax
+	task.Status = "running"
+	_ = h.db.UpdateMiniMaxMediaTask(task)
+
+	start := time.Now()
+	respBody, respContentType, err := h.doRawRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, nil)
+
+	if err != nil {
+		task.Status = "failed"
+		task.ErrorMessage = err.Error()
+		now := time.Now()
+		task.CompletedAt = &now
+		_ = h.db.UpdateMiniMaxMediaTask(task)
+		h.logAPIRequestByID(apiKeyID, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", task.ClientIP, time.Since(start), usageSummary{})
+		return
+	}
+
+	// 解析响应获取 task_id
+	var respMap map[string]interface{}
+	if err := json.Unmarshal(respBody, &respMap); err == nil {
+		// 尝试从响应中提取 MiniMax 的任务 ID
+		externalTaskID := extractMinimaxTaskID(respMap)
+		if externalTaskID != "" {
+			task.ExternalTaskID = externalTaskID
+		}
+	}
+
+	// 检查响应是否直接包含结果（某些情况下可能同步返回）
+	if strings.HasPrefix(respContentType, "audio/") || strings.HasPrefix(respContentType, "image/") || strings.HasPrefix(respContentType, "video/") {
+		// 同步返回了媒体内容
+		task.Status = "succeeded"
+		task.ResultJSON = fmt.Sprintf(`{"content_type": %q, "data": %q}`, respContentType, string(respBody))
+		now := time.Now()
+		task.CompletedAt = &now
+		_ = h.db.UpdateMiniMaxMediaTask(task)
+		h.logAPIRequestByID(apiKeyID, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), string(respBody), task.ClientIP, time.Since(start), usageSummary{})
+		return
+	}
+
+	// 异步模式：需要轮询 external_task_id
+	if task.ExternalTaskID == "" {
+		// 无法获取任务ID，标记为失败
+		task.Status = "failed"
+		task.ErrorMessage = "无法获取 MiniMax 任务 ID"
+		now := time.Now()
+		task.CompletedAt = &now
+		_ = h.db.UpdateMiniMaxMediaTask(task)
+		return
+	}
+
+	// 轮询 MiniMax 任务状态
+	deadline := start.Add(5 * time.Minute) // 最多等待5分钟
+	for {
+		if time.Now().After(deadline) {
+			task.Status = "failed"
+			task.ErrorMessage = "任务超时未完成"
+			now := time.Now()
+			task.CompletedAt = &now
+			_ = h.db.UpdateMiniMaxMediaTask(task)
+			return
+		}
+
+		time.Sleep(3 * time.Second)
+
+		pollResp, err := h.pollMinimaxTaskStatus(task.ExternalTaskID, apiKey, baseURL, model)
+		if err != nil {
+			continue
+		}
+
+		task.Status = pollResp.Status
+		if pollResp.ResultJSON != "" {
+			task.ResultJSON = pollResp.ResultJSON
+		}
+		if pollResp.ErrorMessage != "" {
+			task.ErrorMessage = pollResp.ErrorMessage
+		}
+
+		if pollResp.Status == "succeeded" || pollResp.Status == "failed" {
+			now := time.Now()
+			task.CompletedAt = &now
+			_ = h.db.UpdateMiniMaxMediaTask(task)
+			h.logAPIRequestByID(apiKeyID, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), task.ResultJSON, task.ClientIP, time.Since(start), usageSummary{})
+			return
+		}
+	}
+}
+
+// minimaxPollResponse MiniMax 轮询响应
+type minimaxPollResponse struct {
+	Status       string
+	ResultJSON   string
+	ErrorMessage string
+}
+
+// pollMinimaxTaskStatus 轮询 MiniMax 任务状态
+func (h *AIGatewayHandler) pollMinimaxTaskStatus(externalTaskID, apiKey, baseURL, model string) (*minimaxPollResponse, error) {
+	// MiniMax 任务查询端点格式：/v1/tasks/{task_id}
+	pollURL := strings.TrimRight(baseURL, "/") + "/v1/tasks/" + externalTaskID
+
+	req, err := http.NewRequest(http.MethodGet, pollURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		msg := extractString(payload, "message")
+		if msg == "" {
+			msg = fmt.Sprintf("轮询失败，状态码 %d", resp.StatusCode)
+		}
+		return &minimaxPollResponse{Status: "failed", ErrorMessage: msg}, nil
+	}
+
+	// 解析状态
+	status := extractMinimaxTaskStatus(payload)
+	resultJSON := ""
+	errorMessage := extractMinimaxTaskError(payload)
+
+	if status == "succeeded" {
+		resultJSON = string(body)
+	}
+
+	return &minimaxPollResponse{
+		Status:       mapMinimaxAsyncStatus(status),
+		ResultJSON:   resultJSON,
+		ErrorMessage: errorMessage,
+	}, nil
+}
+
+// extractMinimaxTaskID 从响应中提取 MiniMax 任务 ID
+func extractMinimaxTaskID(payload map[string]interface{}) string {
+	// 可能的字段名：task_id, id, output.task_id
+	if id := extractString(payload, "task_id"); id != "" {
+		return id
+	}
+	if id := extractString(payload, "id"); id != "" {
+		return id
+	}
+	if output, ok := payload["output"].(map[string]interface{}); ok {
+		if id := extractString(output, "task_id"); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// extractMinimaxTaskStatus 从响应中提取任务状态
+func extractMinimaxTaskStatus(payload map[string]interface{}) string {
+	// MiniMax 可能的状态：pending, processing, succeeded, failed
+	if status := extractString(payload, "status"); status != "" {
+		return status
+	}
+	if output, ok := payload["output"].(map[string]interface{}); ok {
+		if status := extractString(output, "status"); status != "" {
+			return status
+		}
+	}
+	return ""
+}
+
+// extractMinimaxTaskError 从响应中提取错误信息
+func extractMinimaxTaskError(payload map[string]interface{}) string {
+	if msg := extractString(payload, "message"); msg != "" {
+		return msg
+	}
+	if msg := extractString(payload, "error", "message"); msg != "" {
+		return msg
+	}
+	if output, ok := payload["output"].(map[string]interface{}); ok {
+		if msg := extractString(output, "error_message"); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+// mapMinimaxAsyncStatus 将 MiniMax 状态映射为内部状态
+func mapMinimaxAsyncStatus(status string) string {
+	switch strings.ToLower(status) {
+	case "pending", "queued":
+		return "pending"
+	case "processing", "running":
+		return "running"
+	case "succeeded", "success":
+		return "succeeded"
+	case "failed", "fail":
+		return "failed"
+	default:
+		return "pending"
+	}
+}
+
+// ListMinimaxTokenPlanTasks 获取当前 API Key 的 MiniMax 媒体任务列表
+// GET /api/minimax/token-plan/tasks
+func (h *AIGatewayHandler) ListMinimaxTokenPlanTasks(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+
+	limit := 20
+	offset := 0
+	if l := parseInt(c.Query("limit"), 0); l > 0 && l <= 100 {
+		limit = l
+	}
+	if o := parseInt(c.Query("offset"), 0); o >= 0 {
+		offset = o
+	}
+
+	tasks, err := h.db.ListMiniMaxMediaTasks(key.ID, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务列表失败", "code": 500})
+		return
+	}
+
+	total, _ := h.db.CountMiniMaxMediaTasks(key.ID)
+
+	// 转换输出格式
+	taskList := make([]gin.H, 0, len(tasks))
+	for _, t := range tasks {
+		item := gin.H{
+			"task_id":     t.ID,
+			"model":       t.Model,
+			"provider":    t.Provider,
+			"status":      t.Status,
+			"error":       t.ErrorMessage,
+			"created_at":  t.CreatedAt.Format(time.RFC3339),
+		}
+		if t.CompletedAt != nil {
+			item["completed_at"] = t.CompletedAt.Format(time.RFC3339)
+		}
+		if t.ExternalTaskID != "" {
+			item["external_task_id"] = t.ExternalTaskID
+		}
+		// 如果有结果，解析并提取 URL
+		if t.ResultJSON != "" && t.Status == "succeeded" {
+			var result map[string]interface{}
+			if err := json.Unmarshal([]byte(t.ResultJSON), &result); err == nil {
+				if output, ok := result["output"].(map[string]interface{}); ok {
+					urls := extractMediaURLs(output)
+					if len(urls) > 0 {
+						item["result_urls"] = urls
+					}
+				}
+			}
+		}
+		taskList = append(taskList, item)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"tasks":  taskList,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// GetMinimaxTokenPlanTask 获取 MiniMax 媒体任务详情
+// GET /api/minimax/token-plan/tasks/:id
+func (h *AIGatewayHandler) GetMinimaxTokenPlanTask(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+
+	taskID := c.Param("id")
+	task, err := h.db.GetMiniMaxMediaTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在", "code": 404})
+		return
+	}
+
+	// 验证任务属于当前 API Key
+	if task.APIKeyID != key.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问此任务", "code": 403})
+		return
+	}
+
+	result := gin.H{
+		"task_id":     task.ID,
+		"model":       task.Model,
+		"provider":    task.Provider,
+		"status":      task.Status,
+		"error":       task.ErrorMessage,
+		"request":     task.RequestBody,
+		"created_at":  task.CreatedAt.Format(time.RFC3339),
+	}
+
+	if task.CompletedAt != nil {
+		result["completed_at"] = task.CompletedAt.Format(time.RFC3339)
+	}
+	if task.ExternalTaskID != "" {
+		result["external_task_id"] = task.ExternalTaskID
+	}
+	if task.ResultJSON != "" {
+		var resultMap map[string]interface{}
+		if err := json.Unmarshal([]byte(task.ResultJSON), &resultMap); err == nil {
+			result["result"] = resultMap
+			// 提取媒体 URL 列表
+			if urls := extractMediaURLs(resultMap); len(urls) > 0 {
+				result["result_urls"] = urls
+			}
+			// 提取内容类型
+			if contentType := extractContentType(resultMap); contentType != "" {
+				result["content_type"] = contentType
+			}
+		} else {
+			result["result"] = task.ResultJSON
+		}
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// extractMediaURLs 从结果中提取媒体 URL
+func extractMediaURLs(output map[string]interface{}) []string {
+	urls := make([]string, 0)
+	var walk func(v interface{})
+	walk = func(v interface{}) {
+		switch val := v.(type) {
+		case string:
+			if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") {
+				urls = append(urls, val)
+			}
+		case map[string]interface{}:
+			for _, v := range val {
+				walk(v)
+			}
+		case []interface{}:
+			for _, v := range val {
+				walk(v)
+			}
+		}
+	}
+	walk(output)
+	return urls
+}
+
+// extractContentType 从结果中提取内容类型
+func extractContentType(output map[string]interface{}) string {
+	// 优先从顶层 content_type 字段获取
+	if ct := extractString(output, "content_type"); ct != "" {
+		return ct
+	}
+	// 尝试从 output 对象中获取
+	if outputObj, ok := output["output"].(map[string]interface{}); ok {
+		if ct := extractString(outputObj, "content_type"); ct != "" {
+			return ct
+		}
+		// 如果 output 是 URL 字符串，根据扩展名推断
+		if urlStr := extractString(outputObj, "url"); urlStr != "" {
+			return inferContentType(urlStr)
+		}
+		if urlStr := extractString(outputObj, "audio_url"); urlStr != "" {
+			return inferContentType(urlStr)
+		}
+		if urlStr := extractString(outputObj, "video_url"); urlStr != "" {
+			return inferContentType(urlStr)
+		}
+		if urlStr := extractString(outputObj, "image_url"); urlStr != "" {
+			return inferContentType(urlStr)
+		}
+	}
+	// 根据模型推断
+	if model := extractString(output, "model"); model != "" {
+		return inferContentTypeByModel(model)
+	}
+	return ""
+}
+
+// inferContentType 根据 URL 扩展名推断内容类型
+func inferContentType(url string) string {
+	if strings.HasSuffix(url, ".mp3") || strings.HasSuffix(url, ".mpeg") {
+		return "audio/mpeg"
+	}
+	if strings.HasSuffix(url, ".wav") {
+		return "audio/wav"
+	}
+	if strings.HasSuffix(url, ".mp4") {
+		return "video/mp4"
+	}
+	if strings.HasSuffix(url, ".png") {
+		return "image/png"
+	}
+	if strings.HasSuffix(url, ".jpg") || strings.HasSuffix(url, ".jpeg") {
+		return "image/jpeg"
+	}
+	if strings.HasSuffix(url, ".gif") {
+		return "image/gif"
+	}
+	if strings.HasSuffix(url, ".webp") {
+		return "image/webp"
+	}
+	return "application/octet-stream"
+}
+
+// inferContentTypeByModel 根据模型名称推断内容类型
+func inferContentTypeByModel(model string) string {
+	switch {
+	case strings.HasPrefix(model, "speech-") || strings.HasPrefix(model, "tts-"):
+		return "audio/mpeg"
+	case strings.HasPrefix(model, "Hailuo-") || strings.HasPrefix(model, "Music-"):
+		return "video/mp4"
+	case model == "image-01":
+		return "image/png"
+	default:
+		return "application/octet-stream"
 	}
 }
 
@@ -1784,6 +2270,29 @@ func (h *AIGatewayHandler) logAPIRequest(key *models.AIAPIKey, model, provider, 
 		Currency:      usage.Currency,
 	})
 	_ = h.db.TouchAIAPIKeyUsage(key.ID, time.Now(), usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.Cost, usage.Currency)
+}
+
+func (h *AIGatewayHandler) logAPIRequestByID(apiKeyID, model, provider, endpoint, requestType string, statusCode int, success bool, errMessage, requestBody, responseBody, clientIP string, latency time.Duration, usage usageSummary) {
+	_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
+		APIKeyID:      apiKeyID,
+		Model:         model,
+		Provider:      provider,
+		Endpoint:      endpoint,
+		RequestType:   requestType,
+		StatusCode:    statusCode,
+		Success:       success,
+		ErrorMessage:  errMessage,
+		RequestBody:   truncateString(requestBody, 10000),
+		ResponseBody:  truncateString(responseBody, 10000),
+		ClientIP:      clientIP,
+		LatencyMS:     latency.Milliseconds(),
+		InputTokens:   usage.InputTokens,
+		OutputTokens:  usage.OutputTokens,
+		TotalTokens:   usage.TotalTokens,
+		EstimatedCost: usage.Cost,
+		Currency:      usage.Currency,
+	})
+	_ = h.db.TouchAIAPIKeyUsage(apiKeyID, time.Now(), usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.Cost, usage.Currency)
 }
 
 // requireImageUnderstandingAdmin 校验图像理解模块独立管理员密码

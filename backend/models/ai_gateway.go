@@ -558,3 +558,123 @@ func (db *DB) GetAIUsageReport(groupBy, apiKeyID string, since time.Time) ([]*AI
 	}
 	return result, nil
 }
+
+// MiniMaxMediaTask MiniMax 媒体生成异步任务
+type MiniMaxMediaTask struct {
+	ID              string     `json:"id"`
+	APIKeyID        string     `json:"api_key_id"`
+	Model           string     `json:"model"`
+	Provider        string     `json:"provider"` // minimax
+	Status          string     `json:"status"`   // pending/running/succeeded/failed
+	RequestBody     string     `json:"request_body"`
+	ResultJSON      string     `json:"result_json,omitempty"`
+	ErrorMessage    string     `json:"error_message,omitempty"`
+	ExternalTaskID  string     `json:"external_task_id"` // MiniMax 返回的任务ID
+	ClientIP        string     `json:"client_ip"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+// InitMiniMaxMediaTasks 初始化 MiniMax 媒体任务表
+func (db *DB) InitMiniMaxMediaTasks() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS minimax_media_tasks (
+			id TEXT PRIMARY KEY,
+			api_key_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			provider TEXT DEFAULT 'minimax',
+			status TEXT DEFAULT 'pending',
+			request_body TEXT DEFAULT '',
+			result_json TEXT DEFAULT '',
+			error_message TEXT DEFAULT '',
+			external_task_id TEXT DEFAULT '',
+			client_ip TEXT DEFAULT '',
+			completed_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_minimax_tasks_api_key ON minimax_media_tasks(api_key_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_minimax_tasks_status ON minimax_media_tasks(status, created_at DESC);
+	`)
+	return err
+}
+
+// CreateMiniMaxMediaTask 创建 MiniMax 媒体任务
+func (db *DB) CreateMiniMaxMediaTask(task *MiniMaxMediaTask) error {
+	task.CreatedAt = time.Now()
+	_, err := db.conn.Exec(`
+		INSERT INTO minimax_media_tasks (id, api_key_id, model, provider, status, request_body, result_json, error_message, external_task_id, client_ip, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, task.ID, task.APIKeyID, task.Model, task.Provider, task.Status, task.RequestBody, task.ResultJSON, task.ErrorMessage, task.ExternalTaskID, task.ClientIP, task.CreatedAt)
+	return err
+}
+
+// GetMiniMaxMediaTask 获取 MiniMax 媒体任务
+func (db *DB) GetMiniMaxMediaTask(id string) (*MiniMaxMediaTask, error) {
+	task := &MiniMaxMediaTask{}
+	err := db.conn.QueryRow(`
+		SELECT id, api_key_id, model, provider, status, request_body, result_json, error_message, external_task_id, client_ip, completed_at, created_at
+		FROM minimax_media_tasks WHERE id = ?
+	`, id).Scan(&task.ID, &task.APIKeyID, &task.Model, &task.Provider, &task.Status, &task.RequestBody, &task.ResultJSON, &task.ErrorMessage, &task.ExternalTaskID, &task.ClientIP, &task.CompletedAt, &task.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+// GetMiniMaxMediaTaskByAPIKey 获取指定 API Key 的 MiniMax 媒体任务
+func (db *DB) GetMiniMaxMediaTaskByAPIKey(id string) (*MiniMaxMediaTask, error) {
+	return db.GetMiniMaxMediaTask(id)
+}
+
+// UpdateMiniMaxMediaTask 更新 MiniMax 媒体任务
+func (db *DB) UpdateMiniMaxMediaTask(task *MiniMaxMediaTask) error {
+	_, err := db.conn.Exec(`
+		UPDATE minimax_media_tasks SET status=?, result_json=?, error_message=?, external_task_id=?, completed_at=? WHERE id=?
+	`, task.Status, task.ResultJSON, task.ErrorMessage, task.ExternalTaskID, task.CompletedAt, task.ID)
+	return err
+}
+
+// ListMiniMaxMediaTasks 列出 MiniMax 媒体任务
+func (db *DB) ListMiniMaxMediaTasks(apiKeyID string, limit, offset int) ([]*MiniMaxMediaTask, error) {
+	query := `
+		SELECT id, api_key_id, model, provider, status, request_body, result_json, error_message, external_task_id, client_ip, completed_at, created_at
+		FROM minimax_media_tasks WHERE 1=1`
+	args := make([]interface{}, 0)
+
+	if apiKeyID != "" {
+		query += ` AND api_key_id = ?`
+		args = append(args, apiKeyID)
+	}
+
+	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tasks := make([]*MiniMaxMediaTask, 0)
+	for rows.Next() {
+		task := &MiniMaxMediaTask{}
+		if err := rows.Scan(&task.ID, &task.APIKeyID, &task.Model, &task.Provider, &task.Status, &task.RequestBody, &task.ResultJSON, &task.ErrorMessage, &task.ExternalTaskID, &task.ClientIP, &task.CompletedAt, &task.CreatedAt); err != nil {
+			continue
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, nil
+}
+
+// CountMiniMaxMediaTasks 统计 MiniMax 媒体任务数量
+func (db *DB) CountMiniMaxMediaTasks(apiKeyID string) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM minimax_media_tasks`
+	args := []interface{}{}
+	if apiKeyID != "" {
+		query += ` WHERE api_key_id = ?`
+		args = append(args, apiKeyID)
+	}
+	err := db.conn.QueryRow(query, args...).Scan(&count)
+	return count, err
+}

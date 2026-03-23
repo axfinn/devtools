@@ -158,6 +158,43 @@
       </el-col>
     </el-row>
 
+    <!-- MiniMax Token Plan 任务管理 -->
+    <el-card class="minimax-tasks-card" v-if="superAdminPassword">
+      <template #header>
+        <div class="card-header">
+          <span>MiniMax 媒体任务</span>
+          <el-button text @click="loadMinimaxTasks">刷新</el-button>
+        </div>
+      </template>
+      <el-table :data="minimaxTasks" v-loading="loadingMinimaxTasks" stripe size="small" max-height="400">
+        <el-table-column prop="task_id" label="任务ID" width="180">
+          <template #default="{ row }">
+            <el-button text type="primary" size="small" @click="viewMinimaxTask(row)">{{ row.task_id }}</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column prop="model" label="模型" width="140">
+          <template #default="{ row }">
+            <el-tag size="small" type="success">{{ row.model }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'succeeded' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'running' ? 'warning' : 'info'">
+              {{ row.status === 'succeeded' ? '成功' : row.status === 'failed' ? '失败' : row.status === 'running' ? '进行中' : '等待' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" width="170">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }">
+            <el-button text type="primary" size="small" @click="viewMinimaxTask(row)">详情</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <!-- 模型快速测试 -->
     <el-card class="test-card">
       <template #header>
@@ -492,6 +529,12 @@
           <el-descriptions-item v-for="route in minimaxDocs.routes" :key="route.path" :label="`${route.method} ${route.path}`">
             {{ route.description }}
           </el-descriptions-item>
+          <el-descriptions-item label="GET /api/minimax/token-plan/tasks">
+            查询当前 API Key 的媒体任务列表
+          </el-descriptions-item>
+          <el-descriptions-item label="GET /api/minimax/token-plan/tasks/:id">
+            查询指定任务的详情和结果
+          </el-descriptions-item>
         </el-descriptions>
 
         <h4 style="margin-top: 16px;">模型请求示例</h4>
@@ -556,6 +599,166 @@ a.download = "output.mp3";
 a.click();</pre>
           </el-tab-pane>
         </el-tabs>
+
+        <el-divider />
+
+        <h4>异步任务使用说明（视频/音乐/图片）</h4>
+        <div class="docs-panel-stack">
+          <p class="docs-text">
+            视频、音乐和图片生成采用异步模式：提交任务后返回 task_id，通过轮询查询任务状态和结果。
+          </p>
+          <el-tabs>
+            <el-tab-pane label="异步调用流程">
+              <pre class="doc-code">// 1. 提交生成任务
+const createResp = await fetch("${origin}/api/minimax/token-plan/v1/generations", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer dtk_ai_xxx",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    model: "Hailuo-2.3-Fast",
+    prompt: "一只猫在草地上玩耍",
+    duration: 6,
+    resolution: "768P"
+  })
+});
+const { task_id, status } = await createResp.json();
+console.log("任务ID:", task_id);
+
+// 2. 轮询任务状态
+async function pollTask(taskId, maxAttempts = 60) {
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 3000)); // 3秒间隔
+    const resp = await fetch(\`\${origin}/api/minimax/token-plan/tasks/\${taskId}\`, {
+      headers: { "Authorization": "Bearer dtk_ai_xxx" }
+    });
+    const task = await resp.json();
+    console.log(\`状态: \${task.status}\`);
+    if (task.status === "succeeded") {
+      console.log("结果:", task.result_urls);
+      return task;
+    }
+    if (task.status === "failed") {
+      throw new Error("任务失败: " + task.error);
+    }
+  }
+  throw new Error("任务超时");
+}
+
+// 3. 下载结果
+const result = await pollTask(task_id);
+if (result.result_urls && result.result_urls.length > 0) {
+  const videoUrl = result.result_urls[0];
+  window.open(videoUrl, "_blank");
+}</pre>
+            </el-tab-pane>
+            <el-tab-pane label="任务列表查询">
+              <pre class="doc-code">// 查询当前 API Key 的所有任务
+const listResp = await fetch("${origin}/api/minimax/token-plan/tasks", {
+  headers: { "Authorization": "Bearer dtk_ai_xxx" }
+});
+const { tasks, total } = await listResp.json();
+console.log("任务总数:", total);
+tasks.forEach(task => {
+  console.log(\`[\${task.status}] \${task.model} - \${task.task_id}\`);
+  if (task.result_urls) {
+    console.log("  结果:", task.result_urls);
+  }
+});</pre>
+            </el-tab-pane>
+          </el-tabs>
+        </div>
+
+        <el-divider />
+
+        <h4>模型特性说明</h4>
+        <el-table :data="minimaxModelFeatures" size="small" stripe>
+          <el-table-column prop="model" label="模型" width="160">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.async ? 'warning' : 'success'">{{ row.model }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="type" label="类型" width="100" />
+          <el-table-column prop="mode" label="模式" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.async ? 'warning' : 'success'">{{ row.async ? '异步' : '同步' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" label="说明" min-width="300" />
+        </el-table>
+      </div>
+    </el-dialog>
+
+    <!-- MiniMax Token Plan 任务详情对话框 -->
+    <el-dialog v-model="minimaxTaskVisible" width="860px" title="MiniMax 任务详情">
+      <div v-if="currentMinimaxTask" class="minimax-task-detail">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="任务ID">{{ currentMinimaxTask.task_id }}</el-descriptions-item>
+          <el-descriptions-item label="模型">
+            <el-tag size="small" type="success">{{ currentMinimaxTask.model }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag size="small" :type="currentMinimaxTask.status === 'succeeded' ? 'success' : currentMinimaxTask.status === 'failed' ? 'danger' : currentMinimaxTask.status === 'running' ? 'warning' : 'info'">
+              {{ currentMinimaxTask.status === 'succeeded' ? '成功' : currentMinimaxTask.status === 'failed' ? '失败' : currentMinimaxTask.status === 'running' ? '进行中' : '等待' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ formatTime(currentMinimaxTask.created_at) }}</el-descriptions-item>
+          <el-descriptions-item v-if="currentMinimaxTask.completed_at" label="完成时间">{{ formatTime(currentMinimaxTask.completed_at) }}</el-descriptions-item>
+          <el-descriptions-item v-if="currentMinimaxTask.external_task_id" label="外部任务ID">{{ currentMinimaxTask.external_task_id }}</el-descriptions-item>
+          <el-descriptions-item v-if="currentMinimaxTask.error" label="错误信息" :span="2">
+            <span style="color: #dc2626;">{{ currentMinimaxTask.error }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <!-- 媒体预览区域 -->
+        <div v-if="currentMinimaxTask.result_urls && currentMinimaxTask.result_urls.length > 0" class="media-preview-section">
+          <h4>生成结果</h4>
+          <div class="media-preview-grid">
+            <div v-for="(url, idx) in currentMinimaxTask.result_urls" :key="idx" class="media-preview-item">
+              <!-- 音频预览 -->
+              <div v-if="currentMinimaxTask.content_type && currentMinimaxTask.content_type.startsWith('audio/')" class="audio-preview">
+                <audio controls :src="url" style="width: 100%;"></audio>
+                <div class="media-url-box">
+                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
+                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                </div>
+              </div>
+              <!-- 视频预览 -->
+              <div v-else-if="currentMinimaxTask.content_type && currentMinimaxTask.content_type.startsWith('video/')" class="video-preview">
+                <video controls :src="url" style="width: 100%; max-height: 300px;"></video>
+                <div class="media-url-box">
+                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
+                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                </div>
+              </div>
+              <!-- 图片预览 -->
+              <div v-else-if="currentMinimaxTask.content_type && currentMinimaxTask.content_type.startsWith('image/')" class="image-preview">
+                <el-image :src="url" fit="contain" style="width: 100%; max-height: 300px;" :preview-src-list="currentMinimaxTask.result_urls" />
+                <div class="media-url-box">
+                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
+                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                </div>
+              </div>
+              <!-- 通用链接 -->
+              <div v-else class="generic-preview">
+                <el-link :href="url" target="_blank" type="primary">
+                  <el-icon><Download /></el-icon> 下载 / 预览
+                </el-link>
+                <div class="media-url-box">
+                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
+                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 原始响应 JSON -->
+        <div v-if="currentMinimaxTask.result" class="result-json-section">
+          <h4>原始响应</h4>
+          <pre class="doc-json">{{ typeof currentMinimaxTask.result === 'string' ? currentMinimaxTask.result : JSON.stringify(currentMinimaxTask.result, null, 2) }}</pre>
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -563,7 +766,8 @@ a.click();</pre>
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElIcon } from 'element-plus'
+import { Download } from '@element-plus/icons-vue'
 
 const API_BASE = '/api/ai-gateway'
 const PASSWORD_KEY = 'ai_gateway_super_admin_password'
@@ -598,6 +802,12 @@ const form = ref({
 const reportGroupBy = ref('day')
 const reportDays = ref(30)
 const origin = typeof window !== 'undefined' ? window.location.origin : ''
+
+// MiniMax Token Plan 任务管理
+const minimaxTasks = ref([])
+const loadingMinimaxTasks = ref(false)
+const minimaxTaskVisible = ref(false)
+const currentMinimaxTask = ref(null)
 
 // 模型快速测试
 const testPrompt = ref('')
@@ -665,7 +875,7 @@ const init = async () => {
   }
   sessionStorage.setItem(PASSWORD_KEY, superAdminPassword.value)
   await loadKeys()
-  await Promise.all([loadReports(), loadAlerts()])
+  await Promise.all([loadReports(), loadAlerts(), loadMinimaxTasks()])
 }
 
 const createKey = async () => {
@@ -791,6 +1001,55 @@ const loadMinimaxDocs = async () => {
   minimaxDocsVisible.value = true
 }
 
+const loadMinimaxTasks = async () => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
+  loadingMinimaxTasks.value = true
+  try {
+    const res = await fetch(`/api/minimax/token-plan/tasks?limit=50`, {
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value }
+    })
+    const data = await res.json()
+    if (res.ok) {
+      minimaxTasks.value = data.tasks || []
+    } else {
+      ElMessage.error(data.error || '加载任务失败')
+    }
+  } catch (err) {
+    ElMessage.error('加载任务失败: ' + err.message)
+  } finally {
+    loadingMinimaxTasks.value = false
+  }
+}
+
+const viewMinimaxTask = async (row) => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
+  try {
+    const res = await fetch(`/api/minimax/token-plan/tasks/${row.task_id}`, {
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value }
+    })
+    const data = await res.json()
+    if (res.ok) {
+      currentMinimaxTask.value = data
+      minimaxTaskVisible.value = true
+    } else {
+      ElMessage.error(data.error || '加载任务详情失败')
+    }
+  } catch (err) {
+    ElMessage.error('加载任务详情失败: ' + err.message)
+  }
+}
+
+const copyText = async (text) => {
+  await navigator.clipboard.writeText(text)
+  ElMessage.success('已复制')
+}
+
 const copyPlainKey = async () => {
   await navigator.clipboard.writeText(createdPlainKey.value)
   ElMessage.success('已复制')
@@ -905,6 +1164,17 @@ const gatewayFaqs = [
   { q: '如何统计每个业务方的费用？', a: '建议每个业务系统单独签发一个 Key，这样后台会自动按 Key 统计请求数、Token、费用和报表。' },
   { q: '为什么有些模型没有 Token？', a: '图片和视频模型通常按次计费，没有文本 Token 概念，网关会写入 request_cost 并累计 total_cost。' },
   { q: '如何排查某次调用失败？', a: '在 Key 详情里查看最近请求明细，重点看状态码、错误信息、模型名、耗时和费用字段。' }
+]
+
+// MiniMax 模型特性表
+const minimaxModelFeatures = [
+  { model: 'speech-2.8-hd', type: 'TTS', async: false, description: '高清语音合成（推荐），同步返回音频' },
+  { model: 'speech-2.6-hd', type: 'TTS', async: false, description: '高清语音合成，同步返回音频' },
+  { model: 'speech-02-hd', type: 'TTS', async: false, description: 'TTS HD 模型，同步返回音频' },
+  { model: 'Hailuo-2.3-Fast', type: '视频', async: true, description: 'Hailuo 视频生成 Fast 版（768P 6s），异步任务' },
+  { model: 'Hailuo-2.3', type: '视频', async: true, description: 'Hailuo 视频生成标准版（768P 6s），异步任务' },
+  { model: 'Music-2.5', type: '音乐', async: true, description: '音乐生成（最长 5 分钟），异步任务' },
+  { model: 'image-01', type: '图片', async: true, description: '图像生成，异步任务' }
 ]
 
 const prettyJSON = (value) => JSON.stringify(value, null, 2)
@@ -1058,5 +1328,61 @@ onMounted(() => {
   .docs-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.minimax-tasks-card {
+  border-radius: 22px;
+}
+
+.minimax-task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.media-preview-section {
+  margin-top: 8px;
+}
+
+.media-preview-section h4 {
+  margin: 0 0 12px;
+}
+
+.media-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.media-preview-item {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.media-url-box {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.url-link {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.audio-preview audio,
+.video-preview video {
+  border-radius: 8px;
+}
+
+.result-json-section {
+  margin-top: 8px;
+}
+
+.result-json-section h4 {
+  margin: 0 0 12px;
 }
 </style>

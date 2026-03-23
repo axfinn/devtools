@@ -119,6 +119,11 @@ func main() {
 		log.Fatalf("LLM Tasks 数据库初始化失败: %v", err)
 	}
 
+	// 初始化 MiniMax 媒体任务表
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		log.Fatalf("MiniMax Media Tasks 数据库初始化失败: %v", err)
+	}
+
 	// 初始化 NFS 分享数据库表
 	if err := db.InitNFSShare(); err != nil {
 		log.Fatalf("NFS 分享数据库初始化失败: %v", err)
@@ -705,6 +710,8 @@ func main() {
 		// MiniMax Token Plan 媒体生成代理（TTS HD / Hailuo 视频 / Music / image-01）
 		api.POST("/minimax/token-plan/v1/generations", aiGatewayHandler.ProxyMinimaxTokenPlan)
 		api.GET("/minimax/token-plan/docs", aiGatewayHandler.GetTokenPlanDocs)
+		api.GET("/minimax/token-plan/tasks", aiGatewayHandler.ListMinimaxTokenPlanTasks)
+		api.GET("/minimax/token-plan/tasks/:id", aiGatewayHandler.GetMinimaxTokenPlanTask)
 
 		// DashScope Anthropic 协议代理
 		api.POST("/dashscope/anthropic/v1/messages", aiGatewayHandler.ProxyDashScopeAnthropic)
