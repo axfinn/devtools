@@ -75,6 +75,53 @@ type MediaGenerationRequest struct {
 	Parameters      map[string]interface{} `json:"parameters"`
 }
 
+// TTSAllowedModels MiniMax TTS 允许的模型列表
+var TTSAllowedModels = []string{
+	"speech-01-hd",
+	"speech-01",
+	"tts-01-hd",
+	"tts-01",
+}
+
+// TokenPlanAllowedModels MiniMax Token Plan 允许的模型列表
+var TokenPlanAllowedModels = []string{
+	// TTS HD
+	"speech-2.8-hd",
+	"speech-2.6-hd",
+	"speech-02-hd",
+	// Hailuo 视频
+	"Hailuo-2.3-Fast",
+	"Hailuo-2.3",
+	// Music
+	"Music-2.5",
+	// Image
+	"image-01",
+}
+
+// TokenPlanRequest MiniMax Token Plan 通用请求
+type TokenPlanRequest struct {
+	Model    string                 `json:"model" binding:"required"`
+	Prompt   string                 `json:"prompt"`
+	Text     string                 `json:"text"`
+	Image    string                 `json:"image"`
+	Images   []string               `json:"images"`
+	Size     string                 `json:"size"`
+	Duration int                    `json:"duration"`
+	Count    int                    `json:"count"`
+	Parameters map[string]interface{} `json:"parameters"`
+}
+
+// TTSRequest MiniMax TTS 请求
+type TTSRequest struct {
+	Model       string  `json:"model" binding:"required"`
+	Text        string  `json:"text" binding:"required"`
+	Voice       string  `json:"voice"`
+	Speed       float64 `json:"speed"`
+	Volume      float64 `json:"volume"`
+	Pitch       float64 `json:"pitch"`
+	AudioFormat string  `json:"audio_format"` // mp3/wav/pcm
+}
+
 func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler) *AIGatewayHandler {
 	return &AIGatewayHandler{
 		db:      db,
@@ -1157,6 +1204,318 @@ func (h *AIGatewayHandler) ProxyDashScopeAnthropic(c *gin.Context) {
 	h.proxyAnthropic(c, "https://coding.dashscope.aliyuncs.com/apps/anthropic", h.cfg.DashScope.APIKey, "/api/dashscope/anthropic/v1/messages", []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M2.5"})
 }
 
+// ProxyMinimaxTTS 转发 TTS 请求到 MiniMax TTS 端点
+// POST /api/minimax/tts/v1/generations
+func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+
+	// 直接透传请求体到上游
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+		return
+	}
+
+	if len(bodyBytes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体为空"})
+		return
+	}
+
+	// 解析 model 字段用于校验和日志
+	var bodyMap map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &bodyMap); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体 JSON 格式错误"})
+		return
+	}
+
+	model, _ := bodyMap["model"].(string)
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 model 字段"})
+		return
+	}
+
+	// 校验模型是否在允许列表中
+	if !isModelAllowed(model, TTSAllowedModels) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("该端点不支持模型 %s，允许的模型: %v", model, TTSAllowedModels)})
+		return
+	}
+
+	if !h.ensureModelAllowed(c, key, model) {
+		return
+	}
+
+	apiKey := h.cfg.MiniMaxTTS.APIKey
+	if apiKey == "" {
+		apiKey = h.cfg.MiniMax.APIKey // fallback to MiniMax APIKey
+	}
+
+	baseURL := h.cfg.MiniMaxTTS.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.minimaxi.com"
+	}
+
+	if apiKey == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置 MiniMax TTS API Key"})
+		return
+	}
+
+	start := time.Now()
+	upstreamURL := strings.TrimRight(baseURL, "/") + "/t2a_v2"
+
+	// 使用 doRawRequest 透传二进制响应
+	respBody, err := h.doRawRequest(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
+	if err != nil {
+		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 计算使用量（按字符数计费）
+	textLen := len(interfaceToString(bodyMap["text"]))
+	usage := usageSummary{Cost: float64(textLen) * 0.001, Currency: "CNY"} // 估算成本
+
+	h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+
+	// 透传音频二进制响应
+	c.DataFromReader(http.StatusOK, int64(len(respBody)), "audio/mp3", nil, nil)
+}
+
+// GetTTSDocs 返回 TTS 端点的 API 文档
+// GET /api/minimax/tts/docs
+func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"title":   "MiniMax TTS 接口文档",
+		"summary": "通过 AI Gateway 调用 MiniMax Text to Speech HD 模型，支持语音合成。",
+		"auth": gin.H{
+			"api_key": "Authorization: Bearer dtk_ai_xxx",
+			"scope":   "media",
+		},
+		"base_url":  "/api/minimax/tts",
+		"upstream":  "https://api.minimaxi.com/t2a_v2",
+		"models":    TTSAllowedModels,
+		"routes": []gin.H{
+			{"method": "GET", "path": "/api/minimax/tts/docs", "description": "获取本文档"},
+			{"method": "POST", "path": "/api/minimax/tts/v1/generations", "description": "MiniMax TTS 接口"},
+		},
+		"examples": gin.H{
+			"request": gin.H{
+				"model": "speech-01-hd",
+				"text":  "你好，这是语音合成测试",
+				"voice": "female_shaohua",
+				"speed": 1.0,
+				"audio_format": "mp3",
+			},
+			"curl": gin.H{
+				"language": "cURL",
+				"code": `curl -X POST https://your-devtools:8080/api/minimax/tts/v1/generations \
+  -H "Authorization: Bearer dtk_ai_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "speech-01-hd",
+    "text": "你好，这是语音合成测试",
+    "voice": "female_shaohua",
+    "speed": 1.0,
+    "audio_format": "mp3"
+  }' \
+  --output audio.mp3`,
+			},
+		},
+		"model_descriptions": gin.H{
+			"speech-01-hd": "高清语音合成模型（推荐）",
+			"speech-01":    "标准语音合成模型",
+			"tts-01-hd":    "TTS HD 模型",
+			"tts-01":       "TTS 标准模型",
+		},
+	})
+}
+
+// resolveTokenPlanModelEndpoint 根据模型返回对应的上游 API 路径
+func resolveTokenPlanModelEndpoint(model string) string {
+	switch model {
+	// TTS HD
+	case "speech-2.8-hd", "speech-2.6-hd", "speech-02-hd":
+		return "/t2a_v2"
+	// Hailuo 视频
+	case "Hailuo-2.3-Fast", "Hailuo-2.3":
+		return "/v1/hailuo/generation"
+	// Music
+	case "Music-2.5":
+		return "/v1/music/generation"
+	// Image
+	case "image-01":
+		return "/v1/image/generation"
+	default:
+		return ""
+	}
+}
+
+// ProxyMinimaxTokenPlan 转发 Token Plan 请求到 MiniMax Token Plan 端点
+// POST /api/minimax/token-plan/v1/generations
+func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+
+	// 直接透传请求体到上游
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+		return
+	}
+
+	if len(bodyBytes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体为空"})
+		return
+	}
+
+	// 解析 model 字段用于校验和日志
+	var bodyMap map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &bodyMap); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体 JSON 格式错误"})
+		return
+	}
+
+	model, _ := bodyMap["model"].(string)
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 model 字段"})
+		return
+	}
+
+	// 校验模型是否在允许列表中
+	if !isModelAllowed(model, TokenPlanAllowedModels) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("该端点不支持模型 %s，允许的模型: %v", model, TokenPlanAllowedModels)})
+		return
+	}
+
+	if !h.ensureModelAllowed(c, key, model) {
+		return
+	}
+
+	apiKey := h.cfg.MiniMaxTokenPlan.APIKey
+	if apiKey == "" {
+		apiKey = h.cfg.MiniMax.APIKey // fallback to MiniMax APIKey
+	}
+
+	baseURL := h.cfg.MiniMaxTokenPlan.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.minimaxi.com"
+	}
+
+	if apiKey == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置 MiniMax Token Plan API Key"})
+		return
+	}
+
+	// 根据模型确定上游路径
+	upstreamPath := resolveTokenPlanModelEndpoint(model)
+	if upstreamPath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("模型 %s 未知的 API 路径", model)})
+		return
+	}
+
+	start := time.Now()
+	upstreamURL := strings.TrimRight(baseURL, "/") + upstreamPath
+
+	// 使用 doRawRequestWithResp 透传请求，获取实际的 Content-Type
+	respBody, respContentType, err := h.doRawRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
+	if err != nil {
+		h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 计算使用量（按请求计费）
+	usage := h.buildMediaUsage(model)
+
+	// 记录请求日志（音频数据不记录完整响应内容）
+	logRespBody := ""
+	if !strings.HasPrefix(respContentType, "audio/") {
+		logRespBody = string(respBody)
+	}
+
+	h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), logRespBody, c.ClientIP(), time.Since(start), usage)
+
+	// 根据实际 Content-Type 返回响应
+	if strings.HasPrefix(respContentType, "audio/") {
+		c.DataFromReader(http.StatusOK, int64(len(respBody)), respContentType, nil, nil)
+	} else {
+		c.Data(http.StatusOK, respContentType, respBody)
+	}
+}
+
+// GetTokenPlanDocs 返回 Token Plan 端点的 API 文档
+// GET /api/minimax/token-plan/docs
+func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"title":   "MiniMax Token Plan 接口文档",
+		"summary": "通过 AI Gateway 调用 MiniMax Token Plan 媒体生成模型，支持 TTS HD、Hailuo 视频、Music 音乐、Image 生成。",
+		"auth": gin.H{
+			"api_key": "Authorization: Bearer dtk_ai_xxx",
+			"scope":   "media",
+		},
+		"base_url":  "/api/minimax/token-plan",
+		"upstream":  "https://api.minimaxi.com",
+		"models":    TokenPlanAllowedModels,
+		"routes": []gin.H{
+			{"method": "GET", "path": "/api/minimax/token-plan/docs", "description": "获取本文档"},
+			{"method": "POST", "path": "/api/minimax/token-plan/v1/generations", "description": "MiniMax Token Plan 媒体生成接口"},
+		},
+		"examples": gin.H{
+			"tts_hd_request": gin.H{
+				"model": "speech-2.8-hd",
+				"text":  "你好，这是语音合成测试",
+				"voice_setting": gin.H{
+					"voice_id": "male-qn",
+					"speed":   1.0,
+				},
+				"audio_setting": gin.H{
+					"audio_format": "mp3",
+					"sample_rate": 32000,
+				},
+			},
+			"hailuo_request": gin.H{
+				"model":      "Hailuo-2.3-Fast",
+				"prompt":     "一只猫在草地上玩耍",
+				"duration":   6,
+				"resolution": "768P",
+			},
+			"music_request": gin.H{
+				"model":    "Music-2.5",
+				"prompt":   "轻松的爵士音乐，适合咖啡厅背景",
+				"duration": 300,
+			},
+			"image_request": gin.H{
+				"model":  "image-01",
+				"prompt": "一个穿着汉服的少女在樱花树下",
+				"size":   "1024x1024",
+			},
+			"curl": gin.H{
+				"language": "cURL",
+				"code": `curl -X POST https://your-devtools:8080/api/minimax/token-plan/v1/generations \
+  -H "Authorization: Bearer dtk_ai_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "speech-2.8-hd",
+    "text": "你好，这是语音合成测试"
+  }'`,
+			},
+		},
+		"model_descriptions": gin.H{
+			"speech-2.8-hd": "TTS HD 高清语音合成（推荐）",
+			"speech-2.6-hd": "TTS HD 高清语音合成",
+			"speech-02-hd":  "TTS HD 高清语音合成",
+			"Hailuo-2.3-Fast": "Hailuo 视频生成 Fast 版（768P 6s）",
+			"Hailuo-2.3":      "Hailuo 视频生成标准版（768P 6s）",
+			"Music-2.5":       "音乐生成（最长 5 分钟）",
+			"image-01":        "图像生成",
+		},
+	})
+}
+
 // proxyAnthropic 转发 Anthropic 协议请求到指定上游
 func (h *AIGatewayHandler) proxyAnthropic(c *gin.Context, upstreamBase, apiKey, logPath string, allowedModels []string) {
 	key, ok := h.authenticateAPIKey(c, "chat")
@@ -1298,9 +1657,15 @@ func (h *AIGatewayHandler) doJSONRequest(url, apiKey string, bodyMap map[string]
 
 // doRawRequest 转发原始请求到上游
 func (h *AIGatewayHandler) doRawRequest(url, apiKey, method string, body []byte, headers http.Header) ([]byte, error) {
+	respBody, _, err := h.doRawRequestWithResp(url, apiKey, method, body, headers)
+	return respBody, err
+}
+
+// doRawRequestWithResp 转发原始请求到上游，返回响应体、Content-Type 和错误
+func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body []byte, headers http.Header) ([]byte, string, error) {
 	req, err := http.NewRequest(method, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -1324,14 +1689,15 @@ func (h *AIGatewayHandler) doRawRequest(url, apiKey, method string, body []byte,
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+	contentType := resp.Header.Get("Content-Type")
 	if resp.StatusCode >= 400 {
-		return respBody, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+		return respBody, contentType, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
 	}
-	return respBody, nil
+	return respBody, contentType, nil
 }
 
 func (h *AIGatewayHandler) authenticateAPIKey(c *gin.Context, scope string) (*models.AIAPIKey, bool) {

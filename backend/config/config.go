@@ -27,6 +27,8 @@ type Config struct {
 	DeepSeek           DeepSeekConfig           `yaml:"deepseek"`
 	MiniMax            MiniMaxConfig            `yaml:"minimax"`
 	MiniMaxMCP         MiniMaxMCPConfig         `yaml:"minimax_mcp"`
+	MiniMaxTTS         MiniMaxTTSConfig         `yaml:"minimax_tts"`
+	MiniMaxTokenPlan   MiniMaxTokenPlanConfig   `yaml:"minimax_token_plan"`
 	DashScope          DashScopeConfig          `yaml:"dashscope"`
 	Bailian            BailianConfig            `yaml:"bailian"`
 	AIGateway          AIGatewayConfig          `yaml:"ai_gateway"`
@@ -196,6 +198,18 @@ func (cfg MiniMaxMCPConfig) Timeout() time.Duration {
 	return time.Duration(cfg.TimeoutSeconds) * time.Second
 }
 
+// MiniMaxTTSConfig MiniMax TTS 语音合成配置
+type MiniMaxTTSConfig struct {
+	APIKey  string `yaml:"api_key"`  // API Key（可与 MiniMax APIKey 共用）
+	BaseURL string `yaml:"base_url"` // TTS 上游地址，默认 https://api.minimaxi.com
+}
+
+// MiniMaxTokenPlanConfig MiniMax Token Plan 媒体生成配置（TTS HD / Hailuo 视频 / Music / image-01）
+type MiniMaxTokenPlanConfig struct {
+	APIKey  string `yaml:"api_key"`  // API Key（可与 MiniMax APIKey 共用）
+	BaseURL string `yaml:"base_url"` // 上游地址，默认 https://api.minimaxi.com
+}
+
 // HouseholdConfig 家庭物品整理模块配置
 type HouseholdConfig struct {
 	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数
@@ -340,6 +354,9 @@ func DefaultConfig() *Config {
 			TimeoutSeconds: 600,
 			Transport:      "line",
 		},
+		MiniMaxTokenPlan: MiniMaxTokenPlanConfig{
+			BaseURL: "https://api.minimaxi.com",
+		},
 		DashScope: DashScopeConfig{
 			BaseURL: "https://coding.dashscope.aliyuncs.com/v1",
 		},
@@ -429,6 +446,14 @@ func Load(path string) (*Config, error) {
 	}
 	if apiHost := os.Getenv("MINIMAX_MCP_API_HOST"); apiHost != "" {
 		cfg.MiniMaxMCP.APIHost = apiHost
+	}
+	// MiniMax TTS API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("MINIMAX_TTS_API_KEY"); apiKey != "" {
+		cfg.MiniMaxTTS.APIKey = apiKey
+	}
+	// MiniMax Token Plan API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("MINIMAX_TOKEN_PLAN_API_KEY"); apiKey != "" {
+		cfg.MiniMaxTokenPlan.APIKey = apiKey
 	}
 	// DashScope API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("DASHSCOPE_API_KEY"); apiKey != "" {

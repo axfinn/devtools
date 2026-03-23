@@ -698,6 +698,14 @@ func main() {
 		// MiniMax Anthropic 协议代理
 		api.POST("/minimax/anthropic/v1/messages", aiGatewayHandler.ProxyMinimaxAnthropic)
 
+		// MiniMax TTS 语音合成代理
+		api.POST("/minimax/tts/v1/generations", aiGatewayHandler.ProxyMinimaxTTS)
+		api.GET("/minimax/tts/docs", aiGatewayHandler.GetTTSDocs)
+
+		// MiniMax Token Plan 媒体生成代理（TTS HD / Hailuo 视频 / Music / image-01）
+		api.POST("/minimax/token-plan/v1/generations", aiGatewayHandler.ProxyMinimaxTokenPlan)
+		api.GET("/minimax/token-plan/docs", aiGatewayHandler.GetTokenPlanDocs)
+
 		// DashScope Anthropic 协议代理
 		api.POST("/dashscope/anthropic/v1/messages", aiGatewayHandler.ProxyDashScopeAnthropic)
 

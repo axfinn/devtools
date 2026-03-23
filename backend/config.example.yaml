@@ -165,6 +165,28 @@ minimax_mcp:
   # 传输协议: line（JSON 行） 或 header（Content-Length）
   transport: "line"
 
+# MiniMax TTS 配置（语音合成）
+# 支持模型: speech-01-hd, speech-01, tts-01-hd, tts-01
+# API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_TTS_API_KEY 覆盖
+minimax_tts:
+  # API Key（可与 minimax.api_key 共用）
+  api_key: ""
+  # TTS 上游地址，默认 https://api.minimaxi.com
+  base_url: "https://api.minimaxi.com"
+
+# MiniMax Token Plan 媒体生成配置（TTS HD / Hailuo 视频 / Music / image-01）
+# 支持模型:
+#   TTS HD: speech-2.8-hd, speech-2.6-hd, speech-02-hd
+#   Hailuo: Hailuo-2.3-Fast, Hailuo-2.3
+#   Music: Music-2.5
+#   Image: image-01
+# API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_TOKEN_PLAN_API_KEY 覆盖
+minimax_token_plan:
+  # API Key（可与 minimax.api_key 共用）
+  api_key: ""
+  # 上游地址，默认 https://api.minimaxi.com
+  base_url: "https://api.minimaxi.com"
+
 # DashScope 文本模型配置（coding 端点，多品牌聚合）
 # 支持模型（通过 /api/ai-gateway/v1/chat/completions 统一调用）：
 #   千问: qwen3.5-plus | qwen3-max-2026-01-23 | qwen3-coder-next | qwen3-coder-plus
@@ -450,6 +472,49 @@ ai_gateway:
       currency: "CNY"
     - model: "qwen-image-max"
       provider: "bailian"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    # MiniMax Token Plan 媒体生成计费（按次计费）
+    - model: "speech-2.8-hd"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "speech-2.6-hd"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "speech-02-hd"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "Hailuo-2.3-Fast"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "Hailuo-2.3"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "Music-2.5"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "image-01"
+      provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0
