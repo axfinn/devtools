@@ -166,7 +166,8 @@ minimax_mcp:
   transport: "line"
 
 # MiniMax TTS 配置（语音合成）
-# 支持模型: speech-01-hd, speech-01, tts-01-hd, tts-01
+# 支持模型（官方模型名）: speech-01-hd, speech-01-turbo, speech-02-hd, speech-02-turbo,
+#                         speech-2.6-hd, speech-2.6-turbo, speech-2.8-hd, speech-2.8-turbo
 # API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_TTS_API_KEY 覆盖
 minimax_tts:
   # API Key（可与 minimax.api_key 共用）
@@ -174,14 +175,28 @@ minimax_tts:
   # TTS 上游地址，默认 https://api.minimaxi.com
   base_url: "https://api.minimaxi.com"
 
-# MiniMax Token Plan 媒体生成配置（TTS HD / Hailuo 视频 / Music / image-01）
-# 支持模型:
-#   TTS HD: speech-2.8-hd, speech-2.6-hd, speech-02-hd
-#   Hailuo: Hailuo-2.3-Fast, Hailuo-2.3
-#   Music: Music-2.5
-#   Image: image-01
+# MiniMax Token Plan 媒体生成配置（TTS HD / Turbo / Hailuo 视频 / Music / Image）
+# 支持模型（官方模型名）:
+#   TTS: speech-01-hd, speech-01-turbo, speech-02-hd, speech-02-turbo,
+#        speech-2.6-hd, speech-2.6-turbo, speech-2.8-hd, speech-2.8-turbo
+#   Hailuo: MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01
+#   Music: music-2.5
+#   Image: image-01, image-01-live
 # API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_TOKEN_PLAN_API_KEY 覆盖
 minimax_token_plan:
+  # API Key（可与 minimax.api_key 共用）
+  api_key: ""
+  # 上游地址，默认 https://api.minimaxi.com
+  base_url: "https://api.minimaxi.com"
+
+# MiniMax Voice Cloning 音色克隆配置
+# 支持功能：
+#   - 上传音频复刻音色 (POST /api/minimax/voice-cloning/upload)
+#   - 获取音色列表 (GET /api/minimax/voice-cloning/voices)
+#   - 删除音色 (DELETE /api/minimax/voice-cloning/voices/:id)
+#   - 使用音色 TTS (POST /api/minimax/voice-cloning/tts)
+# API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_VOICE_CLONING_API_KEY 覆盖
+minimax_voice_cloning:
   # API Key（可与 minimax.api_key 共用）
   api_key: ""
   # 上游地址，默认 https://api.minimaxi.com
@@ -476,14 +491,15 @@ ai_gateway:
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
-    # MiniMax Token Plan 媒体生成计费（按次计费）
-    - model: "speech-2.8-hd"
+    # MiniMax Token Plan 媒体生成计费（按次计费，官方模型名）
+    # TTS HD / Turbo 系列
+    - model: "speech-01-hd"
       provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
-    - model: "speech-2.6-hd"
+    - model: "speech-01-turbo"
       provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
@@ -495,25 +511,76 @@ ai_gateway:
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
-    - model: "Hailuo-2.3-Fast"
+    - model: "speech-02-turbo"
       provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
-    - model: "Hailuo-2.3"
+    - model: "speech-2.6-hd"
       provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
-    - model: "Music-2.5"
+    - model: "speech-2.6-turbo"
       provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
+    - model: "speech-2.8-hd"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "speech-2.8-turbo"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    # Hailuo 视频（官方模型名）
+    - model: "MiniMax-Hailuo-2.3"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "MiniMax-Hailuo-02"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "T2V-01-Director"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "T2V-01"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    # Music
+    - model: "music-2.5"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    # Image
     - model: "image-01"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "image-01-live"
       provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0

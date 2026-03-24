@@ -27,8 +27,9 @@ type Config struct {
 	DeepSeek           DeepSeekConfig           `yaml:"deepseek"`
 	MiniMax            MiniMaxConfig            `yaml:"minimax"`
 	MiniMaxMCP         MiniMaxMCPConfig         `yaml:"minimax_mcp"`
-	MiniMaxTTS         MiniMaxTTSConfig         `yaml:"minimax_tts"`
-	MiniMaxTokenPlan   MiniMaxTokenPlanConfig   `yaml:"minimax_token_plan"`
+	MiniMaxTTS          MiniMaxTTSConfig          `yaml:"minimax_tts"`
+	MiniMaxTokenPlan    MiniMaxTokenPlanConfig    `yaml:"minimax_token_plan"`
+	MiniMaxVoiceCloning MiniMaxVoiceCloningConfig `yaml:"minimax_voice_cloning"`
 	DashScope          DashScopeConfig          `yaml:"dashscope"`
 	Bailian            BailianConfig            `yaml:"bailian"`
 	AIGateway          AIGatewayConfig          `yaml:"ai_gateway"`
@@ -206,6 +207,12 @@ type MiniMaxTTSConfig struct {
 
 // MiniMaxTokenPlanConfig MiniMax Token Plan 媒体生成配置（TTS HD / Hailuo 视频 / Music / image-01）
 type MiniMaxTokenPlanConfig struct {
+	APIKey  string `yaml:"api_key"`  // API Key（可与 MiniMax APIKey 共用）
+	BaseURL string `yaml:"base_url"` // 上游地址，默认 https://api.minimaxi.com
+}
+
+// MiniMaxVoiceCloningConfig MiniMax Voice Cloning 音色克隆配置
+type MiniMaxVoiceCloningConfig struct {
 	APIKey  string `yaml:"api_key"`  // API Key（可与 MiniMax APIKey 共用）
 	BaseURL string `yaml:"base_url"` // 上游地址，默认 https://api.minimaxi.com
 }

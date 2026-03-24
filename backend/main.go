@@ -124,6 +124,11 @@ func main() {
 		log.Fatalf("MiniMax Media Tasks 数据库初始化失败: %v", err)
 	}
 
+	// 初始化 Voice Clone 音色表
+	if err := db.InitVoiceClones(); err != nil {
+		log.Fatalf("Voice Clone 数据库初始化失败: %v", err)
+	}
+
 	// 初始化 NFS 分享数据库表
 	if err := db.InitNFSShare(); err != nil {
 		log.Fatalf("NFS 分享数据库初始化失败: %v", err)
@@ -712,6 +717,14 @@ func main() {
 		api.GET("/minimax/token-plan/docs", aiGatewayHandler.GetTokenPlanDocs)
 		api.GET("/minimax/token-plan/tasks", aiGatewayHandler.ListMinimaxTokenPlanTasks)
 		api.GET("/minimax/token-plan/tasks/:id", aiGatewayHandler.GetMinimaxTokenPlanTask)
+		api.GET("/minimax/token-plan/tasks/:id/download", aiGatewayHandler.DownloadMinimaxTokenPlanTask)
+
+		// MiniMax Voice Cloning 音色克隆代理
+		api.POST("/minimax/voice-cloning/upload", aiGatewayHandler.UploadVoiceClone)
+		api.GET("/minimax/voice-cloning/voices", aiGatewayHandler.ListVoiceClones)
+		api.DELETE("/minimax/voice-cloning/voices/:id", aiGatewayHandler.DeleteVoiceClone)
+		api.POST("/minimax/voice-cloning/tts", aiGatewayHandler.TTSWithVoiceClone)
+		api.GET("/minimax/voice-cloning/docs", aiGatewayHandler.GetVoiceCloningDocs)
 
 		// DashScope Anthropic 协议代理
 		api.POST("/dashscope/anthropic/v1/messages", aiGatewayHandler.ProxyDashScopeAnthropic)

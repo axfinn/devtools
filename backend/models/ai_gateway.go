@@ -678,3 +678,108 @@ func (db *DB) CountMiniMaxMediaTasks(apiKeyID string) (int, error) {
 	err := db.conn.QueryRow(query, args...).Scan(&count)
 	return count, err
 }
+
+// VoiceClone 音色克隆记录
+type VoiceClone struct {
+	ID        uint   `json:"id"`
+	APIKeyID  string `json:"api_key_id"`
+	VoiceID   string `json:"voice_id"`   // MiniMax 返回的 voice_id
+	Name      string `json:"name"`      // 用户定义的音色名称
+	Status    string `json:"status"`     // pending/active/failed
+	CreatedAt string `json:"created_at"`
+}
+
+// InitVoiceClones 初始化音色克隆表
+func (db *DB) InitVoiceClones() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS voice_clones (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			api_key_id TEXT NOT NULL,
+			voice_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			status TEXT DEFAULT 'active',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_voice_clones_api_key ON voice_clones(api_key_id, created_at DESC);
+	`)
+	return err
+}
+
+// CreateVoiceClone 创建音色克隆记录
+func (db *DB) CreateVoiceClone(clone *VoiceClone) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO voice_clones (api_key_id, voice_id, name, status, created_at)
+		VALUES (?, ?, ?, ?, datetime('now'))
+	`, clone.APIKeyID, clone.VoiceID, clone.Name, clone.Status)
+	return err
+}
+
+// GetVoiceClone 获取音色克隆记录
+func (db *DB) GetVoiceClone(id uint) (*VoiceClone, error) {
+	clone := &VoiceClone{}
+	err := db.conn.QueryRow(`
+		SELECT id, api_key_id, voice_id, name, status, created_at
+		FROM voice_clones WHERE id = ?
+	`, id).Scan(&clone.ID, &clone.APIKeyID, &clone.VoiceID, &clone.Name, &clone.Status, &clone.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return clone, nil
+}
+
+// GetVoiceCloneByVoiceID 根据 voice_id 获取音色克隆记录
+func (db *DB) GetVoiceCloneByVoiceID(voiceID string) (*VoiceClone, error) {
+	clone := &VoiceClone{}
+	err := db.conn.QueryRow(`
+		SELECT id, api_key_id, voice_id, name, status, created_at
+		FROM voice_clones WHERE voice_id = ?
+	`, voiceID).Scan(&clone.ID, &clone.APIKeyID, &clone.VoiceID, &clone.Name, &clone.Status, &clone.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return clone, nil
+}
+
+// DeleteVoiceClone 删除音色克隆记录
+func (db *DB) DeleteVoiceClone(id uint, apiKeyID string) error {
+	_, err := db.conn.Exec(`DELETE FROM voice_clones WHERE id = ? AND api_key_id = ?`, id, apiKeyID)
+	return err
+}
+
+// ListVoiceClones 列出音色克隆记录
+func (db *DB) ListVoiceClones(apiKeyID string, limit, offset int) ([]*VoiceClone, error) {
+	query := `
+		SELECT id, api_key_id, voice_id, name, status, created_at
+		FROM voice_clones WHERE 1=1`
+	args := make([]interface{}, 0)
+
+	if apiKeyID != "" {
+		query += ` AND api_key_id = ?`
+		args = append(args, apiKeyID)
+	}
+
+	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	clones := make([]*VoiceClone, 0)
+	for rows.Next() {
+		clone := &VoiceClone{}
+		if err := rows.Scan(&clone.ID, &clone.APIKeyID, &clone.VoiceID, &clone.Name, &clone.Status, &clone.CreatedAt); err != nil {
+			return nil, err
+		}
+		clones = append(clones, clone)
+	}
+	return clones, nil
+}
+
+// UpdateVoiceCloneStatus 更新音色克隆状态
+func (db *DB) UpdateVoiceCloneStatus(id uint, status string) error {
+	_, err := db.conn.Exec(`UPDATE voice_clones SET status = ? WHERE id = ?`, status, id)
+	return err
+}
