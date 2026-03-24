@@ -195,6 +195,161 @@
       </el-table>
     </el-card>
 
+    <!-- Voice Cloning 音色克隆调试模块 -->
+    <el-card class="voice-cloning-card" v-if="superAdminPassword">
+      <template #header>
+        <div class="card-header">
+          <span>Voice Cloning 音色克隆</span>
+          <el-tabs v-model="voiceCloningTab" class="voice-cloning-tabs">
+            <el-tab-pane label="上传音色" name="upload" />
+            <el-tab-pane label="音色列表" name="list" />
+            <el-tab-pane label="音色测试" name="tts" />
+          </el-tabs>
+          <el-button text @click="loadVoiceClones">刷新</el-button>
+        </div>
+      </template>
+
+      <!-- 上传音色 -->
+      <div v-show="voiceCloningTab === 'upload'" class="voice-upload-section">
+        <el-form label-position="top">
+          <el-form-item label="音色名称">
+            <el-input v-model="uploadVoiceName" placeholder="如'我的音色'" style="max-width: 300px;" />
+          </el-form-item>
+          <el-form-item label="音频来源">
+            <el-radio-group v-model="voiceSourceType">
+              <el-radio value="file">文件上传</el-radio>
+              <el-radio value="mic">麦克风录制</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <!-- 文件上传模式 -->
+          <el-form-item v-show="voiceSourceType === 'file'" label="音频文件（支持 wav/mp3/m4a，最大 10MB）">
+            <input type="file" accept="audio/*" @change="handleAudioFileChange" />
+          </el-form-item>
+          <!-- 麦克风录制模式 -->
+          <el-form-item v-show="voiceSourceType === 'mic'" label="麦克风录制">
+            <div class="mic-recorder">
+              <div class="mic-recorder-controls">
+                <el-button
+                  v-if="!isRecording && !recordedAudioUrl"
+                  type="danger"
+                  @click="startRecording"
+                >
+                  开始录制
+                </el-button>
+                <el-button
+                  v-if="isRecording"
+                  type="danger"
+                  @click="stopRecording"
+                >
+                  停止录制
+                </el-button>
+              </div>
+              <div v-if="isRecording" class="recording-status">
+                <span class="recording-dot"></span>
+                <span>录制中... {{ formatDuration(recordingDuration) }}</span>
+              </div>
+              <div v-if="recordedAudioUrl && !isRecording" class="recording-preview">
+                <audio :src="recordedAudioUrl" controls style="width: 300px;" />
+                <div class="recording-actions">
+                  <el-button size="small" @click="playRecording">试听</el-button>
+                  <el-button size="small" type="warning" @click="clearRecording">重新录制</el-button>
+                </div>
+                <div class="recording-info">
+                  <el-tag size="small" type="info">录制时长: {{ formatDuration(recordingDuration) }}</el-tag>
+                </div>
+              </div>
+              <div v-if="!isRecording && !recordedAudioUrl" class="recording-hint">
+                <el-alert type="info" :closable="false" show-icon>
+                  <template #title>
+                    点击"开始录制"后请对准麦克风说话，建议录制 30 秒以上以获得更好的效果。
+                    最大录制时长 5 分钟。
+                  </template>
+                </el-alert>
+              </div>
+            </div>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="uploadingVoice" @click="uploadVoiceClone">上传复刻</el-button>
+          </el-form-item>
+        </el-form>
+        <el-alert type="info" :closable="false" style="margin-top: 12px;">
+          <template #title>
+            上传音频复刻音色后，可以通过音色 ID 使用该音色进行 TTS 语音合成。
+            推荐使用 30秒以上的清晰语音音频以获得更好的效果。
+          </template>
+        </el-alert>
+      </div>
+
+      <!-- 音色列表 -->
+      <div v-show="voiceCloningTab === 'list'" class="voice-list-section">
+        <el-table :data="voiceClones" v-loading="loadingVoiceClones" stripe size="small" max-height="400">
+          <el-table-column prop="voice_id" label="Voice ID" min-width="160">
+            <template #default="{ row }">
+              <code style="font-size: 12px;">{{ row.voice_id }}</code>
+            </template>
+          </el-table-column>
+          <el-table-column prop="name" label="名称" min-width="120" />
+          <el-table-column prop="status" label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">
+                {{ row.status === 'active' ? '可用' : row.status }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="created_at" label="创建时间" width="170">
+            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="100">
+            <template #default="{ row }">
+              <el-button text type="danger" size="small" @click="deleteVoiceClone(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!loadingVoiceClones && voiceClones.length === 0" description="暂无音色，请上传音频复刻" />
+      </div>
+
+      <!-- 音色测试 TTS -->
+      <div v-show="voiceCloningTab === 'tts'" class="voice-tts-section">
+        <el-form label-position="top">
+          <el-form-item label="选择音色">
+            <el-select v-model="selectedVoice" placeholder="请选择音色" value-key="voice_id" style="width: 300px;">
+              <el-option v-for="clone in voiceClones" :key="clone.voice_id" :label="`${clone.name} (${clone.voice_id})`" :value="clone" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="模型">
+            <el-select v-model="ttsModel" style="width: 200px;">
+              <el-option label="speech-2.8-hd" value="speech-2.8-hd" />
+              <el-option label="speech-2.8-turbo" value="speech-2.8-turbo" />
+              <el-option label="speech-02-hd" value="speech-02-hd" />
+              <el-option label="speech-02-turbo" value="speech-02-turbo" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="合成文本">
+            <el-input v-model="ttsText" type="textarea" :rows="4" placeholder="请输入要合成的文本" style="max-width: 500px;" />
+          </el-form-item>
+          <el-form-item label="语速">
+            <el-slider v-model="ttsSpeed" :min="0.5" :max="2.0" :step="0.1" show-stops style="width: 200px;" />
+            <span style="margin-left: 12px;">{{ ttsSpeed }}x</span>
+          </el-form-item>
+          <el-form-item label="音频格式">
+            <el-select v-model="ttsAudioFormat" style="width: 120px;">
+              <el-option label="mp3" value="mp3" />
+              <el-option label="wav" value="wav" />
+              <el-option label="pcm" value="pcm" />
+            </el-select>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="testingTTS" @click="testVoiceTTS">合成语音</el-button>
+          </el-form-item>
+        </el-form>
+        <!-- TTS 结果预览 -->
+        <div v-if="ttsResultUrl" class="tts-result">
+          <h4>合成结果</h4>
+          <audio :src="ttsResultUrl" controls style="width: 100%; max-width: 500px;" />
+        </div>
+      </div>
+    </el-card>
+
     <!-- 模型快速测试 -->
     <el-card class="test-card">
       <template #header>
@@ -714,40 +869,43 @@ tasks.forEach(task => {
         <!-- 媒体预览区域 -->
         <div v-if="currentMinimaxTask.result_urls && currentMinimaxTask.result_urls.length > 0" class="media-preview-section">
           <h4>生成结果</h4>
+          <p style="color: #888; font-size: 12px; margin-bottom: 8px;">
+            <el-icon><Download /></el-icon> 使用我们的下载代理端点，外部也可访问（MiniMax 原始链接仅供调试）
+          </p>
           <div class="media-preview-grid">
             <div v-for="(url, idx) in currentMinimaxTask.result_urls" :key="idx" class="media-preview-item">
               <!-- 音频预览 -->
               <div v-if="currentMinimaxTask.content_type && currentMinimaxTask.content_type.startsWith('audio/')" class="audio-preview">
-                <audio controls :src="url" style="width: 100%;"></audio>
+                <audio controls :src="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" style="width: 100%;"></audio>
                 <div class="media-url-box">
-                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
-                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                  <el-link :href="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" target="_blank" type="primary" class="url-link">通过代理下载</el-link>
+                  <el-button size="small" @click="copyText(`\${origin}/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`)">复制下载链接</el-button>
                 </div>
               </div>
               <!-- 视频预览 -->
               <div v-else-if="currentMinimaxTask.content_type && currentMinimaxTask.content_type.startsWith('video/')" class="video-preview">
-                <video controls :src="url" style="width: 100%; max-height: 300px;"></video>
+                <video controls :src="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" style="width: 100%; max-height: 300px;"></video>
                 <div class="media-url-box">
-                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
-                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                  <el-link :href="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" target="_blank" type="primary" class="url-link">通过代理下载</el-link>
+                  <el-button size="small" @click="copyText(`\${origin}/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`)">复制下载链接</el-button>
                 </div>
               </div>
               <!-- 图片预览 -->
               <div v-else-if="currentMinimaxTask.content_type && currentMinimaxTask.content_type.startsWith('image/')" class="image-preview">
-                <el-image :src="url" fit="contain" style="width: 100%; max-height: 300px;" :preview-src-list="currentMinimaxTask.result_urls" />
+                <el-image :src="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" fit="contain" style="width: 100%; max-height: 300px;" :preview-src-list="[`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`]" />
                 <div class="media-url-box">
-                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
-                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                  <el-link :href="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" target="_blank" type="primary" class="url-link">通过代理下载</el-link>
+                  <el-button size="small" @click="copyText(`\${origin}/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`)">复制下载链接</el-button>
                 </div>
               </div>
               <!-- 通用链接 -->
               <div v-else class="generic-preview">
-                <el-link :href="url" target="_blank" type="primary">
+                <el-link :href="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" target="_blank" type="primary">
                   <el-icon><Download /></el-icon> 下载 / 预览
                 </el-link>
                 <div class="media-url-box">
-                  <el-link :href="url" target="_blank" type="primary" class="url-link">{{ url.substring(0, 60) }}...</el-link>
-                  <el-button size="small" @click="copyText(url)">复制链接</el-button>
+                  <el-link :href="`/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`" target="_blank" type="primary" class="url-link">通过代理下载</el-link>
+                  <el-button size="small" @click="copyText(`\${origin}/api/minimax/token-plan/tasks/${currentMinimaxTask.task_id}/download`)">复制下载链接</el-button>
                 </div>
               </div>
             </div>
@@ -808,6 +966,30 @@ const minimaxTasks = ref([])
 const loadingMinimaxTasks = ref(false)
 const minimaxTaskVisible = ref(false)
 const currentMinimaxTask = ref(null)
+
+// Voice Cloning 音色克隆管理
+const voiceClones = ref([])
+const loadingVoiceClones = ref(false)
+const voiceCloningTab = ref('upload') // 'upload' | 'list' | 'tts'
+const uploadVoiceName = ref('')
+const uploadAudioFile = ref(null)
+const uploadingVoice = ref(false)
+const selectedVoice = ref(null)
+const ttsText = ref('')
+const ttsModel = ref('speech-2.8-hd')
+const ttsSpeed = ref(1.0)
+const ttsAudioFormat = ref('mp3')
+const ttsResultUrl = ref('')
+const testingTTS = ref(false)
+
+// Voice Cloning 麦克风录制
+const voiceSourceType = ref('file') // 'file' | 'mic'
+const isRecording = ref(false)
+const recordingDuration = ref(0)
+const recordedAudioUrl = ref('')
+const recordedChunks = ref([])
+let mediaRecorder = null
+let recordingTimer = null
 
 // 模型快速测试
 const testPrompt = ref('')
@@ -1043,6 +1225,234 @@ const viewMinimaxTask = async (row) => {
   } catch (err) {
     ElMessage.error('加载任务详情失败: ' + err.message)
   }
+}
+
+// Voice Cloning 相关函数
+const loadVoiceClones = async () => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
+  loadingVoiceClones.value = true
+  try {
+    const res = await fetch(`/api/minimax/voice-cloning/voices?limit=100`, {
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value }
+    })
+    const data = await res.json()
+    if (res.ok) {
+      voiceClones.value = data.voices || []
+    } else {
+      ElMessage.error(data.error || '加载音色列表失败')
+    }
+  } catch (err) {
+    ElMessage.error('加载音色列表失败: ' + err.message)
+  } finally {
+    loadingVoiceClones.value = false
+  }
+}
+
+const handleAudioFileChange = (event) => {
+  const file = event.target.files[0]
+  if (file) {
+    if (file.size > 10 * 1024 * 1024) {
+      ElMessage.error('音频文件大小不能超过 10MB')
+      event.target.value = ''
+      return
+    }
+    uploadAudioFile.value = file
+  }
+}
+
+const uploadVoiceClone = async () => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
+  if (!uploadVoiceName.value.trim()) {
+    ElMessage.error('请输入音色名称')
+    return
+  }
+  if (!uploadAudioFile.value) {
+    ElMessage.error('请选择音频文件')
+    return
+  }
+  uploadingVoice.value = true
+  try {
+    const formData = new FormData()
+    formData.append('name', uploadVoiceName.value.trim())
+    formData.append('audio_file', uploadAudioFile.value)
+    const res = await fetch(`/api/minimax/voice-cloning/upload`, {
+      method: 'POST',
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value },
+      body: formData
+    })
+    const data = await res.json()
+    if (res.ok) {
+      ElMessage.success('音色创建成功: ' + data.voice_id)
+      uploadVoiceName.value = ''
+      uploadAudioFile.value = null
+      voiceCloningTab.value = 'list'
+      loadVoiceClones()
+    } else {
+      ElMessage.error(data.error || '上传失败')
+    }
+  } catch (err) {
+    ElMessage.error('上传失败: ' + err.message)
+  } finally {
+    uploadingVoice.value = false
+  }
+}
+
+const deleteVoiceClone = async (clone) => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除音色 "${clone.name}" ?`, '提示', { type: 'warning' })
+    const res = await fetch(`/api/minimax/voice-cloning/voices/${clone.id}`, {
+      method: 'DELETE',
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value }
+    })
+    const data = await res.json()
+    if (res.ok) {
+      ElMessage.success('音色已删除')
+      loadVoiceClones()
+    } else {
+      ElMessage.error(data.error || '删除失败')
+    }
+  } catch (err) {
+    if (err !== 'cancel') {
+      ElMessage.error('删除失败: ' + err.message)
+    }
+  }
+}
+
+const testVoiceTTS = async () => {
+  if (!superAdminPassword.value) {
+    ElMessage.error('请先输入超级管理员密码')
+    return
+  }
+  if (!selectedVoice.value) {
+    ElMessage.error('请选择音色')
+    return
+  }
+  if (!ttsText.value.trim()) {
+    ElMessage.error('请输入要合成的文本')
+    return
+  }
+  testingTTS.value = true
+  ttsResultUrl.value = ''
+  try {
+    const res = await fetch(`/api/minimax/voice-cloning/tts`, {
+      method: 'POST',
+      headers: {
+        'X-Super-Admin-Password': superAdminPassword.value,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: ttsModel.value,
+        text: ttsText.value.trim(),
+        voice_id: selectedVoice.value.voice_id,
+        speed: ttsSpeed.value,
+        audio_format: ttsAudioFormat.value
+      })
+    })
+    if (res.ok) {
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      ttsResultUrl.value = url
+      ElMessage.success('语音合成成功')
+    } else {
+      const data = await res.json()
+      ElMessage.error(data.error || '语音合成失败')
+    }
+  } catch (err) {
+    ElMessage.error('语音合成失败: ' + err.message)
+  } finally {
+    testingTTS.value = false
+  }
+}
+
+// 麦克风录制功能
+const startRecording = async () => {
+  if (isRecording.value) return
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    recordedChunks.value = []
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        recordedChunks.value.push(e.data)
+      }
+    }
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordedChunks.value, { type: 'audio/webm' })
+      const url = URL.createObjectURL(blob)
+      recordedAudioUrl.value = url
+      // 转换为 File 对象以供上传
+      const file = new File([blob], 'recording.webm', { type: 'audio/webm' })
+      uploadAudioFile.value = file
+      // 停止所有 track
+      stream.getTracks().forEach(track => track.stop())
+    }
+    mediaRecorder.start()
+    isRecording.value = true
+    recordingDuration.value = 0
+    recordingTimer = setInterval(() => {
+      recordingDuration.value++
+      // 最大录制 5 分钟（300秒）
+      if (recordingDuration.value >= 300) {
+        stopRecording()
+      }
+    }, 1000)
+    ElMessage.info('开始录制，请对准麦克风说话')
+  } catch (err) {
+    console.error('Failed to start recording:', err)
+    if (err.name === 'NotAllowedError') {
+      ElMessage.error('麦克风权限被拒绝，请在浏览器设置中允许使用麦克风')
+    } else if (err.name === 'NotFoundError') {
+      ElMessage.error('未找到麦克风设备，请确认已连接麦克风')
+    } else {
+      ElMessage.error('无法启动麦克风录制: ' + err.message)
+    }
+  }
+}
+
+const stopRecording = () => {
+  if (!isRecording.value || !mediaRecorder) return
+  mediaRecorder.stop()
+  isRecording.value = false
+  if (recordingTimer) {
+    clearInterval(recordingTimer)
+    recordingTimer = null
+  }
+  ElMessage.success('录制完成，时长: ' + formatDuration(recordingDuration.value))
+}
+
+const playRecording = () => {
+  if (!recordedAudioUrl.value) return
+  const audio = new Audio(recordedAudioUrl.value)
+  audio.play()
+}
+
+const clearRecording = () => {
+  if (recordedAudioUrl.value) {
+    URL.revokeObjectURL(recordedAudioUrl.value)
+  }
+  recordedAudioUrl.value = ''
+  uploadAudioFile.value = null
+  recordedChunks.value = []
+  recordingDuration.value = 0
+  if (isRecording.value) {
+    stopRecording()
+  }
+}
+
+const formatDuration = (seconds) => {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 const copyText = async (text) => {
@@ -1384,5 +1794,98 @@ onMounted(() => {
 
 .result-json-section h4 {
   margin: 0 0 12px;
+}
+
+/* Voice Cloning 样式 */
+.voice-cloning-card {
+  border-radius: 22px;
+}
+
+.voice-cloning-tabs {
+  flex: 1;
+  margin: 0 16px;
+}
+
+.voice-cloning-tabs .el-tabs__header {
+  margin-bottom: 0;
+}
+
+.voice-upload-section,
+.voice-list-section,
+.voice-tts-section {
+  padding: 16px 0;
+}
+
+.tts-result {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #ebeef5;
+}
+
+.tts-result h4 {
+  margin: 0 0 12px;
+}
+
+/* 麦克风录制样式 */
+.mic-recorder {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mic-recorder-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.recording-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f56c6c;
+  font-weight: 500;
+}
+
+.recording-dot {
+  width: 12px;
+  height: 12px;
+  background-color: #f56c6c;
+  border-radius: 50%;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.recording-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background-color: #f5f7fa;
+  border-radius: 8px;
+}
+
+.recording-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.recording-info {
+  display: flex;
+  gap: 8px;
+}
+
+.recording-hint {
+  max-width: 400px;
 }
 </style>
