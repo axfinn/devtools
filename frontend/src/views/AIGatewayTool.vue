@@ -199,7 +199,7 @@
     <el-card class="voice-cloning-card" v-if="superAdminPassword">
       <template #header>
         <div class="card-header">
-          <span>Voice Cloning 音色克隆</span>
+          <span>Voice Cloning 音色克隆（旧版兼容）</span>
           <el-tabs v-model="voiceCloningTab" class="voice-cloning-tabs">
             <el-tab-pane label="上传音色" name="upload" />
             <el-tab-pane label="音色列表" name="list" />
@@ -208,6 +208,12 @@
           <el-button text @click="loadVoiceClones">刷新</el-button>
         </div>
       </template>
+
+      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 16px;">
+        <template #title>
+          这是历史兼容入口。新的 MiniMax Speech 官方接口测试请优先使用下方的 MiniMax Speech 面板。
+        </template>
+      </el-alert>
 
       <!-- 上传音色 -->
       <div v-show="voiceCloningTab === 'upload'" class="voice-upload-section">
@@ -349,6 +355,11 @@
         </div>
       </div>
     </el-card>
+
+    <AIGatewaySpeechPanel
+      :super-admin-password="superAdminPassword"
+      :prefill-api-key="createdPlainKey"
+    />
 
     <!-- 模型快速测试 -->
     <el-card class="test-card">
@@ -926,6 +937,7 @@ tasks.forEach(task => {
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox, ElIcon } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
+import AIGatewaySpeechPanel from '../components/AIGatewaySpeechPanel.vue'
 
 const API_BASE = '/api/ai-gateway'
 const PASSWORD_KEY = 'ai_gateway_super_admin_password'

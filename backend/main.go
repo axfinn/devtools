@@ -124,6 +124,16 @@ func main() {
 		log.Fatalf("MiniMax Media Tasks 数据库初始化失败: %v", err)
 	}
 
+	// 初始化 MiniMax Speech 文件表
+	if err := db.InitMiniMaxSpeechFiles(); err != nil {
+		log.Fatalf("MiniMax Speech Files 数据库初始化失败: %v", err)
+	}
+
+	// 初始化 MiniMax Speech 任务表
+	if err := db.InitMiniMaxSpeechTasks(); err != nil {
+		log.Fatalf("MiniMax Speech Tasks 数据库初始化失败: %v", err)
+	}
+
 	// 初始化 Voice Clone 音色表
 	if err := db.InitVoiceClones(); err != nil {
 		log.Fatalf("Voice Clone 数据库初始化失败: %v", err)
@@ -351,20 +361,20 @@ func main() {
 			paste.GET("/chunk/:file_id/status", pasteHandler.CheckChunkStatus) // 检查上传状态
 
 			// 代码分析 API
-			paste.POST("/analyze", pasteHandler.AnalyzeCode)             // 分析文本代码
-			paste.GET("/analyze/:file_id", pasteHandler.AnalyzeFile)    // 分析上传的文件
+			paste.POST("/analyze", pasteHandler.AnalyzeCode)         // 分析文本代码
+			paste.GET("/analyze/:file_id", pasteHandler.AnalyzeFile) // 分析上传的文件
 
 			// 安全扫描 API
-			paste.POST("/scan", pasteHandler.ScanContent)                   // 扫描内容安全
-			paste.GET("/validate/:file_id", pasteHandler.ValidateFile)    // 验证文件安全
+			paste.POST("/scan", pasteHandler.ScanContent)              // 扫描内容安全
+			paste.GET("/validate/:file_id", pasteHandler.ValidateFile) // 验证文件安全
 
 			// 信息 API
-			paste.GET("/languages", pasteHandler.GetSupportedLanguages)    // 支持的语言
+			paste.GET("/languages", pasteHandler.GetSupportedLanguages)        // 支持的语言
 			paste.GET("/content-types", pasteHandler.GetSupportedContentTypes) // 支持的内容类型
-			paste.GET("/stats", pasteHandler.GetStats)                    // 统计信息
+			paste.GET("/stats", pasteHandler.GetStats)                         // 统计信息
 
 			// 搜索 API
-			paste.GET("/search", pasteHandler.SearchPastes)               // 搜索粘贴板
+			paste.GET("/search", pasteHandler.SearchPastes) // 搜索粘贴板
 
 			// 管理员 API
 			paste.GET("/admin/list", pasteHandler.AdminListPastes)    // 管理员列表
@@ -377,9 +387,9 @@ func main() {
 		analysisHandler := handlers.NewAnalysisHandler()
 		analysis := api.Group("/analysis")
 		{
-			analysis.POST("/code", analysisHandler.AnalyzeCode)     // 代码分析
-			analysis.POST("/scan", analysisHandler.ScanContent)    // 内容安全扫描
-			analysis.POST("/validate", analysisHandler.ValidateFile) // 文件验证
+			analysis.POST("/code", analysisHandler.AnalyzeCode)               // 代码分析
+			analysis.POST("/scan", analysisHandler.ScanContent)               // 内容安全扫描
+			analysis.POST("/validate", analysisHandler.ValidateFile)          // 文件验证
 			analysis.GET("/languages", analysisHandler.GetSupportedLanguages) // 支持的语言列表
 		}
 
@@ -639,11 +649,11 @@ func main() {
 		// NFS/SMB 文件分享 API
 		nfsshare := api.Group("/nfsshare")
 		{
-			nfsshare.GET("/status", nfsShareHandler.Status)                      // 功能状态（公开）
+			nfsshare.GET("/status", nfsShareHandler.Status)                       // 功能状态（公开）
 			nfsshare.GET("/turn-credentials", nfsShareHandler.GetTurnCredentials) // TURN 临时凭证（公开）
-			nfsshare.GET("/:id/info", nfsShareHandler.Info)                      // 分享信息（公开，不消耗次数）
+			nfsshare.GET("/:id/info", nfsShareHandler.Info)                       // 分享信息（公开，不消耗次数）
 			nfsshare.GET("/:id/stream", nfsShareHandler.Stream)                   // 原生视频流（公开，Range 支持）
-			nfsshare.GET("/:id/qualities", nfsShareHandler.HLSQualities)           // 可用清晰度列表（公开）
+			nfsshare.GET("/:id/qualities", nfsShareHandler.HLSQualities)          // 可用清晰度列表（公开）
 			nfsshare.GET("/:id/hls/:quality/:segment", func(c *gin.Context) {     // HLS 转码播放（公开）
 				if c.Param("segment") == "index.m3u8" {
 					nfsShareHandler.HLSPlaylist(c)
@@ -651,17 +661,17 @@ func main() {
 					nfsShareHandler.HLSSegment(c)
 				}
 			})
-			nfsshare.GET("/:id", nfsShareHandler.Access)                         // 访问/下载文件（公开，消耗次数）
-			nfsshare.GET("/:id/watch/ws", nfsShareHandler.WatchWS)              // 一起看 WebSocket（公开）
-			nfsshare.POST("", nfsShareHandler.Create)                            // 创建分享（超管）
-			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)                // 浏览目录（超管）
-			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)               // 分享列表（超管）
-			nfsshare.GET("/admin/mounts", nfsShareHandler.MountsList)            // 挂载点列表及状态（超管）
+			nfsshare.GET("/:id", nfsShareHandler.Access)                                // 访问/下载文件（公开，消耗次数）
+			nfsshare.GET("/:id/watch/ws", nfsShareHandler.WatchWS)                      // 一起看 WebSocket（公开）
+			nfsshare.POST("", nfsShareHandler.Create)                                   // 创建分享（超管）
+			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)                       // 浏览目录（超管）
+			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)                      // 分享列表（超管）
+			nfsshare.GET("/admin/mounts", nfsShareHandler.MountsList)                   // 挂载点列表及状态（超管）
 			nfsshare.POST("/admin/mounts/:name/remount", nfsShareHandler.MountsRemount) // 重新挂载（超管）
 			nfsshare.POST("/admin/mounts/:name/umount", nfsShareHandler.MountsUmount)   // 卸载（超管）
-			nfsshare.GET("/admin/:id/logs", nfsShareHandler.AdminGetLogs)        // 访问日志（超管）
-			nfsshare.PUT("/admin/:id", nfsShareHandler.AdminUpdate)              // 修改配置（超管）
-			nfsshare.DELETE("/admin/:id", nfsShareHandler.AdminDelete)           // 删除分享（超管）
+			nfsshare.GET("/admin/:id/logs", nfsShareHandler.AdminGetLogs)               // 访问日志（超管）
+			nfsshare.PUT("/admin/:id", nfsShareHandler.AdminUpdate)                     // 修改配置（超管）
+			nfsshare.DELETE("/admin/:id", nfsShareHandler.AdminDelete)                  // 删除分享（超管）
 		}
 
 		// OCR 文字识别
@@ -738,6 +748,23 @@ func main() {
 		api.DELETE("/minimax/voice-cloning/voices/:id", aiGatewayHandler.DeleteVoiceClone)
 		api.POST("/minimax/voice-cloning/tts", aiGatewayHandler.TTSWithVoiceClone)
 		api.GET("/minimax/voice-cloning/docs", aiGatewayHandler.GetVoiceCloningDocs)
+
+		// MiniMax Speech 官方语音 HTTP 网关
+		api.GET("/minimax/speech/docs", aiGatewayHandler.GetMiniMaxSpeechDocs)
+		api.POST("/minimax/speech/v1/t2a_v2", aiGatewayHandler.MiniMaxSpeechSyncT2A)
+		api.POST("/minimax/speech/v1/t2a_async_v2", aiGatewayHandler.MiniMaxSpeechAsyncCreate)
+		api.GET("/minimax/speech/v1/query/t2a_async_query_v2", aiGatewayHandler.MiniMaxSpeechAsyncQuery)
+		api.POST("/minimax/speech/v1/get_voice", aiGatewayHandler.MiniMaxSpeechGetVoice)
+		api.POST("/minimax/speech/v1/voice_design", aiGatewayHandler.MiniMaxSpeechVoiceDesign)
+		api.POST("/minimax/speech/v1/voice_clone", aiGatewayHandler.MiniMaxSpeechVoiceClone)
+		api.POST("/minimax/speech/v1/delete_voice", aiGatewayHandler.MiniMaxSpeechDeleteVoice)
+		api.POST("/minimax/speech/v1/files/upload", aiGatewayHandler.MiniMaxSpeechUploadFile)
+		api.GET("/minimax/speech/v1/files/list", aiGatewayHandler.MiniMaxSpeechListFiles)
+		api.GET("/minimax/speech/v1/files/retrieve", aiGatewayHandler.MiniMaxSpeechRetrieveFile)
+		api.GET("/minimax/speech/v1/files/retrieve_content", aiGatewayHandler.MiniMaxSpeechRetrieveFileContent)
+		api.POST("/minimax/speech/v1/files/delete", aiGatewayHandler.MiniMaxSpeechDeleteFile)
+		api.GET("/minimax/speech/tasks", aiGatewayHandler.MiniMaxSpeechListTasks)
+		api.GET("/minimax/speech/tasks/:id", aiGatewayHandler.MiniMaxSpeechGetTask)
 
 		// DashScope Anthropic 协议代理
 		api.POST("/dashscope/anthropic/v1/messages", aiGatewayHandler.ProxyDashScopeAnthropic)
