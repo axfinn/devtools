@@ -75,35 +75,50 @@ type MediaGenerationRequest struct {
 	Parameters      map[string]interface{} `json:"parameters"`
 }
 
-// TTSAllowedModels MiniMax TTS 允许的模型列表
+// TTSAllowedModels MiniMax TTS 允许的模型列表（官方模型名）
 var TTSAllowedModels = []string{
 	"speech-01-hd",
-	"speech-01",
-	"tts-01-hd",
-	"tts-01",
+	"speech-01-turbo",
+	"speech-02-hd",
+	"speech-02-turbo",
+	"speech-2.6-hd",
+	"speech-2.6-turbo",
+	"speech-2.8-hd",
+	"speech-2.8-turbo",
 }
 
-// TokenPlanAllowedModels MiniMax Token Plan 允许的模型列表
+// TokenPlanAllowedModels MiniMax Token Plan 允许的模型列表（官方模型名）
 var TokenPlanAllowedModels = []string{
-	// TTS HD
-	"speech-2.8-hd",
-	"speech-2.6-hd",
+	// TTS HD / Turbo
+	"speech-01-hd",
+	"speech-01-turbo",
 	"speech-02-hd",
-	// Hailuo 视频
-	"Hailuo-2.3-Fast",
-	"Hailuo-2.3",
-	// Music
-	"Music-2.5",
-	// Image
+	"speech-02-turbo",
+	"speech-2.6-hd",
+	"speech-2.6-turbo",
+	"speech-2.8-hd",
+	"speech-2.8-turbo",
+	// Hailuo 视频（官方模型名: MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01）
+	"MiniMax-Hailuo-2.3",
+	"MiniMax-Hailuo-02",
+	"T2V-01-Director",
+	"T2V-01",
+	// Music（官方模型名: music-2.5）
+	"music-2.5",
+	// Image（官方模型名: image-01, image-01-live）
 	"image-01",
+	"image-01-live",
 }
 
 // TokenPlanAsyncModels 需要异步轮询的模型（视频、音乐、图片生成）
 var TokenPlanAsyncModels = []string{
-	"Hailuo-2.3-Fast",
-	"Hailuo-2.3",
-	"Music-2.5",
+	"MiniMax-Hailuo-2.3",
+	"MiniMax-Hailuo-02",
+	"T2V-01-Director",
+	"T2V-01",
+	"music-2.5",
 	"image-01",
+	"image-01-live",
 }
 
 // isTokenPlanAsyncModel 判断模型是否需要异步轮询
@@ -1280,11 +1295,51 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 		return
 	}
 
-	start := time.Now()
-	upstreamURL := strings.TrimRight(baseURL, "/") + "/v1/t"
+	// 转换请求格式：MiniMax TTS API 要求 voice_setting.voice_id 格式
+	// 客户端可能发送 voice: "xxx"，需要转换为 voice_setting: {voice_id: "xxx"}
+	upstreamReq := make(map[string]interface{})
+	upstreamReq["model"] = model
+	if text, ok := bodyMap["text"].(string); ok {
+		upstreamReq["text"] = text
+	}
+	if voice, ok := bodyMap["voice"].(string); ok && voice != "" {
+		if upstreamReq["voice_setting"] == nil {
+			upstreamReq["voice_setting"] = map[string]interface{}{}
+		}
+		if vs, ok := upstreamReq["voice_setting"].(map[string]interface{}); ok {
+			vs["voice_id"] = voice
+		}
+	}
+	if speed, ok := bodyMap["speed"]; ok {
+		if upstreamReq["voice_setting"] == nil {
+			upstreamReq["voice_setting"] = map[string]interface{}{}
+		}
+		if vs, ok := upstreamReq["voice_setting"].(map[string]interface{}); ok {
+			vs["speed"] = speed
+		}
+	}
+	// 透传 audio_format 和 sample_rate 到 audio_setting
+	if af, ok := bodyMap["audio_format"].(string); ok && af != "" {
+		upstreamReq["audio_setting"] = map[string]interface{}{"audio_format": af}
+		if sr, ok := bodyMap["sample_rate"].(float64); ok {
+			if as, ok := upstreamReq["audio_setting"].(map[string]interface{}); ok {
+				as["sample_rate"] = sr
+			}
+		}
+	}
+	// 其他字段直接透传
+	for k, v := range bodyMap {
+		if k != "voice" && k != "speed" && k != "audio_format" && k != "sample_rate" {
+			upstreamReq[k] = v
+		}
+	}
 
-	// 使用 doRawRequest 透传二进制响应
-	respBody, err := h.doRawRequest(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
+	upstreamBytes, _ := json.Marshal(upstreamReq)
+
+	start := time.Now()
+	upstreamURL := strings.TrimRight(baseURL, "/") + "/v1/t2a_v2"
+
+	respBody, _, err := h.doRawRequestWithResp(upstreamURL, apiKey, "POST", upstreamBytes, c.Request.Header)
 	if err != nil {
 		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -1295,10 +1350,51 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 	textLen := len(interfaceToString(bodyMap["text"]))
 	usage := usageSummary{Cost: float64(textLen) * 0.001, Currency: "CNY"} // 估算成本
 
-	h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+	// MiniMax TTS 返回格式：{"data":{"audio":"base64..."}} 或 {"base_resp":{"status_code":xxx,"status_msg":"..."}}
+	var respData map[string]interface{}
+	if err := json.Unmarshal(respBody, &respData); err != nil {
+		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, "上游响应解析失败: "+err.Error(), string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "上游响应解析失败"})
+		return
+	}
 
-	// 透传音频二进制响应
-	c.DataFromReader(http.StatusOK, int64(len(respBody)), "audio/mp3", nil, nil)
+	// 检查是否有业务错误
+	if baseResp, ok := respData["base_resp"].(map[string]interface{}); ok {
+		if code, ok := baseResp["status_code"].(float64); ok && int(code) != 0 {
+			msg, _ := baseResp["status_msg"].(string)
+			h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, msg, string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+			c.JSON(http.StatusBadGateway, gin.H{"error": msg})
+			return
+		}
+	}
+
+	// 提取 base64 音频数据
+	var audioData string
+	if data, ok := respData["data"].(map[string]interface{}); ok {
+		if audio, ok := data["audio"].(string); ok {
+			audioData = audio
+		}
+	}
+
+	if audioData == "" {
+		// 没有音频数据，返回错误
+		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, "未获取到音频数据", string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未获取到音频数据"})
+		return
+	}
+
+	// 解码 base64 音频
+	audioBytes, err := base64.StdEncoding.DecodeString(audioData)
+	if err != nil {
+		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, "音频base64解码失败: "+err.Error(), string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "音频数据解码失败"})
+		return
+	}
+
+	h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), "[base64 audio]", c.ClientIP(), time.Since(start), usage)
+
+	// 返回音频二进制
+	c.DataFromReader(http.StatusOK, int64(len(audioBytes)), "audio/mpeg", bytes.NewReader(audioBytes), nil)
 }
 
 // GetTTSDocs 返回 TTS 端点的 API 文档
@@ -1312,7 +1408,7 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
 			"scope":   "media",
 		},
 		"base_url":  "/api/minimax/tts",
-		"upstream":  "https://api.minimaxi.com/v1/t",
+		"upstream":  "https://api.minimaxi.com/v1/t2a_v2",
 		"models":    TTSAllowedModels,
 		"routes": []gin.H{
 			{"method": "GET", "path": "/api/minimax/tts/docs", "description": "获取本文档"},
@@ -1320,9 +1416,9 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
 		},
 		"examples": gin.H{
 			"request": gin.H{
-				"model": "speech-01-hd",
+				"model": "speech-2.8-hd",
 				"text":  "你好，这是语音合成测试",
-				"voice": "female_shaohua",
+				"voice": "shanghai",
 				"speed": 1.0,
 				"audio_format": "mp3",
 			},
@@ -1332,20 +1428,28 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
   -H "Authorization: Bearer dtk_ai_xxx" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "speech-01-hd",
+    "model": "speech-2.8-hd",
     "text": "你好，这是语音合成测试",
-    "voice": "female_shaohua",
+    "voice": "shanghai",
     "speed": 1.0,
     "audio_format": "mp3"
   }' \
   --output audio.mp3`,
 			},
 		},
+		"voice_ids": gin.H{
+			"description": "有效的 voice_id 列表（根据实际测试）",
+			"valid_voices": []string{"shanghai", "woman", "man", "cantonese", "cantonese_male"},
+		},
 		"model_descriptions": gin.H{
-			"speech-01-hd": "高清语音合成模型（推荐）",
-			"speech-01":    "标准语音合成模型",
-			"tts-01-hd":    "TTS HD 模型",
-			"tts-01":       "TTS 标准模型",
+			"speech-01-hd":       "高清语音合成（speech-01 系列）",
+			"speech-01-turbo":    "标准语音合成（speech-01 系列 turbo 版）",
+			"speech-02-hd":       "高清语音合成（speech-02 系列）",
+			"speech-02-turbo":    "标准语音合成（speech-02 系列 turbo 版）",
+			"speech-2.6-hd":      "高清语音合成（speech-2.6 系列）",
+			"speech-2.6-turbo":   "标准语音合成（speech-2.6 系列 turbo 版）",
+			"speech-2.8-hd":      "高清语音合成（speech-2.8 系列，推荐）",
+			"speech-2.8-turbo":   "标准语音合成（speech-2.8 系列 turbo 版）",
 		},
 	})
 }
@@ -1353,17 +1457,22 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
 // resolveTokenPlanModelEndpoint 根据模型返回对应的上游 API 路径
 func resolveTokenPlanModelEndpoint(model string) string {
 	switch model {
-	// TTS HD - 正确端点: /v1/t
-	case "speech-2.8-hd", "speech-2.6-hd", "speech-02-hd":
-		return "/v1/t"
+	// TTS - 正确端点: /v1/t2a_v2
+	case "speech-01-hd", "speech-01-turbo",
+		"speech-02-hd", "speech-02-turbo",
+		"speech-2.6-hd", "speech-2.6-turbo",
+		"speech-2.8-hd", "speech-2.8-turbo":
+		return "/v1/t2a_v2"
 	// Hailuo 视频 - 正确端点: /v1/video_generation
-	case "Hailuo-2.3-Fast", "Hailuo-2.3":
+	// 官方模型名: MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01
+	case "MiniMax-Hailuo-2.3", "MiniMax-Hailuo-02",
+		"T2V-01-Director", "T2V-01":
 		return "/v1/video_generation"
 	// Music - 正确端点: /v1/music_generation
-	case "Music-2.5":
+	case "music-2.5":
 		return "/v1/music_generation"
 	// Image - 正确端点: /v1/image_generation
-	case "image-01":
+	case "image-01", "image-01-live":
 		return "/v1/image_generation"
 	default:
 		return ""
@@ -1465,7 +1574,7 @@ func (h *AIGatewayHandler) handleSyncTokenPlanRequest(c *gin.Context, key *model
 	h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), logRespBody, c.ClientIP(), time.Since(start), usage)
 
 	if strings.HasPrefix(respContentType, "audio/") {
-		c.DataFromReader(http.StatusOK, int64(len(respBody)), respContentType, nil, nil)
+		c.DataFromReader(http.StatusOK, int64(len(respBody)), respContentType, bytes.NewReader(respBody), nil)
 	} else {
 		c.Data(http.StatusOK, respContentType, respBody)
 	}
@@ -1527,21 +1636,42 @@ func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, ups
 		return
 	}
 
-	// 解析响应获取 task_id
+	// 解析响应获取 task_id 和检查是否有同步结果
 	var respMap map[string]interface{}
+	hasSyncResult := false
 	if err := json.Unmarshal(respBody, &respMap); err == nil {
 		// 尝试从响应中提取 MiniMax 的任务 ID
 		externalTaskID := extractMinimaxTaskID(respMap)
 		if externalTaskID != "" {
 			task.ExternalTaskID = externalTaskID
 		}
+
+		// 检查响应是否直接包含同步结果（image/audio/video URLs）
+		if data, ok := respMap["data"].(map[string]interface{}); ok {
+			if _, hasImages := data["image_urls"]; hasImages {
+				hasSyncResult = true
+			} else if _, hasAudio := data["audio_url"]; hasAudio {
+				hasSyncResult = true
+			} else if _, hasVideo := data["video_url"]; hasVideo {
+				hasSyncResult = true
+			} else if urls, ok := data["image_url"]; ok && urls != nil {
+				hasSyncResult = true
+			} else if urls, ok := data["audio"]; ok && urls != nil && model == "speech-2.8-hd" {
+				// TTS 返回 base64 音频在 data.audio
+				hasSyncResult = true
+			}
+		}
+
+		// 也检查 content-type 是否为媒体类型
+		if !hasSyncResult && (strings.HasPrefix(respContentType, "audio/") || strings.HasPrefix(respContentType, "image/") || strings.HasPrefix(respContentType, "video/")) {
+			hasSyncResult = true
+		}
 	}
 
-	// 检查响应是否直接包含结果（某些情况下可能同步返回）
-	if strings.HasPrefix(respContentType, "audio/") || strings.HasPrefix(respContentType, "image/") || strings.HasPrefix(respContentType, "video/") {
-		// 同步返回了媒体内容
+	// 同步返回了媒体内容
+	if hasSyncResult {
 		task.Status = "succeeded"
-		task.ResultJSON = fmt.Sprintf(`{"content_type": %q, "data": %q}`, respContentType, string(respBody))
+		task.ResultJSON = string(respBody)
 		now := time.Now()
 		task.CompletedAt = &now
 		_ = h.db.UpdateMiniMaxMediaTask(task)
@@ -1922,11 +2052,13 @@ func inferContentType(url string) string {
 // inferContentTypeByModel 根据模型名称推断内容类型
 func inferContentTypeByModel(model string) string {
 	switch {
-	case strings.HasPrefix(model, "speech-") || strings.HasPrefix(model, "tts-"):
+	case strings.HasPrefix(model, "speech-"):
 		return "audio/mpeg"
-	case strings.HasPrefix(model, "Hailuo-") || strings.HasPrefix(model, "Music-"):
+	case strings.HasPrefix(model, "MiniMax-Hailuo-") || strings.HasPrefix(model, "T2V-"):
 		return "video/mp4"
-	case model == "image-01":
+	case strings.HasPrefix(model, "music-"):
+		return "audio/mpeg"
+	case model == "image-01" || model == "image-01-live":
 		return "image/png"
 	default:
 		return "application/octet-stream"
@@ -1949,6 +2081,9 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 		"routes": []gin.H{
 			{"method": "GET", "path": "/api/minimax/token-plan/docs", "description": "获取本文档"},
 			{"method": "POST", "path": "/api/minimax/token-plan/v1/generations", "description": "MiniMax Token Plan 媒体生成接口"},
+			{"method": "GET", "path": "/api/minimax/token-plan/tasks", "description": "获取当前 API Key 的任务列表"},
+			{"method": "GET", "path": "/api/minimax/token-plan/tasks/:id", "description": "获取任务详情（含 result_urls）"},
+			{"method": "GET", "path": "/api/minimax/token-plan/tasks/:id/download", "description": "下载任务产物（代理 MiniMax 媒体文件）"},
 		},
 		"examples": gin.H{
 			"tts_hd_request": gin.H{
@@ -1964,13 +2099,13 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 				},
 			},
 			"hailuo_request": gin.H{
-				"model":      "Hailuo-2.3-Fast",
+				"model":      "MiniMax-Hailuo-2.3",
 				"prompt":     "一只猫在草地上玩耍",
 				"duration":   6,
 				"resolution": "768P",
 			},
 			"music_request": gin.H{
-				"model":    "Music-2.5",
+				"model":    "music-2.5",
 				"prompt":   "轻松的爵士音乐，适合咖啡厅背景",
 				"duration": 300,
 			},
@@ -1991,13 +2126,25 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 			},
 		},
 		"model_descriptions": gin.H{
-			"speech-2.8-hd": "TTS HD 高清语音合成（推荐）",
-			"speech-2.6-hd": "TTS HD 高清语音合成",
-			"speech-02-hd":  "TTS HD 高清语音合成",
-			"Hailuo-2.3-Fast": "Hailuo 视频生成 Fast 版（768P 6s）",
-			"Hailuo-2.3":      "Hailuo 视频生成标准版（768P 6s）",
-			"Music-2.5":       "音乐生成（最长 5 分钟）",
-			"image-01":        "图像生成",
+			// TTS HD / Turbo 系列
+			"speech-01-hd":       "高清语音合成（speech-01 系列）",
+			"speech-01-turbo":    "标准语音合成（speech-01 系列 turbo 版）",
+			"speech-02-hd":       "高清语音合成（speech-02 系列）",
+			"speech-02-turbo":    "标准语音合成（speech-02 系列 turbo 版）",
+			"speech-2.6-hd":      "高清语音合成（speech-2.6 系列）",
+			"speech-2.6-turbo":  "标准语音合成（speech-2.6 系列 turbo 版）",
+			"speech-2.8-hd":      "高清语音合成（speech-2.8 系列，推荐）",
+			"speech-2.8-turbo":   "标准语音合成（speech-2.8 系列 turbo 版）",
+			// Hailuo 视频（官方模型名）
+			"MiniMax-Hailuo-2.3": "Hailuo 视频生成（MiniMax-Hailuo-2.3）",
+			"MiniMax-Hailuo-02":  "Hailuo 视频生成（MiniMax-Hailuo-02）",
+			"T2V-01-Director":    "视频生成（T2V-01-Director）",
+			"T2V-01":             "视频生成（T2V-01）",
+			// Music
+			"music-2.5":          "音乐生成（最长 5 分钟）",
+			// Image
+			"image-01":           "图像生成",
+			"image-01-live":      "图像生成（live 版）",
 		},
 	})
 }
@@ -2616,6 +2763,111 @@ func fetchImageAsBase64(client *http.Client, imageURL string) (string, string, e
 	}
 	encoded := base64.StdEncoding.EncodeToString(data)
 	return encoded, mimeType, nil
+}
+
+// DownloadMinimaxTokenPlanTask 下载 MiniMax 媒体任务产物
+// GET /api/minimax/token-plan/tasks/:id/download
+func (h *AIGatewayHandler) DownloadMinimaxTokenPlanTask(c *gin.Context) {
+	key, ok := h.authenticateAPIKey(c, "media")
+	if !ok {
+		return
+	}
+
+	taskID := c.Param("id")
+	task, err := h.db.GetMiniMaxMediaTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在", "code": 404})
+		return
+	}
+
+	// 验证任务属于当前 API Key
+	if task.APIKeyID != key.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问此任务", "code": 403})
+		return
+	}
+
+	// 检查任务状态
+	if task.Status != "succeeded" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("任务未完成，当前状态: %s", task.Status), "code": 400})
+		return
+	}
+
+	if task.ResultJSON == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "任务结果为空", "code": 400})
+		return
+	}
+
+	// 解析 ResultJSON 获取媒体 URL
+	var resultMap map[string]interface{}
+	if err := json.Unmarshal([]byte(task.ResultJSON), &resultMap); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "解析任务结果失败", "code": 500})
+		return
+	}
+
+	// 提取媒体 URL
+	urls := extractMediaURLs(resultMap)
+	if len(urls) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未找到媒体文件 URL", "code": 400})
+		return
+	}
+
+	mediaURL := urls[0] // 取第一个 URL
+
+	// 提取 content type
+	contentType := extractContentType(resultMap)
+	if contentType == "" {
+		contentType = inferContentType(mediaURL)
+	}
+
+	// 从 MiniMax URL 下载媒体内容
+	req, err := http.NewRequest(http.MethodGet, mediaURL, nil)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "创建请求失败", "code": 502})
+		return
+	}
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("下载媒体失败: %s", err.Error()), "code": 502})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("媒体文件返回 HTTP %d", resp.StatusCode), "code": 502})
+		return
+	}
+
+	// 从响应头获取真实 Content-Type
+	if realCT := resp.Header.Get("Content-Type"); realCT != "" {
+		contentType = realCT
+	}
+
+	// 设置文件名后缀
+	filename := ""
+	switch {
+	case strings.HasPrefix(contentType, "audio/"):
+		filename = "audio.mp3"
+	case strings.HasPrefix(contentType, "video/"):
+		filename = "video.mp4"
+	case strings.HasPrefix(contentType, "image/"):
+		ext := strings.TrimPrefix(contentType, "image/")
+		filename = "image." + ext
+	}
+	if filename == "" {
+		filename = "download"
+	}
+
+	// 设置下载 header
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	c.Header("Content-Type", contentType)
+	if resp.ContentLength > 0 {
+		c.Header("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+	}
+
+	// 透传媒体内容
+	c.Status(resp.StatusCode)
+	io.Copy(c.Writer, resp.Body)
 }
 
 // extractImageMeta 从 data URL 中提取 mime 类型和估算大小（KB）
