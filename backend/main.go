@@ -325,6 +325,9 @@ func main() {
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 
+	// Edge TTS 处理器
+	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
+
 	// 启动 SSH 会话清理协程
 	terminalHandler.StartCleanupRoutine()
 
@@ -404,6 +407,16 @@ func main() {
 			chat.POST("/room/:id/bot", chatHandler.AddBot)
 			chat.DELETE("/room/:id/bot", chatHandler.RemoveBot)
 			chat.POST("/room/:id/bot/stop", chatHandler.StopBot)
+		}
+
+		// Edge TTS API
+		edgeTTS := api.Group("/edge-tts")
+		{
+			edgeTTS.GET("/voices", edgeTTSHandler.ListVoices)
+			edgeTTS.POST("/tts", edgeTTSHandler.Synthesize)
+			edgeTTS.GET("/audio/:filename", edgeTTSHandler.ServeAudioFile)
+			edgeTTS.GET("/health", edgeTTSHandler.Health)
+			edgeTTS.POST("/convert", edgeTTSHandler.ConvertAudioFormat)
 		}
 
 		// 短链 API

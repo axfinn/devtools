@@ -348,6 +348,17 @@ const toolRoutes = [
       description: '统一 AI API Key 管理与对外开放'
     }
   },
+  {
+    path: '/edge-tts',
+    name: 'EdgeTTS',
+    component: () => import('../views/EdgeT TSTool.vue'),
+    meta: {
+      title: 'Edge TTS',
+      icon: 'Headset',
+      category: 'dev',
+      description: 'Microsoft Edge 语音合成，支持多种中文音色'
+    }
+  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',
