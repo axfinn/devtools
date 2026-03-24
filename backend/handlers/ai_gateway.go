@@ -20,10 +20,11 @@ import (
 )
 
 type AIGatewayHandler struct {
-	db      *models.DB
-	cfg     *config.Config
-	bailian *BailianHandler
-	client  *http.Client
+	db           *models.DB
+	cfg          *config.Config
+	bailian      *BailianHandler
+	client       *http.Client  // 带代理，用于 OpenAI 兼容接口
+	noProxyClient *http.Client // 不走代理，用于 MiniMax 等外部 API
 }
 
 type usageSummary struct {
@@ -162,6 +163,12 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		cfg:     cfg,
 		bailian: bailian,
 		client:  &http.Client{Timeout: 90 * time.Second},
+		noProxyClient: &http.Client{
+			Timeout: 90 * time.Second,
+			Transport: &http.Transport{
+				Proxy: nil, // 不使用任何代理
+			},
+		},
 	}
 }
 
@@ -1747,7 +1754,7 @@ func (h *AIGatewayHandler) pollMinimaxTaskStatus(externalTaskID, apiKey, baseURL
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := h.client.Do(req)
+	resp, err := h.noProxyClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -2275,7 +2282,7 @@ func (h *AIGatewayHandler) doJSONRequest(url, apiKey string, bodyMap map[string]
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	resp, err := h.client.Do(req)
+	resp, err := h.noProxyClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -2321,7 +2328,7 @@ func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body
 			req.Header.Add(key, v)
 		}
 	}
-	resp, err := h.client.Do(req)
+	resp, err := h.noProxyClient.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
@@ -2384,6 +2391,29 @@ func (h *AIGatewayHandler) authenticateAPIKey(c *gin.Context, scope string) (*mo
 		}
 	}
 	return matched, true
+}
+
+// authenticateAdminOrAPIKey 双重认证：先尝试超级管理员认证，失败后尝试 API Key 认证
+// 如果是超级管理员认证成功，返回 (nil, true)，表示不限制 API Key
+// 如果是 API Key 认证成功，返回 (apiKey, true)
+// 如果都失败，返回 (nil, false)
+func (h *AIGatewayHandler) authenticateAdminOrAPIKey(c *gin.Context, scope string) (*models.AIAPIKey, bool) {
+	// 1. 检查是否有超级管理员密码
+	adminPassword := c.GetHeader("X-Super-Admin-Password")
+	if adminPassword == "" {
+		adminPassword = c.Query("super_admin_password")
+	}
+
+	// 2. 如果有超级管理员密码，验证它
+	if adminPassword != "" {
+		if strings.TrimSpace(h.cfg.AIGateway.SuperAdminPassword) != "" &&
+			adminPassword == h.cfg.AIGateway.SuperAdminPassword {
+			return nil, true // 超级管理员认证成功
+		}
+	}
+
+	// 3. 如果没有超级管理员密码或验证失败，尝试 API Key 认证
+	return h.authenticateAPIKey(c, scope)
 }
 
 func (h *AIGatewayHandler) ensureModelAllowed(c *gin.Context, key *models.AIAPIKey, model string) bool {
@@ -2827,7 +2857,7 @@ func (h *AIGatewayHandler) DownloadMinimaxTokenPlanTask(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.client.Do(req)
+	resp, err := h.noProxyClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("下载媒体失败: %s", err.Error()), "code": 502})
 		return
@@ -2898,13 +2928,16 @@ func extractImageMeta(dataURL string) (mime string, sizeKB int) {
 // UploadVoiceClone 上传音频复刻音色
 // POST /api/minimax/voice-cloning/upload
 func (h *AIGatewayHandler) UploadVoiceClone(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
 
-	// 获取 API Key 的 ID
-	apiKeyID := key.ID
+	// 获取 API Key 的 ID（超级管理员为空）
+	apiKeyID := ""
+	if key != nil {
+		apiKeyID = key.ID
+	}
 
 	// 解析 multipart form
 	if err := c.Request.ParseMultipartForm(32 << 20); err != nil { // 32MB limit
@@ -2996,7 +3029,7 @@ func (h *AIGatewayHandler) UploadVoiceClone(c *gin.Context) {
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	start := time.Now()
-	resp, err := h.client.Do(req)
+	resp, err := h.noProxyClient.Do(req)
 	if err != nil {
 		h.logAPIRequest(key, "voice-cloning", "minimax", "/api/minimax/voice-cloning/upload", "media", http.StatusBadGateway, false, err.Error(), fmt.Sprintf("name=%s, size=%d", name, len(audioData)), "", c.ClientIP(), time.Since(start), usageSummary{})
 		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("上传音色失败: %s", err.Error()), "code": 502})
@@ -3062,12 +3095,15 @@ func (h *AIGatewayHandler) UploadVoiceClone(c *gin.Context) {
 // ListVoiceClones 获取音色列表
 // GET /api/minimax/voice-cloning/voices
 func (h *AIGatewayHandler) ListVoiceClones(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
 
-	apiKeyID := key.ID
+	apiKeyID := ""
+	if key != nil {
+		apiKeyID = key.ID
+	}
 	limit := boundedInt(c.Query("limit"), 20, 1, 100)
 	offset := boundedInt(c.Query("offset"), 0, 0, 100000)
 
@@ -3092,7 +3128,7 @@ func (h *AIGatewayHandler) ListVoiceClones(c *gin.Context) {
 	req, err := http.NewRequest("GET", upstreamURL, nil)
 	if err == nil {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
-		resp, err := h.client.Do(req)
+		resp, err := h.noProxyClient.Do(req)
 		if err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -3133,12 +3169,15 @@ func (h *AIGatewayHandler) ListVoiceClones(c *gin.Context) {
 // DeleteVoiceClone 删除音色
 // DELETE /api/minimax/voice-cloning/voices/:id
 func (h *AIGatewayHandler) DeleteVoiceClone(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
 
-	apiKeyID := key.ID
+	apiKeyID := ""
+	if key != nil {
+		apiKeyID = key.ID
+	}
 
 	// 解析 ID
 	idStr := c.Param("id")
@@ -3155,8 +3194,8 @@ func (h *AIGatewayHandler) DeleteVoiceClone(c *gin.Context) {
 		return
 	}
 
-	// 检查权限
-	if clone.APIKeyID != apiKeyID {
+	// 检查权限：超级管理员可以删除任何音色，普通用户只能删除自己创建的音色
+	if key != nil && clone.APIKeyID != apiKeyID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权删除该音色", "code": 403})
 		return
 	}
@@ -3180,7 +3219,7 @@ func (h *AIGatewayHandler) DeleteVoiceClone(c *gin.Context) {
 	delReq.Body = io.NopCloser(bytes.NewReader(body))
 
 	start := time.Now()
-	resp, err := h.client.Do(delReq)
+	resp, err := h.noProxyClient.Do(delReq)
 	if err != nil {
 		// 即使上游调用失败，也删除本地记录
 		h.db.DeleteVoiceClone(id, apiKeyID)
@@ -3202,7 +3241,7 @@ func (h *AIGatewayHandler) DeleteVoiceClone(c *gin.Context) {
 // TTSWithVoiceClone 使用自定义音色进行 TTS
 // POST /api/minimax/voice-cloning/tts
 func (h *AIGatewayHandler) TTSWithVoiceClone(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -3238,8 +3277,11 @@ func (h *AIGatewayHandler) TTSWithVoiceClone(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureModelAllowed(c, key, model) {
-		return
+	// 超级管理员跳过 API Key 模型权限检查
+	if key != nil {
+		if !h.ensureModelAllowed(c, key, model) {
+			return
+		}
 	}
 
 	// 获取 voice_id
@@ -3249,9 +3291,9 @@ func (h *AIGatewayHandler) TTSWithVoiceClone(c *gin.Context) {
 		return
 	}
 
-	// 验证 voice_id 是否属于当前用户
+	// 验证 voice_id 是否属于当前用户（超级管理员可以使用任何音色）
 	clone, err := h.db.GetVoiceCloneByVoiceID(voiceID)
-	if err != nil || clone.APIKeyID != key.ID {
+	if err != nil || (key != nil && clone.APIKeyID != key.ID) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权使用该音色", "code": 403})
 		return
 	}
