@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -218,8 +219,20 @@ func (h *EdgeTTSHandler) ConvertAudioFormat(c *gin.Context) {
 		return
 	}
 
+	// 处理相对 URL：拼接当前服务的 host
+	sourceURL := req.SourceURL
+	if strings.HasPrefix(sourceURL, "/") {
+		// 相对路径，拼接当前请求的 host
+		host := c.Request.Host
+		scheme := "http"
+		if c.Request.TLS != nil {
+			scheme = "https"
+		}
+		sourceURL = fmt.Sprintf("%s://%s%s", scheme, host, sourceURL)
+	}
+
 	// 获取源文件
-	resp, err := h.httpClient.Get(req.SourceURL)
+	resp, err := h.httpClient.Get(sourceURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "下载源文件失败: " + err.Error()})
 		return
