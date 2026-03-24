@@ -2,6 +2,8 @@
 
 CLAWTEST_DIR=/app/data/clawtest
 CLAUDE_HOME=/home/autodev/.claude
+CODEX_HOME=/home/autodev/.codex
+HOST_CODEX_HOME=/tmp/host-codex
 
 # 1. 更新 clawtest（在 data volume 里，重建镜像不丢失）
 if [ -d "${CLAWTEST_DIR}/.git" ]; then
@@ -53,6 +55,26 @@ EOF
 
 # 每次启动修正权限（防止重建镜像后 UID 变化）
 chown -R autodev:autodev "${CLAUDE_HOME}"
+
+# 3. 如宿主机提供 ~/.codex，则安全同步必要配置到容器内的 Codex Home。
+# 只复制配置和认证文件，不把任何敏感内容写进仓库。
+echo "[entrypoint] Preparing ${CODEX_HOME}..."
+mkdir -p "${CODEX_HOME}"
+if [ -d "${HOST_CODEX_HOME}" ]; then
+    echo "[entrypoint] Syncing host Codex config from ${HOST_CODEX_HOME}..."
+    for file in config.toml auth.json version.json .personality_migration; do
+        if [ -f "${HOST_CODEX_HOME}/${file}" ]; then
+            cp "${HOST_CODEX_HOME}/${file}" "${CODEX_HOME}/${file}"
+        fi
+    done
+    if [ -d "${HOST_CODEX_HOME}/rules" ]; then
+        mkdir -p "${CODEX_HOME}/rules"
+        cp -R "${HOST_CODEX_HOME}/rules/." "${CODEX_HOME}/rules/" 2>/dev/null || true
+    fi
+else
+    echo "[entrypoint] Host Codex config not found; using container-local Codex config"
+fi
+chown -R autodev:autodev "${CODEX_HOME}"
 
 cd /app
 

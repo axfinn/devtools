@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,9 @@ const (
 	TaskTypeExport  = "export"
 	TaskTypeExtend  = "extend"
 	TaskTypeInit    = "init"
+
+	AutoDevModuleCC    = "cc"
+	AutoDevModuleCodex = "codex"
 )
 
 // AutoDevTask represents an autodev execution task
@@ -21,8 +25,9 @@ type AutoDevTask struct {
 	ID          string     `json:"id"`
 	Type        string     `json:"type"` // develop, ask, export
 	Description string     `json:"description"`
-	Options     string     `json:"options"` // JSON: {publish,build,push}
-	Status      string     `json:"status"`  // pending, running, completed, failed
+	Options     string     `json:"options"` // JSON: {publish,build,push,module}
+	Module      string     `json:"module"`
+	Status      string     `json:"status"` // pending, running, completed, failed
 	ExitCode    int        `json:"exit_code"`
 	WorkDir     string     `json:"work_dir"`
 	PID         int        `json:"pid"`
@@ -34,9 +39,34 @@ type AutoDevTask struct {
 
 // AutoDevOptions task execution options
 type AutoDevOptions struct {
-	Publish bool `json:"publish"`
-	Build   bool `json:"build"`
-	Push    bool `json:"push"`
+	Publish bool   `json:"publish"`
+	Build   bool   `json:"build"`
+	Push    bool   `json:"push"`
+	Module  string `json:"module"`
+}
+
+// NormalizeAutoDevModule converts user input to a supported execution module.
+// Empty or unknown values always fall back to Claude Code for backward compatibility.
+func NormalizeAutoDevModule(module string) string {
+	switch strings.ToLower(strings.TrimSpace(module)) {
+	case AutoDevModuleCodex:
+		return AutoDevModuleCodex
+	default:
+		return AutoDevModuleCC
+	}
+}
+
+// ParseAutoDevOptions decodes task options and applies backward-compatible defaults.
+func ParseAutoDevOptions(raw string) AutoDevOptions {
+	opts := AutoDevOptions{Module: AutoDevModuleCC}
+	if strings.TrimSpace(raw) == "" {
+		return opts
+	}
+	if err := json.Unmarshal([]byte(raw), &opts); err != nil {
+		return AutoDevOptions{Module: AutoDevModuleCC}
+	}
+	opts.Module = NormalizeAutoDevModule(opts.Module)
+	return opts
 }
 
 // InitAutoDevTasks initializes the autodev_tasks table
@@ -70,8 +100,8 @@ func (db *DB) InitAutoDevTasks() error {
 func (db *DB) migrateAutoDevTasksTable() error {
 	// List of columns that should exist in the table
 	requiredColumns := []struct {
-		name    string
-		expr    string
+		name string
+		expr string
 	}{
 		{"type", "ALTER TABLE autodev_tasks ADD COLUMN type TEXT DEFAULT 'develop'"},
 		{"description", "ALTER TABLE autodev_tasks ADD COLUMN description TEXT"},
@@ -153,6 +183,7 @@ func (db *DB) GetAutoDevTask(id string) (*AutoDevTask, error) {
 	if task.Type == "" {
 		task.Type = TaskTypeDevelop
 	}
+	task.Module = ParseAutoDevOptions(task.Options).Module
 	if startedAt.Valid {
 		task.StartedAt = &startedAt.Time
 	}
@@ -223,6 +254,7 @@ func (db *DB) ListAutoDevTasks(limit, offset int, status, taskType string) ([]*A
 		if task.Type == "" {
 			task.Type = TaskTypeDevelop
 		}
+		task.Module = ParseAutoDevOptions(task.Options).Module
 		if startedAt.Valid {
 			task.StartedAt = &startedAt.Time
 		}
@@ -297,6 +329,7 @@ func (db *DB) UpdateAutoDevTaskResult(id, resultFile string) error {
 
 // MarshalAutoDevOptions encodes options to JSON
 func MarshalAutoDevOptions(opts AutoDevOptions) string {
+	opts.Module = NormalizeAutoDevModule(opts.Module)
 	b, _ := json.Marshal(opts)
 	return string(b)
 }

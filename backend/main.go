@@ -808,10 +808,14 @@ func main() {
 			// SSH key for GitHub access
 			autodev.GET("/sshkey", autoDevHandler.GetSSHKey)
 			autodev.POST("/sshkey/regenerate", autoDevHandler.RegenerateSSHKey)
-			// Claude CLI 版本管理
+			// Claude / Codex CLI 版本管理
 			autodev.GET("/claude/version", autoDevHandler.GetClaudeVersion)
+			autodev.GET("/claude/cli/test", autoDevHandler.TestClaudeCLI)
 			autodev.GET("/claude/test", autoDevHandler.TestModel)
 			autodev.GET("/claude/update/stream", autoDevHandler.UpdateClaude)
+			autodev.GET("/codex/version", autoDevHandler.GetCodexVersion)
+			autodev.GET("/codex/cli/test", autoDevHandler.TestCodexCLI)
+			autodev.GET("/codex/update/stream", autoDevHandler.UpdateCodex)
 			// clawtest 版本管理
 			autodev.GET("/clawtest/version", autoDevHandler.GetClawtestVersion)
 			autodev.GET("/clawtest/update/stream", autoDevHandler.UpdateClawtest)

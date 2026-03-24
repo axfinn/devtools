@@ -47,7 +47,7 @@
       <div class="flex items-center gap-2">
         <el-button size="small" @click="claudeDrawerVisible = true" class="topbar-btn">
           <el-icon><SetUp /></el-icon>
-          <span class="hidden sm:inline ml-1">Claude 管理</span>
+          <span class="hidden sm:inline ml-1">CLI 管理</span>
         </el-button>
         <el-tooltip :content="themeMode === 'auto' ? '跟随系统主题' : isDark ? '切换浅色模式' : '切换深色模式'" placement="bottom">
           <el-button size="small" @click="toggleTheme" class="topbar-btn">
@@ -85,6 +85,14 @@
             >
               {{ mode === 'develop' ? '开发' : mode === 'ask' ? '问答' : mode === 'extend' ? '扩展' : '导出' }}
             </button>
+          </div>
+
+          <div v-if="activeMode !== 'export' || resumeTaskId" class="mb-3">
+            <div class="text-xs text-slate-400 mb-2">执行模块</div>
+            <div class="flex gap-2">
+              <button type="button" class="filter-pill" :class="{ 'filter-pill--active': newTask.module === 'cc' }" @click="newTask.module = 'cc'">cc</button>
+              <button type="button" class="filter-pill" :class="{ 'filter-pill--active': newTask.module === 'codex' }" @click="newTask.module = 'codex'">codex</button>
+            </div>
           </div>
 
           <!-- Ask Mode: Simple input -->
@@ -273,6 +281,7 @@
                   </p>
                   <div class="flex items-center gap-1.5 mt-0.5">
                     <span class="task-type-tag" :class="`task-type-tag--${task.type || 'develop'}`">{{ typeLabel(task.type) }}</span>
+                    <span class="module-tag" :class="`module-tag--${taskModule(task)}`">{{ moduleLabel(taskModule(task)) }}</span>
                     <p class="text-xs text-slate-500">{{ formatTime(task.created_at) }}</p>
                   </div>
                   <!-- Running phase -->
@@ -351,6 +360,7 @@
                   {{ statusLabel(selectedTask.status) }}
                 </el-tag>
                 <span class="task-type-tag" :class="`task-type-tag--${selectedTask.type || 'develop'}`">{{ typeLabel(selectedTask.type) }}</span>
+                <span class="module-tag" :class="`module-tag--${taskModule(selectedTask)}`">{{ moduleLabel(taskModule(selectedTask)) }}</span>
                 <span class="text-xs text-slate-500 font-mono">#{{ selectedTask.id }}</span>
               </div>
               <h2 class="content-header-title" :title="selectedTask.description">{{ selectedTask.description }}</h2>
@@ -631,13 +641,13 @@
       <div class="fullscreen-content markdown-view" v-html="fullscreenHtml" />
     </el-dialog>
 
-    <!-- ===== Claude 管理 Drawer ===== -->
-    <el-drawer v-model="claudeDrawerVisible" title="Claude CLI 管理" direction="rtl" size="480px" @open="onClaudeDrawerOpen">
+    <!-- ===== CLI 管理 Drawer ===== -->
+    <el-drawer v-model="claudeDrawerVisible" title="cc / codex CLI 管理" direction="rtl" size="480px" @open="onClaudeDrawerOpen">
       <div class="space-y-4 p-2">
         <el-card shadow="never">
           <template #header>
             <div class="flex items-center justify-between">
-              <span class="font-semibold text-sm">当前环境</span>
+              <span class="font-semibold text-sm">cc / Claude Code CLI 版本</span>
               <el-button size="small" :loading="loadingClaudeInfo" @click="loadClaudeVersion" circle plain>
                 <el-icon><Refresh /></el-icon>
               </el-button>
@@ -671,7 +681,53 @@
         <el-card shadow="never">
           <template #header>
             <div class="flex items-center justify-between">
-              <span class="font-semibold text-sm">模型连通性测试</span>
+              <span class="font-semibold text-sm">cc / Claude Code CLI 自检</span>
+              <el-button size="small" :loading="testingClaudeCLI" @click="testClaudeCLI" plain>
+                <el-icon><Connection /></el-icon> 测试
+              </el-button>
+            </div>
+          </template>
+          <div v-if="!claudeCliHealth && !testingClaudeCLI" class="text-center text-gray-400 py-4 text-sm">点击测试按钮检查 cc CLI 是否可执行</div>
+          <div v-else-if="testingClaudeCLI" class="text-center py-4">
+            <el-icon class="is-loading text-purple-500 text-xl"><Loading /></el-icon>
+            <p class="text-xs text-gray-400 mt-2">正在执行 cc 自检…</p>
+          </div>
+          <div v-else-if="claudeCliHealth" class="space-y-2">
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">状态</span>
+              <el-tag :type="claudeCliHealth.ok ? 'success' : 'danger'" size="small" effect="dark">{{ claudeCliHealth.ok ? '可用' : '失败' }}</el-tag>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">版本</span>
+              <span class="text-xs font-mono text-purple-600">{{ claudeCliHealth.version || claudeInfo?.version || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">HOME</span>
+              <span class="text-xs font-mono text-gray-600 truncate max-w-[220px]" :title="claudeCliHealth.home">{{ claudeCliHealth.home || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">路径</span>
+              <span class="text-xs font-mono text-gray-600 truncate max-w-[220px]" :title="claudeCliHealth.path">{{ claudeCliHealth.path || claudeInfo?.path || '—' }}</span>
+            </div>
+            <div v-if="claudeCliHealth.latency_ms" class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">响应延迟</span>
+              <span class="text-sm font-mono" :class="claudeCliHealth.latency_ms < 5000 ? 'text-green-600' : 'text-yellow-600'">{{ claudeCliHealth.latency_ms }} ms</span>
+            </div>
+            <div v-if="claudeCliHealth.response" class="py-1.5 border-b">
+              <span class="text-xs text-gray-500 block mb-1">CLI 回复</span>
+              <span class="text-xs font-mono text-green-700 bg-green-50 px-2 py-1 rounded block break-all">{{ claudeCliHealth.response }}</span>
+            </div>
+            <div v-if="claudeCliHealth.error" class="py-1.5">
+              <span class="text-xs text-gray-500 block mb-1">错误信息</span>
+              <span class="text-xs text-red-600 bg-red-50 px-2 py-1 rounded block break-all">{{ claudeCliHealth.error }}</span>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card shadow="never">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-sm">Anthropic 模型 API 测试</span>
               <el-button size="small" :loading="testingModel" @click="testModel" plain>
                 <el-icon><Connection /></el-icon> 测试
               </el-button>
@@ -715,11 +771,12 @@
         </el-card>
 
         <el-card shadow="never">
-          <template #header><span class="font-semibold text-sm">更新 Claude Code CLI</span></template>
+          <template #header><span class="font-semibold text-sm">更新 cc / Claude Code CLI</span></template>
           <div class="space-y-3">
             <div class="bg-gray-50 rounded p-3 text-xs text-gray-600">
               <p>执行命令：</p>
               <code class="font-mono text-purple-700">npm install -g @anthropic-ai/claude-code@latest</code>
+              <p class="mt-1 text-[11px] text-gray-500">用于更新默认模块 cc（Claude Code CLI）</p>
             </div>
             <el-button type="primary" class="w-full" :loading="updating" :disabled="updating" @click="startUpdate">
               <el-icon><Upload /></el-icon>
@@ -735,6 +792,113 @@
             <el-result v-if="updateResult" :icon="updateResult.success ? 'success' : 'error'" :title="updateResult.success ? '更新成功' : '更新失败'" :sub-title="updateResult.message">
               <template #extra>
                 <el-button size="small" @click="loadClaudeVersion">刷新版本信息</el-button>
+              </template>
+            </el-result>
+          </div>
+        </el-card>
+
+        <el-card shadow="never">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-sm">codex / OpenAI Codex CLI 版本</span>
+              <el-button size="small" :loading="loadingCodexInfo" @click="loadCodexVersion" circle plain>
+                <el-icon><Refresh /></el-icon>
+              </el-button>
+            </div>
+          </template>
+          <div v-if="loadingCodexInfo" class="text-center py-4"><el-icon class="is-loading text-purple-500 text-xl"><Loading /></el-icon></div>
+          <div v-else-if="codexInfo" class="space-y-2">
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">Codex CLI</span>
+              <div class="flex items-center gap-2">
+                <el-tag :type="codexInfo.available ? 'success' : 'danger'" size="small" effect="dark">{{ codexInfo.available ? '已安装' : '未安装' }}</el-tag>
+                <span class="text-sm font-mono font-semibold text-purple-600">{{ codexInfo.version || '—' }}</span>
+              </div>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">安装路径</span>
+              <span class="text-xs font-mono text-gray-600 truncate max-w-[240px]">{{ codexInfo.path || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">Node.js</span>
+              <span class="text-sm font-mono">{{ codexInfo.node_version || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5">
+              <span class="text-sm text-gray-500">npm</span>
+              <span class="text-sm font-mono">{{ codexInfo.npm_version || '—' }}</span>
+            </div>
+          </div>
+          <div v-else class="text-center text-gray-400 py-4 text-sm">点击刷新按钮获取版本信息</div>
+        </el-card>
+
+        <el-card shadow="never">
+          <template #header>
+            <div class="flex items-center justify-between">
+              <span class="font-semibold text-sm">codex / OpenAI Codex CLI 自检</span>
+              <el-button size="small" :loading="testingCodexCLI" @click="testCodexCLI" plain>
+                <el-icon><Connection /></el-icon> 测试
+              </el-button>
+            </div>
+          </template>
+          <div v-if="!codexCliHealth && !testingCodexCLI" class="text-center text-gray-400 py-4 text-sm">点击测试按钮检查 codex CLI 是否可执行</div>
+          <div v-else-if="testingCodexCLI" class="text-center py-4">
+            <el-icon class="is-loading text-purple-500 text-xl"><Loading /></el-icon>
+            <p class="text-xs text-gray-400 mt-2">正在执行 codex 自检…</p>
+          </div>
+          <div v-else-if="codexCliHealth" class="space-y-2">
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">状态</span>
+              <el-tag :type="codexCliHealth.ok ? 'success' : 'danger'" size="small" effect="dark">{{ codexCliHealth.ok ? '可用' : '失败' }}</el-tag>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">版本</span>
+              <span class="text-xs font-mono text-purple-600">{{ codexCliHealth.version || codexInfo?.version || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">HOME</span>
+              <span class="text-xs font-mono text-gray-600 truncate max-w-[220px]" :title="codexCliHealth.home">{{ codexCliHealth.home || '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">路径</span>
+              <span class="text-xs font-mono text-gray-600 truncate max-w-[220px]" :title="codexCliHealth.path">{{ codexCliHealth.path || codexInfo?.path || '—' }}</span>
+            </div>
+            <div v-if="codexCliHealth.latency_ms" class="flex items-center justify-between py-1.5 border-b">
+              <span class="text-sm text-gray-500">响应延迟</span>
+              <span class="text-sm font-mono" :class="codexCliHealth.latency_ms < 5000 ? 'text-green-600' : 'text-yellow-600'">{{ codexCliHealth.latency_ms }} ms</span>
+            </div>
+            <div v-if="codexCliHealth.response" class="py-1.5 border-b">
+              <span class="text-xs text-gray-500 block mb-1">CLI 回复</span>
+              <span class="text-xs font-mono text-green-700 bg-green-50 px-2 py-1 rounded block break-all">{{ codexCliHealth.response }}</span>
+            </div>
+            <div v-if="codexCliHealth.error" class="py-1.5">
+              <span class="text-xs text-gray-500 block mb-1">错误信息</span>
+              <span class="text-xs text-red-600 bg-red-50 px-2 py-1 rounded block break-all">{{ codexCliHealth.error }}</span>
+            </div>
+          </div>
+        </el-card>
+
+        <el-card shadow="never">
+          <template #header><span class="font-semibold text-sm">更新 codex / OpenAI Codex CLI</span></template>
+          <div class="space-y-3">
+            <div class="bg-gray-50 rounded p-3 text-xs text-gray-600">
+              <p>执行命令：</p>
+              <code class="font-mono text-purple-700">npm install -g @openai/codex@latest</code>
+              <p class="mt-1 text-[11px] text-gray-500">用于更新可选模块 codex（OpenAI Codex CLI）</p>
+            </div>
+            <el-button type="primary" class="w-full" :loading="updatingCodex" :disabled="updatingCodex" @click="startCodexUpdate">
+              <el-icon><Upload /></el-icon>
+              <span class="ml-1">{{ updatingCodex ? '更新中…' : '立即更新到最新版本' }}</span>
+            </el-button>
+            <div v-if="codexUpdateLogs.length">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-xs text-gray-500">更新输出</span>
+                <el-button size="small" text @click="codexUpdateLogs = []">清空</el-button>
+              </div>
+              <pre ref="codexUpdateLogEl" class="text-xs bg-gray-900 text-green-400 p-3 rounded overflow-auto max-h-[300px] whitespace-pre-wrap break-all font-mono leading-5">{{ codexUpdateLogs.join('\n') }}</pre>
+            </div>
+            <el-result v-if="codexUpdateResult" :icon="codexUpdateResult.success ? 'success' : 'error'" :title="codexUpdateResult.success ? '更新成功' : '更新失败'" :sub-title="codexUpdateResult.message">
+              <template #extra>
+                <el-button size="small" @click="loadCodexVersion">刷新版本信息</el-button>
               </template>
             </el-result>
           </div>
@@ -871,7 +1035,7 @@ import hljs from 'highlight.js'
 import {
   Lock, MagicStick, VideoPlay, VideoPause, Refresh, RefreshRight,
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
-  FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
+  Folder, FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
   SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled,
   Sunny, MoonNight, Key, ChatLineRound, Plus, Search, ArrowRight, WarningFilled,
   DocumentChecked
@@ -899,6 +1063,7 @@ function renderMd(content) {
 
 const SESSION_KEY = 'autodev_password'
 const API_BASE = '/api/autodev'
+const DEFAULT_MODULE = 'cc'
 
 // ---- theme: sync with global useTheme composable ----
 const { currentTheme, themeMode, toggleTheme } = useTheme()
@@ -961,7 +1126,7 @@ const loadingMore = ref(false)
 const submitting = ref(false)
 const resumeTaskId = ref('')
 const activeMode = ref('develop') // 'develop' | 'ask' | 'extend' | 'export'
-const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip' })
+const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE })
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
 
 // ---- list filter & pagination ----
@@ -1087,7 +1252,8 @@ async function submitTask() {
         body: JSON.stringify({
           password: savedPassword,
           description: newTask.value.description.trim(),
-          work_dir: newTask.value.workDir.trim()
+          work_dir: newTask.value.workDir.trim(),
+          module: newTask.value.module
         })
       })
       data = await res.json()
@@ -1099,7 +1265,8 @@ async function submitTask() {
         body: JSON.stringify({
           password: savedPassword,
           description: newTask.value.description.trim(),
-          work_dir: newTask.value.workDir.trim()
+          work_dir: newTask.value.workDir.trim(),
+          module: newTask.value.module
         })
       })
       data = await res.json()
@@ -1115,10 +1282,12 @@ async function submitTask() {
         body.type = 'develop'
         body.resume_from = newTask.value.resumeFrom
         body.work_dir = newTask.value.workDir
+        body.module = newTask.value.module
       } else {
         // Normal mode - include type based on activeMode
         body.description = newTask.value.description.trim()
         body.type = activeMode.value
+        if (activeMode.value !== 'export') body.module = newTask.value.module
 
         if (activeMode.value === 'develop') {
           body.publish = newTask.value.publish
@@ -1144,7 +1313,7 @@ async function submitTask() {
         activeMode.value === 'export' ? '导出任务已提交…' : '任务已提交，正在执行…'
       ElMessage.success(successMsg)
       resumeTaskId.value = ''
-      newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip' }
+      newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE }
       await loadTasks()
       selectTask(data)
     } else {
@@ -1183,13 +1352,15 @@ function startResume(task) {
     push: parseOptions(task.options).push || false,
     resumeFrom: resumeFrom > 0 ? resumeFrom : 1,
     workDir: task.work_dir,
+    exportFormat: 'zip',
+    module: taskModule(task),
   }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function cancelResume() {
   resumeTaskId.value = ''
-  newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '' }
+  newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE }
 }
 
 async function deleteTask(task) {
@@ -1355,13 +1526,13 @@ const resultEmptyHint = computed(() => {
 // ---- quick ask / extend from selected task ----
 function quickAsk(task) {
   activeMode.value = 'ask'
-  newTask.value = { ...newTask.value, description: '', workDir: task.work_dir }
+  newTask.value = { ...newTask.value, description: '', workDir: task.work_dir, module: taskModule(task) }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function quickExtend(task) {
   activeMode.value = 'extend'
-  newTask.value = { ...newTask.value, description: '', workDir: task.work_dir }
+  newTask.value = { ...newTask.value, description: '', workDir: task.work_dir, module: taskModule(task) }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -1622,21 +1793,40 @@ function statusLabel(s) {
 function parseOptions(str) {
   try { return JSON.parse(str || '{}') } catch { return {} }
 }
+function normalizeModule(module) {
+  return module === 'codex' ? 'codex' : DEFAULT_MODULE
+}
+function taskModule(task) {
+  return normalizeModule(task?.module || parseOptions(task?.options).module)
+}
+function moduleLabel(module) {
+  return normalizeModule(module)
+}
 function formatTime(t) {
   if (!t) return ''
   return new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-// ---- Claude version management ----
+// ---- CLI management ----
 const claudeDrawerVisible = ref(false)
 const claudeInfo = ref(null)
 const loadingClaudeInfo = ref(false)
+const claudeCliHealth = ref(null)
+const testingClaudeCLI = ref(false)
 const modelHealth = ref(null)
 const testingModel = ref(false)
 const updating = ref(false)
 const updateLogs = ref([])
 const updateResult = ref(null)
 const updateLogEl = ref(null)
+const codexInfo = ref(null)
+const loadingCodexInfo = ref(false)
+const codexCliHealth = ref(null)
+const testingCodexCLI = ref(false)
+const updatingCodex = ref(false)
+const codexUpdateLogs = ref([])
+const codexUpdateResult = ref(null)
+const codexUpdateLogEl = ref(null)
 
 // ---- SSH Key ----
 const sshKeyInfo = ref(null)
@@ -1727,6 +1917,7 @@ function startClawtestUpdate() {
 
 function onClaudeDrawerOpen() {
   if (!claudeInfo.value) loadClaudeVersion()
+  if (!codexInfo.value) loadCodexVersion()
   if (!clawtestInfo.value) loadClawtestVersion()
   if (!sshKeyInfo.value) loadSSHKey()
 }
@@ -1738,6 +1929,37 @@ async function loadClaudeVersion() {
     if (res.ok) claudeInfo.value = await res.json()
   } catch { ElMessage.error('获取版本信息失败') }
   finally { loadingClaudeInfo.value = false }
+}
+
+async function loadCodexVersion() {
+  loadingCodexInfo.value = true
+  try {
+    const res = await fetch(`${API_BASE}/codex/version?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) codexInfo.value = await res.json()
+  } catch { ElMessage.error('获取 Codex 版本信息失败') }
+  finally { loadingCodexInfo.value = false }
+}
+
+async function testClaudeCLI() {
+  testingClaudeCLI.value = true
+  claudeCliHealth.value = null
+  try {
+    const res = await fetch(`${API_BASE}/claude/cli/test?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) claudeCliHealth.value = await res.json()
+    else ElMessage.error('cc 自检失败')
+  } catch { ElMessage.error('cc 自检失败') }
+  finally { testingClaudeCLI.value = false }
+}
+
+async function testCodexCLI() {
+  testingCodexCLI.value = true
+  codexCliHealth.value = null
+  try {
+    const res = await fetch(`${API_BASE}/codex/cli/test?password=${encodeURIComponent(savedPassword)}`)
+    if (res.ok) codexCliHealth.value = await res.json()
+    else ElMessage.error('codex 自检失败')
+  } catch { ElMessage.error('codex 自检失败') }
+  finally { testingCodexCLI.value = false }
 }
 
 async function testModel() {
@@ -1775,12 +1997,47 @@ function startUpdate() {
           ? `${data.old_version} → ${data.new_version}` : `当前版本: ${data.new_version || '未知'}`
         updateResult.value = { success: true, message: msg }
         claudeInfo.value = null
+        claudeCliHealth.value = null
       }
     } catch { updateResult.value = { success: true, message: '完成' } }
   })
   es.onerror = () => {
     es.close(); updating.value = false
     if (!updateResult.value) updateResult.value = { success: false, message: '连接中断' }
+  }
+}
+
+function startCodexUpdate() {
+  if (updatingCodex.value) return
+  updatingCodex.value = true
+  codexUpdateLogs.value = []
+  codexUpdateResult.value = null
+  const url = `${API_BASE}/codex/update/stream?password=${encodeURIComponent(savedPassword)}`
+  const es = new EventSource(url)
+  es.addEventListener('log', (e) => {
+    try {
+      const data = JSON.parse(e.data)
+      codexUpdateLogs.value.push(data.line)
+      nextTick(() => { if (codexUpdateLogEl.value) codexUpdateLogEl.value.scrollTop = codexUpdateLogEl.value.scrollHeight })
+    } catch {}
+  })
+  es.addEventListener('done', (e) => {
+    es.close(); updatingCodex.value = false
+    try {
+      const data = JSON.parse(e.data)
+      if (data.error) { codexUpdateResult.value = { success: false, message: data.error } }
+      else {
+        const msg = data.new_version && data.new_version !== data.old_version
+          ? `${data.old_version} → ${data.new_version}` : `当前版本: ${data.new_version || '未知'}`
+        codexUpdateResult.value = { success: true, message: msg }
+        codexInfo.value = null
+        codexCliHealth.value = null
+      }
+    } catch { codexUpdateResult.value = { success: true, message: '完成' } }
+  })
+  es.onerror = () => {
+    es.close(); updatingCodex.value = false
+    if (!codexUpdateResult.value) codexUpdateResult.value = { success: false, message: '连接中断' }
   }
 }
 
@@ -1905,7 +2162,6 @@ onUnmounted(() => {
 .sidebar-card-header {
   display: flex;
   align-items: center;
-  gap-: 6px;
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
@@ -1956,6 +2212,22 @@ onUnmounted(() => {
 .task-type-tag--extend  { background: #3b1f5e; color: #c084fc; }
 .task-type-tag--export  { background: #3a2b00; color: #fbbf24; }
 .task-type-tag--init    { background: #1a2f3a; color: #38bdf8; }
+
+.module-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.module-tag--cc {
+  background: #312e81;
+  color: #a5b4fc;
+}
+.module-tag--codex {
+  background: #14532d;
+  color: #86efac;
+}
 
 /* ===== Task List ===== */
 .task-list {

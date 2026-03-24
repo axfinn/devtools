@@ -46,8 +46,9 @@ ENV UV_CACHE_DIR=/root/.cache/uv
 # Warm up uvx tool cache to avoid runtime downloads
 RUN uvx minimax-coding-plan-mcp -y --help >/dev/null 2>&1 || true
 
-# Install Claude Code CLI
+# Install Claude Code CLI and Codex CLI
 RUN npm install -g @anthropic-ai/claude-code --unsafe-perm 2>&1 || true
+RUN npm install -g @openai/codex --unsafe-perm 2>&1 || true
 
 # Create non-root user for running autodev tasks
 # Claude Code refuses --dangerously-skip-permissions when running as root
