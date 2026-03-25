@@ -491,6 +491,10 @@
                     </el-button>
                   </div>
                 </div>
+                <div v-if="resultPreviewNotice" class="preview-notice">
+                  <el-icon><WarningFilled /></el-icon>
+                  <span>{{ resultPreviewNotice }}</span>
+                </div>
                 <div class="markdown-view" v-html="renderedResult" />
               </div>
             </div>
@@ -528,10 +532,10 @@
                       :key="file.path"
                       class="file-item"
                       :class="{ 'file-item--active': activeFilePath === file.path }"
-                      @click="loadFile(file.path)"
+                      @click="openFile(file.path)"
                       :title="file.path"
                     >
-                      <span class="file-icon">{{ fileIcon(file.name) }}</span>
+                      <span class="file-icon">{{ fileIcon(file) }}</span>
                       <div class="file-info">
                         <span class="file-name">{{ file.name }}</span>
                         <span class="file-path-hint" v-if="file.path.includes('/')">{{ file.path.substring(0, file.path.lastIndexOf('/')) }}/</span>
@@ -547,7 +551,7 @@
                       <p class="text-slate-500 text-sm mb-3">点击左侧文件查看内容</p>
                       <div class="text-xs text-slate-600 space-y-1 text-left inline-block">
                         <p>📄 <strong class="text-slate-500">RESULT.md</strong> — 任务最终结果</p>
-                        <p>💻 <strong class="text-slate-500">项目代码</strong> — autodev 生成的代码文件</p>
+                        <p>📁 <strong class="text-slate-500">项目文件</strong> — 代码、静态资源和构建产物</p>
                         <p>📋 <strong class="text-slate-500">process/</strong> — 各阶段过程文档</p>
                       </div>
                     </div>
@@ -559,22 +563,80 @@
                     <div class="result-toolbar">
                       <div class="flex items-center gap-2 min-w-0">
                         <span class="file-category-badge" :class="`badge--${activeCategoryName}`">{{ activeCategoryLabel }}</span>
+                        <span class="file-kind-badge">{{ activeFileKindLabel }}</span>
                         <span class="text-xs text-slate-500 font-mono truncate">{{ activeFilePath }}</span>
                       </div>
-                      <div class="flex gap-2 shrink-0">
-                        <el-button v-if="activeFilePath?.endsWith('.md')" size="small" text class="!text-slate-400" @click="openFullscreenFile">
+                      <div class="flex gap-2 shrink-0 items-center">
+                        <el-select
+                          v-if="activeFileIsText"
+                          v-model="filePreviewMode"
+                          size="small"
+                          class="preview-select"
+                          @change="reloadActiveFile"
+                        >
+                          <el-option
+                            v-for="option in FILE_PREVIEW_MODE_OPTIONS"
+                            :key="option.value"
+                            :label="option.label"
+                            :value="option.value"
+                          />
+                        </el-select>
+                        <span v-if="activeFileSize" class="text-xs text-slate-500 hidden sm:inline">{{ formatBytes(activeFileSize) }}</span>
+                        <el-button size="small" text class="!text-slate-400" @click="reloadActiveFile">
+                          <el-icon><Refresh /></el-icon>
+                        </el-button>
+                        <el-button size="small" text class="!text-slate-400" @click="openRawFile">
+                          <el-icon><Pointer /></el-icon>
+                        </el-button>
+                        <el-button v-if="activeFileKind === 'markdown'" size="small" text class="!text-slate-400" @click="openFullscreenFile">
                           <el-icon><FullScreen /></el-icon>
                         </el-button>
-                        <el-button size="small" text class="!text-slate-400" @click="copyCurrentFile">
+                        <el-button v-if="activeFileIsText" size="small" text class="!text-slate-400" @click="copyCurrentFile">
                           <el-icon><CopyDocument /></el-icon>
                         </el-button>
                       </div>
                     </div>
+                    <div v-if="activeFileNotice" class="preview-notice">
+                      <el-icon><WarningFilled /></el-icon>
+                      <span>{{ activeFileNotice }}</span>
+                    </div>
                     <div class="flex-1 overflow-auto">
-                      <div v-if="activeFilePath?.endsWith('.md')"
-                        class="markdown-view p-4"
-                        v-html="renderedActiveFile"
-                      />
+                      <div v-if="activeFileKind === 'markdown'" class="markdown-view p-4" v-html="renderedActiveFile" />
+                      <div v-else-if="activeFileKind === 'image'" class="media-preview">
+                        <img :src="activeFileRawUrl" :alt="activeFilePath" class="media-image">
+                      </div>
+                      <div v-else-if="activeFileKind === 'audio'" class="media-preview media-preview--center">
+                        <audio :src="activeFileRawUrl" controls preload="metadata" class="media-audio" />
+                      </div>
+                      <div v-else-if="activeFileKind === 'video'" class="media-preview">
+                        <video :src="activeFileRawUrl" controls preload="metadata" class="media-video" />
+                      </div>
+                      <div v-else-if="activeFileKind === 'pdf'" class="media-preview">
+                        <iframe :src="activeFileRawUrl" class="media-pdf" title="PDF 预览" />
+                      </div>
+                      <div v-else-if="!activeFileIsText" class="binary-preview">
+                        <div class="binary-preview-card">
+                          <div class="binary-preview-title">该文件不适合文本预览</div>
+                          <div class="binary-preview-grid">
+                            <div class="binary-preview-item">
+                              <span class="binary-preview-label">类型</span>
+                              <span class="binary-preview-value">{{ activeFileKindLabel }}</span>
+                            </div>
+                            <div class="binary-preview-item">
+                              <span class="binary-preview-label">MIME</span>
+                              <span class="binary-preview-value">{{ activeFileMeta?.mime_type || 'application/octet-stream' }}</span>
+                            </div>
+                            <div class="binary-preview-item">
+                              <span class="binary-preview-label">大小</span>
+                              <span class="binary-preview-value">{{ formatBytes(activeFileSize) }}</span>
+                            </div>
+                          </div>
+                          <el-button type="primary" plain @click="openRawFile">
+                            <el-icon><Pointer /></el-icon>
+                            <span class="ml-1">打开原文件</span>
+                          </el-button>
+                        </div>
+                      </div>
                       <pre v-else class="code-view">{{ activeFileContent }}</pre>
                     </div>
                   </div>
@@ -588,8 +650,16 @@
                 <el-select v-model="activeLogPhase" size="small" class="w-36" @change="loadLogs">
                   <el-option v-for="ph in availableLogPhases" :key="ph" :label="ph" :value="ph" />
                 </el-select>
+                <el-select v-model="logTailLines" size="small" class="preview-select" @change="loadLogs">
+                  <el-option v-for="option in LOG_TAIL_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
+                </el-select>
                 <span class="text-xs text-slate-500">{{ logLineCount }} 行</span>
+                <span v-if="logMeta.total_bytes" class="text-xs text-slate-600 hidden sm:inline">{{ formatBytes(logMeta.total_bytes) }}</span>
                 <div class="flex gap-2 ml-auto">
+                  <el-button size="small" :type="logFollow ? 'success' : 'info'" plain @click="logFollow = !logFollow" class="action-btn">
+                    <el-icon><Connection /></el-icon>
+                    <span class="ml-1 hidden sm:inline">{{ logFollow ? '跟随中' : '已暂停' }}</span>
+                  </el-button>
                   <el-button size="small" :loading="loadingLogs" @click="loadLogs" plain class="action-btn">
                     <el-icon><Refresh /></el-icon>
                   </el-button>
@@ -597,6 +667,10 @@
                     <el-icon><Bottom /></el-icon>
                   </el-button>
                 </div>
+              </div>
+              <div v-if="logNotice" class="preview-notice preview-notice--terminal">
+                <el-icon><WarningFilled /></el-icon>
+                <span>{{ logNotice }}</span>
               </div>
               <div v-if="!logContent" class="empty-content bg-slate-950">
                 <el-icon class="text-3xl text-slate-700 mb-2"><Monitor /></el-icon>
@@ -1064,6 +1138,39 @@ function renderMd(content) {
 const SESSION_KEY = 'autodev_password'
 const API_BASE = '/api/autodev'
 const DEFAULT_MODULE = 'cc'
+const RESULT_PREVIEW_BYTES = 512 * 1024
+const FILE_PREVIEW_BYTES = 256 * 1024
+const FILE_PREVIEW_LINES = 400
+const LOG_PREVIEW_BYTES = 192 * 1024
+
+const FILE_PREVIEW_MODE_OPTIONS = [
+  { label: '智能', value: 'auto' },
+  { label: '开头', value: 'head' },
+  { label: '结尾', value: 'tail' },
+  { label: '全文', value: 'full' },
+]
+
+const LOG_TAIL_OPTIONS = [
+  { label: '尾部 200 行', value: 200 },
+  { label: '尾部 300 行', value: 300 },
+  { label: '尾部 500 行', value: 500 },
+  { label: '尾部 1000 行', value: 1000 },
+]
+
+const FILE_KIND_LABELS = {
+  markdown: 'Markdown',
+  text: '文本',
+  image: '图片',
+  audio: '音频',
+  video: '视频',
+  pdf: 'PDF',
+  archive: '压缩包',
+  binary: '二进制',
+}
+
+function createEmptyLogMeta() {
+  return { log_path: '', total_bytes: 0, display_bytes: 0, displayed_line_count: 0, truncated: false, preview_mode: 'tail' }
+}
 
 // ---- theme: sync with global useTheme composable ----
 const { currentTheme, themeMode, toggleTheme } = useTheme()
@@ -1386,15 +1493,21 @@ const taskFiles = ref([])
 const taskHasSite = ref(false)
 const activeFilePath = ref(null)
 const activeFileContent = ref('')
+const activeFileMeta = ref(null)
+const filePreviewMode = ref('auto')
 const loadingFile = ref(false)
 const loadingDetail = ref(false)
 const logContent = ref('')
+const logMeta = ref(createEmptyLogMeta())
+const logTailLines = ref(300)
+const logFollow = ref(true)
 const availableLogPhases = ref(['driver'])
 const activeLogPhase = ref('driver')
 const loadingLogs = ref(false)
 const logEl = ref(null)
 const downloading = ref(false)
 const resultContent = ref('')
+const resultPreviewMeta = ref(null)
 const initingProject = ref(false)
 const initDialogVisible = ref(false)
 const initLogs = ref([])
@@ -1406,8 +1519,37 @@ const fullscreenVisible = ref(false)
 const fullscreenTitle = ref('')
 const fullscreenHtml = ref('')
 
+const activeFile = computed(() => taskFiles.value.find(file => file.path === activeFilePath.value) || null)
 const renderedResult = computed(() => renderMd(resultContent.value))
 const renderedActiveFile = computed(() => renderMd(activeFileContent.value))
+const activeFileKind = computed(() => activeFileMeta.value?.kind || activeFile.value?.kind || 'text')
+const activeFileIsText = computed(() => activeFileMeta.value?.is_text ?? ['text', 'markdown'].includes(activeFileKind.value))
+const activeFileKindLabel = computed(() => FILE_KIND_LABELS[activeFileKind.value] || '文件')
+const activeFileSize = computed(() => activeFileMeta.value?.size ?? activeFile.value?.size ?? 0)
+const activeFileRawUrl = computed(() => {
+  if (!selectedTask.value || !activeFilePath.value) return ''
+  return `${API_BASE}/tasks/${selectedTask.value.id}/raw?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(activeFilePath.value)}`
+})
+const resultPreviewNotice = computed(() => buildTextPreviewNotice(resultPreviewMeta.value, '结果文件'))
+const activeFileNotice = computed(() => {
+  const meta = activeFileMeta.value
+  if (!meta) return ''
+  if (!meta.is_text) {
+    if (meta.kind === 'binary' || meta.kind === 'archive') {
+      return `已切换为元信息视图，原文件大小 ${formatBytes(activeFileSize.value)}。`
+    }
+    return `${activeFileKindLabel.value} · ${meta.mime_type || 'application/octet-stream'} · ${formatBytes(activeFileSize.value)}`
+  }
+  return buildTextPreviewNotice(meta, activeFileKindLabel.value)
+})
+const logNotice = computed(() => {
+  const parts = []
+  if (logMeta.value.log_path) parts.push(logMeta.value.log_path)
+  if (logMeta.value.truncated) parts.push(`仅显示尾部 ${logLineCount.value} 行 / ${formatBytes(logMeta.value.display_bytes)}`)
+  if (logMeta.value.total_bytes) parts.push(`原日志 ${formatBytes(logMeta.value.total_bytes)}`)
+  if (!logFollow.value && logContent.value) parts.push('已暂停自动跟随滚动')
+  return parts.join(' · ')
+})
 
 function openFullscreen() {
   fullscreenTitle.value = 'RESULT.md'
@@ -1442,10 +1584,16 @@ async function selectTask(task) {
   activeTab.value = 'result'
   activeFilePath.value = null
   activeFileContent.value = ''
+  activeFileMeta.value = null
+  filePreviewMode.value = 'auto'
   logContent.value = ''
+  logMeta.value = createEmptyLogMeta()
+  logTailLines.value = 300
+  logFollow.value = true
   taskFiles.value = []
   taskHasSite.value = false
   resultContent.value = ''
+  resultPreviewMeta.value = null
   availableLogPhases.value = ['driver']
   activeLogPhase.value = 'driver'
   // Fetch task detail (lightweight: no file walk)
@@ -1465,6 +1613,7 @@ async function refreshDetail() {
     // Load result content for the active tab (lazy: only if result tab is visible)
     if (activeTab.value === 'result') await loadResultForTask()
     else if (activeTab.value === 'files') await loadFiles()
+    else if (activeTab.value === 'logs') await loadLogs()
   } finally { loadingDetail.value = false }
 }
 
@@ -1504,6 +1653,11 @@ async function loadFiles() {
     const data = await res.json()
     taskFiles.value = data.files || []
     taskHasSite.value = !!data.has_site
+    if (activeFilePath.value && !taskFiles.value.some(file => file.path === activeFilePath.value)) {
+      activeFilePath.value = null
+      activeFileContent.value = ''
+      activeFileMeta.value = null
+    }
   }
 }
 
@@ -1578,30 +1732,50 @@ function initProject(task) {
 }
 
 async function loadResultFile(path) {
+  resultPreviewMeta.value = null
   try {
     const res = await fetch(
-      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(path)}`
+      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(path)}&mode=full&max_bytes=${RESULT_PREVIEW_BYTES}&max_lines=1200`
     )
     if (res.ok) {
       const data = await res.json()
+      resultPreviewMeta.value = data
       resultContent.value = data.content || ''
     }
   } catch {}
 }
 
-async function loadFile(path) {
+function defaultPreviewModeForFile(path) {
+  const file = taskFiles.value.find(item => item.path === path)
+  return file?.category === 'log' ? 'tail' : 'auto'
+}
+
+function openFile(path) {
   activeFilePath.value = path
+  filePreviewMode.value = defaultPreviewModeForFile(path)
+  reloadActiveFile()
+}
+
+async function reloadActiveFile() {
+  if (!selectedTask.value || !activeFilePath.value) return
   activeFileContent.value = ''
+  activeFileMeta.value = null
   loadingFile.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(path)}`
+      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(activeFilePath.value)}&mode=${encodeURIComponent(filePreviewMode.value)}&max_bytes=${FILE_PREVIEW_BYTES}&max_lines=${FILE_PREVIEW_LINES}`
     )
     if (res.ok) {
       const data = await res.json()
+      activeFileMeta.value = data
       activeFileContent.value = data.content || ''
     }
   } finally { loadingFile.value = false }
+}
+
+function openRawFile() {
+  if (!activeFileRawUrl.value) return
+  window.open(activeFileRawUrl.value, '_blank')
 }
 
 async function loadLogs() {
@@ -1609,11 +1783,19 @@ async function loadLogs() {
   loadingLogs.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/tasks/${selectedTask.value.id}/logs?password=${encodeURIComponent(savedPassword)}&phase=${encodeURIComponent(activeLogPhase.value)}`
+      `${API_BASE}/tasks/${selectedTask.value.id}/logs?password=${encodeURIComponent(savedPassword)}&phase=${encodeURIComponent(activeLogPhase.value)}&max_lines=${logTailLines.value}&max_bytes=${LOG_PREVIEW_BYTES}`
     )
     if (res.ok) {
       const data = await res.json()
       logContent.value = data.logs || ''
+      logMeta.value = {
+        log_path: data.log_path || '',
+        total_bytes: data.total_bytes || 0,
+        display_bytes: data.display_bytes || 0,
+        displayed_line_count: data.displayed_line_count || 0,
+        truncated: !!data.truncated,
+        preview_mode: data.preview_mode || 'tail',
+      }
       if (data.available_phases?.length) {
         availableLogPhases.value = data.available_phases
         if (!availableLogPhases.value.includes(activeLogPhase.value)) {
@@ -1621,16 +1803,18 @@ async function loadLogs() {
         }
       }
       await nextTick()
-      scrollLogsToBottom()
+      scrollLogsToBottom(false)
     }
   } finally { loadingLogs.value = false }
 }
 
-function scrollLogsToBottom() {
-  if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight
+function scrollLogsToBottom(force = true) {
+  if (logEl.value && (force || logFollow.value)) {
+    logEl.value.scrollTop = logEl.value.scrollHeight
+  }
 }
 
-const logLineCount = computed(() => logContent.value ? logContent.value.split('\n').length : 0)
+const logLineCount = computed(() => logMeta.value.displayed_line_count || (logContent.value ? logContent.value.split('\n').length : 0))
 
 function switchToFiles() {
   activeTab.value = 'files'
@@ -1670,6 +1854,27 @@ function previewSite() {
   window.open(`${API_BASE}/tasks/${selectedTask.value.id}/site/index.html?password=${encodeURIComponent(savedPassword)}`, '_blank')
 }
 
+function formatBytes(bytes) {
+  const value = Number(bytes || 0)
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = value
+  let index = 0
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024
+    index += 1
+  }
+  const digits = size >= 10 || index === 0 ? 0 : 1
+  return `${size.toFixed(digits)} ${units[index]}`
+}
+
+function buildTextPreviewNotice(meta, label = '文件') {
+  if (!meta?.truncated) return ''
+  const modeLabel = { head: '开头', tail: '结尾', full: '全文', auto: '智能' }[meta.preview_mode] || '片段'
+  const lines = meta.displayed_line_count || 0
+  return `${label}较大，当前仅显示${modeLabel}窗口 ${lines} 行 / ${formatBytes(meta.display_bytes)}，原文件 ${formatBytes(meta.total_bytes || meta.size)}。`
+}
+
 // ---- phase helpers ----
 function isPhaseCompleted(i, state) {
   if (!state) return false
@@ -1702,7 +1907,7 @@ function miniPhaseClass(i, state) {
 // ---- file groups (computed from taskFiles by category) ----
 const FILE_GROUP_DEFS = [
   { category: 'result',  icon: '📄', label: '结果文档' },
-  { category: 'code',    icon: '💻', label: '项目代码' },
+  { category: 'code',    icon: '📁', label: '项目文件' },
   { category: 'process', icon: '📋', label: '过程文档' },
   { category: 'docs',    icon: '📚', label: '文档配置' },
   { category: 'log',     icon: '📝', label: '执行日志' },
@@ -1728,7 +1933,7 @@ const fileGroups = computed(() => {
   }
   return FILE_GROUP_DEFS.filter(g => map[g.category]?.length).map(g => ({
     ...g,
-    files: map[g.category],
+    files: [...map[g.category]].sort((a, b) => a.path.localeCompare(b.path)),
   }))
 })
 
@@ -1765,7 +1970,15 @@ const taskPlaceholder = computed(() => {
 })
 
 // ---- file helpers ----
-function fileIcon(name) {
+function fileIcon(file) {
+  const name = typeof file === 'string' ? file : file?.name || ''
+  const kind = typeof file === 'string' ? '' : file?.kind
+  if (kind === 'image') return '🖼️'
+  if (kind === 'audio') return '🎵'
+  if (kind === 'video') return '🎬'
+  if (kind === 'pdf') return '📕'
+  if (kind === 'archive') return '🗜️'
+  if (kind === 'binary') return '🧱'
   const ext = name.split('.').pop()?.toLowerCase()
   const map = {
     md: '📄', txt: '📄',
@@ -1778,7 +1991,10 @@ function fileIcon(name) {
     html: '🌐', css: '🎨', scss: '🎨',
     log: '📝',
     sql: '🗄️', db: '🗄️',
-    png: '🖼️', jpg: '🖼️', svg: '🖼️',
+    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', svg: '🖼️',
+    mp3: '🎵', wav: '🎵', ogg: '🎵',
+    mp4: '🎬', webm: '🎬', mov: '🎬',
+    pdf: '📕', zip: '🗜️', tar: '🗜️', gz: '🗜️',
   }
   return map[ext] || '📄'
 }
@@ -2469,6 +2685,39 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.preview-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #172554;
+  border-bottom: 1px solid #1d4ed8;
+  color: #bfdbfe;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.preview-notice--terminal {
+  background: #111827;
+  border-bottom-color: #334155;
+  color: #94a3b8;
+}
+
+.preview-select {
+  width: 112px;
+}
+
+.preview-select :deep(.el-input__wrapper) {
+  background: #0f172a;
+  border: 1px solid #334155;
+  box-shadow: none;
+}
+
+.preview-select :deep(.el-input__inner) {
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
 /* ===== Markdown View ===== */
 .markdown-view {
   overflow-y: auto;
@@ -2660,6 +2909,18 @@ onUnmounted(() => {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+.file-kind-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: #1e293b;
+  color: #cbd5e1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .badge--result  { background: #1e1b4b; color: #a78bfa; }
 .badge--code    { background: #052e16; color: #4ade80; }
 .badge--process { background: #172554; color: #60a5fa; }
@@ -2731,15 +2992,107 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.media-preview {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  background: #0b1120;
+  overflow: auto;
+}
+
+.media-preview--center {
+  align-items: center;
+}
+
+.media-image,
+.media-video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  background: #020617;
+  box-shadow: 0 20px 45px rgba(2, 6, 23, 0.45);
+}
+
+.media-audio {
+  width: min(680px, 100%);
+}
+
+.media-pdf {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+  border: none;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.binary-preview {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #0f172a;
+}
+
+.binary-preview-card {
+  width: min(560px, 100%);
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid #334155;
+  background: #111827;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.35);
+}
+
+.binary-preview-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 16px;
+}
+
+.binary-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.binary-preview-item {
+  padding: 12px;
+  border-radius: 12px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+}
+
+.binary-preview-label {
+  display: block;
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.binary-preview-value {
+  display: block;
+  font-size: 13px;
+  color: #e2e8f0;
+  word-break: break-word;
+}
+
 .code-view {
   padding: 16px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
   line-height: 1.6;
   color: #e2e8f0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  overflow-y: auto;
+  white-space: pre;
+  word-break: normal;
+  overflow: auto;
+  tab-size: 2;
   flex: 1;
   background: #0f172a;
   margin: 0;
@@ -2749,6 +3102,7 @@ onUnmounted(() => {
 .log-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px;
   background: #1e293b;
@@ -2765,8 +3119,10 @@ onUnmounted(() => {
   font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 12.5px;
   line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
+  word-break: normal;
+  overflow: auto;
+  tab-size: 2;
   margin: 0;
 }
 
@@ -2897,6 +3253,27 @@ onUnmounted(() => {
   border-bottom-color: #e2e8f0;
 }
 
+.theme-light .preview-notice {
+  background: #eff6ff;
+  border-bottom-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.theme-light .preview-notice--terminal {
+  background: #f8fafc;
+  border-bottom-color: #e2e8f0;
+  color: #64748b;
+}
+
+.theme-light .preview-select :deep(.el-input__wrapper) {
+  background: #ffffff;
+  border-color: #cbd5e1;
+}
+
+.theme-light .preview-select :deep(.el-input__inner) {
+  color: #334155;
+}
+
 /* Light markdown */
 .theme-light .markdown-view { color: #1e293b; }
 .theme-light .markdown-view :deep(h1) { color: #0f172a; border-bottom-color: #e2e8f0; }
@@ -2938,8 +3315,19 @@ onUnmounted(() => {
 .theme-light .file-group-header { border-top-color: #e2e8f0; }
 .theme-light .file-group-label { color: #94a3b8; }
 .theme-light .file-group-count { background: #e2e8f0; color: #94a3b8; }
+.theme-light .file-kind-badge { background: #e2e8f0; color: #475569; }
 
 .theme-light .file-content-area { background: #ffffff; }
+.theme-light .media-preview { background: #f8fafc; }
+.theme-light .binary-preview { background: #ffffff; }
+.theme-light .binary-preview-card {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  box-shadow: none;
+}
+.theme-light .binary-preview-item { background: #ffffff; border-color: #e2e8f0; }
+.theme-light .binary-preview-title { color: #0f172a; }
+.theme-light .binary-preview-value { color: #334155; }
 .theme-light .code-view { background: #f8fafc; color: #1e293b; }
 
 /* Light log terminal */

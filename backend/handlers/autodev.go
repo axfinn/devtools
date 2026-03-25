@@ -3,20 +3,24 @@ package handlers
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"devtools/models"
 
@@ -28,6 +32,22 @@ import (
 const autodevUID = 1001
 const autodevGID = 1001
 const autodevHome = "/home/autodev"
+
+const (
+	defaultFilePreviewBytes = 256 * 1024
+	defaultFilePreviewLines = 400
+	defaultLogPreviewBytes  = 192 * 1024
+	defaultLogPreviewLines  = 300
+
+	maxPreviewBytes = 1024 * 1024
+	maxPreviewLines = 2000
+
+	maxListedTextFileSize   = 5 * 1024 * 1024
+	maxListedBinaryFileSize = 20 * 1024 * 1024
+	maxListedMediaFileSize  = 100 * 1024 * 1024
+
+	fileSniffBytes = 1024
+)
 
 // setSysProcCredential sets the credential on cmd only when running as root.
 // When not root (e.g. local dev), setuid is not permitted and must be skipped.
@@ -518,19 +538,53 @@ func (h *AutoDevHandler) GetFile(c *gin.Context) {
 	if filePath == "" {
 		filePath = "RESULT.md"
 	}
-
-	absPath := filepath.Join(task.WorkDir, filePath)
-	if !strings.HasPrefix(filepath.Clean(absPath), filepath.Clean(task.WorkDir)) {
+	absPath, relPath, err := resolveTaskPath(task.WorkDir, filePath)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "路径不合法"})
 		return
 	}
 
-	content, err := os.ReadFile(absPath)
+	maxBytes := parsePositiveInt(c.Query("max_bytes"), defaultFilePreviewBytes, 8*1024, maxPreviewBytes)
+	maxLines := parsePositiveInt(c.Query("max_lines"), defaultFilePreviewLines, 20, maxPreviewLines)
+	mode := normalizePreviewMode(c.Query("mode"))
+
+	preview, err := buildTaskFilePreview(absPath, relPath, mode, maxBytes, maxLines)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"content": string(content), "path": filePath})
+	c.JSON(http.StatusOK, preview)
+}
+
+// GetRawFile handles GET /api/autodev/tasks/:id/raw?password=xxx&path=foo.png
+// Streams the original file so the browser can preview images/audio/video/PDF natively.
+func (h *AutoDevHandler) GetRawFile(c *gin.Context) {
+	if !h.checkPasswordQuery(c) {
+		return
+	}
+	task, ok := h.loadTask(c)
+	if !ok {
+		return
+	}
+
+	filePath := c.Query("path")
+	if filePath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path 不能为空"})
+		return
+	}
+	absPath, relPath, err := resolveTaskPath(task.WorkDir, filePath)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "路径不合法"})
+		return
+	}
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在"})
+		return
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filepath.Base(relPath)))
+	c.File(absPath)
 }
 
 // GetLogs handles GET /api/autodev/tasks/:id/logs?password=xxx&phase=driver
@@ -548,6 +602,8 @@ func (h *AutoDevHandler) GetLogs(c *gin.Context) {
 	if phase == "" {
 		phase = "driver"
 	}
+	maxBytes := parsePositiveInt(c.Query("max_bytes"), defaultLogPreviewBytes, 8*1024, maxPreviewBytes)
+	maxLines := parsePositiveInt(c.Query("max_lines"), defaultLogPreviewLines, 20, maxPreviewLines)
 
 	logDir := filepath.Join(task.WorkDir, ".autodev", "logs")
 	// try phase.log first, then fallback to driver.log
@@ -557,22 +613,37 @@ func (h *AutoDevHandler) GetLogs(c *gin.Context) {
 		filepath.Join(logDir, "session.log"),
 		filepath.Join(task.WorkDir, "autodev.log"),
 	}
+	availablePhases := listAvailableLogPhases(logDir)
 	for _, lp := range candidates {
-		if content, err := os.ReadFile(lp); err == nil {
-			// list available log files
-			logFiles, _ := filepath.Glob(filepath.Join(logDir, "*.log"))
-			var phases []string
-			for _, lf := range logFiles {
-				phases = append(phases, strings.TrimSuffix(filepath.Base(lf), ".log"))
+		info, err := os.Stat(lp)
+		if err == nil && !info.IsDir() {
+			preview, err := readTextPreview(lp, "tail", maxBytes, maxLines)
+			if err != nil {
+				continue
 			}
 			c.JSON(http.StatusOK, gin.H{
-				"logs":             string(content),
-				"available_phases": phases,
+				"logs":                 preview.Content,
+				"available_phases":     availablePhases,
+				"log_path":             filepath.Base(lp),
+				"preview_mode":         preview.Mode,
+				"total_bytes":          info.Size(),
+				"display_bytes":        preview.DisplayBytes,
+				"displayed_line_count": preview.DisplayedLineCount,
+				"truncated":            preview.Truncated,
 			})
 			return
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"logs": "", "available_phases": []string{}})
+	c.JSON(http.StatusOK, gin.H{
+		"logs":                 "",
+		"available_phases":     availablePhases,
+		"log_path":             "",
+		"preview_mode":         "tail",
+		"total_bytes":          0,
+		"display_bytes":        0,
+		"displayed_line_count": 0,
+		"truncated":            false,
+	})
 }
 
 // Download handles GET /api/autodev/tasks/:id/download?password=xxx
@@ -1038,6 +1109,341 @@ func (h *AutoDevHandler) loadTask(c *gin.Context) (*models.AutoDevTask, bool) {
 	return task, true
 }
 
+type textPreview struct {
+	Content            string
+	Mode               string
+	Truncated          bool
+	DisplayBytes       int
+	DisplayedLineCount int
+}
+
+func resolveTaskPath(rootDir, relativePath string) (string, string, error) {
+	rootDir = filepath.Clean(rootDir)
+	relativePath = strings.TrimSpace(relativePath)
+	relativePath = strings.TrimPrefix(relativePath, "/")
+	relativePath = strings.TrimPrefix(relativePath, "\\")
+	if relativePath == "" || relativePath == "." {
+		return "", "", fmt.Errorf("empty path")
+	}
+
+	absPath := filepath.Join(rootDir, filepath.Clean(relativePath))
+	rel, err := filepath.Rel(rootDir, absPath)
+	if err != nil {
+		return "", "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", "", fmt.Errorf("path escapes root")
+	}
+	return absPath, filepath.ToSlash(rel), nil
+}
+
+func parsePositiveInt(raw string, fallback, minValue, maxValue int) int {
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	if v < minValue {
+		return minValue
+	}
+	if v > maxValue {
+		return maxValue
+	}
+	return v
+}
+
+func normalizePreviewMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "head", "tail", "full":
+		return strings.ToLower(strings.TrimSpace(mode))
+	default:
+		return "auto"
+	}
+}
+
+func buildTaskFilePreview(absPath, relPath, mode string, maxBytes, maxLines int) (gin.H, error) {
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, os.ErrNotExist
+	}
+
+	sample, err := readFileSample(absPath, fileSniffBytes)
+	if err != nil {
+		return nil, err
+	}
+	kind, mimeType, isText := detectPreviewKind(filepath.Base(absPath), sample)
+	preview := gin.H{
+		"path":      relPath,
+		"kind":      kind,
+		"mime_type": mimeType,
+		"size":      info.Size(),
+		"is_text":   isText,
+	}
+	if !isText {
+		preview["previewable"] = kind == "image" || kind == "audio" || kind == "video" || kind == "pdf"
+		return preview, nil
+	}
+
+	resolvedMode := mode
+	if resolvedMode == "auto" {
+		if classifyFile(relPath, filepath.Base(absPath)) == "log" {
+			resolvedMode = "tail"
+		} else if info.Size() > int64(maxBytes) {
+			resolvedMode = "head"
+		} else {
+			resolvedMode = "full"
+		}
+	}
+
+	text, err := readTextPreview(absPath, resolvedMode, maxBytes, maxLines)
+	if err != nil {
+		return nil, err
+	}
+
+	preview["previewable"] = true
+	preview["preview_mode"] = text.Mode
+	preview["content"] = text.Content
+	preview["truncated"] = text.Truncated
+	preview["total_bytes"] = info.Size()
+	preview["display_bytes"] = text.DisplayBytes
+	preview["displayed_line_count"] = text.DisplayedLineCount
+	return preview, nil
+}
+
+func readFileSample(path string, maxBytes int) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, int64(maxBytes)))
+}
+
+func readTextPreview(path, mode string, maxBytes, maxLines int) (textPreview, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return textPreview{}, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return textPreview{}, err
+	}
+
+	var (
+		raw       []byte
+		truncated bool
+	)
+
+	switch mode {
+	case "tail":
+		raw, truncated, err = readTailBytes(f, info.Size(), int64(maxBytes))
+	default:
+		limit := info.Size()
+		if limit > int64(maxBytes) {
+			limit = int64(maxBytes)
+			truncated = true
+		}
+		if _, err = f.Seek(0, io.SeekStart); err != nil {
+			return textPreview{}, err
+		}
+		raw, err = io.ReadAll(io.LimitReader(f, limit))
+	}
+	if err != nil {
+		return textPreview{}, err
+	}
+
+	if mode == "tail" && truncated {
+		if idx := bytes.IndexByte(raw, '\n'); idx >= 0 {
+			raw = raw[idx+1:]
+		}
+	}
+
+	var lineTrimmed bool
+	if mode == "tail" {
+		raw, lineTrimmed = trimLastLines(raw, maxLines)
+	} else {
+		raw, lineTrimmed = trimFirstLines(raw, maxLines)
+	}
+	truncated = truncated || lineTrimmed
+
+	content := string(bytes.ToValidUTF8(raw, []byte("�")))
+	return textPreview{
+		Content:            content,
+		Mode:               mode,
+		Truncated:          truncated,
+		DisplayBytes:       len(raw),
+		DisplayedLineCount: countLines(content),
+	}, nil
+}
+
+func readTailBytes(f *os.File, fileSize, maxBytes int64) ([]byte, bool, error) {
+	if maxBytes <= 0 || fileSize <= maxBytes {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return nil, false, err
+		}
+		data, err := io.ReadAll(f)
+		return data, false, err
+	}
+
+	start := fileSize - maxBytes
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, false, err
+	}
+	data, err := io.ReadAll(f)
+	return data, true, err
+}
+
+func trimFirstLines(data []byte, maxLines int) ([]byte, bool) {
+	if maxLines <= 0 || len(data) == 0 {
+		return data, false
+	}
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	if len(lines) <= maxLines {
+		return data, false
+	}
+	return bytes.Join(lines[:maxLines], nil), true
+}
+
+func trimLastLines(data []byte, maxLines int) ([]byte, bool) {
+	if maxLines <= 0 || len(data) == 0 {
+		return data, false
+	}
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	if len(lines) <= maxLines {
+		return data, false
+	}
+	return bytes.Join(lines[len(lines)-maxLines:], nil), true
+}
+
+func countLines(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(content, "\n") + 1
+}
+
+func listAvailableLogPhases(logDir string) []string {
+	logFiles, _ := filepath.Glob(filepath.Join(logDir, "*.log"))
+	phases := make([]string, 0, len(logFiles))
+	for _, lf := range logFiles {
+		phases = append(phases, strings.TrimSuffix(filepath.Base(lf), ".log"))
+	}
+	sort.Slice(phases, func(i, j int) bool {
+		priority := map[string]int{"driver": 0, "session": 1}
+		pi, okI := priority[phases[i]]
+		pj, okJ := priority[phases[j]]
+		switch {
+		case okI && okJ:
+			return pi < pj
+		case okI:
+			return true
+		case okJ:
+			return false
+		default:
+			return phases[i] < phases[j]
+		}
+	})
+	return phases
+}
+
+func detectPreviewKind(name string, sample []byte) (string, string, bool) {
+	kind := inferPreviewKindByName(name)
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	if mimeType == "" && len(sample) > 0 {
+		mimeType = http.DetectContentType(sample)
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	switch {
+	case strings.HasPrefix(mimeType, "image/"):
+		return "image", mimeType, false
+	case strings.HasPrefix(mimeType, "audio/"):
+		return "audio", mimeType, false
+	case strings.HasPrefix(mimeType, "video/"):
+		return "video", mimeType, false
+	case mimeType == "application/pdf":
+		return "pdf", mimeType, false
+	case strings.HasPrefix(mimeType, "text/"):
+		if kind == "markdown" {
+			return kind, mimeType, true
+		}
+		return "text", mimeType, true
+	case looksLikeText(sample):
+		if kind == "markdown" {
+			return kind, "text/markdown; charset=utf-8", true
+		}
+		return "text", "text/plain; charset=utf-8", true
+	}
+
+	switch kind {
+	case "image", "audio", "video", "pdf", "archive":
+		return kind, mimeType, false
+	case "markdown":
+		return kind, "text/markdown; charset=utf-8", true
+	case "text":
+		return kind, "text/plain; charset=utf-8", true
+	default:
+		return "binary", mimeType, false
+	}
+}
+
+func inferPreviewKindByName(name string) string {
+	lower := strings.ToLower(name)
+	ext := strings.ToLower(filepath.Ext(lower))
+
+	switch lower {
+	case "dockerfile", "makefile", "readme", "readme.md", ".gitignore", ".env", ".env.example":
+		return "text"
+	}
+
+	switch ext {
+	case ".md", ".markdown":
+		return "markdown"
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico", ".avif":
+		return "image"
+	case ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".opus":
+		return "audio"
+	case ".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v":
+		return "video"
+	case ".pdf":
+		return "pdf"
+	case ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar", ".war":
+		return "archive"
+	case ".txt", ".log", ".json", ".yaml", ".yml", ".toml", ".xml", ".csv", ".ini", ".conf",
+		".sql", ".sh", ".bash", ".zsh", ".fish", ".py", ".rb", ".php", ".go", ".rs", ".java",
+		".kt", ".js", ".jsx", ".ts", ".tsx", ".vue", ".css", ".scss", ".less", ".html", ".htm",
+		".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh":
+		return "text"
+	default:
+		return "binary"
+	}
+}
+
+func looksLikeText(sample []byte) bool {
+	if len(sample) == 0 {
+		return true
+	}
+	if !utf8.Valid(sample) {
+		return false
+	}
+	var controlCount int
+	for _, b := range sample {
+		if b < 32 && b != '\n' && b != '\r' && b != '\t' {
+			controlCount++
+		}
+	}
+	return controlCount*20 < len(sample)
+}
+
 // readAutoDevState reads .autodev/state.json from a task work directory
 func readAutoDevState(workDir string) map[string]any {
 	p := filepath.Join(workDir, ".autodev", "state.json")
@@ -1081,7 +1487,8 @@ func writeAutoDevState(workDir string, fields map[string]any) {
 //	"state"   – .autodev/state.json
 //
 // Skipped entirely: .git/, node_modules/, __pycache__/, _site/ (too many files),
-// binary/large files (>5MB), and files deeper than 6 levels.
+// and files deeper than 6 levels. Large media files are still listed with
+// metadata so the frontend can offer native previews instead of raw binary text.
 func listTaskFiles(workDir string) []map[string]any {
 	var files []map[string]any
 
@@ -1114,8 +1521,15 @@ func listTaskFiles(workDir string) []map[string]any {
 		if err != nil {
 			return nil
 		}
-		// Skip large files (>5MB) – not useful to display in browser
-		if info.Size() > 5*1024*1024 {
+		kind := inferPreviewKindByName(d.Name())
+		sizeLimit := int64(maxListedTextFileSize)
+		switch kind {
+		case "image", "audio", "video", "pdf":
+			sizeLimit = maxListedMediaFileSize
+		case "archive", "binary":
+			sizeLimit = maxListedBinaryFileSize
+		}
+		if info.Size() > sizeLimit {
 			return nil
 		}
 
@@ -1130,6 +1544,7 @@ func listTaskFiles(workDir string) []map[string]any {
 			"size":     info.Size(),
 			"mtime":    info.ModTime().Format(time.RFC3339),
 			"category": category,
+			"kind":     kind,
 		})
 		return nil
 	})

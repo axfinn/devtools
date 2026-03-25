@@ -793,6 +793,7 @@ func main() {
 			autodev.GET("/tasks/:id/state", autoDevHandler.GetState)
 			autodev.GET("/tasks/:id/files", autoDevHandler.GetFiles)
 			autodev.GET("/tasks/:id/file", autoDevHandler.GetFile)
+			autodev.GET("/tasks/:id/raw", autoDevHandler.GetRawFile)
 			autodev.GET("/tasks/:id/logs", autoDevHandler.GetLogs)
 			autodev.GET("/tasks/:id/download", autoDevHandler.Download)
 			autodev.GET("/tasks/:id/site/*filepath", autoDevHandler.GetSite)
