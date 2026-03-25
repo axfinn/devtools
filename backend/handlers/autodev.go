@@ -327,6 +327,11 @@ func (h *AutoDevHandler) VerifyPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// GetCapabilities handles GET /api/autodev/capabilities.
+func (h *AutoDevHandler) GetCapabilities(c *gin.Context) {
+	c.JSON(http.StatusOK, models.GetCapabilities())
+}
+
 // Submit handles POST /api/autodev/tasks — start a new task or resume from breakpoint
 func (h *AutoDevHandler) Submit(c *gin.Context) {
 	var req struct {
@@ -448,7 +453,7 @@ func (h *AutoDevHandler) List(c *gin.Context) {
 	result := make([]any, 0, len(tasks))
 	for _, t := range tasks {
 		m := taskToMap(t)
-		if t.Status == "running" {
+		if t.Status == "running" || t.Status == "failed" || t.Status == "paused" || t.Status == "stopped" {
 			if state := readAutoDevState(t.WorkDir); state != nil {
 				m["autodev_state"] = state
 			}
@@ -723,8 +728,77 @@ func (h *AutoDevHandler) GetSite(c *gin.Context) {
 	c.File(absPath)
 }
 
+func controlStatus(action string) string {
+	if action == "terminate" {
+		return "stopped"
+	}
+	return "paused"
+}
+
+func resolveTaskStatus(workDir, fallback string) string {
+	state := readAutoDevState(workDir)
+	if state == nil {
+		return fallback
+	}
+	if status, ok := state["status"].(string); ok {
+		switch status {
+		case "finished", "completed":
+			return "completed"
+		case "failed", "paused", "stopped":
+			return status
+		}
+	}
+	if action, ok := state["control_action"].(string); ok && action != "" {
+		return controlStatus(action)
+	}
+	return fallback
+}
+
+func (h *AutoDevHandler) requestTaskControl(id string, task *models.AutoDevTask, action string) int {
+	status := controlStatus(action)
+	writeAutoDevState(task.WorkDir, map[string]any{
+		"control_action":    action,
+		"stop_requested_at": time.Now().Format(time.RFC3339),
+		"status":            status,
+	})
+
+	if _, err := os.Stat(h.stopScriptPath); err == nil {
+		cmd := exec.Command("python3", h.stopScriptPath, "--path", task.WorkDir)
+		_ = cmd.Run()
+	} else {
+		stopFile := filepath.Join(task.WorkDir, ".autodev", "STOP")
+		os.MkdirAll(filepath.Dir(stopFile), 0755)
+		_ = os.WriteFile(stopFile, []byte(time.Now().Format(time.RFC3339)), 0644)
+	}
+
+	h.mu.Lock()
+	if cmd, ok := h.processes[id]; ok && cmd.Process != nil {
+		if action == "terminate" {
+			_ = cmd.Process.Kill()
+		} else {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
+	}
+	h.mu.Unlock()
+
+	resumeFrom := 1
+	state := readAutoDevState(task.WorkDir)
+	if state != nil {
+		if last, ok := state["last_completed"]; ok {
+			switch v := last.(type) {
+			case float64:
+				resumeFrom = int(v) + 2
+			}
+		}
+	}
+	if resumeFrom < 1 {
+		resumeFrom = 1
+	}
+	return resumeFrom
+}
+
 // StopTask handles POST /api/autodev/tasks/:id/stop
-// Uses autodev-stop script to gracefully stop (writes STOP file + SIGTERM)
+// stop is treated as a pause: keep the worktree and allow later resume.
 func (h *AutoDevHandler) StopTask(c *gin.Context) {
 	var req struct {
 		Password string `json:"password" binding:"required"`
@@ -745,38 +819,43 @@ func (h *AutoDevHandler) StopTask(c *gin.Context) {
 		return
 	}
 
-	// Try graceful stop via autodev-stop script
-	if _, err := os.Stat(h.stopScriptPath); err == nil {
-		cmd := exec.Command("python3", h.stopScriptPath, "--path", task.WorkDir)
-		cmd.Run()
-	} else {
-		// Fallback: write STOP file directly
-		stopFile := filepath.Join(task.WorkDir, ".autodev", "STOP")
-		os.MkdirAll(filepath.Dir(stopFile), 0755)
-		os.WriteFile(stopFile, []byte(time.Now().Format(time.RFC3339)), 0644)
-		// also kill the process
-		h.mu.Lock()
-		if cmd, ok := h.processes[id]; ok && cmd.Process != nil {
-			cmd.Process.Kill()
-		}
-		h.mu.Unlock()
-	}
-
-	// Read resume suggestion from state
-	state := readAutoDevState(task.WorkDir)
-	resumeFrom := 0
-	if state != nil {
-		if last, ok := state["last_completed"]; ok {
-			switch v := last.(type) {
-			case float64:
-				resumeFrom = int(v) + 2 // next phase (1-indexed)
-			}
-		}
-	}
-
-	h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
+	resumeFrom := h.requestTaskControl(id, task, "pause")
+	h.db.UpdateAutoDevTaskStatus(id, "paused", -1, 0)
 	c.JSON(http.StatusOK, gin.H{
 		"ok":          true,
+		"status":      "paused",
+		"resume_from": resumeFrom,
+		"work_dir":    task.WorkDir,
+	})
+}
+
+// TerminateTask handles POST /api/autodev/tasks/:id/terminate
+// terminate stops the current execution more aggressively, but preserves files for later inspection or resume.
+func (h *AutoDevHandler) TerminateTask(c *gin.Context) {
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+	if h.adminPassword == "" || req.Password != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return
+	}
+
+	id := c.Param("id")
+	task, err := h.db.GetAutoDevTask(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
+		return
+	}
+
+	resumeFrom := h.requestTaskControl(id, task, "terminate")
+	h.db.UpdateAutoDevTaskStatus(id, "stopped", -1, 0)
+	c.JSON(http.StatusOK, gin.H{
+		"ok":          true,
+		"status":      "stopped",
 		"resume_from": resumeFrom,
 		"work_dir":    task.WorkDir,
 	})
@@ -855,12 +934,12 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 		status = "failed"
 	}
 
-	// check autodev state for actual completion status
-	if state := readAutoDevState(workDir); state != nil {
-		if s, ok := state["status"].(string); ok && s == "finished" {
-			status = "completed"
-			exitCode = 0
-		}
+	status = resolveTaskStatus(workDir, status)
+	if status == "completed" {
+		exitCode = 0
+	}
+	if status == "paused" || status == "stopped" {
+		exitCode = -1
 	}
 
 	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
@@ -923,10 +1002,18 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir, module string) {
 		status = "failed"
 	}
 
-	writeAutoDevState(workDir, map[string]any{
-		"status":      "finished",
-		"phase_label": "ASK 问答",
-	})
+	status = resolveTaskStatus(workDir, status)
+	if status == "completed" {
+		writeAutoDevState(workDir, map[string]any{
+			"status":      "completed",
+			"phase_label": "ASK 问答",
+		})
+	} else if status == "failed" {
+		writeAutoDevState(workDir, map[string]any{
+			"status":      "failed",
+			"phase_label": "ASK 问答",
+		})
+	}
 
 	// ask_project writes answers to process/qa.md.
 	// Verify it was created; if not, mark as failed even when exit code is 0.
@@ -936,6 +1023,12 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir, module string) {
 			log.Printf("[AutoDev] runAskTask: qa.md not found after completion, marking failed")
 			status = "failed"
 		}
+	}
+	if status == "completed" {
+		exitCode = 0
+	}
+	if status == "paused" || status == "stopped" {
+		exitCode = -1
 	}
 
 	h.db.UpdateAutoDevTaskResult(id, qaFile)
@@ -999,11 +1092,24 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir, module string) 
 		status = "failed"
 	}
 
-	// Mark state as finished so GetTask reflects completion.
-	writeAutoDevState(workDir, map[string]any{
-		"status":      "finished",
-		"phase_label": "EXTEND 扩展",
-	})
+	status = resolveTaskStatus(workDir, status)
+	if status == "completed" {
+		writeAutoDevState(workDir, map[string]any{
+			"status":      "completed",
+			"phase_label": "EXTEND 扩展",
+		})
+	} else if status == "failed" {
+		writeAutoDevState(workDir, map[string]any{
+			"status":      "failed",
+			"phase_label": "EXTEND 扩展",
+		})
+	}
+	if status == "completed" {
+		exitCode = 0
+	}
+	if status == "paused" || status == "stopped" {
+		exitCode = -1
+	}
 
 	// extend_project writes result to RESULT.md and process/iter-N/result.md.
 	resultFile := filepath.Join(workDir, "RESULT.md")
@@ -1079,6 +1185,14 @@ func (h *AutoDevHandler) runExportTask(id, description, workDir, exportFormat st
 			exitCode = exitErr.ExitCode()
 		}
 		status = "failed"
+	}
+
+	status = resolveTaskStatus(workDir, status)
+	if status == "completed" {
+		exitCode = 0
+	}
+	if status == "paused" || status == "stopped" {
+		exitCode = -1
 	}
 
 	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)

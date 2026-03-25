@@ -27,7 +27,7 @@ type AutoDevTask struct {
 	Description string     `json:"description"`
 	Options     string     `json:"options"` // JSON: {publish,build,push,module}
 	Module      string     `json:"module"`
-	Status      string     `json:"status"` // pending, running, completed, failed
+	Status      string     `json:"status"` // pending, running, paused, stopped, completed, failed
 	ExitCode    int        `json:"exit_code"`
 	WorkDir     string     `json:"work_dir"`
 	PID         int        `json:"pid"`
@@ -332,4 +332,105 @@ func MarshalAutoDevOptions(opts AutoDevOptions) string {
 	opts.Module = NormalizeAutoDevModule(opts.Module)
 	b, _ := json.Marshal(opts)
 	return string(b)
+}
+
+// Capabilities represents the system capabilities exposed via GET /api/autodev/capabilities.
+type Capabilities struct {
+	System       string                   `json:"system"`
+	Version      string                   `json:"version"`
+	TaskTypes    []string                 `json:"task_types"`
+	Capabilities map[string]CapabilitySet `json:"capabilities"`
+	Boundaries   Boundaries               `json:"boundaries"`
+}
+
+// CapabilitySet represents a group of related capabilities.
+type CapabilitySet struct {
+	Label       string   `json:"label"`
+	Description string   `json:"description"`
+	Items       []string `json:"items"`
+}
+
+// Boundaries describes execution limits and prerequisites.
+type Boundaries struct {
+	Cannot   []string `json:"cannot"`
+	Requires []string `json:"requires"`
+}
+
+// GetCapabilities returns the static capability list for the devtools AutoDev workspace.
+func GetCapabilities() *Capabilities {
+	return &Capabilities{
+		System:  "devtools / AutoDev Web UI",
+		Version: "1.1.0",
+		TaskTypes: []string{
+			"develop",
+			"ask",
+			"extend",
+			"export",
+			"init",
+		},
+		Capabilities: map[string]CapabilitySet{
+			"task_management": {
+				Label:       "任务管理与执行",
+				Description: "提交和管理 AutoDev 开发任务",
+				Items: []string{
+					"develop - 全新项目开发",
+					"ask - 基于项目上下文问答",
+					"extend - 在已有项目上按周期迭代优化",
+					"export - 导出任务产物",
+					"init - 初始化项目上下文",
+				},
+			},
+			"iteration_control": {
+				Label:       "迭代控制",
+				Description: "围绕一个功能持续优化并保留恢复点",
+				Items: []string{
+					"pause - 暂停当前执行并保留断点",
+					"terminate - 终止当前执行但保留工作区",
+					"resume - 从最近断点继续开发",
+					"查看当前迭代和累计 green 周期",
+				},
+			},
+			"git_green_cycle": {
+				Label:       "Git Green Cycle",
+				Description: "成功迭代后自动固化 git 基线",
+				Items: []string{
+					"自动确保项目处于 git 跟踪",
+					"成功周期后自动 commit",
+					"自动创建 autodev-cycle-XXX-green tag",
+					"展示当前 green tag 与下一轮 tag",
+				},
+			},
+			"file_observability": {
+				Label:       "文件与日志观测",
+				Description: "跟踪任务过程、产物和日志",
+				Items: []string{
+					"实时日志读取",
+					"文件浏览与原文件预览",
+					"过程文档查看",
+					"结果下载与站点预览",
+				},
+			},
+			"system_admin": {
+				Label:       "系统配置管理",
+				Description: "管理 AutoDev 运行所需的工具链",
+				Items: []string{
+					"SSH Key 管理",
+					"Claude / Codex CLI 版本管理",
+					"clawtest 引擎版本查看",
+				},
+			},
+		},
+		Boundaries: Boundaries{
+			Cannot: []string{
+				"不会绕过需求直接替你决定业务方向",
+				"不会在没有工作区上下文时伪造项目状态",
+				"不会自动删除你已有的项目文件或 git 历史",
+			},
+			Requires: []string{
+				"develop/ask/extend 需要清晰的需求描述",
+				"ask/extend 需要可访问的已有项目目录",
+				"涉及远端 git 操作时需要正确配置 SSH key 或仓库权限",
+			},
+		},
+	}
 }

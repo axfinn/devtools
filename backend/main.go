@@ -786,6 +786,7 @@ func main() {
 		autodev := api.Group("/autodev")
 		{
 			autodev.POST("/verify", autoDevHandler.VerifyPassword)
+			autodev.GET("/capabilities", autoDevHandler.GetCapabilities)
 			autodev.POST("/tasks", autoDevHandler.Submit)
 			autodev.GET("/tasks", autoDevHandler.List)
 			autodev.GET("/projects", autoDevHandler.ListProjects)
@@ -798,6 +799,7 @@ func main() {
 			autodev.GET("/tasks/:id/download", autoDevHandler.Download)
 			autodev.GET("/tasks/:id/site/*filepath", autoDevHandler.GetSite)
 			autodev.POST("/tasks/:id/stop", autoDevHandler.StopTask)
+			autodev.POST("/tasks/:id/terminate", autoDevHandler.TerminateTask)
 			autodev.DELETE("/tasks/:id", autoDevHandler.DeleteTask)
 			// Ask API - quick Q&A
 			autodev.POST("/ask", autoDevHandler.Ask)

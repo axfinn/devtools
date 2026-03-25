@@ -45,6 +45,10 @@
         </el-badge>
       </div>
       <div class="flex items-center gap-2">
+        <el-button size="small" @click="capabilitiesVisible = true; loadCapabilities()" class="topbar-btn">
+          <el-icon><InfoFilled /></el-icon>
+          <span class="hidden sm:inline ml-1">能力</span>
+        </el-button>
         <el-button size="small" @click="claudeDrawerVisible = true" class="topbar-btn">
           <el-icon><SetUp /></el-icon>
           <span class="hidden sm:inline ml-1">CLI 管理</span>
@@ -83,12 +87,15 @@
               :class="{ 'mode-tab--active': activeMode === mode }"
               @click="activeMode = mode"
             >
-              {{ mode === 'develop' ? '开发' : mode === 'ask' ? '问答' : mode === 'extend' ? '扩展' : '导出' }}
+              {{ mode === 'develop' ? '开发' : mode === 'ask' ? '问答' : mode === 'extend' ? '迭代' : '导出' }}
             </button>
           </div>
 
-          <div v-if="activeMode !== 'export' || resumeTaskId" class="mb-3">
-            <div class="text-xs text-slate-400 mb-2">执行模块</div>
+          <div v-if="activeMode !== 'export'" class="mb-3">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs text-slate-400">执行模块</span>
+              <span class="text-xs text-slate-500">默认 cc</span>
+            </div>
             <div class="flex gap-2">
               <button type="button" class="filter-pill" :class="{ 'filter-pill--active': newTask.module === 'cc' }" @click="newTask.module = 'cc'">cc</button>
               <button type="button" class="filter-pill" :class="{ 'filter-pill--active': newTask.module === 'codex' }" @click="newTask.module = 'codex'">codex</button>
@@ -102,7 +109,7 @@
               type="textarea"
               :rows="3"
               placeholder="输入你的问题，例如：如何用 Go 实现并发爬虫？"
-              maxlength="500"
+              maxlength="3000"
               show-word-limit
               class="mb-2"
             />
@@ -139,8 +146,8 @@
               v-model="newTask.description"
               type="textarea"
               :rows="3"
-              placeholder="输入要追加的新需求，例如：添加 OAuth2 登录功能"
-              maxlength="500"
+              placeholder="输入这一轮要优化的功能，例如：补齐 OAuth2 登录和回调流程"
+              maxlength="3000"
               show-word-limit
               class="mb-2"
             />
@@ -167,7 +174,7 @@
             </el-select>
             <div class="output-hint">
               <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
-              <span>在已有项目上追加新需求，自动走 DESIGN→DO→REVIEW→DELIVER 流程</span>
+              <span>在已有项目上按迭代周期持续优化，成功后自动形成 git commit + green tag 基线</span>
             </div>
           </div>
 
@@ -178,7 +185,7 @@
               type="textarea"
               :rows="2"
               placeholder="要导出的任务描述或目录名"
-              maxlength="200"
+              maxlength="3000"
               class="mb-2"
             />
             <el-select v-model="newTask.exportFormat" placeholder="导出格式" size="small" class="w-full mb-2">
@@ -198,7 +205,7 @@
             type="textarea"
             :rows="4"
             :placeholder="taskPlaceholder"
-            maxlength="500"
+            maxlength="3000"
             show-word-limit
             class="mb-3"
           />
@@ -258,6 +265,8 @@
           <div class="filter-bar">
             <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === '' }" @click="setStatusFilter('')">全部</button>
             <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'running' }" @click="setStatusFilter('running')">运行中</button>
+            <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'paused' }" @click="setStatusFilter('paused')">已暂停</button>
+            <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'stopped' }" @click="setStatusFilter('stopped')">已终止</button>
             <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'completed' }" @click="setStatusFilter('completed')">已完成</button>
             <button class="filter-pill" :class="{ 'filter-pill--active': listFilter.status === 'failed' }" @click="setStatusFilter('failed')">失败</button>
           </div>
@@ -305,12 +314,17 @@
                     {{ statusLabel(task.status) }}
                   </el-tag>
                   <div class="flex gap-1">
-                    <el-tooltip v-if="task.status === 'running'" content="中断" placement="top">
+                    <el-tooltip v-if="task.status === 'running'" content="暂停" placement="top">
                       <el-button size="small" type="warning" circle plain @click.stop="stopTask(task)" class="!w-6 !h-6 !p-0">
                         <el-icon class="text-xs"><VideoPause /></el-icon>
                       </el-button>
                     </el-tooltip>
-                    <el-tooltip v-if="task.status === 'failed'" content="断点恢复" placement="top">
+                    <el-tooltip v-if="task.status === 'running'" content="终止" placement="top">
+                      <el-button size="small" type="danger" circle plain @click.stop="terminateTask(task)" class="!w-6 !h-6 !p-0">
+                        <el-icon class="text-xs"><Delete /></el-icon>
+                      </el-button>
+                    </el-tooltip>
+                    <el-tooltip v-if="canResume(task)" content="继续迭代" placement="top">
                       <el-button size="small" type="success" circle plain @click.stop="startResume(task)" class="!w-6 !h-6 !p-0">
                         <el-icon class="text-xs"><RefreshRight /></el-icon>
                       </el-button>
@@ -348,7 +362,7 @@
           </div>
         </div>
 
-        <div v-else class="h-full flex flex-col">
+        <div v-else class="flex-1 min-h-0 flex flex-col">
 
           <!-- Task Header -->
           <div class="content-header">
@@ -379,10 +393,10 @@
                   <el-icon><ChatLineRound /></el-icon> 问答
                 </el-button>
               </el-tooltip>
-              <el-tooltip content="在此项目上追加新需求（迭代开发）" placement="bottom">
+              <el-tooltip content="在此项目上开启下一轮迭代开发" placement="bottom">
                 <el-button size="small" plain @click="quickExtend(selectedTask)" class="action-btn"
                   :disabled="selectedTask.status === 'running'">
-                  <el-icon><Plus /></el-icon> 扩展
+                  <el-icon><Plus /></el-icon> 迭代
                 </el-button>
               </el-tooltip>
               <el-tooltip content="生成 CLAUDE.md，为 ask/extend 提供冷启动上下文" placement="bottom">
@@ -396,11 +410,32 @@
                 <el-icon><Monitor /></el-icon> 预览
               </el-button>
               <el-button v-if="selectedTask.status === 'running'" size="small" type="warning" plain @click="stopTask(selectedTask)" class="action-btn">
-                <el-icon><VideoPause /></el-icon> 中断
+                <el-icon><VideoPause /></el-icon> 暂停
               </el-button>
-              <el-button v-if="selectedTask.status === 'failed'" size="small" type="success" plain @click="startResume(selectedTask)" class="action-btn">
-                <el-icon><RefreshRight /></el-icon> 恢复
+              <el-button v-if="selectedTask.status === 'running'" size="small" type="danger" plain @click="terminateTask(selectedTask)" class="action-btn">
+                <el-icon><Delete /></el-icon> 终止
               </el-button>
+              <el-button v-if="canResume(selectedTask)" size="small" type="success" plain @click="startResume(selectedTask)" class="action-btn">
+                <el-icon><RefreshRight /></el-icon> 继续
+              </el-button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-3">
+            <div class="rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-3">
+              <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Git Green Tag</p>
+              <p class="mt-1 text-sm font-mono text-slate-200 break-all">{{ taskGit.last_cycle_tag || taskGit.latest_green_tag || '未建立 green 基线' }}</p>
+              <p class="mt-1 text-xs text-slate-500">下一轮标签：{{ taskGit.next_green_tag || 'autodev-cycle-001-green' }}</p>
+            </div>
+            <div class="rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-3">
+              <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Iteration</p>
+              <p class="mt-1 text-sm text-slate-200">{{ taskCurrentIterationText }}</p>
+              <p class="mt-1 text-xs text-slate-500">累计 green 周期：{{ taskGit.cycle_count || 0 }}</p>
+            </div>
+            <div class="rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-3">
+              <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Workspace</p>
+              <p class="mt-1 text-sm font-mono text-slate-200 break-all">{{ selectedTask.work_dir }}</p>
+              <p class="mt-1 text-xs text-slate-500">状态：{{ taskStateStatusLabel }}</p>
             </div>
           </div>
 
@@ -426,13 +461,15 @@
               <el-icon v-else class="text-xs"><WarningFilled /></el-icon>
             </div>
             <span class="simple-task-label">
-              {{ selectedTask.type === 'ask' ? 'ASK 问答执行' : 'EXTEND 迭代扩展' }}
+              {{ selectedTask.type === 'ask' ? 'ASK 问答执行' : taskCurrentIterationText }}
             </span>
             <span v-if="selectedTask.status === 'running'" class="ml-2 text-xs text-amber-400 flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block"></span>
               运行中
             </span>
             <span v-else-if="selectedTask.status === 'completed'" class="ml-2 text-xs text-green-400">完成</span>
+            <span v-else-if="selectedTask.status === 'paused'" class="ml-2 text-xs text-amber-400">已暂停</span>
+            <span v-else-if="selectedTask.status === 'stopped'" class="ml-2 text-xs text-red-400">已终止</span>
             <span v-else class="ml-2 text-xs text-red-400">失败</span>
           </div>
 
@@ -713,6 +750,65 @@
       destroy-on-close
     >
       <div class="fullscreen-content markdown-view" v-html="fullscreenHtml" />
+    </el-dialog>
+
+    <!-- ===== Capabilities Dialog ===== -->
+    <el-dialog v-model="capabilitiesVisible" title="AutoDev AI 能力清单" width="640px" destroy-on-close>
+      <div v-if="loadingCapabilities" class="text-center py-8">
+        <el-icon class="is-loading text-purple-500 text-2xl"><Loading /></el-icon>
+        <p class="text-slate-400 text-sm mt-2">加载中...</p>
+      </div>
+      <div v-else-if="capabilitiesData" class="capabilities-content">
+        <div class="mb-4 p-3 bg-slate-800/50 rounded-lg border border-slate-700/50">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-purple-400 font-semibold">{{ capabilitiesData.system }}</span>
+            <el-tag size="small" type="info">{{ capabilitiesData.version }}</el-tag>
+          </div>
+          <p class="text-xs text-slate-400">
+            支持任务类型：
+            <el-tag v-for="t in capabilitiesData.task_types" :key="t" size="small" class="mx-0.5">{{ t }}</el-tag>
+          </p>
+        </div>
+
+        <div class="space-y-3">
+          <div v-for="(cap, key) in capabilitiesData.capabilities" :key="key" class="capability-card">
+            <div class="flex items-start gap-2">
+              <el-icon class="text-purple-400 mt-0.5"><InfoFilled /></el-icon>
+              <div class="flex-1">
+                <h4 class="text-sm font-medium text-slate-200 mb-1">{{ cap.label }}</h4>
+                <p class="text-xs text-slate-400 mb-2">{{ cap.description }}</p>
+                <div class="flex flex-wrap gap-1">
+                  <el-tag v-for="item in cap.items" :key="item" size="small" type="info" class="capability-item-tag">
+                    {{ item }}
+                  </el-tag>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 p-3 bg-amber-900/20 rounded-lg border border-amber-700/30">
+          <h4 class="text-sm font-medium text-amber-400 mb-2 flex items-center gap-1">
+            <el-icon><WarningFilled /></el-icon>
+            能力边界
+          </h4>
+          <div v-if="capabilitiesData.boundaries?.cannot?.length" class="mb-2">
+            <p class="text-xs text-amber-300 mb-1">禁止：</p>
+            <ul class="text-xs text-slate-400 space-y-0.5 pl-4">
+              <li v-for="c in capabilitiesData.boundaries.cannot" :key="c">• {{ c }}</li>
+            </ul>
+          </div>
+          <div v-if="capabilitiesData.boundaries?.requires?.length">
+            <p class="text-xs text-amber-300 mb-1">要求：</p>
+            <ul class="text-xs text-slate-400 space-y-0.5 pl-4">
+              <li v-for="r in capabilitiesData.boundaries.requires" :key="r">• {{ r }}</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="capabilitiesVisible = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <!-- ===== CLI 管理 Drawer ===== -->
@@ -1233,7 +1329,10 @@ const loadingMore = ref(false)
 const submitting = ref(false)
 const resumeTaskId = ref('')
 const activeMode = ref('develop') // 'develop' | 'ask' | 'extend' | 'export'
-const newTask = ref({ description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE })
+function createEmptyTask() {
+  return { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE }
+}
+const newTask = ref(createEmptyTask())
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
 
 // ---- list filter & pagination ----
@@ -1246,7 +1345,7 @@ function setStatusFilter(status) {
 }
 
 function typeLabel(type) {
-  const map = { develop: '开发', ask: '问答', extend: '扩展', export: '导出', init: '初始化' }
+  const map = { develop: '开发', ask: '问答', extend: '迭代', export: '导出', init: '初始化' }
   return map[type] || type || '开发'
 }
 
@@ -1280,7 +1379,7 @@ const submitButtonText = computed(() => {
   if (resumeTaskId.value) return '恢复执行'
   switch (activeMode.value) {
     case 'ask': return '提问'
-    case 'extend': return '扩展'
+    case 'extend': return '迭代'
     case 'export': return '导出'
     default: return '开始执行'
   }
@@ -1416,11 +1515,11 @@ async function submitTask() {
     if (res.ok) {
       const successMsg = resumeTaskId.value ? '已恢复执行' :
         activeMode.value === 'ask' ? '问题已提交，AI 正在思考…' :
-        activeMode.value === 'extend' ? '扩展任务已提交，正在执行…' :
+        activeMode.value === 'extend' ? '迭代任务已提交，正在执行…' :
         activeMode.value === 'export' ? '导出任务已提交…' : '任务已提交，正在执行…'
       ElMessage.success(successMsg)
       resumeTaskId.value = ''
-      newTask.value = { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE }
+      newTask.value = createEmptyTask()
       await loadTasks()
       selectTask(data)
     } else {
@@ -1439,7 +1538,24 @@ async function stopTask(task) {
     })
     const data = await res.json()
     if (res.ok) {
-      ElMessage.warning(`已发送中断信号。可从阶段 ${data.resume_from} 断点恢复。`)
+      ElMessage.warning(`已发送暂停信号。可从阶段 ${data.resume_from} 继续开发。`)
+      await loadTasks()
+    } else {
+      ElMessage.error(data.error || '操作失败')
+    }
+  } catch { ElMessage.error('操作失败') }
+}
+
+async function terminateTask(task) {
+  try {
+    const res = await fetch(`${API_BASE}/tasks/${task.id}/terminate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: savedPassword })
+    })
+    const data = await res.json()
+    if (res.ok) {
+      ElMessage.error(`已终止当前执行。可从阶段 ${data.resume_from} 重新继续，或直接发起下一轮迭代。`)
       await loadTasks()
     } else {
       ElMessage.error(data.error || '操作失败')
@@ -1449,14 +1565,15 @@ async function stopTask(task) {
 
 function startResume(task) {
   const state = task.autodev_state
+  const options = parseOptions(task.options)
   let resumeFrom = 1
   if (state?.last_completed != null) resumeFrom = Math.floor(state.last_completed) + 2
   resumeTaskId.value = task.id
   newTask.value = {
     description: task.description,
-    publish: parseOptions(task.options).publish || false,
-    build: parseOptions(task.options).build || false,
-    push: parseOptions(task.options).push || false,
+    publish: options.publish || false,
+    build: options.build || false,
+    push: options.push || false,
     resumeFrom: resumeFrom > 0 ? resumeFrom : 1,
     workDir: task.work_dir,
     exportFormat: 'zip',
@@ -1522,6 +1639,25 @@ const fullscreenHtml = ref('')
 const activeFile = computed(() => taskFiles.value.find(file => file.path === activeFilePath.value) || null)
 const renderedResult = computed(() => renderMd(resultContent.value))
 const renderedActiveFile = computed(() => renderMd(activeFileContent.value))
+const taskGit = computed(() => taskState.value?.git || {})
+const taskIterations = computed(() => Array.isArray(taskState.value?.iterations) ? taskState.value.iterations : [])
+const taskCurrentIteration = computed(() => {
+  const current = Number(taskState.value?.current_iteration || 0)
+  if (current) {
+    return taskIterations.value.find(item => Number(item.n) === current) || null
+  }
+  return taskIterations.value.length ? taskIterations.value[taskIterations.value.length - 1] : null
+})
+const taskCurrentIterationText = computed(() => {
+  if (selectedTask.value?.type !== 'extend') return '当前任务'
+  const current = taskCurrentIteration.value
+  if (current?.n) return `迭代 #${current.n}${current.requirement ? ` · ${current.requirement}` : ''}`
+  return '迭代开发'
+})
+const taskStateStatusLabel = computed(() => {
+  const raw = taskState.value?.status || selectedTask.value?.status || ''
+  return statusLabel(raw === 'finished' ? 'completed' : raw)
+})
 const activeFileKind = computed(() => activeFileMeta.value?.kind || activeFile.value?.kind || 'text')
 const activeFileIsText = computed(() => activeFileMeta.value?.is_text ?? ['text', 'markdown'].includes(activeFileKind.value))
 const activeFileKindLabel = computed(() => FILE_KIND_LABELS[activeFileKind.value] || '文件')
@@ -2001,10 +2137,13 @@ function fileIcon(file) {
 
 // ---- helpers ----
 function statusType(s) {
-  return { pending: 'info', running: 'warning', completed: 'success', failed: 'danger' }[s] || 'info'
+  return { pending: 'info', running: 'warning', paused: 'warning', completed: 'success', stopped: 'danger', failed: 'danger' }[s] || 'info'
 }
 function statusLabel(s) {
-  return { pending: '等待中', running: '执行中', completed: '已完成', failed: '已中断' }[s] || s
+  return { pending: '等待中', running: '执行中', paused: '已暂停', completed: '已完成', stopped: '已终止', failed: '执行失败' }[s] || s
+}
+function canResume(task) {
+  return ['failed', 'paused', 'stopped'].includes(task?.status)
 }
 function parseOptions(str) {
   try { return JSON.parse(str || '{}') } catch { return {} }
@@ -2021,6 +2160,22 @@ function moduleLabel(module) {
 function formatTime(t) {
   if (!t) return ''
   return new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+// ---- Capabilities ----
+const capabilitiesVisible = ref(false)
+const capabilitiesData = ref(null)
+const loadingCapabilities = ref(false)
+
+async function loadCapabilities() {
+  if (capabilitiesData.value) return
+  loadingCapabilities.value = true
+  try {
+    const res = await fetch(`${API_BASE}/capabilities`)
+    if (res.ok) capabilitiesData.value = await res.json()
+    else ElMessage.error('获取能力清单失败')
+  } catch { ElMessage.error('网络错误') }
+  finally { loadingCapabilities.value = false }
 }
 
 // ---- CLI management ----
@@ -2276,6 +2431,10 @@ async function refreshSelectedTaskState() {
       // Sync status from state.json (running tasks may complete)
       if (state.status === 'finished' || state.status === 'completed') {
         selectedTask.value.status = 'completed'
+      } else if (state.status === 'paused') {
+        selectedTask.value.status = 'paused'
+      } else if (state.status === 'stopped') {
+        selectedTask.value.status = 'stopped'
       } else if (state.status === 'failed') {
         selectedTask.value.status = 'failed'
       }
@@ -3140,6 +3299,16 @@ onUnmounted(() => {
   line-height: 1.6;
 }
 .init-log-line { color: #94a3b8; white-space: pre-wrap; word-break: break-all; }
+
+/* ===== Capabilities Dialog ===== */
+.capabilities-content { max-height: 60vh; overflow-y: auto; }
+.capability-card {
+  padding: 12px;
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  border-radius: 8px;
+}
+.capability-item-tag { font-size: 11px; }
 
 /* ===== Fullscreen Dialog ===== */
 .fullscreen-dialog :deep(.el-dialog__body) {
