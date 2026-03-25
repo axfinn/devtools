@@ -126,6 +126,7 @@ Docker exposes the backend on port 8082.
 - `POST /api/paste`: Create shared paste (requires `content`, optional `title`, `language`, `password`, `expires_in`, `max_views`)
 - `GET /api/paste/:id?password=xxx`: Get paste content (increments view count)
 - `GET /api/paste/:id/info`: Get paste metadata without content
+- **录音录屏**: 前端使用 MediaRecorder API 录制音频/视频，录制完成后作为文件通过 `/api/paste/upload` 上传
 
 **IP/DNS:**
 - `GET /api/ip`: Get client IP address

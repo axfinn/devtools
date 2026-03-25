@@ -49,7 +49,7 @@
         <h2>共享粘贴板</h2>
         <div class="header-right">
           <div class="info-text">
-            支持文本、图片、视频分享 - 自动压缩优化
+            支持文本、图片、录音、录屏分享 - 自动压缩优化
           </div>
           <el-button size="small" @click="showMyShares = true">
             <el-icon><FolderOpened /></el-icon>
@@ -142,6 +142,47 @@
           <el-icon :size="32"><Upload /></el-icon>
           <span>点击上传文件或直接拖拽</span>
           <span class="upload-hint">支持图片、视频、音频、PDF、Office文档、压缩包等 (最大 200MB)</span>
+        </div>
+      </div>
+
+      <!-- 录音录屏区域 -->
+      <div class="record-section">
+        <div class="record-header">
+          <span class="record-title">
+            <el-icon><VideoPlay /></el-icon>
+            音视频录制
+          </span>
+        </div>
+        <div class="record-buttons">
+          <el-button type="primary" @click="startAudioRecording" :disabled="isRecordingAudio || isRecordingScreen">
+            <el-icon><Microphone /></el-icon>
+            录音
+          </el-button>
+          <el-button type="success" @click="startScreenRecording" :disabled="isRecordingAudio || isRecordingScreen">
+            <el-icon><Monitor /></el-icon>
+            录屏
+          </el-button>
+          <el-button v-if="isRecordingAudio || isRecordingScreen" type="danger" @click="stopRecording">
+            <el-icon><VideoPause /></el-icon>
+            停止录制
+          </el-button>
+          <span v-if="isRecordingAudio || isRecordingScreen" class="recording-indicator">
+            <span class="recording-dot"></span>
+            录制中 {{ formatDuration(recordingDuration) }}
+          </span>
+        </div>
+        <div v-if="recordedChunks.length > 0" class="record-preview">
+          <video v-if="recordingPreviewUrl" :src="recordingPreviewUrl" controls style="max-width: 400px; max-height: 200px; background: #000;"></video>
+          <div class="record-actions">
+            <el-button size="small" type="primary" @click="addRecordedFile">
+              <el-icon><Plus /></el-icon>
+              添加到文件
+            </el-button>
+            <el-button size="small" @click="discardRecording">
+              <el-icon><Delete /></el-icon>
+              丢弃
+            </el-button>
+          </div>
         </div>
       </div>
 
@@ -303,6 +344,47 @@
         </div>
       </div>
 
+      <!-- 高级模式录音录屏区域 -->
+      <div class="record-section">
+        <div class="record-header">
+          <span class="record-title">
+            <el-icon><VideoPlay /></el-icon>
+            音视频录制
+          </span>
+        </div>
+        <div class="record-buttons">
+          <el-button type="primary" @click="startAudioRecording" :disabled="isRecordingAudio || isRecordingScreen">
+            <el-icon><Microphone /></el-icon>
+            录音
+          </el-button>
+          <el-button type="success" @click="startScreenRecording" :disabled="isRecordingAudio || isRecordingScreen">
+            <el-icon><Monitor /></el-icon>
+            录屏
+          </el-button>
+          <el-button v-if="isRecordingAudio || isRecordingScreen" type="danger" @click="stopRecording">
+            <el-icon><VideoPause /></el-icon>
+            停止录制
+          </el-button>
+          <span v-if="isRecordingAudio || isRecordingScreen" class="recording-indicator">
+            <span class="recording-dot"></span>
+            录制中 {{ formatDuration(recordingDuration) }}
+          </span>
+        </div>
+        <div v-if="recordedChunks.length > 0" class="record-preview">
+          <video v-if="recordingPreviewUrl" :src="recordingPreviewUrl" controls style="max-width: 400px; max-height: 200px; background: #000;"></video>
+          <div class="record-actions">
+            <el-button size="small" type="primary" @click="addRecordedFile">
+              <el-icon><Plus /></el-icon>
+              添加到文件
+            </el-button>
+            <el-button size="small" @click="discardRecording">
+              <el-icon><Delete /></el-icon>
+              丢弃
+            </el-button>
+          </div>
+        </div>
+      </div>
+
       <div class="options-row">
         <div class="option-item">
           <span class="option-label">过期时间</span>
@@ -354,7 +436,8 @@
       <div class="tips-section">
         <h4>使用提示</h4>
         <ul>
-          <li>支持文本、图片、视频、音频、PDF、Office文档、压缩包等多种格式</li>
+          <li>支持文本、图片、音频、PDF、Office文档、压缩包、录音、录屏等多种格式</li>
+          <li>录音功能使用麦克风录制音频，录屏功能支持录制整个屏幕、窗口或标签页</li>
           <li>大文件自动分片上传,支持断点续传</li>
           <li>视频默认最多10次访问(防止滥用)</li>
           <li>管理员可设置更多访问次数或永久访问</li>
@@ -568,7 +651,7 @@
 import { ref, nextTick, computed } from 'vue'
 import { ElImageViewer } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files, Reading } from '@element-plus/icons-vue'
+import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files, Reading, Microphone, VideoCamera, Monitor, VideoPlay, VideoPause, Bell, WarnTriangleFilled } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { API_BASE } from '../api'
 import { FFmpeg } from '@ffmpeg/ffmpeg'
@@ -593,6 +676,18 @@ const qrCanvas = ref(null)
 const files = ref([]) // [{ file: File, preview: string, type: 'image'|'video'|'audio'|'document'|'archive'|'file', name: string, size: number, compressed: boolean, compressing: boolean, uploadedId: string, uploading: boolean, uploadProgress: number }]
 const fileInput = ref(null)
 const isDragging = ref(false)
+
+// 录音/录屏功能
+const isRecordingAudio = ref(false)
+const isRecordingScreen = ref(false)
+const recordingMediaType = ref('') // 'audio' | 'screen'
+const audioRecorder = ref(null)
+const screenRecorder = ref(null)
+const recordedChunks = ref([])
+const recordingDuration = ref(0)
+const recordingTimer = ref(null)
+const showRecordingDialog = ref(false)
+const recordingPreviewUrl = ref('')
 
 // OCR 功能
 const showOcrDialog = ref(false)
@@ -800,6 +895,180 @@ const removeMyShare = (id) => {
 // 格式化时间戳
 const formatTimestamp = (timestamp) => {
   return new Date(timestamp).toLocaleString('zh-CN')
+}
+
+// ========== 录音录屏功能 ==========
+
+// 格式化录制时长
+const formatDuration = (seconds) => {
+  const mins = Math.floor(seconds / 60)
+  const secs = seconds % 60
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+}
+
+// 开始录音
+const startAudioRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    audioRecorder.value = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+    recordedChunks.value = []
+
+    audioRecorder.value.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        recordedChunks.value.push(e.data)
+      }
+    }
+
+    audioRecorder.value.onstop = () => {
+      const blob = new Blob(recordedChunks.value, { type: 'audio/webm' })
+      recordingPreviewUrl.value = URL.createObjectURL(blob)
+      stream.getTracks().forEach(track => track.stop())
+    }
+
+    audioRecorder.value.start(1000) // 每秒收集数据
+    isRecordingAudio.value = true
+    recordingMediaType.value = 'audio'
+    recordingDuration.value = 0
+
+    // 开始计时
+    recordingTimer.value = setInterval(() => {
+      recordingDuration.value++
+    }, 1000)
+
+    ElMessage.success('开始录音，请对着麦克风说话')
+  } catch (err) {
+    console.error('录音失败:', err)
+    if (err.name === 'NotAllowedError') {
+      ElMessage.error('请允许访问麦克风权限')
+    } else if (err.name === 'NotFoundError') {
+      ElMessage.error('未找到麦克风设备')
+    } else {
+      ElMessage.error('无法访问麦克风: ' + err.message)
+    }
+  }
+}
+
+// 开始录屏
+const startScreenRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { cursor: 'always' },
+      audio: true
+    })
+
+    // 检查是否有音频轨道
+    const hasAudio = stream.getAudioTracks().length > 0
+
+    screenRecorder.value = new MediaRecorder(stream, {
+      mimeType: 'video/webm;codecs=vp9,opus'
+    })
+    recordedChunks.value = []
+
+    screenRecorder.value.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        recordedChunks.value.push(e.data)
+      }
+    }
+
+    screenRecorder.value.onstop = () => {
+      const mimeType = hasAudio ? 'video/webm;codecs=vp9,opus' : 'video/webm'
+      const blob = new Blob(recordedChunks.value, { type: mimeType })
+      recordingPreviewUrl.value = URL.createObjectURL(blob)
+      stream.getTracks().forEach(track => track.stop())
+    }
+
+    // 监听用户停止分享
+    stream.getVideoTracks()[0].onended = () => {
+      stopRecording()
+    }
+
+    screenRecorder.value.start(1000)
+    isRecordingScreen.value = true
+    recordingMediaType.value = 'screen'
+    recordingDuration.value = 0
+
+    // 开始计时
+    recordingTimer.value = setInterval(() => {
+      recordingDuration.value++
+    }, 1000)
+
+    ElMessage.success('开始录屏，点击"停止录制"或停止屏幕分享即可结束')
+  } catch (err) {
+    console.error('录屏失败:', err)
+    if (err.name === 'NotAllowedError') {
+      ElMessage.error('请允许屏幕录制权限')
+    } else if (err.name === 'NotFoundError') {
+      ElMessage.error('未找到屏幕录制设备')
+    } else {
+      ElMessage.error('无法访问屏幕录制: ' + err.message)
+    }
+  }
+}
+
+// 停止录制
+const stopRecording = () => {
+  if (audioRecorder.value && isRecordingAudio.value) {
+    audioRecorder.value.stop()
+    isRecordingAudio.value = false
+    audioRecorder.value = null
+  }
+
+  if (screenRecorder.value && isRecordingScreen.value) {
+    screenRecorder.value.stop()
+    isRecordingScreen.value = false
+    screenRecorder.value = null
+  }
+
+  if (recordingTimer.value) {
+    clearInterval(recordingTimer.value)
+    recordingTimer.value = null
+  }
+
+  ElMessage.success('录制完成')
+}
+
+// 添加录制文件到文件列表
+const addRecordedFile = async () => {
+  if (recordedChunks.value.length === 0) {
+    ElMessage.warning('没有录制内容')
+    return
+  }
+
+  const mimeType = recordingMediaType.value === 'audio' ? 'audio/webm' : 'video/webm;codecs=vp9,opus'
+  const extension = recordingMediaType.value === 'audio' ? 'webm' : 'webm'
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const filename = `${recordingMediaType.value}_${timestamp}.${extension}`
+
+  const blob = new Blob(recordedChunks.value, { type: mimeType })
+  const file = new File([blob], filename, { type: mimeType })
+
+  // 使用现有 addFile 函数添加
+  await addFile(file)
+
+  // 清理录制状态
+  discardRecording()
+
+  ElMessage.success('已添加到文件列表')
+}
+
+// 丢弃录制
+const discardRecording = () => {
+  if (recordingPreviewUrl.value) {
+    URL.revokeObjectURL(recordingPreviewUrl.value)
+  }
+  recordedChunks.value = []
+  recordingPreviewUrl.value = ''
+  recordingDuration.value = 0
+  isRecordingAudio.value = false
+  isRecordingScreen.value = false
+  recordingMediaType.value = ''
+  audioRecorder.value = null
+  screenRecorder.value = null
+
+  if (recordingTimer.value) {
+    clearInterval(recordingTimer.value)
+    recordingTimer.value = null
+  }
 }
 
 // 管理员功能
@@ -1378,6 +1647,9 @@ const resetForm = () => {
     }
   }
   files.value = []
+
+  // 清理录制状态
+  discardRecording()
 }
 
 // 管理员登录
@@ -1998,6 +2270,82 @@ restoreAdminPassword()
 
 .error-msg {
   margin-top: 10px;
+}
+
+/* 录音录屏区域 */
+.record-section {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  padding: 15px;
+}
+
+.record-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.record-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.record-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f56c6c;
+  font-size: 14px;
+}
+
+.recording-dot {
+  width: 10px;
+  height: 10px;
+  background-color: #f56c6c;
+  border-radius: 50%;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.record-preview {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border-base);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.record-preview video {
+  border-radius: var(--radius-md);
+}
+
+.record-actions {
+  display: flex;
+  gap: 10px;
 }
 
 /* 移动端适配 */
