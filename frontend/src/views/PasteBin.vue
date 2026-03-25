@@ -154,19 +154,27 @@
           </span>
         </div>
         <div class="record-buttons">
-          <el-button type="primary" @click="startAudioRecording" :disabled="isRecordingAudio || isRecordingScreen">
+          <el-button type="primary" @click="startAudioRecording" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
             <el-icon><Microphone /></el-icon>
             录音
           </el-button>
-          <el-button type="success" @click="startScreenRecording" :disabled="isRecordingAudio || isRecordingScreen">
+          <el-button type="success" @click="startScreenRecording" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
             <el-icon><Monitor /></el-icon>
             录屏
           </el-button>
-          <el-button v-if="isRecordingAudio || isRecordingScreen" type="danger" @click="stopRecording">
+          <el-button type="warning" @click="capturePhoto" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
+            <el-icon><Camera /></el-icon>
+            拍照
+          </el-button>
+          <el-button type="danger" @click="startCameraRecording" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
+            <el-icon><VideoCamera /></el-icon>
+            录像
+          </el-button>
+          <el-button v-if="isRecordingAudio || isRecordingScreen || isRecordingCamera" type="danger" @click="stopRecording">
             <el-icon><VideoPause /></el-icon>
             停止录制
           </el-button>
-          <span v-if="isRecordingAudio || isRecordingScreen" class="recording-indicator">
+          <span v-if="isRecordingAudio || isRecordingScreen || isRecordingCamera" class="recording-indicator">
             <span class="recording-dot"></span>
             录制中 {{ formatDuration(recordingDuration) }}
           </span>
@@ -353,19 +361,27 @@
           </span>
         </div>
         <div class="record-buttons">
-          <el-button type="primary" @click="startAudioRecording" :disabled="isRecordingAudio || isRecordingScreen">
+          <el-button type="primary" @click="startAudioRecording" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
             <el-icon><Microphone /></el-icon>
             录音
           </el-button>
-          <el-button type="success" @click="startScreenRecording" :disabled="isRecordingAudio || isRecordingScreen">
+          <el-button type="success" @click="startScreenRecording" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
             <el-icon><Monitor /></el-icon>
             录屏
           </el-button>
-          <el-button v-if="isRecordingAudio || isRecordingScreen" type="danger" @click="stopRecording">
+          <el-button type="warning" @click="capturePhoto" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
+            <el-icon><Camera /></el-icon>
+            拍照
+          </el-button>
+          <el-button type="danger" @click="startCameraRecording" :disabled="isRecordingAudio || isRecordingScreen || isRecordingCamera">
+            <el-icon><VideoCamera /></el-icon>
+            录像
+          </el-button>
+          <el-button v-if="isRecordingAudio || isRecordingScreen || isRecordingCamera" type="danger" @click="stopRecording">
             <el-icon><VideoPause /></el-icon>
             停止录制
           </el-button>
-          <span v-if="isRecordingAudio || isRecordingScreen" class="recording-indicator">
+          <span v-if="isRecordingAudio || isRecordingScreen || isRecordingCamera" class="recording-indicator">
             <span class="recording-dot"></span>
             录制中 {{ formatDuration(recordingDuration) }}
           </span>
@@ -651,7 +667,7 @@
 import { ref, nextTick, computed } from 'vue'
 import { ElImageViewer } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files, Reading, Microphone, VideoCamera, Monitor, VideoPlay, VideoPause, Bell, WarnTriangleFilled } from '@element-plus/icons-vue'
+import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files, Reading, Microphone, Camera, VideoCamera, Monitor, VideoPlay, VideoPause, Bell, WarnTriangleFilled } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 import { API_BASE } from '../api'
 import { FFmpeg } from '@ffmpeg/ffmpeg'
@@ -680,10 +696,14 @@ const isDragging = ref(false)
 // 录音/录屏功能
 const isRecordingAudio = ref(false)
 const isRecordingScreen = ref(false)
-const recordingMediaType = ref('') // 'audio' | 'screen'
+const isRecordingCamera = ref(false)
+const recordingMediaType = ref('') // 'audio' | 'screen' | 'camera'
 const audioRecorder = ref(null)
 const screenRecorder = ref(null)
+const cameraRecorder = ref(null)
+const cameraStream = ref(null)
 const recordedChunks = ref([])
+const cameraPhotoData = ref(null)
 const recordingDuration = ref(0)
 const recordingTimer = ref(null)
 const showRecordingDialog = ref(false)
@@ -1005,6 +1025,112 @@ const startScreenRecording = async () => {
   }
 }
 
+// 开始摄像头录像
+const startCameraRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: 1280, height: 720 },
+      audio: true
+    })
+
+    cameraStream.value = stream
+    cameraRecorder.value = new MediaRecorder(stream, {
+      mimeType: 'video/webm;codecs=vp9,opus'
+    })
+    recordedChunks.value = []
+
+    cameraRecorder.value.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        recordedChunks.value.push(e.data)
+      }
+    }
+
+    cameraRecorder.value.onstop = () => {
+      const blob = new Blob(recordedChunks.value, { type: 'video/webm;codecs=vp9,opus' })
+      recordingPreviewUrl.value = URL.createObjectURL(blob)
+      stream.getTracks().forEach(track => track.stop())
+    }
+
+    cameraRecorder.value.start(1000)
+    isRecordingCamera.value = true
+    recordingMediaType.value = 'camera'
+    recordingDuration.value = 0
+
+    // 开始计时
+    recordingTimer.value = setInterval(() => {
+      recordingDuration.value++
+    }, 1000)
+
+    ElMessage.success('开始摄像头录像，点击"停止录制"即可结束')
+  } catch (err) {
+    console.error('摄像头录像失败:', err)
+    if (err.name === 'NotAllowedError') {
+      ElMessage.error('请允许访问摄像头权限')
+    } else if (err.name === 'NotFoundError') {
+      ElMessage.error('未找到摄像头设备')
+    } else {
+      ElMessage.error('无法访问摄像头: ' + err.message)
+    }
+  }
+}
+
+// 拍照
+const capturePhoto = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: 1280, height: 720 },
+      audio: false
+    })
+
+    cameraStream.value = stream
+
+    // 创建video元素用于捕获帧
+    const video = document.createElement('video')
+    video.srcObject = stream
+    video.autoplay = true
+    video.playsInline = true
+
+    await new Promise(resolve => {
+      video.onloadedmetadata = resolve
+    })
+
+    // 等待一下确保视频准备就绪
+    await new Promise(resolve => setTimeout(resolve, 300))
+
+    // 创建canvas捕获当前帧
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(video, 0, 0)
+
+    // 停止所有轨道
+    stream.getTracks().forEach(track => track.stop())
+    cameraStream.value = null
+
+    // 转换为blob
+    canvas.toBlob((blob) => {
+      if (blob) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const filename = `photo_${timestamp}.jpg`
+        const file = new File([blob], filename, { type: 'image/jpeg' })
+        addFile(file)
+        ElMessage.success('已拍照并添加到文件列表')
+      }
+    }, 'image/jpeg', 0.92)
+
+  } catch (err) {
+    console.error('拍照失败:', err)
+    if (err.name === 'NotAllowedError') {
+      ElMessage.error('请允许访问摄像头权限')
+    } else if (err.name === 'NotFoundError') {
+      ElMessage.error('未找到摄像头设备')
+    } else {
+      ElMessage.error('无法访问摄像头: ' + err.message)
+    }
+  }
+}
+
 // 停止录制
 const stopRecording = () => {
   if (audioRecorder.value && isRecordingAudio.value) {
@@ -1017,6 +1143,17 @@ const stopRecording = () => {
     screenRecorder.value.stop()
     isRecordingScreen.value = false
     screenRecorder.value = null
+  }
+
+  if (cameraRecorder.value && isRecordingCamera.value) {
+    cameraRecorder.value.stop()
+    isRecordingCamera.value = false
+    cameraRecorder.value = null
+  }
+
+  if (cameraStream.value) {
+    cameraStream.value.getTracks().forEach(track => track.stop())
+    cameraStream.value = null
   }
 
   if (recordingTimer.value) {
@@ -1061,9 +1198,15 @@ const discardRecording = () => {
   recordingDuration.value = 0
   isRecordingAudio.value = false
   isRecordingScreen.value = false
+  isRecordingCamera.value = false
   recordingMediaType.value = ''
   audioRecorder.value = null
   screenRecorder.value = null
+  cameraRecorder.value = null
+  if (cameraStream.value) {
+    cameraStream.value.getTracks().forEach(track => track.stop())
+    cameraStream.value = null
+  }
 
   if (recordingTimer.value) {
     clearInterval(recordingTimer.value)
