@@ -1307,11 +1307,11 @@ const initMermaid = () => {
 }
 
 let mermaidCounter = 0
-async function renderMermaidInElement(el) {
+async function renderMermaidInElement(el, forceReRender = false) {
   if (!el) return
   const blocks = el.querySelectorAll('.mermaid-block')
   for (const block of blocks) {
-    if (block.dataset.rendered) continue
+    if (block.dataset.rendered && !forceReRender) continue
     try {
       const source = decodeURIComponent(escape(atob(block.dataset.source)))
       const id = `mermaid-auto-${Date.now()}-${++mermaidCounter}`
@@ -1322,7 +1322,9 @@ async function renderMermaidInElement(el) {
         rendered.innerHTML = svg
         rendered.dataset.diagramId = id
       }
-      // Add source toggle button
+      // Add source toggle button (remove old one first if re-rendering)
+      const oldBtn = block.querySelector('.mermaid-source-toggle')
+      if (oldBtn) oldBtn.remove()
       const btn = document.createElement('button')
       btn.className = 'mermaid-source-toggle'
       btn.textContent = '查看源码'
@@ -1335,7 +1337,9 @@ async function renderMermaidInElement(el) {
       }
       block.style.position = 'relative'
       block.appendChild(btn)
-      // Add source code element
+      // Add source code element (remove old one first if re-rendering)
+      const oldSrc = block.querySelector('.mermaid-source-code')
+      if (oldSrc) oldSrc.remove()
       const sourceEl = document.createElement('div')
       sourceEl.className = 'mermaid-source-code'
       sourceEl.innerHTML = `<pre>${md.utils.escapeHtml(source)}</pre>`
@@ -1343,7 +1347,7 @@ async function renderMermaidInElement(el) {
     } catch (err) {
       const rendered = block.querySelector('.mermaid-rendered')
       if (rendered) {
-        rendered.innerHTML = `<div class="mermaid-error"><el-icon><WarningFilled /></el-icon> 渲染失败: ${err.message || err}</div>`
+        rendered.innerHTML = `<div class="mermaid-error">⚠️ 渲染失败: ${err.message || err}</div>`
       }
     }
   }
@@ -2086,6 +2090,19 @@ watch(renderedResult, () => {
 watch(renderedActiveFile, () => {
   nextTick(() => {
     if (fileMarkdownRef.value) renderMermaidInElement(fileMarkdownRef.value)
+  })
+})
+
+// Re-render mermaid on theme change (reset rendered flag so diagrams re-render with new theme)
+watch(isDark, () => {
+  initMermaid()
+  nextTick(() => {
+    document.querySelectorAll('.mermaid-block').forEach(block => {
+      delete block.dataset.rendered
+    })
+    if (resultMarkdownRef.value) renderMermaidInElement(resultMarkdownRef.value, true)
+    if (fileMarkdownRef.value) renderMermaidInElement(fileMarkdownRef.value, true)
+    if (fullscreenMarkdownRef.value) renderMermaidInElement(fullscreenMarkdownRef.value, true)
   })
 })
 
@@ -3128,8 +3145,8 @@ onUnmounted(() => {
 .markdown-view :deep(img) { max-width: 100%; border-radius: 6px; cursor: pointer; }
 .markdown-view :deep(img):hover { opacity: 0.9; }
 
-/* ===== Mermaid Blocks ===== */
-.mermaid-block {
+/* ===== Mermaid Blocks (inside markdown-view) ===== */
+.markdown-view :deep(.mermaid-block) {
   position: relative;
   margin: 1rem 0;
   border-radius: 8px;
@@ -3137,22 +3154,22 @@ onUnmounted(() => {
   background: #1e293b;
   border: 1px solid #334155;
 }
-.mermaid-rendered {
+.markdown-view :deep(.mermaid-rendered) {
   padding: 1rem;
   overflow-x: auto;
 }
-.mermaid-rendered svg {
+.markdown-view :deep(.mermaid-rendered svg) {
   max-width: 100%;
   height: auto;
 }
-.mermaid-error {
+.markdown-view :deep(.mermaid-error) {
   color: #f87171;
   padding: 1rem;
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
-.mermaid-source-toggle {
+.markdown-view :deep(.mermaid-source-toggle) {
   position: absolute;
   top: 0.5rem;
   right: 0.5rem;
@@ -3165,20 +3182,20 @@ onUnmounted(() => {
   color: #94a3b8;
   cursor: pointer;
 }
-.mermaid-source-toggle:hover {
+.markdown-view :deep(.mermaid-source-toggle:hover) {
   background: rgba(0,0,0,0.8);
   color: #e2e8f0;
 }
-.mermaid-source-code {
+.markdown-view :deep(.mermaid-source-code) {
   display: none;
   padding: 1rem;
   background: #0f172a;
   border-top: 1px solid #334155;
 }
-.mermaid-source-code.visible {
+.markdown-view :deep(.mermaid-source-code.visible) {
   display: block;
 }
-.mermaid-source-code pre {
+.markdown-view :deep(.mermaid-source-code pre) {
   margin: 0;
   font-size: 0.8rem;
   color: #94a3b8;
@@ -3671,11 +3688,11 @@ onUnmounted(() => {
 .theme-light .markdown-view :deep(tr:nth-child(even)) { background: #f8fafc; }
 
 /* Light mermaid blocks */
-.theme-light .mermaid-block { background: #f8fafc; border-color: #e2e8f0; }
-.theme-light .mermaid-rendered { background: #ffffff; }
-.theme-light .mermaid-source-code { background: #f1f5f9; border-color: #e2e8f0; }
-.theme-light .mermaid-source-code pre { color: #64748b; }
-.theme-light .mermaid-error { color: #dc2626; }
+.theme-light .markdown-view :deep(.mermaid-block) { background: #f8fafc; border-color: #e2e8f0; }
+.theme-light .markdown-view :deep(.mermaid-rendered) { background: #ffffff; }
+.theme-light .markdown-view :deep(.mermaid-source-code) { background: #f1f5f9; border-color: #e2e8f0; }
+.theme-light .markdown-view :deep(.mermaid-source-code pre) { color: #64748b; }
+.theme-light .markdown-view :deep(.mermaid-error) { color: #dc2626; }
 
 /* Light file tree */
 .theme-light .file-tree {
