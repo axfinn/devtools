@@ -359,6 +359,17 @@ const toolRoutes = [
       description: 'Microsoft Edge 语音合成，支持多种中文音色'
     }
   },
+  {
+    path: '/games',
+    name: 'GameHall',
+    component: () => import('../views/GameHall.vue'),
+    meta: {
+      title: '小游戏',
+      icon: 'Connection',
+      category: 'life',
+      description: '双人小游戏，支持 AI 陪玩'
+    }
+  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',

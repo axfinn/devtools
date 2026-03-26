@@ -338,6 +338,9 @@ func main() {
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
 
+	// 游戏处理器
+	gameHandler := handlers.NewGameHandler(cfg.MiniMax)
+
 	// 启动 SSH 会话清理协程
 	terminalHandler.StartCleanupRoutine()
 
@@ -427,6 +430,29 @@ func main() {
 			edgeTTS.GET("/audio/:filename", edgeTTSHandler.ServeAudioFile)
 			edgeTTS.GET("/health", edgeTTSHandler.Health)
 			edgeTTS.POST("/convert", edgeTTSHandler.ConvertAudioFormat)
+		}
+
+		// 游戏 API
+		game := api.Group("/game")
+		{
+			game.GET("/info", gameHandler.GetGameInfo)
+			// 井字棋
+			game.POST("/tictactoe/init", gameHandler.InitTicTacToe)
+			game.POST("/tictactoe/move", gameHandler.MoveTicTacToe)
+			// 五子棋
+			game.POST("/gomoku/init", gameHandler.InitGomoku)
+			game.POST("/gomoku/move", gameHandler.MoveGomoku)
+			// 猜数字
+			game.POST("/guessnumber/init", gameHandler.InitGuessNumber)
+			game.POST("/guessnumber/guess", gameHandler.Guess)
+			// 石头剪刀布
+			game.POST("/rps/init", gameHandler.InitRPS)
+			game.POST("/rps/play", gameHandler.PlayRPS)
+			// 色子比大小
+			game.POST("/dice/init", gameHandler.InitDice)
+			game.POST("/dice/roll", gameHandler.RollDice)
+			// AI 对话
+			game.POST("/ai-chat", gameHandler.AIChat)
 		}
 
 		// 短链 API
