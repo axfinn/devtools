@@ -532,7 +532,7 @@
                   <el-icon><WarningFilled /></el-icon>
                   <span>{{ resultPreviewNotice }}</span>
                 </div>
-                <div class="markdown-view" v-html="renderedResult" />
+                <div ref="resultMarkdownRef" class="markdown-view" v-html="renderedResult" />
               </div>
             </div>
 
@@ -638,9 +638,9 @@
                       <span>{{ activeFileNotice }}</span>
                     </div>
                     <div class="flex-1 overflow-auto">
-                      <div v-if="activeFileKind === 'markdown'" class="markdown-view p-4" v-html="renderedActiveFile" />
+                      <div v-if="activeFileKind === 'markdown'" ref="fileMarkdownRef" class="markdown-view p-4" v-html="renderedActiveFile" />
                       <div v-else-if="activeFileKind === 'image'" class="media-preview">
-                        <img :src="activeFileRawUrl" :alt="activeFilePath" class="media-image">
+                        <img :src="activeFileRawUrl" :alt="activeFilePath" class="media-image" @click="openImageFullscreen(activeFileRawUrl, activeFilePath)">
                       </div>
                       <div v-else-if="activeFileKind === 'audio'" class="media-preview media-preview--center">
                         <audio :src="activeFileRawUrl" controls preload="metadata" class="media-audio" />
@@ -749,7 +749,20 @@
       class="fullscreen-dialog"
       destroy-on-close
     >
-      <div class="fullscreen-content markdown-view" v-html="fullscreenHtml" />
+      <div ref="fullscreenMarkdownRef" class="fullscreen-content markdown-view" v-html="fullscreenHtml" @click="handleFullscreenClick" />
+    </el-dialog>
+
+    <!-- ===== Image Fullscreen Dialog ===== -->
+    <el-dialog
+      v-model="imageFullscreenVisible"
+      :title="imageFullscreenTitle"
+      width="90%"
+      class="image-fullscreen-dialog"
+      destroy-on-close
+    >
+      <div class="image-fullscreen-body">
+        <img :src="imageFullscreenUrl" :alt="imageFullscreenTitle" class="image-fullscreen-img">
+      </div>
     </el-dialog>
 
     <!-- ===== Capabilities Dialog ===== -->
@@ -1217,6 +1230,11 @@ const md = new MarkdownIt({
   linkify: true,
   typographer: true,
   highlight(str, lang) {
+    // Special handling for mermaid blocks - escape but mark for later rendering
+    if (lang === 'mermaid') {
+      const encoded = btoa(unescape(encodeURIComponent(str)))
+      return `<div class="mermaid-block" data-source="${encoded}"><div class="mermaid-rendered"></div></div>`
+    }
     if (lang && hljs.getLanguage(lang)) {
       try {
         return `<pre class="hljs-block"><code class="hljs language-${lang}">${hljs.highlight(str, { language: lang, ignoreIllegals: true }).value}</code></pre>`
@@ -1271,6 +1289,65 @@ function createEmptyLogMeta() {
 // ---- theme: sync with global useTheme composable ----
 const { currentTheme, themeMode, toggleTheme } = useTheme()
 const isDark = computed(() => currentTheme.value === 'dark')
+
+// ---- mermaid setup ----
+import mermaid from 'mermaid'
+
+const initMermaid = () => {
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+    theme: isDark.value ? 'dark' : 'default',
+    flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
+    sequence: { useMaxWidth: true },
+    gantt: { useMaxWidth: true },
+    pie: { useMaxWidth: true },
+    er: { useMaxWidth: true }
+  })
+}
+
+let mermaidCounter = 0
+async function renderMermaidInElement(el) {
+  if (!el) return
+  const blocks = el.querySelectorAll('.mermaid-block')
+  for (const block of blocks) {
+    if (block.dataset.rendered) continue
+    try {
+      const source = decodeURIComponent(escape(atob(block.dataset.source)))
+      const id = `mermaid-auto-${Date.now()}-${++mermaidCounter}`
+      const { svg } = await mermaid.render(id, source)
+      block.dataset.rendered = 'true'
+      const rendered = block.querySelector('.mermaid-rendered')
+      if (rendered) {
+        rendered.innerHTML = svg
+        rendered.dataset.diagramId = id
+      }
+      // Add source toggle button
+      const btn = document.createElement('button')
+      btn.className = 'mermaid-source-toggle'
+      btn.textContent = '查看源码'
+      btn.onclick = () => {
+        const sourceEl = block.querySelector('.mermaid-source-code')
+        if (sourceEl) {
+          sourceEl.classList.toggle('visible')
+          btn.textContent = sourceEl.classList.contains('visible') ? '隐藏源码' : '查看源码'
+        }
+      }
+      block.style.position = 'relative'
+      block.appendChild(btn)
+      // Add source code element
+      const sourceEl = document.createElement('div')
+      sourceEl.className = 'mermaid-source-code'
+      sourceEl.innerHTML = `<pre>${md.utils.escapeHtml(source)}</pre>`
+      block.appendChild(sourceEl)
+    } catch (err) {
+      const rendered = block.querySelector('.mermaid-rendered')
+      if (rendered) {
+        rendered.innerHTML = `<div class="mermaid-error"><el-icon><WarningFilled /></el-icon> 渲染失败: ${err.message || err}</div>`
+      }
+    }
+  }
+}
 
 const PHASE_NAMES = [
   { label: 'DISCOVER', short: 'DIS' },
@@ -1635,6 +1712,27 @@ const initLogEl = ref(null)
 const fullscreenVisible = ref(false)
 const fullscreenTitle = ref('')
 const fullscreenHtml = ref('')
+const fullscreenMarkdownRef = ref(null)
+const resultMarkdownRef = ref(null)
+const fileMarkdownRef = ref(null)
+
+// image fullscreen
+const imageFullscreenVisible = ref(false)
+const imageFullscreenUrl = ref('')
+const imageFullscreenTitle = ref('')
+
+function openImageFullscreen(url, title = '图片') {
+  imageFullscreenUrl.value = url
+  imageFullscreenTitle.value = title
+  imageFullscreenVisible.value = true
+}
+
+function handleFullscreenClick(e) {
+  const img = e.target.closest('img')
+  if (img) {
+    openImageFullscreen(img.src, img.alt || '图片')
+  }
+}
 
 const activeFile = computed(() => taskFiles.value.find(file => file.path === activeFilePath.value) || null)
 const renderedResult = computed(() => renderMd(resultContent.value))
@@ -1691,12 +1789,20 @@ function openFullscreen() {
   fullscreenTitle.value = 'RESULT.md'
   fullscreenHtml.value = renderedResult.value
   fullscreenVisible.value = true
+  nextTick(() => {
+    const el = document.querySelector('.fullscreen-content')
+    if (el) renderMermaidInElement(el)
+  })
 }
 
 function openFullscreenFile() {
   fullscreenTitle.value = activeFilePath.value?.split('/').pop() || '文件'
   fullscreenHtml.value = renderedActiveFile.value
   fullscreenVisible.value = true
+  nextTick(() => {
+    const el = document.querySelector('.fullscreen-content')
+    if (el) renderMermaidInElement(el)
+  })
 }
 
 async function copyResult() {
@@ -1968,6 +2074,19 @@ watch(activeTab, tab => {
   if (tab === 'logs') loadLogs()
   else if (tab === 'files' && taskFiles.value.length === 0) loadFiles()
   else if (tab === 'result' && !resultContent.value) loadResultForTask()
+})
+
+// Render mermaid diagrams after markdown content is updated
+watch(renderedResult, () => {
+  nextTick(() => {
+    if (resultMarkdownRef.value) renderMermaidInElement(resultMarkdownRef.value)
+  })
+})
+
+watch(renderedActiveFile, () => {
+  nextTick(() => {
+    if (fileMarkdownRef.value) renderMermaidInElement(fileMarkdownRef.value)
+  })
 })
 
 async function downloadTask() {
@@ -2458,6 +2577,7 @@ function startAutoRefresh() {
 }
 
 onMounted(() => {
+  initMermaid()
   const pw = getPassword()
   if (pw) { savedPassword = pw; authenticated.value = true; loadTasks(); loadProjects() }
   startAutoRefresh()
@@ -3005,7 +3125,81 @@ onUnmounted(() => {
   color: #cbd5e1;
 }
 .markdown-view :deep(tr:nth-child(even)) { background: #1e293b40; }
-.markdown-view :deep(img) { max-width: 100%; border-radius: 6px; }
+.markdown-view :deep(img) { max-width: 100%; border-radius: 6px; cursor: pointer; }
+.markdown-view :deep(img):hover { opacity: 0.9; }
+
+/* ===== Mermaid Blocks ===== */
+.mermaid-block {
+  position: relative;
+  margin: 1rem 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #1e293b;
+  border: 1px solid #334155;
+}
+.mermaid-rendered {
+  padding: 1rem;
+  overflow-x: auto;
+}
+.mermaid-rendered svg {
+  max-width: 100%;
+  height: auto;
+}
+.mermaid-error {
+  color: #f87171;
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.mermaid-source-toggle {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 10;
+  background: rgba(0,0,0,0.6);
+  border: none;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  cursor: pointer;
+}
+.mermaid-source-toggle:hover {
+  background: rgba(0,0,0,0.8);
+  color: #e2e8f0;
+}
+.mermaid-source-code {
+  display: none;
+  padding: 1rem;
+  background: #0f172a;
+  border-top: 1px solid #334155;
+}
+.mermaid-source-code.visible {
+  display: block;
+}
+.mermaid-source-code pre {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #94a3b8;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ===== Image Fullscreen ===== */
+.image-fullscreen-body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  max-height: 80vh;
+  overflow: auto;
+}
+.image-fullscreen-img {
+  max-width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
 
 /* ===== Files Layout ===== */
 .files-layout {
@@ -3475,6 +3669,13 @@ onUnmounted(() => {
 .theme-light .markdown-view :deep(th) { background: #f1f5f9; color: #64748b; border-color: #e2e8f0; }
 .theme-light .markdown-view :deep(td) { border-color: #e2e8f0; color: #334155; }
 .theme-light .markdown-view :deep(tr:nth-child(even)) { background: #f8fafc; }
+
+/* Light mermaid blocks */
+.theme-light .mermaid-block { background: #f8fafc; border-color: #e2e8f0; }
+.theme-light .mermaid-rendered { background: #ffffff; }
+.theme-light .mermaid-source-code { background: #f1f5f9; border-color: #e2e8f0; }
+.theme-light .mermaid-source-code pre { color: #64748b; }
+.theme-light .mermaid-error { color: #dc2626; }
 
 /* Light file tree */
 .theme-light .file-tree {
