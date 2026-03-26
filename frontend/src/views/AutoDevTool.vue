@@ -2522,7 +2522,7 @@ onUnmounted(() => {
   padding: 12px;
   background: #1e293b;
   border-right: 1px solid #334155;
-  overflow-y: auto;
+  overflow: hidden;
   gap: 0;
 }
 
@@ -2532,6 +2532,11 @@ onUnmounted(() => {
   border-radius: 10px;
   padding: 12px;
   margin-bottom: 10px;
+}
+
+.sidebar-card.flex-1 {
+  overflow: auto;
+  min-height: 0;
 }
 
 .sidebar-card-header {
@@ -2640,7 +2645,7 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   background: #0f172a;
 }
 
@@ -2768,7 +2773,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   flex: 1;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .tab-bar {
