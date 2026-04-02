@@ -73,6 +73,11 @@
           <el-tooltip v-if="botConfig?.enabled" content="中断当前 bot 回复" placement="bottom">
             <el-button size="small" type="warning" @click="stopBotReply" :loading="stoppingBot">⏹</el-button>
           </el-tooltip>
+          <el-tooltip :content="ttsEnabled ? '点击静音' : '点击开启语音（朗读最后一条）'" placement="bottom">
+            <el-button size="small" :type="ttsEnabled ? 'primary' : ''" @click="toggleTTS(!ttsEnabled)">
+              {{ ttsEnabled ? '🔊' : '🔇' }}
+            </el-button>
+          </el-tooltip>
           <el-button size="small" @click="openBotDialog">
             🤖 {{ botConfig?.enabled ? '管理机器人' : '添加机器人' }}
           </el-button>
@@ -134,7 +139,10 @@
                   <span>{{ msg.original_name || '下载文件' }}</span>
                 </a>
               </template>
-              <template v-else>{{ msg.content }}</template>
+              <template v-else>
+                <div v-if="msg.nickname !== nickname" class="md-content" v-html="renderMd(msg.content)"></div>
+                <span v-else>{{ msg.content }}</span>
+              </template>
             </div>
             <!-- 消息操作按钮（hover 显示） -->
             <div class="message-actions">
@@ -280,7 +288,7 @@
     <el-dialog v-model="showJoinDialog" title="加入房间" width="400px">
       <el-form :model="joinForm" label-width="80px">
         <el-form-item label="昵称">
-          <el-input v-model="joinForm.nickname" placeholder="请输入昵称" maxlength="20" />
+          <el-input v-model="joinForm.nickname" :placeholder="joinForm.defaultNickname" maxlength="20" clearable />
         </el-form-item>
         <el-form-item v-if="joinForm.needPassword" label="密钥">
           <el-input
@@ -323,10 +331,7 @@
         <el-button type="danger" size="small" @click="removeBot" :loading="addingBot">移除机器人</el-button>
       </div>
       <!-- 已有机器人时的 TTS 开关 -->
-      <div v-if="botConfig?.enabled" class="bot-tts-row">
-        <el-switch v-model="ttsEnabled" @change="toggleTTS" active-text="🔊 语音朗读" inactive-text="静音" />
-        <span class="bot-tts-tip">{{ ttsEnabled ? '机器人回复将自动朗读' : '已静音' }}</span>
-      </div>
+      <!-- TTS 已移至顶部全局按钮，此处不再显示 -->
       <!-- 未有机器人：显示模板选择 -->
       <div v-else>
         <div class="bot-hint">选择一个角色加入聊天室，机器人将自动回复所有消息</div>
@@ -343,11 +348,6 @@
             <div class="bot-template-icon">{{ tmpl.nickname.split(' ')[0] }}</div>
             <div class="bot-template-name">{{ tmpl.name }}</div>
           </div>
-        </div>
-        <!-- TTS 语音开关 -->
-        <div class="bot-tts-row">
-          <el-switch v-model="enableTTS" active-text="🔊 语音朗读" inactive-text="静音" />
-          <span class="bot-tts-tip">开启后机器人回复将自动朗读（微软 Neural TTS）</span>
         </div>
         <!-- 高级选项 -->
         <el-collapse v-model="showBotAdvanced" class="bot-advanced">
@@ -448,6 +448,22 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElImageViewer, ElMessageBox } from 'element-plus'
 import { API_BASE, WS_BASE } from '../api'
 import QRCode from 'qrcode'
+import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js'
+
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: false,
+  highlight(str, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      try { return `<pre class="hljs"><code>${hljs.highlight(str, { language: lang, ignoreIllegals: true }).value}</code></pre>` } catch {}
+    }
+    return `<pre class="hljs"><code>${md.utils.escapeHtml(str)}</code></pre>`
+  }
+})
+
+const renderMd = (text) => md.render(text || '')
 
 const MAX_RECONNECT_ATTEMPTS = 5
 
@@ -502,7 +518,13 @@ let screenRecorder = null
 let screenChunks = []
 
 const createForm = ref({ name: '', password: '' })
-const joinForm = ref({ nickname: '', password: '', needPassword: false, roomId: '' })
+const joinForm = ref({ nickname: '', defaultNickname: '', password: '', needPassword: false, roomId: '' })
+
+const randomNicknames = ['旅行者', '探险家', '路人甲', '神秘人', '匿名者', '游客', '过客', '行者', '漫游者', '访客']
+const genNickname = () => {
+  const base = randomNicknames[Math.floor(Math.random() * randomNicknames.length)]
+  return base + Math.floor(Math.random() * 9000 + 1000)
+}
 
 // 机器人相关
 const showBotDialog = ref(false)
@@ -515,9 +537,7 @@ const stoppingBot = ref(false)
 const customBotNickname = ref('')
 const customSystemPrompt = ref('')
 const showBotAdvanced = ref([])
-const enableTTS = ref(false)   // 添加机器人时的 TTS 开关
-const ttsEngine = ref('auto')  // 添加机器人时的引擎选择
-const ttsEnabled = ref(false)  // 当前已有机器人的 TTS 状态（本地）
+const ttsEnabled = ref(localStorage.getItem('chat_tts_enabled') === 'true')
 let ttsAudio = null            // 当前播放的 TTS 音频实例
 
 const messagesContainer = ref(null)
@@ -580,6 +600,7 @@ const createRoom = async () => {
 
     joinForm.value = {
       nickname: '',
+      defaultNickname: nickname.value || genNickname(),
       password: createForm.value.password,
       needPassword: false,
       roomId: data.id
@@ -596,6 +617,7 @@ const createRoom = async () => {
 const handleJoinRoom = (room) => {
   joinForm.value = {
     nickname: nickname.value || '',
+    defaultNickname: nickname.value || genNickname(),
     password: '',
     needPassword: room.has_password,
     roomId: room.id
@@ -617,6 +639,7 @@ const joinRoomById = async () => {
     }
     joinForm.value = {
       nickname: nickname.value || '',
+      defaultNickname: nickname.value || genNickname(),
       password: '',
       needPassword: data.has_password,
       roomId: joinRoomId.value
@@ -628,10 +651,7 @@ const joinRoomById = async () => {
 }
 
 const confirmJoin = async () => {
-  if (!joinForm.value.nickname.trim()) {
-    ElMessage.warning('请输入昵称')
-    return
-  }
+  const finalNickname = joinForm.value.nickname.trim() || joinForm.value.defaultNickname
 
   joining.value = true
   try {
@@ -639,7 +659,7 @@ const confirmJoin = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        nickname: joinForm.value.nickname,
+        nickname: finalNickname,
         password: joinForm.value.password
       })
     })
@@ -648,7 +668,7 @@ const confirmJoin = async () => {
       throw new Error(data.error || '加入失败')
     }
 
-    nickname.value = joinForm.value.nickname
+    nickname.value = finalNickname
     currentRoom.value = data.room
     showJoinDialog.value = false
     reconnectAttempts.value = 0
@@ -1147,8 +1167,6 @@ const loadBotConfig = async () => {
     botConfig.value = data.bot || null
     botTemplates.value = data.templates || []
     botHasKey.value = data.has_key === true
-    // 同步服务端 enable_tts 到前端开关
-    ttsEnabled.value = data.bot?.enable_tts === true
     if (!selectedRole.value && botTemplates.value.length) {
       selectedRole.value = botTemplates.value[0].key
     }
@@ -1165,7 +1183,7 @@ const addBot = async () => {
   if (!selectedRole.value) return
   addingBot.value = true
   try {
-    const body = { role: selectedRole.value, enable_tts: enableTTS.value, tts_engine: ttsEngine.value }
+    const body = { role: selectedRole.value, enable_tts: true }
     if (customBotNickname.value.trim()) body.nickname = customBotNickname.value.trim()
     if (customSystemPrompt.value.trim()) body.system_prompt = customSystemPrompt.value.trim()
     const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
@@ -1176,11 +1194,9 @@ const addBot = async () => {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || '添加失败')
     botConfig.value = data.bot
-    ttsEnabled.value = data.bot?.enable_tts === true
     showBotDialog.value = false
     customBotNickname.value = ''
     customSystemPrompt.value = ''
-    enableTTS.value = false
     showBotAdvanced.value = []
     ElMessage.success(`${data.bot.nickname} 已加入房间`)
   } catch (e) {
@@ -1224,29 +1240,16 @@ const stopBotReply = async () => {
 }
 
 // ========== TTS 语音 ==========
-const toggleTTS = async (val) => {
-  if (!botConfig.value) return
+const toggleTTS = (val) => {
   ttsEnabled.value = val
-  if (!val) stopTTSAudio()
-  // 同步更新服务端 bot 的 enable_tts
-  try {
-    const body = {
-      role: botConfig.value.role,
-      nickname: botConfig.value.nickname,
-      system_prompt: botConfig.value.system_prompt,
-      enable_tts: val,
-      tts_engine: botConfig.value.tts_engine || ttsEngine.value,
-    }
-    const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-    const data = await res.json()
-    if (res.ok) botConfig.value = data.bot
-  } catch (e) {
-    console.warn('同步 TTS 状态失败:', e)
+  localStorage.setItem('chat_tts_enabled', val ? 'true' : 'false')
+  if (!val) {
+    stopTTSAudio()
+    return
   }
+  // 开启时朗读最后一条有音频的消息
+  const lastAudio = [...messages.value].reverse().find(m => m.audio_url)
+  if (lastAudio) playTTSAudio(lastAudio.audio_url)
 }
 
 const playTTSAudio = (audioUrl) => {
@@ -1314,7 +1317,6 @@ const leaveRoom = () => {
   currentRoom.value = null
   messages.value = []
   botConfig.value = null
-  ttsEnabled.value = false
   connectionStatus.value = 'disconnected'
   reconnectAttempts.value = 0
   loadRooms()
@@ -1731,6 +1733,20 @@ onUnmounted(() => {
   line-height: 1.5;
   word-break: break-word;
 }
+
+.md-content {
+  line-height: 1.6;
+  word-break: break-word;
+}
+.md-content :deep(p) { margin: 0 0 6px; }
+.md-content :deep(p:last-child) { margin-bottom: 0; }
+.md-content :deep(pre) { background: var(--bg-tertiary); border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: 6px 0; }
+.md-content :deep(code) { font-family: monospace; font-size: 13px; }
+.md-content :deep(:not(pre) > code) { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 4px; }
+.md-content :deep(ul), .md-content :deep(ol) { padding-left: 20px; margin: 4px 0; }
+.md-content :deep(blockquote) { border-left: 3px solid var(--border-base); margin: 4px 0; padding-left: 10px; color: var(--text-secondary); }
+.md-content :deep(a) { color: var(--color-primary); }
+.md-content :deep(h1), .md-content :deep(h2), .md-content :deep(h3) { margin: 6px 0 4px; font-size: 1em; font-weight: 600; }
 
 .message-image {
   max-width: 300px;
