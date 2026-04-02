@@ -172,6 +172,18 @@ const toolRoutes = [
     }
   },
   {
+    path: '/mindmap',
+    name: 'MindMap',
+    component: () => import('../views/MindMapTool.vue'),
+    meta: {
+      title: '思维导图',
+      icon: 'Share',
+      category: 'draw',
+      shortcut: true,
+      description: '思维导图，支持 AI 生成、云端保存、分享'
+    }
+  },
+  {
     path: '/excalidraw',
     name: 'Excalidraw',
     component: () => import('../views/ExcalidrawTool.vue'),
