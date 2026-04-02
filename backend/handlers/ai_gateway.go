@@ -910,6 +910,43 @@ func (h *AIGatewayHandler) runAsyncChatTask(taskID string, req ChatCompletionReq
 }
 
 const internalQwenVisionKeyID = "internal:qwen-vision"
+const internalChatKeyID = "internal:chat"
+
+// InternalChat 内部免 API Key 聊天接口，仅限同域浏览器调用
+// POST /api/internal/chat
+func (h *AIGatewayHandler) InternalChat(c *gin.Context) {
+	if !requireSameOrigin(c) {
+		return
+	}
+	var req ChatCompletionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数解析失败"})
+		return
+	}
+	if req.Model == "" {
+		req.Model = fallbackString(h.cfg.MiniMax.Model, "MiniMax-M2.5")
+	}
+
+	start := time.Now()
+	result, _, err := h.executeChatRequest(req)
+	if err != nil {
+		_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
+			APIKeyID: internalChatKeyID, Model: req.Model, Provider: "minimax",
+			Endpoint: "/api/internal/chat", RequestType: "chat",
+			StatusCode: http.StatusBadGateway, Success: false, ErrorMessage: err.Error(),
+			ClientIP: c.ClientIP(), LatencyMS: time.Since(start).Milliseconds(),
+		})
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
+		APIKeyID: internalChatKeyID, Model: req.Model, Provider: "minimax",
+		Endpoint: "/api/internal/chat", RequestType: "chat",
+		StatusCode: http.StatusOK, Success: true,
+		ClientIP: c.ClientIP(), LatencyMS: time.Since(start).Milliseconds(),
+	})
+	c.JSON(http.StatusOK, result)
+}
 
 // requireSameOrigin 校验请求来源是否来自当前服务器（同域浏览器请求）
 // 非浏览器直接调用（无 Origin/Referer）会被拒绝，防止外部直接访问内部免密钥接口

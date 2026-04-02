@@ -13,6 +13,9 @@
         </el-button-group>
       </div>
       <div class="toolbar-right">
+        <el-tooltip content="我的导图" placement="bottom">
+          <el-button size="small" @click="openManage"><el-icon><FolderOpened /></el-icon> 我的</el-button>
+        </el-tooltip>
         <el-tooltip content="AI 生成" placement="bottom">
           <el-button size="small" type="primary" @click="showAIDialog = true">✨ AI 生成</el-button>
         </el-tooltip>
@@ -244,13 +247,6 @@
         <el-form-item label="主题">
           <el-input v-model="aiPrompt" placeholder="例如：项目管理、学习计划、产品设计..." />
         </el-form-item>
-        <el-form-item label="模型">
-          <el-select v-model="aiModel" style="width: 100%">
-            <el-option label="MiniMax-M2.5" value="MiniMax-M2.5" />
-            <el-option label="qwen3.5-plus" value="qwen3.5-plus" />
-            <el-option label="deepseek-chat" value="deepseek-chat" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="层级">
           <el-slider v-model="aiDepth" :min="2" :max="5" :step="1" show-stops />
         </el-form-item>
@@ -316,6 +312,47 @@
       </template>
     </el-dialog>
 
+    <!-- 我的导图管理 -->
+    <el-dialog v-model="showManageDialog" title="我的导图" width="700px">
+      <div class="manage-toolbar">
+        <el-button size="small" type="primary" @click="loadMyMaps">刷新</el-button>
+        <el-button size="small" @click="showAdminLogin = true" v-if="!adminAuthed">超管模式</el-button>
+        <el-tag v-if="adminAuthed" type="success" size="small">超管模式</el-tag>
+        <el-button size="small" type="danger" @click="adminAuthed = false; adminPwd = ''" v-if="adminAuthed">退出超管</el-button>
+      </div>
+
+      <!-- 超管登录 -->
+      <el-dialog v-model="showAdminLogin" title="超管登录" width="320px" append-to-body>
+        <el-input v-model="adminPwd" type="password" placeholder="管理员密码" show-password />
+        <template #footer>
+          <el-button @click="showAdminLogin = false">取消</el-button>
+          <el-button type="primary" @click="loginAdmin">确认</el-button>
+        </template>
+      </el-dialog>
+
+      <el-table :data="manageMaps" style="width:100%; margin-top:12px" size="small" v-loading="manageLoading">
+        <el-table-column prop="title" label="标题" min-width="160">
+          <template #default="{ row }">
+            <span>{{ row.title || '无标题' }}</span>
+            <el-tag v-if="row.source === 'local'" size="small" style="margin-left:6px">本地</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" width="160">
+          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+        </el-table-column>
+        <el-table-column prop="views" label="访问" width="60" />
+        <el-table-column label="操作" width="160">
+          <template #default="{ row }">
+            <el-button size="small" @click="loadMap(row)">打开</el-button>
+            <el-button size="small" type="danger" @click="deleteMap(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="showManageDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 隐藏的文件输入 -->
     <input ref="fileInput" type="file" accept=".json" style="display:none" @change="importJSON" />
   </div>
@@ -355,6 +392,14 @@ const editingNode = ref(null)
 const editingText = ref('')
 
 // 云端/分享
+// 管理面板
+const showManageDialog = ref(false)
+const showAdminLogin = ref(false)
+const adminAuthed = ref(false)
+const adminPwd = ref('')
+const manageMaps = ref([])
+const manageLoading = ref(false)
+
 const cloudId = ref('')
 const creatorKey = ref('')
 const shareUrl = ref('')
@@ -368,7 +413,6 @@ const saveExpireDays = ref(30)
 // AI
 const showAIDialog = ref(false)
 const aiPrompt = ref('')
-const aiModel = ref('MiniMax-M2.5')
 const aiDepth = ref(3)
 const aiStyle = ref('detailed')
 const aiLoading = ref(false)
@@ -858,14 +902,11 @@ mindmap
       子节点
     分支2`
 
-    const res = await fetch(`${API_BASE}/api/ai-gateway/v1/chat/completions`, {
+    const res = await fetch(`${API_BASE}/api/internal/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Super-Admin-Password': '123654789'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: aiModel.value,
+        model: 'MiniMax-M2.5',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `请为"${aiPrompt.value}"生成思维导图` }
@@ -1013,6 +1054,122 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeyDown)
 })
+
+// ===== 管理面板 =====
+const ADMIN_PWD_KEY = 'mindmap_admin_pwd'
+
+function openManage() {
+  showManageDialog.value = true
+  loadMyMaps()
+}
+
+function loginAdmin() {
+  if (!adminPwd.value.trim()) return
+  adminAuthed.value = true
+  showAdminLogin.value = false
+  loadMyMaps()
+}
+
+async function loadMyMaps() {
+  manageLoading.value = true
+  try {
+    if (adminAuthed.value) {
+      // 超管：拉全部
+      const res = await fetch(`${API_BASE}/api/mdshare/admin/list?admin_password=${encodeURIComponent(adminPwd.value)}`)
+      const data = await res.json()
+      if (!res.ok) {
+        ElMessage.error(data.error || '获取失败')
+        adminAuthed.value = false
+        return
+      }
+      manageMaps.value = (data.list || []).map(m => ({ ...m, source: 'admin' }))
+    } else {
+      // 普通用户：读 localStorage
+      const records = JSON.parse(localStorage.getItem('mindmap_records') || '[]')
+      manageMaps.value = records.map(r => ({ ...r, source: 'local' }))
+    }
+  } finally {
+    manageLoading.value = false
+  }
+}
+
+async function loadMap(row) {
+  // 用 creator_key 获取内容
+  const key = row.creator_key || row.creatorKey
+  if (!key && !adminAuthed.value) {
+    ElMessage.warning('无法获取该导图内容')
+    return
+  }
+  try {
+    let res, data
+    if (adminAuthed.value) {
+      res = await fetch(`${API_BASE}/api/mdshare/admin/${row.id}?admin_password=${encodeURIComponent(adminPwd.value)}`)
+    } else {
+      res = await fetch(`${API_BASE}/api/mdshare/${row.id}/creator?creator_key=${encodeURIComponent(key)}`)
+    }
+    data = await res.json()
+    if (!res.ok) { ElMessage.error(data.error || '加载失败'); return }
+
+    // 解析内容
+    try {
+      const parsed = JSON.parse(data.content)
+      if (parsed.root) {
+        title.value = parsed.title || data.title || '无标题'
+        rootNode.value = restoreParentRefs(parsed.root)
+        cloudId.value = row.id
+        creatorKey.value = key || ''
+        shortUrl.value = row.short_code ? `${location.origin}/s/${row.short_code}` : ''
+        showManageDialog.value = false
+        ElMessage.success('已加载')
+        return
+      }
+    } catch (_) {}
+    // fallback: mermaid code
+    mermaidCode.value = data.content
+    activeTab.value = 'code'
+    showManageDialog.value = false
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+async function deleteMap(row) {
+  const key = row.creator_key || row.creatorKey
+  try {
+    let res
+    if (adminAuthed.value) {
+      res = await fetch(`${API_BASE}/api/mdshare/admin/${row.id}?admin_password=${encodeURIComponent(adminPwd.value)}`, { method: 'DELETE' })
+    } else if (key) {
+      res = await fetch(`${API_BASE}/api/mdshare/${row.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creator_key: key })
+      })
+    } else {
+      ElMessage.warning('无删除权限')
+      return
+    }
+    if (!res.ok) { const d = await res.json(); ElMessage.error(d.error || '删除失败'); return }
+    // 从 localStorage 移除
+    const records = JSON.parse(localStorage.getItem('mindmap_records') || '[]')
+    localStorage.setItem('mindmap_records', JSON.stringify(records.filter(r => r.id !== row.id)))
+    ElMessage.success('已删除')
+    loadMyMaps()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+function formatTime(t) {
+  if (!t) return ''
+  return new Date(t).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function restoreParentRefs(node, parent = null) {
+  node.parent = parent
+  if (node.children) node.children.forEach(c => restoreParentRefs(c, node))
+  return node
+}
 </script>
 
 <style scoped>
@@ -1202,6 +1359,9 @@ onUnmounted(() => {
 
 /* 分享信息 */
 .share-info { padding: 4px 0; }
+
+/* 管理面板 */
+.manage-toolbar { display: flex; align-items: center; gap: 8px; }
 
 @media (max-width: 768px) {
   .toolbar { padding: 6px 8px; }

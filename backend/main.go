@@ -754,6 +754,9 @@ func main() {
 			aigw.GET("/v1/media/tasks/:id", aiGatewayHandler.GetMediaTask)
 		}
 
+		// 内部免认证聊天接口（同域浏览器调用）
+		api.POST("/internal/chat", createRateLimiter.Middleware(), aiGatewayHandler.InternalChat)
+
 		// MiniMax Anthropic 协议代理
 		api.POST("/minimax/anthropic/v1/messages", aiGatewayHandler.ProxyMinimaxAnthropic)
 
