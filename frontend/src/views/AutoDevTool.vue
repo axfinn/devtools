@@ -81,17 +81,17 @@
           <!-- Mode Tabs (only show when not resuming) -->
           <div v-if="!resumeTaskId" class="mode-tabs mb-3">
             <button
-              v-for="mode in ['develop', 'ask', 'extend', 'export']"
+              v-for="mode in ['develop', 'loop', 'ask', 'extend', 'export']"
               :key="mode"
               class="mode-tab"
               :class="{ 'mode-tab--active': activeMode === mode }"
               @click="activeMode = mode"
             >
-              {{ mode === 'develop' ? '开发' : mode === 'ask' ? '问答' : mode === 'extend' ? '迭代' : '导出' }}
+              {{ mode === 'develop' ? '开发' : mode === 'loop' ? '循环' : mode === 'ask' ? '问答' : mode === 'extend' ? '迭代' : '导出' }}
             </button>
           </div>
 
-          <div v-if="activeMode !== 'export'" class="mb-3">
+          <div v-if="activeMode !== 'export' && activeMode !== 'loop'" class="mb-3">
             <div class="flex items-center justify-between mb-2">
               <span class="text-xs text-slate-400">执行模块</span>
               <span class="text-xs text-slate-500">默认 cc</span>
@@ -198,6 +198,39 @@
             </div>
           </div>
 
+          <!-- Loop Mode -->
+          <div v-if="activeMode === 'loop' && !resumeTaskId" class="mb-3">
+            <el-input
+              v-model="newTask.description"
+              type="textarea"
+              :rows="4"
+              placeholder="输入开发目标，AI 将无限迭代直到完成，例如：开发一个完整的 Todo 应用"
+              maxlength="3000"
+              show-word-limit
+              class="mb-2"
+            />
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-xs text-slate-400 shrink-0">最大迭代次数</span>
+              <el-input-number
+                v-model="newTask.loopCount"
+                :min="-1"
+                :max="100"
+                size="small"
+                class="flex-1"
+                :placeholder="'-1 = 无限'"
+              />
+              <span class="text-xs text-slate-500 shrink-0">-1=无限</span>
+            </div>
+            <div class="flex gap-2 mb-2">
+              <button type="button" class="filter-pill" :class="{ 'filter-pill--active': newTask.module === 'cc' }" @click="newTask.module = 'cc'">cc</button>
+              <button type="button" class="filter-pill" :class="{ 'filter-pill--active': newTask.module === 'codex' }" @click="newTask.module = 'codex'">codex</button>
+            </div>
+            <div class="output-hint">
+              <el-icon class="text-slate-500 text-xs shrink-0"><InfoFilled /></el-icon>
+              <span>完整 6 阶段开发后自动 EVOLVE 评估，持续迭代优化，每轮成功后 git commit 固化基线</span>
+            </div>
+          </div>
+
           <!-- Develop Mode -->
           <template v-if="activeMode === 'develop' && !resumeTaskId">
           <el-input
@@ -243,6 +276,7 @@
           >
             <el-icon v-if="!submitting">
               <VideoPlay v-if="activeMode === 'develop'" />
+              <RefreshRight v-else-if="activeMode === 'loop'" />
               <ChatLineRound v-else-if="activeMode === 'ask'" />
               <Plus v-else-if="activeMode === 'extend'" />
               <Download v-else-if="activeMode === 'export'" />
@@ -299,7 +333,7 @@
                       <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block"></span>
                       {{ task.autodev_state.phase_label || '执行中' }}
                     </div>
-                    <div v-if="task.type === 'ask' || task.type === 'extend'" class="flex gap-0.5">
+                    <div v-if="task.type === 'ask' || task.type === 'extend' || task.type === 'loop'" class="flex gap-0.5">
                       <div class="flex-1 h-1 rounded-full bg-amber-400 animate-pulse" />
                     </div>
                     <div v-else class="flex gap-0.5">
@@ -1411,7 +1445,7 @@ const submitting = ref(false)
 const resumeTaskId = ref('')
 const activeMode = ref('develop') // 'develop' | 'ask' | 'extend' | 'export'
 function createEmptyTask() {
-  return { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE }
+  return { description: '', publish: false, build: false, push: false, resumeFrom: 1, workDir: '', exportFormat: 'zip', module: DEFAULT_MODULE, loopCount: -1 }
 }
 const newTask = ref(createEmptyTask())
 const runningCount = computed(() => tasks.value.filter(t => t.status === 'running').length)
@@ -1426,7 +1460,7 @@ function setStatusFilter(status) {
 }
 
 function typeLabel(type) {
-  const map = { develop: '开发', ask: '问答', extend: '迭代', export: '导出', init: '初始化' }
+  const map = { develop: '开发', loop: '循环', ask: '问答', extend: '迭代', export: '导出', init: '初始化' }
   return map[type] || type || '开发'
 }
 
@@ -1460,6 +1494,7 @@ const submitButtonText = computed(() => {
   if (resumeTaskId.value) return '恢复执行'
   switch (activeMode.value) {
     case 'ask': return '提问'
+    case 'loop': return '开始循环'
     case 'extend': return '迭代'
     case 'export': return '导出'
     default: return '开始执行'
@@ -1580,6 +1615,9 @@ async function submitTask() {
           body.publish = newTask.value.publish
           body.build = newTask.value.build
           body.push = newTask.value.push
+        } else if (activeMode.value === 'loop') {
+          body.loop = newTask.value.loopCount
+          body.module = newTask.value.module
         } else if (activeMode.value === 'export') {
           body.export_format = newTask.value.exportFormat
         }
@@ -1596,6 +1634,7 @@ async function submitTask() {
     if (res.ok) {
       const successMsg = resumeTaskId.value ? '已恢复执行' :
         activeMode.value === 'ask' ? '问题已提交，AI 正在思考…' :
+        activeMode.value === 'loop' ? '循环任务已提交，AI 将持续迭代…' :
         activeMode.value === 'extend' ? '迭代任务已提交，正在执行…' :
         activeMode.value === 'export' ? '导出任务已提交…' : '任务已提交，正在执行…'
       ElMessage.success(successMsg)
@@ -2725,6 +2764,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .task-type-tag--develop { background: #1e3a5f; color: #60a5fa; }
+.task-type-tag--loop    { background: #1a3a1a; color: #4ade80; }
 .task-type-tag--ask     { background: #1a3a2a; color: #34d399; }
 .task-type-tag--extend  { background: #3b1f5e; color: #c084fc; }
 .task-type-tag--export  { background: #3a2b00; color: #fbbf24; }

@@ -335,12 +335,13 @@ func (h *AutoDevHandler) GetCapabilities(c *gin.Context) {
 // Submit handles POST /api/autodev/tasks — start a new task or resume from breakpoint
 func (h *AutoDevHandler) Submit(c *gin.Context) {
 	var req struct {
-		Type        string `json:"type"` // develop, ask, export (default: develop)
+		Type        string `json:"type"` // develop, loop, ask, export (default: develop)
 		Description string `json:"description" binding:"required"`
 		Password    string `json:"password" binding:"required"`
 		Publish     bool   `json:"publish"`
 		Build       bool   `json:"build"`
 		Push        bool   `json:"push"`
+		Loop        int    `json:"loop"`     // 0=不循环, -1=无限, N=最多N次迭代
 		// Resume support: if set, --from <phase> is passed and WorkDir is used
 		ResumeFrom int    `json:"resume_from"` // phase number to resume from (1-based, 0 = new task)
 		WorkDir    string `json:"work_dir"`    // existing work dir to resume
@@ -395,7 +396,7 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 	}
 
 	module := models.NormalizeAutoDevModule(req.Module)
-	opts := models.AutoDevOptions{Publish: req.Publish, Build: req.Build, Push: req.Push, Module: module}
+	opts := models.AutoDevOptions{Publish: req.Publish, Build: req.Build, Push: req.Push, Module: module, Loop: req.Loop}
 	task, err := h.db.CreateAutoDevTask(taskType, req.Description, models.MarshalAutoDevOptions(opts), taskDir)
 	if err != nil {
 		log.Printf("[AutoDev] CreateAutoDevTask error: type=%s, description=%s, workDir=%s, error=%v", taskType, req.Description, taskDir, err)
@@ -411,6 +412,8 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 		go h.runExtendTask(task.ID, req.Description, taskDir, module)
 	case models.TaskTypeExport:
 		go h.runExportTask(task.ID, req.Description, taskDir, req.ExportFormat)
+	case models.TaskTypeLoop:
+		go h.runLoopTask(task.ID, req.Description, taskDir, req.Publish, req.Build, req.Push, req.Loop, module)
 	default:
 		resumeFrom := 0
 		if isResume {
@@ -1112,6 +1115,80 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir, module string) 
 	}
 
 	// extend_project writes result to RESULT.md and process/iter-N/result.md.
+	resultFile := filepath.Join(workDir, "RESULT.md")
+	h.db.UpdateAutoDevTaskResult(id, resultFile)
+	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)
+
+	h.mu.Lock()
+	delete(h.processes, id)
+	h.mu.Unlock()
+}
+
+// runLoopTask executes `autodev --loop [N] "description" --path workDir` in a background goroutine.
+// loop=0 means no loop (same as develop), loop=-1 means infinite, loop=N means at most N iterations.
+func (h *AutoDevHandler) runLoopTask(id, description, workDir string, publish, build, push bool, loop int, module string) {
+	module = models.NormalizeAutoDevModule(module)
+
+	logDir := filepath.Join(workDir, ".autodev", "logs")
+	os.MkdirAll(logDir, 0755)
+	os.Chown(workDir, autodevUID, autodevGID)
+	os.Chown(filepath.Join(workDir, ".autodev"), autodevUID, autodevGID)
+	os.Chown(logDir, autodevUID, autodevGID)
+
+	args := []string{description, "--path", workDir, "--module", module}
+	if publish {
+		args = append(args, "--publish")
+	}
+	if build {
+		args = append(args, "--build")
+	}
+	if push {
+		args = append(args, "--push")
+	}
+	// --loop [N]: -1=无限(不传N), N>0=最多N次
+	if loop < 0 {
+		args = append(args, "--loop")
+	} else if loop > 0 {
+		args = append(args, "--loop", strconv.Itoa(loop))
+	}
+
+	cmd := exec.Command(h.autodevPath, args...)
+	cmd.Dir = workDir
+	setSysProcCredential(cmd)
+	cmd.Env = h.buildEnv()
+
+	h.mu.Lock()
+	h.processes[id] = cmd
+	h.mu.Unlock()
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("[AutoDev] runLoopTask start error: %v", err)
+		h.db.UpdateAutoDevTaskStatus(id, "failed", -1, 0)
+		h.mu.Lock()
+		delete(h.processes, id)
+		h.mu.Unlock()
+		return
+	}
+	h.db.UpdateAutoDevTaskStatus(id, "running", 0, cmd.Process.Pid)
+
+	waitErr := cmd.Wait()
+	exitCode := 0
+	status := "completed"
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		status = "failed"
+	}
+
+	status = resolveTaskStatus(workDir, status)
+	if status == "completed" {
+		exitCode = 0
+	}
+	if status == "paused" || status == "stopped" {
+		exitCode = -1
+	}
+
 	resultFile := filepath.Join(workDir, "RESULT.md")
 	h.db.UpdateAutoDevTaskResult(id, resultFile)
 	h.db.UpdateAutoDevTaskStatus(id, status, exitCode, 0)

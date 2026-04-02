@@ -11,6 +11,7 @@ import (
 // Task type constants
 const (
 	TaskTypeDevelop = "develop"
+	TaskTypeLoop    = "loop"   // --loop 无限迭代模式
 	TaskTypeAsk     = "ask"
 	TaskTypeExport  = "export"
 	TaskTypeExtend  = "extend"
@@ -43,6 +44,7 @@ type AutoDevOptions struct {
 	Build   bool   `json:"build"`
 	Push    bool   `json:"push"`
 	Module  string `json:"module"`
+	Loop    int    `json:"loop,omitempty"` // 0=不循环, -1=无限, N=最多N次迭代
 }
 
 // NormalizeAutoDevModule converts user input to a supported execution module.
@@ -363,6 +365,7 @@ func GetCapabilities() *Capabilities {
 		Version: "1.1.0",
 		TaskTypes: []string{
 			"develop",
+			"loop",
 			"ask",
 			"extend",
 			"export",
@@ -373,7 +376,8 @@ func GetCapabilities() *Capabilities {
 				Label:       "任务管理与执行",
 				Description: "提交和管理 AutoDev 开发任务",
 				Items: []string{
-					"develop - 全新项目开发",
+					"develop - 全新项目开发（6阶段）",
+					"loop - 无限迭代模式（develop + 自动EVOLVE循环）",
 					"ask - 基于项目上下文问答",
 					"extend - 在已有项目上按周期迭代优化",
 					"export - 导出任务产物",
