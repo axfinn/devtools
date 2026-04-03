@@ -681,6 +681,14 @@ const confirmJoin = async () => {
     // 持久化，刷新后自动恢复
     sessionStorage.setItem('chat_room_id', data.room.id)
     sessionStorage.setItem('chat_nickname', finalNickname)
+    if (joinForm.value.password) {
+      sessionStorage.setItem('chat_room_password', joinForm.value.password)
+    }
+    // 更新 URL，方便刷新恢复
+    const newHash = `#/chat?roomId=${data.room.id}`
+    if (window.location.hash !== newHash) {
+      window.history.replaceState(null, '', newHash)
+    }
 
     // 加载历史消息 + 机器人配置
     await loadHistoryMessages()
@@ -1367,6 +1375,8 @@ const leaveRoom = () => {
   stopTTSAudio()
   sessionStorage.removeItem('chat_room_id')
   sessionStorage.removeItem('chat_nickname')
+  sessionStorage.removeItem('chat_room_password')
+  window.history.replaceState(null, '', '#/chat')
   currentRoom.value = null
   messages.value = []
   botConfig.value = []
@@ -1542,47 +1552,51 @@ const formatDateTime = (timeStr) => {
 onMounted(async () => {
   loadRooms()
 
-  // 检查URL参数，支持扫码进房
   const urlParams = new URLSearchParams(window.location.hash.split('?')[1])
-  const roomId = urlParams.get('roomId')
-  if (roomId) {
-    joinRoomId.value = roomId
-    joinRoomById()
-  }
+  const urlRoomId = urlParams.get('roomId')
+  const savedRoomId = sessionStorage.getItem('chat_room_id')
+  const savedNickname = sessionStorage.getItem('chat_nickname')
+  const savedRoomPassword = sessionStorage.getItem('chat_room_password') || ''
 
   // 检查是否有保存的管理员密码
   const savedPassword = sessionStorage.getItem('chat_admin_password')
-  if (savedPassword) {
-    adminPassword.value = savedPassword
-  }
+  if (savedPassword) adminPassword.value = savedPassword
 
-  // 刷新恢复：自动重新加入上次的房间
-  const savedRoomId = sessionStorage.getItem('chat_room_id')
-  const savedNickname = sessionStorage.getItem('chat_nickname')
-  if (savedRoomId && savedNickname && !roomId) {
+  // 刷新恢复：URL roomId 与 session 一致，或无 URL roomId 但有 session
+  const restoreRoomId = (urlRoomId && urlRoomId === savedRoomId) || (!urlRoomId && savedRoomId)
+    ? (savedRoomId || urlRoomId)
+    : null
+
+  if (restoreRoomId && savedNickname) {
     try {
-      const res = await fetch(`${API_BASE}/api/chat/room/${savedRoomId}/join`, {
+      const res = await fetch(`${API_BASE}/api/chat/room/${restoreRoomId}/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname: savedNickname })
+        body: JSON.stringify({ nickname: savedNickname, password: savedRoomPassword })
       })
       const data = await res.json()
       if (res.ok) {
         nickname.value = savedNickname
         currentRoom.value = data.room
         reconnectAttempts.value = 0
+        window.history.replaceState(null, '', `#/chat?roomId=${data.room.id}`)
         await loadHistoryMessages()
         loadBotConfig()
         connectWebSocket()
         nextTick(() => scrollToBottom())
-      } else {
-        sessionStorage.removeItem('chat_room_id')
-        sessionStorage.removeItem('chat_nickname')
+        return
       }
-    } catch (e) {
-      sessionStorage.removeItem('chat_room_id')
-      sessionStorage.removeItem('chat_nickname')
-    }
+    } catch (e) { /* fall through */ }
+    // 恢复失败，清掉 session
+    sessionStorage.removeItem('chat_room_id')
+    sessionStorage.removeItem('chat_nickname')
+    sessionStorage.removeItem('chat_room_password')
+  }
+
+  // 扫码进房（无 session 或恢复失败）
+  if (urlRoomId) {
+    joinRoomId.value = urlRoomId
+    joinRoomById()
   }
 })
 
