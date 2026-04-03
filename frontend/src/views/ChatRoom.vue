@@ -540,7 +540,7 @@ const customBotNickname = ref('')
 const customSystemPrompt = ref('')
 const mentionOnly = ref(false)
 const showBotAdvanced = ref([])
-const ttsEnabled = ref(localStorage.getItem('chat_tts_enabled') === 'true')
+const ttsEnabled = ref(localStorage.getItem('chat_tts_enabled') !== 'false')
 let ttsAudio = null            // 当前播放的 TTS 音频实例
 const ttsQueue = []            // 待播放的 audio URL 队列
 let ttsPlaying = false         // 是否正在播放
@@ -754,6 +754,7 @@ const connectWebSocket = () => {
       // bot 文本消息 → 等上一个 TTS 播完再请求
       if (msg.type === 'message' && msg.msg_type !== 'image' && msg.msg_type !== 'video' && msg.msg_type !== 'audio' && msg.msg_type !== 'file' && msg.nickname !== nickname.value) {
         const botEntry = botConfig.value.find(b => b.nickname === msg.nickname)
+        console.log('[TTS] bot msg:', msg.nickname, 'botEntry:', botEntry, 'ttsEnabled:', ttsEnabled.value)
         if (botEntry && ttsEnabled.value) {
           const voice = botEntry.tts_voice || 'zh-CN-XiaoxiaoNeural'
           ttsIdlePromise = ttsIdlePromise.then(() => fetchAndEnqueueTTS(msg.content, voice))
@@ -1285,6 +1286,24 @@ const playTTSAudio = (audioUrl) => {
   ttsAudio.play().catch(e => console.warn('TTS play failed:', e))
 }
 
+// 清理 markdown 特殊字符，避免 TTS 合成失败
+const stripMarkdown = (text) => {
+  return text
+    .replace(/```[\s\S]*?```/g, '代码块')   // 代码块
+    .replace(/`[^`]*`/g, '')                // 行内代码
+    .replace(/#{1,6}\s/g, '')               // 标题
+    .replace(/\*\*([^*]+)\*\*/g, '$1')      // 粗体
+    .replace(/\*([^*]+)\*/g, '$1')          // 斜体
+    .replace(/~~([^~]+)~~/g, '$1')          // 删除线
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')// 链接
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')   // 图片
+    .replace(/^[-*+]\s/gm, '')              // 无序列表
+    .replace(/^\d+\.\s/gm, '')              // 有序列表
+    .replace(/^>\s/gm, '')                  // 引用
+    .replace(/[-]{3,}/g, '')                // 分割线
+    .trim()
+}
+
 // 按句拆分文本（中英文句末标点）
 const splitSentences = (text) => {
   const sentences = []
@@ -1293,21 +1312,23 @@ const splitSentences = (text) => {
     cur += ch
     if ('。！？!?\n'.includes(ch)) {
       const s = cur.trim()
-      if (s) sentences.push(s)
+      if (s && s.replace(/[。！？!?\s]/g, '').length > 0) sentences.push(s)
       cur = ''
     }
     if (cur.length >= 80) {
       const s = cur.trim()
-      if (s) sentences.push(s)
+      if (s && s.replace(/[。！？!?\s]/g, '').length > 0) sentences.push(s)
       cur = ''
     }
   }
-  if (cur.trim()) sentences.push(cur.trim())
+  if (cur.trim() && cur.trim().replace(/[。！？!?\s]/g, '').length > 0) sentences.push(cur.trim())
   return sentences
 }
 
 const fetchAndEnqueueTTS = async (text, voice) => {
-  const sentences = splitSentences(text)
+  const clean = stripMarkdown(text)
+  if (!clean) return
+  const sentences = splitSentences(clean)
   for (const s of sentences) {
     try {
       const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
@@ -1316,16 +1337,21 @@ const fetchAndEnqueueTTS = async (text, voice) => {
         body: JSON.stringify({ text: s, voice })
       })
       const data = await res.json()
-      if (res.ok && data.url) enqueueTTS(data.url)
+      if (res.ok && data.url) {
+        // 入队后等这句播完再请求下一句
+        await new Promise(resolve => {
+          enqueueTTS(data.url, resolve)
+        })
+      }
     } catch (e) {
       console.warn('TTS fetch failed:', e)
     }
   }
 }
 
-const enqueueTTS = (audioUrl) => {
+const enqueueTTS = (audioUrl, onPlayed) => {
   const url = audioUrl.startsWith('/') ? `${location.origin}${audioUrl}` : audioUrl
-  ttsQueue.push(url)
+  ttsQueue.push({ url, onPlayed })
   if (ttsEnabled.value && !ttsPlaying) {
     if (!ttsIdleResolve) {
       ttsIdlePromise = new Promise(resolve => { ttsIdleResolve = resolve })
@@ -1341,11 +1367,11 @@ const playNextTTS = () => {
     return
   }
   ttsPlaying = true
-  const url = ttsQueue.shift()
+  const { url, onPlayed } = ttsQueue.shift()
   ttsAudio = new Audio(url)
-  ttsAudio.onended = playNextTTS
-  ttsAudio.onerror = playNextTTS
-  ttsAudio.play().catch(() => playNextTTS())
+  ttsAudio.onended = () => { if (onPlayed) onPlayed(); playNextTTS() }
+  ttsAudio.onerror = () => { if (onPlayed) onPlayed(); playNextTTS() }
+  ttsAudio.play().catch(() => { if (onPlayed) onPlayed(); playNextTTS() })
 }
 
 const stopTTSAudio = () => {
