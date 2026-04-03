@@ -539,6 +539,8 @@ const customSystemPrompt = ref('')
 const showBotAdvanced = ref([])
 const ttsEnabled = ref(localStorage.getItem('chat_tts_enabled') === 'true')
 let ttsAudio = null            // 当前播放的 TTS 音频实例
+let ttsQueue = []              // 待播放的 audio URL 队列
+let ttsPlaying = false         // 是否正在播放
 
 const messagesContainer = ref(null)
 const fileInput = ref(null)
@@ -734,9 +736,9 @@ const connectWebSocket = () => {
       nextTick(() => {
         scrollToBottom()
       })
-      // 机器人 TTS 自动播放
-      if (msg.type === 'message' && msg.audio_url && msg.nickname !== nickname.value) {
-        playTTSAudio(msg.audio_url)
+      // 机器人 TTS 分句播放
+      if (msg.type === 'tts_chunk' && msg.audio_url) {
+        enqueueTTS(msg.audio_url)
       }
     } catch (error) {
       console.error('消息解析失败:', error)
@@ -1260,8 +1262,32 @@ const playTTSAudio = (audioUrl) => {
   ttsAudio.play().catch(e => console.warn('TTS play failed:', e))
 }
 
+const enqueueTTS = (audioUrl) => {
+  if (!ttsEnabled.value || !audioUrl) return
+  const url = audioUrl.startsWith('/') ? `${location.origin}${audioUrl}` : audioUrl
+  ttsQueue.push(url)
+  if (!ttsPlaying) playNextTTS()
+}
+
+const playNextTTS = () => {
+  if (!ttsEnabled.value || ttsQueue.length === 0) {
+    ttsPlaying = false
+    return
+  }
+  ttsPlaying = true
+  const url = ttsQueue.shift()
+  ttsAudio = new Audio(url)
+  ttsAudio.onended = playNextTTS
+  ttsAudio.onerror = playNextTTS
+  ttsAudio.play().catch(() => playNextTTS())
+}
+
 const stopTTSAudio = () => {
+  ttsQueue = []
+  ttsPlaying = false
   if (ttsAudio) {
+    ttsAudio.onended = null
+    ttsAudio.onerror = null
     ttsAudio.pause()
     ttsAudio.src = ''
     ttsAudio = null

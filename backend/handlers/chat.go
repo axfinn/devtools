@@ -133,7 +133,9 @@ type WSMessage struct {
 	CreatedAt    string `json:"created_at,omitempty"`
 	MsgType      string `json:"msg_type,omitempty"`
 	OriginalName string `json:"original_name,omitempty"`
-	AudioURL     string `json:"audio_url,omitempty"` // TTS 音频 URL（仅 bot 消息）
+	AudioURL     string `json:"audio_url,omitempty"`   // TTS 音频 URL（仅 bot 消息）
+	ChunkIndex   int    `json:"chunk_index,omitempty"` // TTS 分句序号（tts_chunk 消息）
+	MsgID        int64  `json:"msg_id,omitempty"`      // 关联的消息 ID（tts_chunk 消息）
 }
 
 func NewChatHandler(db *models.DB, adminPassword string, minimax config.MiniMaxConfig, ttsServiceURL string) *ChatHandler {
@@ -940,8 +942,17 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 	}
 	room.mu.Unlock()
 
-	// 可选：TTS 生成音频
-	var audioURL string
+	// 先广播消息本体（不含音频）
+	h.broadcast(room, WSMessage{
+		Type:      "message",
+		ID:        botMsg.ID,
+		Nickname:  bot.Nickname,
+		Content:   reply,
+		MsgType:   "text",
+		CreatedAt: botMsg.CreatedAt.Format(time.RFC3339),
+	}, nil)
+
+	// 可选：TTS 按句子异步合成，逐句推送 tts_chunk
 	if bot.EnableTTS {
 		voice := bot.TTSVoice
 		if voice == "" {
@@ -950,27 +961,18 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 		if voice == "" {
 			voice = "zh-CN-XiaoxiaoNeural"
 		}
-		if url, ttsErr := h.callEdgeTTS(reply, voice); ttsErr != nil {
-			log.Printf("TTS error (room=%s): %v", roomID, ttsErr)
-		} else {
-			audioURL = url
-		}
+		go h.streamTTSChunks(room, botMsg.ID, bot.Nickname, reply, voice)
 	}
-
-	h.broadcast(room, WSMessage{
-		Type:      "message",
-		ID:        botMsg.ID,
-		Nickname:  bot.Nickname,
-		Content:   reply,
-		MsgType:   "text",
-		AudioURL:  audioURL,
-		CreatedAt: botMsg.CreatedAt.Format(time.RFC3339),
-	}, nil)
 }
 
 // cleanTextForTTS 清洗文本，移除 Markdown 和特殊字符，避免 edge-tts NoAudioReceived
 func cleanTextForTTS(text string) string {
-	// 移除代码块
+	// 先截断，避免对超长 LLM 输出做大量字符串操作
+	runes := []rune(text)
+	if len(runes) > 300 {
+		text = string(runes[:300])
+	}
+	// 移除代码块（截断后再处理，量小）
 	for strings.Contains(text, "```") {
 		start := strings.Index(text, "```")
 		end := strings.Index(text[start+3:], "```")
@@ -981,15 +983,7 @@ func cleanTextForTTS(text string) string {
 		text = text[:start] + " 代码块 " + text[start+3+end+3:]
 	}
 	// 移除行内代码
-	for strings.Contains(text, "`") {
-		s := strings.Index(text, "`")
-		e := strings.Index(text[s+1:], "`")
-		if e == -1 {
-			text = strings.ReplaceAll(text, "`", "")
-			break
-		}
-		text = text[:s] + text[s+1:s+1+e] + text[s+1+e+1:]
-	}
+	text = strings.ReplaceAll(text, "`", "")
 	// 移除 URL
 	for _, prefix := range []string{"https://", "http://"} {
 		for strings.Contains(text, prefix) {
@@ -1004,11 +998,6 @@ func cleanTextForTTS(text string) string {
 	// 移除 Markdown 格式符
 	for _, ch := range []string{"**", "__", "~~", "##", "#", ">", "- ", "* "} {
 		text = strings.ReplaceAll(text, ch, "")
-	}
-	// 限制长度（edge-tts 超长会失败）
-	runes := []rune(text)
-	if len(runes) > 300 {
-		text = string(runes[:300]) + "……"
 	}
 	return strings.TrimSpace(text)
 }
@@ -1029,7 +1018,8 @@ func (h *ChatHandler) callEdgeTTS(text, voice string) (string, error) {
 		"voice": voice,
 	})
 
-	resp, err := http.Post(h.ttsServiceURL+"/tts", "application/json", bytes.NewReader(reqBody))
+	ttsClient := &http.Client{Timeout: 15 * time.Second}
+	resp, err := ttsClient.Post(h.ttsServiceURL+"/tts", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return "", fmt.Errorf("TTS service unavailable: %v", err)
 	}
@@ -1047,6 +1037,56 @@ func (h *ChatHandler) callEdgeTTS(text, voice string) (string, error) {
 		return "", fmt.Errorf("TTS response decode error: %v", err)
 	}
 	return result.URL, nil
+}
+
+// splitSentences 按中英文句末标点拆分句子，每句不超过 100 字
+func splitSentences(text string) []string {
+	var sentences []string
+	var cur []rune
+	for _, r := range []rune(text) {
+		cur = append(cur, r)
+		if r == '。' || r == '！' || r == '？' || r == '!' || r == '?' || r == '\n' {
+			s := strings.TrimSpace(string(cur))
+			if s != "" {
+				sentences = append(sentences, s)
+			}
+			cur = cur[:0]
+		}
+		// 单句超 100 字强制切断
+		if len(cur) >= 100 {
+			s := strings.TrimSpace(string(cur))
+			if s != "" {
+				sentences = append(sentences, s)
+			}
+			cur = cur[:0]
+		}
+	}
+	if s := strings.TrimSpace(string(cur)); s != "" {
+		sentences = append(sentences, s)
+	}
+	return sentences
+}
+
+// streamTTSChunks 按句子逐个合成 TTS，每合成一句立即 broadcast tts_chunk
+func (h *ChatHandler) streamTTSChunks(room *Room, msgID int64, nickname, reply, voice string) {
+	sentences := splitSentences(cleanTextForTTS(reply))
+	for i, s := range sentences {
+		if s == "" {
+			continue
+		}
+		url, err := h.callEdgeTTS(s, voice)
+		if err != nil {
+			log.Printf("TTS chunk error (msg=%d chunk=%d): %v", msgID, i, err)
+			continue
+		}
+		h.broadcast(room, WSMessage{
+			Type:       "tts_chunk",
+			MsgID:      msgID,
+			Nickname:   nickname,
+			AudioURL:   url,
+			ChunkIndex: i + 1,
+		}, nil)
+	}
 }
 
 // callMiniMax 调用 MiniMax API（兼容 Anthropic 格式）
