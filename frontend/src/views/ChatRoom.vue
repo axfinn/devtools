@@ -544,6 +544,8 @@ const ttsEnabled = ref(localStorage.getItem('chat_tts_enabled') === 'true')
 let ttsAudio = null            // 当前播放的 TTS 音频实例
 const ttsQueue = []            // 待播放的 audio URL 队列
 let ttsPlaying = false         // 是否正在播放
+let ttsIdleResolve = null      // 队列播完时的 resolve
+let ttsIdlePromise = Promise.resolve() // 等待队列空闲的 Promise
 
 const messagesContainer = ref(null)
 const fileInput = ref(null)
@@ -749,11 +751,12 @@ const connectWebSocket = () => {
       const msg = JSON.parse(event.data)
       if (msg.type !== 'tts_chunk') messages.value.push(msg)
       nextTick(() => { scrollToBottom() })
-      // bot 文本消息 → 请求 TTS 并入队播放
+      // bot 文本消息 → 等上一个 TTS 播完再请求
       if (msg.type === 'message' && msg.msg_type !== 'image' && msg.msg_type !== 'video' && msg.msg_type !== 'audio' && msg.msg_type !== 'file' && msg.nickname !== nickname.value) {
         const botEntry = botConfig.value.find(b => b.nickname === msg.nickname)
-        if (botEntry && botEntry.enable_tts && ttsEnabled.value) {
-          fetchAndEnqueueTTS(msg.content, botEntry.tts_voice || 'zh-CN-XiaoxiaoNeural')
+        if (botEntry && ttsEnabled.value) {
+          const voice = botEntry.tts_voice || 'zh-CN-XiaoxiaoNeural'
+          ttsIdlePromise = ttsIdlePromise.then(() => fetchAndEnqueueTTS(msg.content, voice))
         }
       }
     } catch (error) {
@@ -1282,29 +1285,59 @@ const playTTSAudio = (audioUrl) => {
   ttsAudio.play().catch(e => console.warn('TTS play failed:', e))
 }
 
+// 按句拆分文本（中英文句末标点）
+const splitSentences = (text) => {
+  const sentences = []
+  let cur = ''
+  for (const ch of text) {
+    cur += ch
+    if ('。！？!?\n'.includes(ch)) {
+      const s = cur.trim()
+      if (s) sentences.push(s)
+      cur = ''
+    }
+    if (cur.length >= 80) {
+      const s = cur.trim()
+      if (s) sentences.push(s)
+      cur = ''
+    }
+  }
+  if (cur.trim()) sentences.push(cur.trim())
+  return sentences
+}
+
 const fetchAndEnqueueTTS = async (text, voice) => {
-  try {
-    const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice })
-    })
-    const data = await res.json()
-    if (res.ok && data.url) enqueueTTS(data.url)
-  } catch (e) {
-    console.warn('TTS fetch failed:', e)
+  const sentences = splitSentences(text)
+  for (const s of sentences) {
+    try {
+      const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: s, voice })
+      })
+      const data = await res.json()
+      if (res.ok && data.url) enqueueTTS(data.url)
+    } catch (e) {
+      console.warn('TTS fetch failed:', e)
+    }
   }
 }
 
 const enqueueTTS = (audioUrl) => {
   const url = audioUrl.startsWith('/') ? `${location.origin}${audioUrl}` : audioUrl
   ttsQueue.push(url)
-  if (ttsEnabled.value && !ttsPlaying) playNextTTS()
+  if (ttsEnabled.value && !ttsPlaying) {
+    if (!ttsIdleResolve) {
+      ttsIdlePromise = new Promise(resolve => { ttsIdleResolve = resolve })
+    }
+    playNextTTS()
+  }
 }
 
 const playNextTTS = () => {
   if (!ttsEnabled.value || ttsQueue.length === 0) {
     ttsPlaying = false
+    if (ttsIdleResolve) { ttsIdleResolve(); ttsIdleResolve = null }
     return
   }
   ttsPlaying = true
@@ -1318,6 +1351,8 @@ const playNextTTS = () => {
 const stopTTSAudio = () => {
   ttsQueue.length = 0
   ttsPlaying = false
+  if (ttsIdleResolve) { ttsIdleResolve(); ttsIdleResolve = null }
+  ttsIdlePromise = Promise.resolve()
   if (ttsAudio) {
     ttsAudio.onended = null
     ttsAudio.onerror = null
