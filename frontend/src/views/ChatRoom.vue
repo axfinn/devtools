@@ -678,6 +678,10 @@ const confirmJoin = async () => {
     showJoinDialog.value = false
     reconnectAttempts.value = 0
 
+    // 持久化，刷新后自动恢复
+    sessionStorage.setItem('chat_room_id', data.room.id)
+    sessionStorage.setItem('chat_nickname', finalNickname)
+
     // 加载历史消息 + 机器人配置
     await loadHistoryMessages()
     loadBotConfig()
@@ -735,13 +739,14 @@ const connectWebSocket = () => {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data)
-      messages.value.push(msg)
-      nextTick(() => {
-        scrollToBottom()
-      })
-      // 机器人 TTS 分句播放
-      if (msg.type === 'tts_chunk' && msg.audio_url) {
-        enqueueTTS(msg.audio_url)
+      if (msg.type !== 'tts_chunk') messages.value.push(msg)
+      nextTick(() => { scrollToBottom() })
+      // bot 文本消息 → 请求 TTS 并入队播放
+      if (msg.type === 'message' && msg.msg_type !== 'image' && msg.msg_type !== 'video' && msg.msg_type !== 'audio' && msg.msg_type !== 'file' && msg.nickname !== nickname.value) {
+        const botEntry = botConfig.value.find(b => b.nickname === msg.nickname)
+        if (botEntry && botEntry.enable_tts && ttsEnabled.value) {
+          fetchAndEnqueueTTS(msg.content, botEntry.tts_voice || 'zh-CN-XiaoxiaoNeural')
+        }
       }
     } catch (error) {
       console.error('消息解析失败:', error)
@@ -1269,6 +1274,20 @@ const playTTSAudio = (audioUrl) => {
   ttsAudio.play().catch(e => console.warn('TTS play failed:', e))
 }
 
+const fetchAndEnqueueTTS = async (text, voice) => {
+  try {
+    const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice })
+    })
+    const data = await res.json()
+    if (res.ok && data.url) enqueueTTS(data.url)
+  } catch (e) {
+    console.warn('TTS fetch failed:', e)
+  }
+}
+
 const enqueueTTS = (audioUrl) => {
   const url = audioUrl.startsWith('/') ? `${location.origin}${audioUrl}` : audioUrl
   ttsQueue.push(url)
@@ -1346,6 +1365,8 @@ const leaveRoom = () => {
     ws = null
   }
   stopTTSAudio()
+  sessionStorage.removeItem('chat_room_id')
+  sessionStorage.removeItem('chat_nickname')
   currentRoom.value = null
   messages.value = []
   botConfig.value = []
@@ -1518,7 +1539,7 @@ const formatDateTime = (timeStr) => {
   })
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadRooms()
 
   // 检查URL参数，支持扫码进房
@@ -1533,6 +1554,35 @@ onMounted(() => {
   const savedPassword = sessionStorage.getItem('chat_admin_password')
   if (savedPassword) {
     adminPassword.value = savedPassword
+  }
+
+  // 刷新恢复：自动重新加入上次的房间
+  const savedRoomId = sessionStorage.getItem('chat_room_id')
+  const savedNickname = sessionStorage.getItem('chat_nickname')
+  if (savedRoomId && savedNickname && !roomId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/room/${savedRoomId}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: savedNickname })
+      })
+      const data = await res.json()
+      if (res.ok) {
+        nickname.value = savedNickname
+        currentRoom.value = data.room
+        reconnectAttempts.value = 0
+        await loadHistoryMessages()
+        loadBotConfig()
+        connectWebSocket()
+        nextTick(() => scrollToBottom())
+      } else {
+        sessionStorage.removeItem('chat_room_id')
+        sessionStorage.removeItem('chat_nickname')
+      }
+    } catch (e) {
+      sessionStorage.removeItem('chat_room_id')
+      sessionStorage.removeItem('chat_nickname')
+    }
   }
 })
 
