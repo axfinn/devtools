@@ -54,9 +54,10 @@ type BotConfig struct {
 	Nickname     string `json:"nickname"`
 	Role         string `json:"role"`
 	SystemPrompt string `json:"system_prompt"`
-	EnableTTS    bool   `json:"enable_tts"`   // 是否开启语音朗读
-	TTSVoice     string `json:"tts_voice"`    // 语音名，留空用角色默认
-	TTSEngine    string `json:"tts_engine"`   // "auto" | "kokoro" | "edge-tts"
+	EnableTTS    bool   `json:"enable_tts"`
+	TTSVoice     string `json:"tts_voice"`
+	TTSEngine    string `json:"tts_engine"`
+	MentionOnly  bool   `json:"mention_only"` // true = 只有 @nickname 才触发
 }
 
 // 角色默认 edge-tts 语音映射（zh-CN Microsoft Neural voices）
@@ -110,12 +111,12 @@ type ChatHandler struct {
 }
 
 type Room struct {
-	ID         string
-	clients    map[*Client]bool
-	mu         sync.RWMutex
-	bot        *BotConfig
-	history    []botMessage    // 最近 20 条对话上下文
-	botCancel  context.CancelFunc // 取消当前正在进行的 bot 回复
+	ID          string
+	clients     map[*Client]bool
+	mu          sync.RWMutex
+	bots        map[string]*BotConfig          // key = nickname
+	histories   map[string][]botMessage        // key = nickname
+	botCancels  map[string]context.CancelFunc  // key = nickname
 }
 
 type Client struct {
@@ -333,14 +334,26 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 	room, exists := h.rooms[roomID]
 	if !exists {
 		room = &Room{
-			ID:      roomID,
-			clients: make(map[*Client]bool),
+			ID:         roomID,
+			clients:    make(map[*Client]bool),
+			bots:       make(map[string]*BotConfig),
+			histories:  make(map[string][]botMessage),
+			botCancels: make(map[string]context.CancelFunc),
 		}
-		// 从数据库恢复机器人配置
+		// 从数据库恢复机器人配置（兼容旧单 bot JSON 和新多 bot JSON 数组）
 		if botJSON, err := h.db.LoadBotConfig(roomID); err == nil && botJSON != "" {
-			var bc BotConfig
-			if json.Unmarshal([]byte(botJSON), &bc) == nil {
-				room.bot = &bc
+			var bots []BotConfig
+			if json.Unmarshal([]byte(botJSON), &bots) == nil {
+				for i := range bots {
+					bc := bots[i]
+					room.bots[bc.Nickname] = &bc
+				}
+			} else {
+				// 兼容旧格式单个 bot
+				var bc BotConfig
+				if json.Unmarshal([]byte(botJSON), &bc) == nil && bc.Nickname != "" {
+					room.bots[bc.Nickname] = &bc
+				}
 			}
 		}
 		h.rooms[roomID] = room
@@ -436,21 +449,32 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 			if chatMsg.MsgType == "text" || chatMsg.MsgType == "" {
 				r := client.room
 				r.mu.RLock()
-				bot := r.bot
+				var triggeredBots []*BotConfig
+				for _, bot := range r.bots {
+					if !bot.Enabled || client.nickname == bot.Nickname {
+						continue
+					}
+					mentioned := strings.Contains(msg.Content, "@"+bot.Nickname)
+					if bot.MentionOnly && !mentioned {
+						continue
+					}
+					triggeredBots = append(triggeredBots, bot)
+				}
 				r.mu.RUnlock()
-				if bot != nil && bot.Enabled && client.nickname != bot.Nickname {
-					// 取消上一条还未完成的 bot 回复
+
+				for _, bot := range triggeredBots {
+					bot := bot
 					r.mu.Lock()
-					if r.botCancel != nil {
-						r.botCancel()
+					if cancel, ok := r.botCancels[bot.Nickname]; ok {
+						cancel()
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-					r.botCancel = cancel
+					r.botCancels[bot.Nickname] = cancel
 					r.mu.Unlock()
 
 					go func() {
 						defer cancel()
-						h.triggerBotReply(ctx, r, roomID, client.nickname, msg.Content)
+						h.triggerBotReply(ctx, r, roomID, client.nickname, msg.Content, bot.Nickname)
 					}()
 				}
 			}
@@ -717,30 +741,33 @@ func (h *ChatHandler) GetBotConfig(c *gin.Context) {
 	room := h.rooms[roomID]
 	h.mu.RUnlock()
 
-	var bot *BotConfig
+	var bots []*BotConfig
 	if room != nil {
 		room.mu.RLock()
-		bot = room.bot
+		for _, b := range room.bots {
+			bots = append(bots, b)
+		}
 		room.mu.RUnlock()
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"bot":       bot,
+		"bots":      bots,
 		"templates": botRoleTemplates,
 		"has_key":   h.minimax.APIKey != "",
 	})
 }
 
 type AddBotRequest struct {
-	Role         string `json:"role" binding:"required"`
-	Nickname     string `json:"nickname"`
+	Role        string `json:"role" binding:"required"`
+	Nickname    string `json:"nickname"`
 	SystemPrompt string `json:"system_prompt"`
-	EnableTTS    bool   `json:"enable_tts"`
-	TTSVoice     string `json:"tts_voice"`
-	TTSEngine    string `json:"tts_engine"` // "auto" | "kokoro" | "edge-tts"
+	EnableTTS   bool   `json:"enable_tts"`
+	TTSVoice    string `json:"tts_voice"`
+	TTSEngine   string `json:"tts_engine"`
+	MentionOnly bool   `json:"mention_only"`
 }
 
-// AddBot 添加/更新房间机器人
+// AddBot 添加/更新房间机器人（同 nickname 覆盖）
 func (h *ChatHandler) AddBot(c *gin.Context) {
 	roomID := c.Param("id")
 	if !h.db.RoomExists(roomID) {
@@ -758,7 +785,6 @@ func (h *ChatHandler) AddBot(c *gin.Context) {
 		return
 	}
 
-	// 查找预设模板
 	var tmpl *BotRoleTemplate
 	for i := range botRoleTemplates {
 		if botRoleTemplates[i].Key == req.Role {
@@ -779,6 +805,7 @@ func (h *ChatHandler) AddBot(c *gin.Context) {
 		EnableTTS:    req.EnableTTS,
 		TTSVoice:     botRoleVoices[req.Role],
 		TTSEngine:    "auto",
+		MentionOnly:  req.MentionOnly,
 	}
 	if req.Nickname != "" {
 		bc.Nickname = req.Nickname
@@ -793,32 +820,25 @@ func (h *ChatHandler) AddBot(c *gin.Context) {
 		bc.TTSEngine = req.TTSEngine
 	}
 
-	// 更新内存中的房间
 	h.mu.Lock()
 	room, exists := h.rooms[roomID]
 	if !exists {
-		room = &Room{ID: roomID, clients: make(map[*Client]bool)}
+		room = &Room{ID: roomID, clients: make(map[*Client]bool), bots: make(map[string]*BotConfig), histories: make(map[string][]botMessage), botCancels: make(map[string]context.CancelFunc)}
 		h.rooms[roomID] = room
 	}
 	h.mu.Unlock()
 
 	room.mu.Lock()
-	room.bot = bc
-	room.history = nil
+	room.bots[bc.Nickname] = bc
+	delete(room.histories, bc.Nickname)
 	room.mu.Unlock()
 
-	// 持久化到数据库
-	if data, err := json.Marshal(bc); err == nil {
-		h.db.SaveBotConfig(roomID, string(data))
-	}
-
-	// 广播机器人加入消息
+	h.saveBots(roomID, room)
 	h.broadcast(room, WSMessage{Type: "system", Content: bc.Nickname + " 加入了房间"}, nil)
-
 	c.JSON(http.StatusOK, gin.H{"bot": bc})
 }
 
-// RemoveBot 移除房间机器人
+// RemoveBot 按 nickname 移除指定机器人
 func (h *ChatHandler) RemoveBot(c *gin.Context) {
 	roomID := c.Param("id")
 	if !h.db.RoomExists(roomID) {
@@ -826,22 +846,29 @@ func (h *ChatHandler) RemoveBot(c *gin.Context) {
 		return
 	}
 
+	nickname := c.Query("nickname")
+
 	h.mu.RLock()
 	room := h.rooms[roomID]
 	h.mu.RUnlock()
 
-	var nickname string
 	if room != nil {
 		room.mu.Lock()
-		if room.bot != nil {
-			nickname = room.bot.Nickname
-			room.bot = nil
-			room.history = nil
-		}
-		// 取消正在进行的 bot 回复
-		if room.botCancel != nil {
-			room.botCancel()
-			room.botCancel = nil
+		if nickname != "" {
+			if cancel, ok := room.botCancels[nickname]; ok {
+				cancel()
+				delete(room.botCancels, nickname)
+			}
+			delete(room.bots, nickname)
+			delete(room.histories, nickname)
+		} else {
+			// 兼容旧接口：移除全部
+			for _, cancel := range room.botCancels {
+				cancel()
+			}
+			room.bots = make(map[string]*BotConfig)
+			room.histories = make(map[string][]botMessage)
+			room.botCancels = make(map[string]context.CancelFunc)
 		}
 		room.mu.Unlock()
 
@@ -850,13 +877,14 @@ func (h *ChatHandler) RemoveBot(c *gin.Context) {
 		}
 	}
 
-	h.db.SaveBotConfig(roomID, "")
+	h.saveBots(roomID, room)
 	c.JSON(http.StatusOK, gin.H{"message": "机器人已移除"})
 }
 
-// StopBot 中断当前正在进行的 bot 回复
+// StopBot 中断指定（或全部）机器人正在进行的回复
 func (h *ChatHandler) StopBot(c *gin.Context) {
 	roomID := c.Param("id")
+	nickname := c.Query("nickname")
 
 	h.mu.RLock()
 	room := h.rooms[roomID]
@@ -868,39 +896,61 @@ func (h *ChatHandler) StopBot(c *gin.Context) {
 	}
 
 	room.mu.Lock()
-	if room.botCancel != nil {
-		room.botCancel()
-		room.botCancel = nil
+	if nickname != "" {
+		if cancel, ok := room.botCancels[nickname]; ok {
+			cancel()
+			delete(room.botCancels, nickname)
+		}
+	} else {
+		for _, cancel := range room.botCancels {
+			cancel()
+		}
+		room.botCancels = make(map[string]context.CancelFunc)
 	}
 	room.mu.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{"message": "已中断机器人回复"})
 }
 
-// triggerBotReply 异步生成机器人回复并广播，支持通过 ctx 取消
-func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, userNickname, userMsg string) {
+// saveBots 将房间所有 bot 持久化到数据库
+func (h *ChatHandler) saveBots(roomID string, room *Room) {
+	if room == nil {
+		h.db.SaveBotConfig(roomID, "[]")
+		return
+	}
 	room.mu.RLock()
-	bot := room.bot
+	bots := make([]*BotConfig, 0, len(room.bots))
+	for _, b := range room.bots {
+		bots = append(bots, b)
+	}
+	room.mu.RUnlock()
+	if data, err := json.Marshal(bots); err == nil {
+		h.db.SaveBotConfig(roomID, string(data))
+	}
+}
+
+// triggerBotReply 异步生成指定 bot 的回复并广播，支持通过 ctx 取消
+func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, userNickname, userMsg, botNickname string) {
+	room.mu.RLock()
+	bot := room.bots[botNickname]
 	room.mu.RUnlock()
 	if bot == nil || !bot.Enabled {
 		return
 	}
 
-	// 检查是否已取消
 	select {
 	case <-ctx.Done():
 		return
 	default:
 	}
 
-	// 更新对话历史
 	room.mu.Lock()
-	room.history = append(room.history, botMessage{Role: "user", Content: userNickname + ": " + userMsg})
-	if len(room.history) > 20 {
-		room.history = room.history[len(room.history)-20:]
+	room.histories[botNickname] = append(room.histories[botNickname], botMessage{Role: "user", Content: userNickname + ": " + userMsg})
+	if len(room.histories[botNickname]) > 20 {
+		room.histories[botNickname] = room.histories[botNickname][len(room.histories[botNickname])-20:]
 	}
-	historyCopy := make([]botMessage, len(room.history))
-	copy(historyCopy, room.history)
+	historyCopy := make([]botMessage, len(room.histories[botNickname]))
+	copy(historyCopy, room.histories[botNickname])
 	room.mu.Unlock()
 
 	// 调用 MiniMax（可被 ctx 取消）
@@ -936,9 +986,9 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 
 	// 把机器人回复追加到历史
 	room.mu.Lock()
-	room.history = append(room.history, botMessage{Role: "assistant", Content: reply})
-	if len(room.history) > 20 {
-		room.history = room.history[len(room.history)-20:]
+	room.histories[botNickname] = append(room.histories[botNickname], botMessage{Role: "assistant", Content: reply})
+	if len(room.histories[botNickname]) > 20 {
+		room.histories[botNickname] = room.histories[botNickname][len(room.histories[botNickname])-20:]
 	}
 	room.mu.Unlock()
 

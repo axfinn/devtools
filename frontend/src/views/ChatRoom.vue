@@ -67,11 +67,11 @@
         </div>
         <div class="header-actions">
           <!-- 机器人状态 + 按钮 -->
-          <el-tag v-if="botConfig?.enabled" type="success" size="small" class="bot-online-tag">
-            {{ botConfig.nickname }} 在线
-          </el-tag>
-          <el-tooltip v-if="botConfig?.enabled" content="中断当前 bot 回复" placement="bottom">
-            <el-button size="small" type="warning" @click="stopBotReply" :loading="stoppingBot">⏹</el-button>
+          <template v-for="bot in botConfig" :key="bot.nickname">
+            <el-tag type="success" size="small" class="bot-online-tag">{{ bot.nickname }} 在线</el-tag>
+          </template>
+          <el-tooltip v-if="botConfig.length" content="中断全部 bot 回复" placement="bottom">
+            <el-button size="small" type="warning" @click="stopBotReply()" :loading="stoppingBot">⏹</el-button>
           </el-tooltip>
           <el-tooltip :content="ttsEnabled ? '点击静音' : '点击开启语音（朗读最后一条）'" placement="bottom">
             <el-button size="small" :type="ttsEnabled ? 'primary' : ''" @click="toggleTTS(!ttsEnabled)">
@@ -79,7 +79,7 @@
             </el-button>
           </el-tooltip>
           <el-button size="small" @click="openBotDialog">
-            🤖 {{ botConfig?.enabled ? '管理机器人' : '添加机器人' }}
+            🤖 {{ botConfig.length ? '管理机器人' : '添加机器人' }}
           </el-button>
           <el-button @click="showQRCode" size="small" type="primary">
             <el-icon><Tickets /></el-icon>
@@ -320,58 +320,60 @@
     <!-- 机器人管理对话框 -->
     <el-dialog v-model="showBotDialog" title="🤖 AI 机器人" width="520px">
       <!-- 已有机器人：显示当前配置 -->
-      <div v-if="botConfig?.enabled" class="bot-active-panel">
-        <div class="bot-current">
-          <span class="bot-avatar">{{ botConfig.nickname }}</span>
+      <!-- 已有机器人列表 -->
+      <div v-if="botConfig.length" class="bot-active-panel">
+        <div v-for="bot in botConfig" :key="bot.nickname" class="bot-current">
+          <span class="bot-avatar">{{ bot.nickname.split(' ')[0] }}</span>
           <div class="bot-info">
-            <div class="bot-name">{{ botConfig.nickname }}</div>
-            <div class="bot-role-label">{{ getBotTemplateName(botConfig.role) }}</div>
+            <div class="bot-name">{{ bot.nickname }}</div>
+            <div class="bot-role-label">
+              {{ getBotTemplateName(bot.role) }}
+              <el-tag v-if="bot.mention_only" size="small" type="info" style="margin-left:4px">@触发</el-tag>
+            </div>
           </div>
+          <el-button type="danger" size="small" @click="removeBot(bot.nickname)" :loading="addingBot">移除</el-button>
         </div>
-        <el-button type="danger" size="small" @click="removeBot" :loading="addingBot">移除机器人</el-button>
       </div>
-      <!-- 已有机器人时的 TTS 开关 -->
-      <!-- TTS 已移至顶部全局按钮，此处不再显示 -->
-      <!-- 未有机器人：显示模板选择 -->
-      <div v-else>
-        <div class="bot-hint">选择一个角色加入聊天室，机器人将自动回复所有消息</div>
-        <div v-if="!botHasKey" class="bot-no-key-tip">
-          ⚠️ 未配置 MINIMAX_API_KEY，机器人功能不可用
-        </div>
-        <div class="bot-templates">
-          <div
-            v-for="tmpl in botTemplates"
-            :key="tmpl.key"
-            :class="['bot-template-card', selectedRole === tmpl.key ? 'selected' : '']"
-            @click="selectedRole = tmpl.key"
-          >
-            <div class="bot-template-icon">{{ tmpl.nickname.split(' ')[0] }}</div>
-            <div class="bot-template-name">{{ tmpl.name }}</div>
-          </div>
-        </div>
-        <!-- 高级选项 -->
-        <el-collapse v-model="showBotAdvanced" class="bot-advanced">
-          <el-collapse-item title="自定义设置（可选）" name="advanced">
-            <el-form label-width="80px" size="small">
-              <el-form-item label="昵称">
-                <el-input v-model="customBotNickname" placeholder="留空使用模板默认昵称" maxlength="20" />
-              </el-form-item>
-              <el-form-item label="人设提示">
-                <el-input
-                  v-model="customSystemPrompt"
-                  type="textarea"
-                  :rows="3"
-                  placeholder="留空使用模板默认人设"
-                />
-              </el-form-item>
-            </el-form>
-          </el-collapse-item>
-        </el-collapse>
+      <!-- 添加新机器人 -->
+      <div class="bot-hint">{{ botConfig.length ? '继续添加机器人：' : '选择一个角色加入聊天室' }}</div>
+      <div v-if="!botHasKey" class="bot-no-key-tip">
+        ⚠️ 未配置 MINIMAX_API_KEY，机器人功能不可用
       </div>
+      <div class="bot-templates">
+        <div
+          v-for="tmpl in botTemplates"
+          :key="tmpl.key"
+          :class="['bot-template-card', selectedRole === tmpl.key ? 'selected' : '']"
+          @click="selectedRole = tmpl.key"
+        >
+          <div class="bot-template-icon">{{ tmpl.nickname.split(' ')[0] }}</div>
+          <div class="bot-template-name">{{ tmpl.name }}</div>
+        </div>
+      </div>
+      <!-- 高级选项 -->
+      <el-collapse v-model="showBotAdvanced" class="bot-advanced">
+        <el-collapse-item title="自定义设置（可选）" name="advanced">
+          <el-form label-width="80px" size="small">
+            <el-form-item label="昵称">
+              <el-input v-model="customBotNickname" placeholder="留空使用模板默认昵称" maxlength="20" />
+            </el-form-item>
+            <el-form-item label="人设提示">
+              <el-input
+                v-model="customSystemPrompt"
+                type="textarea"
+                :rows="3"
+                placeholder="留空使用模板默认人设"
+              />
+            </el-form-item>
+            <el-form-item label="触发方式">
+              <el-switch v-model="mentionOnly" active-text="仅 @我 触发" inactive-text="全部消息触发" />
+            </el-form-item>
+          </el-form>
+        </el-collapse-item>
+      </el-collapse>
       <template #footer>
-        <el-button @click="showBotDialog = false">取消</el-button>
+        <el-button @click="showBotDialog = false">关闭</el-button>
         <el-button
-          v-if="!botConfig?.enabled"
           type="primary"
           @click="addBot"
           :loading="addingBot"
@@ -528,7 +530,7 @@ const genNickname = () => {
 
 // 机器人相关
 const showBotDialog = ref(false)
-const botConfig = ref(null)
+const botConfig = ref([])   // 多 bot 列表
 const botTemplates = ref([])
 const botHasKey = ref(false)
 const selectedRole = ref('')
@@ -536,10 +538,11 @@ const addingBot = ref(false)
 const stoppingBot = ref(false)
 const customBotNickname = ref('')
 const customSystemPrompt = ref('')
+const mentionOnly = ref(false)
 const showBotAdvanced = ref([])
 const ttsEnabled = ref(localStorage.getItem('chat_tts_enabled') === 'true')
 let ttsAudio = null            // 当前播放的 TTS 音频实例
-let ttsQueue = []              // 待播放的 audio URL 队列
+const ttsQueue = []            // 待播放的 audio URL 队列
 let ttsPlaying = false         // 是否正在播放
 
 const messagesContainer = ref(null)
@@ -1166,7 +1169,7 @@ const loadBotConfig = async () => {
   try {
     const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`)
     const data = await res.json()
-    botConfig.value = data.bot || null
+    botConfig.value = data.bots || []
     botTemplates.value = data.templates || []
     botHasKey.value = data.has_key === true
     if (!selectedRole.value && botTemplates.value.length) {
@@ -1185,7 +1188,7 @@ const addBot = async () => {
   if (!selectedRole.value) return
   addingBot.value = true
   try {
-    const body = { role: selectedRole.value, enable_tts: true }
+    const body = { role: selectedRole.value, enable_tts: true, mention_only: mentionOnly.value }
     if (customBotNickname.value.trim()) body.nickname = customBotNickname.value.trim()
     if (customSystemPrompt.value.trim()) body.system_prompt = customSystemPrompt.value.trim()
     const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
@@ -1195,10 +1198,13 @@ const addBot = async () => {
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || '添加失败')
-    botConfig.value = data.bot
-    showBotDialog.value = false
+    // 更新本地列表（同 nickname 覆盖）
+    const idx = botConfig.value.findIndex(b => b.nickname === data.bot.nickname)
+    if (idx >= 0) botConfig.value[idx] = data.bot
+    else botConfig.value.push(data.bot)
     customBotNickname.value = ''
     customSystemPrompt.value = ''
+    mentionOnly.value = false
     showBotAdvanced.value = []
     ElMessage.success(`${data.bot.nickname} 已加入房间`)
   } catch (e) {
@@ -1208,18 +1214,19 @@ const addBot = async () => {
   }
 }
 
-const removeBot = async () => {
+const removeBot = async (nickname) => {
   addingBot.value = true
   try {
-    const res = await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot`, {
-      method: 'DELETE'
-    })
+    const url = `${API_BASE}/api/chat/room/${currentRoom.value.id}/bot${nickname ? '?nickname=' + encodeURIComponent(nickname) : ''}`
+    const res = await fetch(url, { method: 'DELETE' })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || '移除失败')
-    const oldNickname = botConfig.value?.nickname
-    botConfig.value = null
-    showBotDialog.value = false
-    ElMessage.success(`${oldNickname} 已移除`)
+    if (nickname) {
+      botConfig.value = botConfig.value.filter(b => b.nickname !== nickname)
+    } else {
+      botConfig.value = []
+    }
+    ElMessage.success(`${nickname || '全部机器人'} 已移除`)
   } catch (e) {
     ElMessage.error(e.message)
   } finally {
@@ -1227,11 +1234,12 @@ const removeBot = async () => {
   }
 }
 
-const stopBotReply = async () => {
+const stopBotReply = async (nickname) => {
   if (!currentRoom.value) return
   stoppingBot.value = true
   try {
-    await fetch(`${API_BASE}/api/chat/room/${currentRoom.value.id}/bot/stop`, { method: 'POST' })
+    const url = `${API_BASE}/api/chat/room/${currentRoom.value.id}/bot/stop${nickname ? '?nickname=' + encodeURIComponent(nickname) : ''}`
+    await fetch(url, { method: 'POST' })
     stopTTSAudio()
     ElMessage.success('已中断机器人回复')
   } catch (e) {
@@ -1249,9 +1257,8 @@ const toggleTTS = (val) => {
     stopTTSAudio()
     return
   }
-  // 开启时朗读最后一条有音频的消息
-  const lastAudio = [...messages.value].reverse().find(m => m.audio_url)
-  if (lastAudio) playTTSAudio(lastAudio.audio_url)
+  // 开启时如果队列里有待播放的 chunk，立即开始播放
+  if (ttsQueue.length > 0 && !ttsPlaying) playNextTTS()
 }
 
 const playTTSAudio = (audioUrl) => {
@@ -1263,10 +1270,9 @@ const playTTSAudio = (audioUrl) => {
 }
 
 const enqueueTTS = (audioUrl) => {
-  if (!ttsEnabled.value || !audioUrl) return
   const url = audioUrl.startsWith('/') ? `${location.origin}${audioUrl}` : audioUrl
   ttsQueue.push(url)
-  if (!ttsPlaying) playNextTTS()
+  if (ttsEnabled.value && !ttsPlaying) playNextTTS()
 }
 
 const playNextTTS = () => {
@@ -1283,7 +1289,7 @@ const playNextTTS = () => {
 }
 
 const stopTTSAudio = () => {
-  ttsQueue = []
+  ttsQueue.length = 0
   ttsPlaying = false
   if (ttsAudio) {
     ttsAudio.onended = null
@@ -1342,7 +1348,7 @@ const leaveRoom = () => {
   stopTTSAudio()
   currentRoom.value = null
   messages.value = []
-  botConfig.value = null
+  botConfig.value = []
   connectionStatus.value = 'disconnected'
   reconnectAttempts.value = 0
   loadRooms()
