@@ -68,7 +68,7 @@
     <div class="main-layout">
 
       <!-- ===== Left Sidebar ===== -->
-      <div class="sidebar">
+      <div class="sidebar" :class="{ 'mobile-hidden': mobileView === 'detail' }">
 
         <!-- Submit Form -->
         <div class="sidebar-card mb-3">
@@ -384,6 +384,7 @@
       </div>
 
       <!-- ===== Right Content Panel ===== -->
+      <div class="content-panel" :class="{ 'mobile-hidden': mobileView === 'sidebar' }">
       <div class="content-panel">
         <!-- Empty State -->
         <div v-if="!selectedTask" class="flex items-center justify-center h-full text-slate-500">
@@ -400,6 +401,13 @@
 
           <!-- Task Header -->
           <div class="content-header">
+            <!-- 移动端返回按钮 -->
+            <div class="mobile-back-bar">
+              <el-button size="small" @click="mobileView = 'sidebar'" class="action-btn" plain>
+                <el-icon><ArrowLeft /></el-icon>
+                <span class="ml-1">任务列表</span>
+              </el-button>
+            </div>
             <!-- Row 1: status + title -->
             <div class="content-header-title-row">
               <div class="flex items-center gap-2 shrink-0">
@@ -1254,7 +1262,7 @@ import {
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
   Folder, FolderOpened, Bottom, SetUp, Upload, Monitor, Connection,
   SwitchButton, List, Check, FullScreen, CopyDocument, InfoFilled,
-  Sunny, MoonNight, Key, ChatLineRound, Plus, Search, ArrowRight, WarningFilled,
+  Sunny, MoonNight, Key, ChatLineRound, Plus, Search, ArrowRight, ArrowLeft, WarningFilled,
   DocumentChecked
 } from '@element-plus/icons-vue'
 
@@ -1400,6 +1408,8 @@ function phaseLabel(n) { return PHASE_NAMES[n - 1]?.label || `阶段 ${n}` }
 
 // ---- auth ----
 const authenticated = ref(false)
+// 移动端视图切换：'sidebar' | 'detail'
+const mobileView = ref('sidebar')
 const passwordInput = ref('')
 const loggingIn = ref(false)
 let savedPassword = ''
@@ -1881,6 +1891,8 @@ async function selectTask(task) {
   resultPreviewMeta.value = null
   availableLogPhases.value = ['driver']
   activeLogPhase.value = 'driver'
+  // 移动端切换到详情视图
+  if (window.innerWidth < 768) mobileView.value = 'detail'
   // Fetch task detail (lightweight: no file walk)
   await refreshDetail()
 }
@@ -3596,10 +3608,17 @@ onUnmounted(() => {
 
 /* Responsive */
 @media (max-width: 768px) {
-  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #334155; max-height: 50vh; }
+  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #334155; max-height: none; overflow-y: auto; }
   .main-layout { flex-direction: column; }
-  .content-panel { flex: 1; min-height: 50vh; }
+  .content-panel { flex: 1; min-height: 0; }
   .markdown-view { padding: 16px; }
+  /* 移动端视图切换 */
+  .mobile-hidden { display: none !important; }
+  .mobile-back-bar { display: flex; padding: 6px 12px 0; }
+}
+
+@media (min-width: 769px) {
+  .mobile-back-bar { display: none; }
 }
 
 /* =====================================================

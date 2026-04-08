@@ -50,20 +50,22 @@
       <el-tabs v-model="activeTab" class="nfs-tabs">
         <!-- Tab 1: 文件浏览 & 创建分享 -->
         <el-tab-pane label="文件浏览 & 创建分享" name="browse">
-          <div class="flex gap-4 mt-2" style="min-height: 500px;">
+          <div class="browse-layout mt-2">
             <!-- 左侧：目录浏览 -->
-            <el-card class="flex-1" style="min-width: 0;">
+            <el-card class="browse-file-card">
               <template #header>
-                <div class="flex items-center justify-between">
-                  <span class="font-semibold">目录浏览</span>
-                  <div class="flex items-center gap-2 text-sm text-gray-500">
-                    <span>当前路径：</span>
-                    <el-breadcrumb separator="/">
+                <div class="flex flex-col gap-1">
+                  <div class="flex items-center justify-between">
+                    <span class="font-semibold">目录浏览</span>
+                  </div>
+                  <div class="flex items-center gap-1 text-sm text-gray-500 overflow-hidden">
+                    <span class="shrink-0">路径：</span>
+                    <el-breadcrumb separator="/" class="nfs-breadcrumb">
                       <el-breadcrumb-item
-                        v-for="(seg, i) in breadcrumbs"
+                        v-for="(seg, i) in mobileBreadcrumbs"
                         :key="i"
-                        :class="{ 'cursor-pointer text-blue-500': i < breadcrumbs.length - 1 }"
-                        @click="i < breadcrumbs.length - 1 && navigateTo(seg.path)"
+                        :class="{ 'cursor-pointer text-blue-500': i < mobileBreadcrumbs.length - 1 }"
+                        @click="i < mobileBreadcrumbs.length - 1 && navigateTo(seg.path)"
                       >{{ seg.name }}</el-breadcrumb-item>
                     </el-breadcrumb>
                   </div>
@@ -86,27 +88,30 @@
                         </el-icon>
                       </template>
                     </el-table-column>
-                    <el-table-column label="名称" prop="name" min-width="200">
+                    <el-table-column label="名称" prop="name" min-width="120">
                       <template #default="{ row }">
-                        <span :class="row.is_dir ? 'font-medium text-yellow-700' : ''">
-                          {{ row.name }}
-                        </span>
+                        <div>
+                          <span :class="row.is_dir ? 'font-medium text-yellow-700' : ''">{{ row.name }}</span>
+                          <div class="text-xs text-gray-400 sm-hidden-info">
+                            <span v-if="!row.is_dir">{{ formatSize(row.size) }}</span>
+                            <span v-if="!row.is_dir" class="mx-1">·</span>
+                            <span>{{ formatDate(row.mod_time) }}</span>
+                          </div>
+                        </div>
                       </template>
                     </el-table-column>
-                    <el-table-column label="大小" width="110">
+                    <el-table-column label="大小" width="90" class-name="col-hide-mobile">
                       <template #default="{ row }">
-                        <span v-if="!row.is_dir" class="text-gray-500 text-xs">
-                          {{ formatSize(row.size) }}
-                        </span>
+                        <span v-if="!row.is_dir" class="text-gray-500 text-xs">{{ formatSize(row.size) }}</span>
                         <span v-else class="text-gray-400 text-xs">—</span>
                       </template>
                     </el-table-column>
-                    <el-table-column label="修改时间" width="150">
+                    <el-table-column label="修改时间" width="140" class-name="col-hide-mobile">
                       <template #default="{ row }">
                         <span class="text-gray-400 text-xs">{{ formatDate(row.mod_time) }}</span>
                       </template>
                     </el-table-column>
-                    <el-table-column label="操作" width="90">
+                    <el-table-column label="操作" width="80">
                       <template #default="{ row }">
                         <el-button
                           v-if="!row.is_dir"
@@ -123,7 +128,7 @@
             </el-card>
 
             <!-- 右侧：创建分享 -->
-            <el-card style="width: 340px; flex-shrink: 0;">
+            <el-card class="browse-create-card">
               <template #header>
                 <span class="font-semibold">创建分享</span>
               </template>
@@ -268,37 +273,41 @@
               </el-button>
             </div>
             <el-table :data="shareList" size="small" stripe v-loading="listLoading">
-              <el-table-column label="名称" min-width="160">
+              <el-table-column label="名称" min-width="140">
                 <template #default="{ row }">
                   <div class="font-medium">{{ row.name }}</div>
                   <div class="text-xs text-gray-400 truncate" :title="row.file_path">{{ row.file_path }}</div>
+                  <!-- 移动端内联显示额外信息 -->
+                  <div class="sm-hidden-info text-xs text-gray-400 mt-0.5 flex flex-wrap gap-x-2">
+                    <span>{{ formatSize(row.file_size) }}</span>
+                    <el-tag :type="getShareStatus(row).type" size="small" class="!text-xs">{{ getShareStatus(row).label }}</el-tag>
+                    <span :class="row.expires_at && isExpired(row.expires_at) ? 'text-red-500' : ''">
+                      {{ row.expires_at ? formatDate(row.expires_at) : '永不过期' }}
+                    </span>
+                  </div>
                 </template>
               </el-table-column>
-              <el-table-column label="大小" width="90">
+              <el-table-column label="大小" width="80" class-name="col-hide-mobile">
                 <template #default="{ row }">
                   <span class="text-xs">{{ formatSize(row.file_size) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="访问次数" width="120" align="center">
+              <el-table-column label="访问次数" width="110" align="center">
                 <template #default="{ row }">
                   <el-progress
                     :percentage="row.max_views > 0 ? Math.round((row.views / row.max_views) * 100) : 0"
                     :status="row.views >= row.max_views ? 'exception' : ''"
                     :stroke-width="6"
                   />
-                  <div class="text-xs text-center mt-1">
-                    {{ row.views }} / {{ row.max_views }}
-                  </div>
+                  <div class="text-xs text-center mt-1">{{ row.views }} / {{ row.max_views }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="状态" width="80" align="center">
+              <el-table-column label="状态" width="72" align="center" class-name="col-hide-mobile">
                 <template #default="{ row }">
-                  <el-tag :type="getShareStatus(row).type" size="small">
-                    {{ getShareStatus(row).label }}
-                  </el-tag>
+                  <el-tag :type="getShareStatus(row).type" size="small">{{ getShareStatus(row).label }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="有效期" width="130">
+              <el-table-column label="有效期" width="120" class-name="col-hide-mobile">
                 <template #default="{ row }">
                   <span v-if="row.expires_at" class="text-xs" :class="isExpired(row.expires_at) ? 'text-red-500' : 'text-gray-500'">
                     {{ formatDate(row.expires_at) }}
@@ -306,15 +315,10 @@
                   <span v-else class="text-xs text-green-500">永不过期</span>
                 </template>
               </el-table-column>
-              <el-table-column label="创建时间" width="130">
+              <el-table-column label="操作" width="160" align="center">
                 <template #default="{ row }">
-                  <span class="text-xs text-gray-400">{{ formatDate(row.created_at) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="200" align="center">
-                <template #default="{ row }">
-                  <el-button size="small" type="primary" link @click="copyShareLink(row)">复制链接</el-button>
-                  <el-button size="small" type="info" link @click="viewLogs(row)">查看日志</el-button>
+                  <el-button size="small" type="primary" link @click="copyShareLink(row)">复制</el-button>
+                  <el-button size="small" type="info" link @click="viewLogs(row)">日志</el-button>
                   <el-button size="small" link @click="openEditDialog(row)">调整</el-button>
                   <el-button size="small" type="danger" link @click="deleteShare(row)">删除</el-button>
                 </template>
@@ -338,7 +342,7 @@
     <el-dialog
       v-model="logsDialogVisible"
       :title="`访问日志 · ${currentShare?.name || ''}`"
-      width="800px"
+      :width="dialogWidth"
       destroy-on-close
     >
       <div class="flex items-center justify-between mb-3">
@@ -348,25 +352,25 @@
         </el-button>
       </div>
       <el-table :data="logList" size="small" stripe v-loading="logsLoading" max-height="400">
-        <el-table-column label="时间" width="155">
+        <el-table-column label="时间" min-width="120">
           <template #default="{ row }">
             <span class="text-xs">{{ formatDate(row.accessed_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="IP" width="130" prop="client_ip" />
-        <el-table-column label="状态" width="110" align="center">
+        <el-table-column label="IP" width="120" prop="client_ip" class-name="col-hide-mobile" />
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="getLogStatusTag(row.status)" size="small">
               {{ getLogStatusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="传输大小" width="100">
+        <el-table-column label="传输大小" width="90" class-name="col-hide-mobile">
           <template #default="{ row }">
             <span class="text-xs">{{ row.bytes_sent > 0 ? formatSize(row.bytes_sent) : '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="User-Agent" min-width="200">
+        <el-table-column label="User-Agent" min-width="160" class-name="col-hide-mobile">
           <template #default="{ row }">
             <span class="text-xs text-gray-500 truncate block" :title="row.user_agent">{{ row.user_agent }}</span>
           </template>
@@ -384,7 +388,7 @@
     </el-dialog>
 
     <!-- 调整分享配置弹窗 -->
-    <el-dialog v-model="editDialogVisible" title="调整分享配置" width="420px">
+    <el-dialog v-model="editDialogVisible" title="调整分享配置" :width="dialogWidth">
       <el-form :model="editForm" label-width="90px">
         <el-form-item label="当前次数">
           <span class="text-sm text-gray-600">已访问 {{ editTarget?.views }} / {{ editTarget?.max_views }} 次</span>
@@ -477,6 +481,15 @@ const breadcrumbs = computed(() => {
   }
   return segs
 })
+
+// 移动端只显示最后2段面包屑
+const mobileBreadcrumbs = computed(() => {
+  const all = breadcrumbs.value
+  if (all.length <= 2) return all
+  return [{ name: '…', path: all[all.length - 2].path }, all[all.length - 1]]
+})
+
+const dialogWidth = computed(() => window.innerWidth < 640 ? '95%' : '560px')
 
 // -------- 生命周期 --------
 onMounted(async () => {
@@ -892,5 +905,62 @@ function getLogStatusLabel(status) {
 <style scoped>
 .nfs-tabs :deep(.el-tabs__content) {
   overflow: visible;
+}
+
+/* 文件浏览布局：桌面左右，移动端上下 */
+.browse-layout {
+  display: flex;
+  gap: 16px;
+  min-height: 400px;
+}
+.browse-file-card {
+  flex: 1;
+  min-width: 0;
+}
+.browse-create-card {
+  width: 340px;
+  flex-shrink: 0;
+}
+
+/* 面包屑不换行截断 */
+.nfs-breadcrumb {
+  overflow: hidden;
+  white-space: nowrap;
+}
+.nfs-breadcrumb :deep(.el-breadcrumb__item) {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 移动端内联信息默认隐藏（桌面端不显示） */
+.sm-hidden-info {
+  display: none;
+}
+
+/* 移动端响应式 */
+@media (max-width: 640px) {
+  .browse-layout {
+    flex-direction: column;
+  }
+  .browse-create-card {
+    width: 100%;
+  }
+
+  /* 移动端隐藏部分列 */
+  :deep(.col-hide-mobile) {
+    display: none;
+  }
+
+  /* 移动端在名称列内联显示额外信息 */
+  .sm-hidden-info {
+    display: flex;
+  }
+
+  /* 分页简化 */
+  :deep(.el-pagination .el-pager) {
+    display: none;
+  }
 }
 </style>
