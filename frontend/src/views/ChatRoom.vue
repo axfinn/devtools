@@ -73,7 +73,7 @@
           <el-tooltip v-if="botConfig.length" content="中断全部 bot 回复" placement="bottom">
             <el-button size="small" type="warning" @click="stopBotReply()" :loading="stoppingBot">⏹</el-button>
           </el-tooltip>
-          <el-tooltip :content="ttsEnabled ? '点击静音' : '点击开启语音（朗读最后一条）'" placement="bottom">
+          <el-tooltip :content="ttsEnabled ? '自动朗读已开启，点击关闭' : '自动朗读已关闭，点击开启'" placement="bottom">
             <el-button size="small" :type="ttsEnabled ? 'primary' : ''" @click="toggleTTS(!ttsEnabled)">
               {{ ttsEnabled ? '🔊' : '🔇' }}
             </el-button>
@@ -154,6 +154,20 @@
               </el-tooltip>
               <el-tooltip content="下载" placement="top" v-if="['image','video','audio','file'].includes(msg.msg_type)">
                 <el-icon class="action-icon" @click.stop="downloadFile(msg)"><Download /></el-icon>
+              </el-tooltip>
+              <!-- bot 文本消息：独立朗读按钮 -->
+              <el-tooltip
+                v-if="isBotMsg(msg) && (!msg.msg_type || msg.msg_type === 'text')"
+                :content="playingMsgId === (msg.id || msg.created_at) ? '停止朗读' : '朗读此条'"
+                placement="top"
+              >
+                <el-icon
+                  class="action-icon"
+                  @click.stop="toggleMsgTTS(msg)"
+                >
+                  <VideoPause v-if="playingMsgId === (msg.id || msg.created_at)" />
+                  <VideoPlay v-else />
+                </el-icon>
               </el-tooltip>
             </div>
           </template>
@@ -546,6 +560,7 @@ const ttsQueue = []            // 待播放的 audio URL 队列
 let ttsPlaying = false         // 是否正在播放
 let ttsIdleResolve = null      // 队列播完时的 resolve
 let ttsIdlePromise = Promise.resolve() // 等待队列空闲的 Promise
+const playingMsgId = ref(null) // 当前正在朗读的消息 id
 
 const messagesContainer = ref(null)
 const fileInput = ref(null)
@@ -1278,6 +1293,31 @@ const toggleTTS = (val) => {
   if (ttsQueue.length > 0 && !ttsPlaying) playNextTTS()
 }
 
+// 判断是否是 bot 消息
+const isBotMsg = (msg) => {
+  return msg.type === 'message' && botConfig.value.some(b => b.nickname === msg.nickname)
+}
+
+// 每条消息独立朗读/停止
+const toggleMsgTTS = async (msg) => {
+  const msgId = msg.id || msg.created_at
+  if (playingMsgId.value === msgId) {
+    // 正在播放此条 → 停止
+    stopTTSAudio()
+    playingMsgId.value = null
+    return
+  }
+  // 停止当前播放，开始朗读此条
+  stopTTSAudio()
+  playingMsgId.value = msgId
+  const botEntry = botConfig.value.find(b => b.nickname === msg.nickname)
+  const voice = botEntry?.tts_voice || 'zh-CN-XiaoxiaoNeural'
+  await fetchAndEnqueueTTS(msg.content, voice, () => {
+    // 播完后清除状态
+    if (playingMsgId.value === msgId) playingMsgId.value = null
+  }, true)
+}
+
 const playTTSAudio = (audioUrl) => {
   if (!ttsEnabled.value || !audioUrl) return
   stopTTSAudio()
@@ -1325,9 +1365,9 @@ const splitSentences = (text) => {
   return sentences
 }
 
-const fetchAndEnqueueTTS = async (text, voice) => {
+const fetchAndEnqueueTTS = async (text, voice, onDone, force = false) => {
   const clean = stripMarkdown(text)
-  if (!clean) return
+  if (!clean) { if (onDone) onDone(); return }
   const sentences = splitSentences(clean)
   for (const s of sentences) {
     let success = false
@@ -1341,7 +1381,7 @@ const fetchAndEnqueueTTS = async (text, voice) => {
         })
         const data = await res.json()
         if (res.ok && data.url) {
-          await new Promise(resolve => { enqueueTTS(data.url, resolve) })
+          await new Promise(resolve => { enqueueTTS(data.url, resolve, force) })
           success = true
         }
       } catch (e) {
@@ -1349,21 +1389,22 @@ const fetchAndEnqueueTTS = async (text, voice) => {
       }
     }
   }
+  if (onDone) onDone()
 }
 
-const enqueueTTS = (audioUrl, onPlayed) => {
+const enqueueTTS = (audioUrl, onPlayed, force = false) => {
   const url = audioUrl.startsWith('/') ? `${location.origin}${audioUrl}` : audioUrl
   ttsQueue.push({ url, onPlayed })
-  if (ttsEnabled.value && !ttsPlaying) {
+  if ((ttsEnabled.value || force) && !ttsPlaying) {
     if (!ttsIdleResolve) {
       ttsIdlePromise = new Promise(resolve => { ttsIdleResolve = resolve })
     }
-    playNextTTS()
+    playNextTTS(force)
   }
 }
 
-const playNextTTS = () => {
-  if (!ttsEnabled.value || ttsQueue.length === 0) {
+const playNextTTS = (force = false) => {
+  if ((!ttsEnabled.value && !force) || ttsQueue.length === 0) {
     ttsPlaying = false
     if (ttsIdleResolve) { ttsIdleResolve(); ttsIdleResolve = null }
     return
@@ -1371,14 +1412,15 @@ const playNextTTS = () => {
   ttsPlaying = true
   const { url, onPlayed } = ttsQueue.shift()
   ttsAudio = new Audio(url)
-  ttsAudio.onended = () => { if (onPlayed) onPlayed(); playNextTTS() }
-  ttsAudio.onerror = () => { if (onPlayed) onPlayed(); playNextTTS() }
-  ttsAudio.play().catch(() => { if (onPlayed) onPlayed(); playNextTTS() })
+  ttsAudio.onended = () => { if (onPlayed) onPlayed(); playNextTTS(force) }
+  ttsAudio.onerror = () => { if (onPlayed) onPlayed(); playNextTTS(force) }
+  ttsAudio.play().catch(() => { if (onPlayed) onPlayed(); playNextTTS(force) })
 }
 
 const stopTTSAudio = () => {
   ttsQueue.length = 0
   ttsPlaying = false
+  playingMsgId.value = null
   if (ttsIdleResolve) { ttsIdleResolve(); ttsIdleResolve = null }
   ttsIdlePromise = Promise.resolve()
   if (ttsAudio) {
