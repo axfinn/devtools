@@ -169,12 +169,11 @@ async function shareLink() {
     const res = await fetch('/api/shorturl', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ original_url: fullUrl, expires_in: 30 })
+      body: JSON.stringify({ original_url: fullUrl })
     })
     const data = await res.json()
-    if (data.short_code) {
-      const shortUrl = `${location.origin}/s/${data.short_code}`
-      navigator.clipboard.writeText(shortUrl).then(() => ElMessage.success('短链已复制：' + shortUrl))
+    if (data.short_url) {
+      navigator.clipboard.writeText(data.short_url).then(() => ElMessage.success('短链已复制：' + data.short_url))
     } else {
       // 短链失败降级：直接复制长链
       navigator.clipboard.writeText(fullUrl).then(() => ElMessage.warning('短链生成失败，已复制完整链接'))
