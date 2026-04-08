@@ -561,15 +561,15 @@ function onVideoError() {
 // ---- 房主同步事件 ----
 function onHostPlay() {
   if (!isHost.value || syncLock || !ws || ws.readyState !== WebSocket.OPEN) return
-  wsSend({ type: 'sync', action: 'play', time: videoEl.value.currentTime })
+  wsSend({ type: 'sync', action: 'play', time: art?.currentTime ?? 0 })
 }
 function onHostPause() {
   if (!isHost.value || syncLock || !ws || ws.readyState !== WebSocket.OPEN) return
-  wsSend({ type: 'sync', action: 'pause', time: videoEl.value.currentTime })
+  wsSend({ type: 'sync', action: 'pause', time: art?.currentTime ?? 0 })
 }
 function onHostSeek() {
   if (!isHost.value || syncLock || !ws || ws.readyState !== WebSocket.OPEN) return
-  wsSend({ type: 'sync', action: 'seek', time: videoEl.value.currentTime })
+  wsSend({ type: 'sync', action: 'seek', time: art?.currentTime ?? 0 })
 }
 
 // ---- 一起看 ----
@@ -642,13 +642,13 @@ function handleWsMsg(msg) {
       fireDanmaku(msg.text)
       break
     case 'sync':
-      if (!videoEl.value || isHost.value) break
+      if (!art || isHost.value) break
       syncLock = true
-      if (msg.action === 'seek' || Math.abs(videoEl.value.currentTime - msg.time) > 2) {
-        videoEl.value.currentTime = msg.time
+      if (msg.action === 'seek' || Math.abs(art.currentTime - msg.time) > 2) {
+        art.currentTime = msg.time
       }
-      if (msg.action === 'play') videoEl.value.play().catch(() => {})
-      else if (msg.action === 'pause') videoEl.value.pause()
+      if (msg.action === 'play') art.play(true)
+      else if (msg.action === 'pause') art.pause()
       setTimeout(() => { syncLock = false }, 500)
       break
 
