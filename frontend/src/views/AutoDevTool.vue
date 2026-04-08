@@ -385,7 +385,6 @@
 
       <!-- ===== Right Content Panel ===== -->
       <div class="content-panel" :class="{ 'mobile-hidden': mobileView === 'sidebar' }">
-      <div class="content-panel">
         <!-- Empty State -->
         <div v-if="!selectedTask" class="flex items-center justify-center h-full text-slate-500">
           <div class="text-center">
