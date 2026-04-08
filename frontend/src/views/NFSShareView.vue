@@ -63,18 +63,12 @@
                 <p class="hint">首次播放需要转码，大文件可能需要几分钟</p>
               </div>
 
-              <!-- 视频元素 -->
-              <video
+              <!-- 视频元素（ArtPlayer 挂载点） -->
+              <div
                 v-show="!transcoding"
-                ref="videoEl"
-                class="video-player"
-                controls
-                preload="metadata"
-                @play="onHostPlay"
-                @pause="onHostPause"
-                @seeked="onHostSeek"
-                @error="onVideoError"
-              ></video>
+                ref="artRef"
+                class="art-player-container"
+              ></div>
             </div>
 
             <div class="video-actions">
@@ -237,6 +231,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import Hls from 'hls.js'
+import Artplayer from 'artplayer'
 
 const route = useRoute()
 const id = route.params.id
@@ -246,7 +241,9 @@ const loading = ref(true)
 const error = ref('')
 const info = ref({})
 const transcoding = ref(false)
-const videoEl = ref(null)
+const videoEl = ref(null)   // 指向 ArtPlayer 底层 video 元素
+const artRef = ref(null)    // ArtPlayer 挂载 DOM
+let art = null              // ArtPlayer 实例
 const playerWrapper = ref(null)
 const danmakuLayer = ref(null)
 
@@ -422,98 +419,126 @@ async function loadQualities() {
 
 // ---- 视频播放器 ----
 async function initPlayer() {
-  // 统一先尝试 HLS（默认），失败再降级
   await loadQualities()
   if (qualityList.value.length > 0) {
     playMode.value = 'hls'
     transcoding.value = true
-    startHLS()
+    await nextTick()
+    createArtPlayer(hlsUrl.value, 'hls')
   } else if (isNativeVideo.value) {
-    // HLS 不可用（ffmpeg 缺失等），原生格式可以降级直播
     playMode.value = 'native'
-    startNative()
+    await nextTick()
+    createArtPlayer(streamUrl.value, 'native')
   } else {
     error.value = '无法获取视频清晰度信息，请稍后重试'
   }
 }
 
+function createArtPlayer(src, mode) {
+  if (art) { art.destroy(); art = null }
+  if (hls) { hls.destroy(); hls = null }
+
+  const isHls = mode === 'hls'
+
+  art = new Artplayer({
+    container: artRef.value,
+    url: src,
+    type: isHls ? 'm3u8' : '',
+    volume: 0.8,
+    autoplay: false,
+    pip: true,
+    fullscreen: true,
+    fullscreenWeb: true,
+    playbackRate: true,
+    aspectRatio: true,
+    setting: true,
+    hotkey: true,
+    theme: '#409eff',
+    lang: 'zh-cn',
+    moreVideoAttr: {
+      preload: 'metadata',
+    },
+    customType: isHls ? {
+      m3u8: function (video, url) {
+        if (Hls.isSupported()) {
+          if (hls) { hls.destroy() }
+          hls = new Hls({
+            manifestLoadingTimeOut: 30 * 60 * 1000,
+            manifestLoadingRetryDelay: 2000,
+            manifestLoadingMaxRetry: 900,
+          })
+          hls.loadSource(url)
+          hls.attachMedia(video)
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            transcoding.value = false
+          })
+          hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              pollTranscoding()
+            } else if (data.fatal) {
+              error.value = '视频加载失败'
+              transcoding.value = false
+            }
+          })
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url
+          video.addEventListener('loadedmetadata', () => { transcoding.value = false }, { once: true })
+        } else {
+          error.value = '浏览器不支持 HLS 播放'
+          transcoding.value = false
+        }
+      }
+    } : {},
+  })
+
+  // 拿到底层 video 元素，挂同步事件
+  art.on('ready', () => {
+    videoEl.value = art.video
+    if (!isHls) transcoding.value = false
+    art.video.addEventListener('play', onHostPlay)
+    art.video.addEventListener('pause', onHostPause)
+    art.video.addEventListener('seeked', onHostSeek)
+    art.video.addEventListener('error', onVideoError)
+  })
+}
+
 async function switchMode(mode) {
   if (mode === playMode.value) return
-  const savedTime = videoEl.value?.currentTime || 0
+  const savedTime = art?.video?.currentTime || 0
   playMode.value = mode
   if (hls) { hls.destroy(); hls = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (mode === 'hls') {
     transcoding.value = true
-    startHLS()
-    if (hls) {
-      hls.once(Hls.Events.MANIFEST_PARSED, () => {
-        if (savedTime > 0 && videoEl.value) videoEl.value.currentTime = savedTime
-      })
-    }
+    createArtPlayer(hlsUrl.value, 'hls')
+    // seek after manifest
   } else {
     transcoding.value = false
-    startNative()
-    if (savedTime > 0 && videoEl.value) {
-      videoEl.value.addEventListener('loadedmetadata', () => {
-        videoEl.value.currentTime = savedTime
-      }, { once: true })
-    }
+    createArtPlayer(streamUrl.value, 'native')
+  }
+  if (savedTime > 0) {
+    art?.once('ready', () => { if (art?.video) art.video.currentTime = savedTime })
   }
 }
 
 async function onQualityChange(quality) {
-  if (!videoEl.value) return
-  const savedTime = videoEl.value.currentTime || 0
+  const savedTime = art?.video?.currentTime || 0
   currentQuality.value = quality
   transcoding.value = true
   if (hls) { hls.destroy(); hls = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-  startHLS()
-  // MANIFEST_PARSED 后再 seek：分片列表已知，时间跳转更可靠
-  if (hls) {
-    hls.once(Hls.Events.MANIFEST_PARSED, () => {
-      if (savedTime > 0 && videoEl.value) {
-        videoEl.value.currentTime = savedTime
-      }
-    })
+  createArtPlayer(hlsUrl.value, 'hls')
+  if (savedTime > 0) {
+    art?.once('ready', () => { if (art?.video) art.video.currentTime = savedTime })
   }
 }
 
 function startNative() {
-  transcoding.value = false
-  videoEl.value.src = streamUrl.value
+  createArtPlayer(streamUrl.value, 'native')
 }
 
 function startHLS() {
-  const m3u8 = hlsUrl.value
-  if (Hls.isSupported()) {
-    if (hls) { hls.destroy(); hls = null }
-    hls = new Hls({
-    manifestLoadingTimeOut: 30 * 60 * 1000,
-    manifestLoadingRetryDelay: 2000,   // 转码中每2秒重试一次
-    manifestLoadingMaxRetry: 900,      // 最多重试30分钟
-  })
-    hls.loadSource(m3u8)
-    hls.attachMedia(videoEl.value)
-    hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      transcoding.value = false
-    })
-    hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        pollTranscoding()
-      } else if (data.fatal) {
-        error.value = '视频加载失败'
-        transcoding.value = false
-      }
-    })
-  } else if (videoEl.value.canPlayType('application/vnd.apple.mpegurl')) {
-    videoEl.value.src = m3u8
-    videoEl.value.addEventListener('loadedmetadata', () => { transcoding.value = false }, { once: true })
-  } else {
-    error.value = '浏览器不支持 HLS 播放'
-    transcoding.value = false
-  }
+  createArtPlayer(hlsUrl.value, 'hls')
 }
 
 function pollTranscoding() {
@@ -850,6 +875,7 @@ function removeVoiceParticipant(peerID) {
 
 onMounted(() => { loadInfo() })
 onUnmounted(() => {
+  if (art) { art.destroy(); art = null }
   if (hls) { hls.destroy(); hls = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (ws) { ws.close(); ws = null }
@@ -933,10 +959,16 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.video-player {
+.art-player-container {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+/* ArtPlayer 全局样式覆盖 */
+:global(.art-video-player) {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 /* 弹幕层 */
@@ -944,7 +976,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 5;
+  z-index: 30;
   overflow: hidden;
 }
 

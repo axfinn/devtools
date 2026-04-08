@@ -3607,7 +3607,9 @@ onUnmounted(() => {
 
 /* Responsive */
 @media (max-width: 768px) {
-  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #334155; max-height: none; overflow-y: auto; }
+  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid #334155; max-height: none; height: calc(100vh - 52px); overflow-y: auto; }
+  .sidebar-card.flex-1 { overflow: visible; min-height: unset; flex: none; }
+  .task-list { overflow-y: visible; flex: none; }
   .main-layout { flex-direction: column; }
   .content-panel { flex: 1; min-height: 0; }
   .markdown-view { padding: 16px; }
