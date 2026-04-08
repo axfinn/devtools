@@ -1329,6 +1329,10 @@ const stripMarkdown = (text) => {
     .replace(/^\d+\.\s/gm, '')              // 有序列表
     .replace(/^>\s/gm, '')                  // 引用
     .replace(/[-]{3,}/g, '')                // 分割线
+    .replace(/[\u2018\u2019]/g, "'")        // 弯单引号 → '
+    .replace(/[\u201c\u201d]/g, '"')        // 弯双引号 → "
+    .replace(/[\u2014\u2013]/g, '，')       // 破折号/短横线 → 逗号
+    .replace(/[\u2026]/g, '。')             // 省略号 → 句号
     .trim()
 }
 
