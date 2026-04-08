@@ -58,7 +58,7 @@
             </div>
           </template>
           <div v-else class="img-error">
-            <el-icon size="32"><BrokenImage /></el-icon>
+            <el-icon size="32"><Picture /></el-icon>
             <span>加载失败</span>
             <el-button size="small" @click.stop="retryOne(img)">重试</el-button>
           </div>
@@ -95,7 +95,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Loading, BrokenImage, CopyDocument, Picture } from '@element-plus/icons-vue'
+import { Loading, CopyDocument, Picture } from '@element-plus/icons-vue'
 
 const urlInput = ref('')
 const images = ref([])
