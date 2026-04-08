@@ -1368,14 +1368,16 @@ const splitSentences = (text) => {
 const fetchAndEnqueueTTS = async (text, voice, onDone, force = false) => {
   const clean = stripMarkdown(text)
   if (!clean) { if (onDone) onDone(); return }
-  const sentences = splitSentences(clean)
-  if (!sentences.length) { if (onDone) onDone(); return }
-  for (const s of sentences) {
-    // 过滤掉纯 URL、纯符号、过短内容
+  const sentences = splitSentences(clean).filter(s => {
     const readable = s.replace(/https?:\/\/\S+/g, '').replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').trim()
-    if (readable.length < 2) continue
-    let success = false
-    for (let attempt = 0; attempt < 2 && !success; attempt++) {
+    return readable.length >= 2
+  })
+  if (!sentences.length) { if (onDone) onDone(); return }
+
+  // 并发 fetch 所有句子，但按顺序入队播放
+  // 每个句子用一个 Promise 占位，前一句播完才 resolve 下一句的 "可以播" 信号
+  const fetchSentence = async (s) => {
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (attempt > 0) await new Promise(r => setTimeout(r, 800))
         const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
@@ -1384,16 +1386,31 @@ const fetchAndEnqueueTTS = async (text, voice, onDone, force = false) => {
           body: JSON.stringify({ text: s, voice })
         })
         const data = await res.json()
-        if (res.ok && data.url) {
-          await new Promise(resolve => { enqueueTTS(data.url, resolve, force) })
-          success = true
-        }
+        if (res.ok && data.url) return data.url
       } catch (e) {
         console.warn('TTS fetch failed:', e)
       }
     }
+    return null
   }
-  if (onDone) onDone()
+
+  // 并发拉取所有音频，同时保持顺序播放
+  // 用链式 Promise：第 i 句 fetch 完后，等第 i-1 句播完再入队
+  let prevPlayed = Promise.resolve()
+  const fetches = sentences.map(s => fetchSentence(s))
+
+  for (let i = 0; i < fetches.length; i++) {
+    const isLast = i === fetches.length - 1
+    const url = await fetches[i]  // 等这句 fetch 完
+    if (!url) {
+      if (isLast) { await prevPlayed; if (onDone) onDone() }
+      continue
+    }
+    // 等上一句播完再入队（保证顺序，且无缝衔接）
+    await prevPlayed
+    prevPlayed = new Promise(resolve => { enqueueTTS(url, resolve, force) })
+    if (isLast) { await prevPlayed; if (onDone) onDone() }
+  }
 }
 
 const enqueueTTS = (audioUrl, onPlayed, force = false) => {
