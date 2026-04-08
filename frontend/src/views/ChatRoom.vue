@@ -767,10 +767,9 @@ const connectWebSocket = () => {
       // bot 文本消息 → 等上一个 TTS 播完再请求
       if (msg.type === 'message' && msg.msg_type !== 'image' && msg.msg_type !== 'video' && msg.msg_type !== 'audio' && msg.msg_type !== 'file' && msg.nickname !== nickname.value) {
         const botEntry = botConfig.value.find(b => b.nickname === msg.nickname)
-        console.log('[TTS] bot msg:', msg.nickname, 'botEntry:', botEntry, 'ttsEnabled:', ttsEnabled.value)
         if (botEntry && ttsEnabled.value) {
           const voice = botEntry.tts_voice || 'zh-CN-XiaoxiaoNeural'
-          ttsIdlePromise = ttsIdlePromise.then(() => fetchAndEnqueueTTS(msg.content, voice))
+          fetchAndEnqueueTTS(msg.content, voice)
         }
       }
     } catch (error) {
@@ -1665,6 +1664,9 @@ const formatDateTime = (timeStr) => {
 }
 
 onMounted(async () => {
+  // 禁止外层 main-content 滚动，让聊天室自己管理滚动
+  const mainContent = document.querySelector('.main-content')
+  if (mainContent) mainContent.style.overflow = 'hidden'
   loadRooms()
 
   const urlParams = new URLSearchParams(window.location.hash.split('?')[1])
@@ -1716,6 +1718,9 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  // 恢复外层滚动
+  const mainContent = document.querySelector('.main-content')
+  if (mainContent) mainContent.style.overflow = ''
   cancelAudioRecording()
   closeCamera()
   stopScreenRecording()
@@ -1731,7 +1736,7 @@ onUnmounted(() => {
 .tool-container {
   display: flex;
   flex-direction: column;
-  min-height: 400px;
+  height: calc(100vh - 40px); /* main-content padding 20px * 2 */
   padding: 20px;
   box-sizing: border-box;
 }
@@ -1813,7 +1818,8 @@ onUnmounted(() => {
 .chat-view {
   display: flex;
   flex-direction: column;
-  min-height: 500px;
+  height: 100%;
+  min-height: 0;
 }
 
 .chat-header {
