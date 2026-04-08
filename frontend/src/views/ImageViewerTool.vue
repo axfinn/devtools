@@ -93,7 +93,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading, CopyDocument, Picture } from '@element-plus/icons-vue'
 
@@ -133,6 +133,7 @@ function onLoad(img) {
 function onError(img) {
   if (proxyFallback.value && !img.proxied) {
     img.proxied = true
+    img.status = 'loading'
     img.displaySrc = `/api/proxy-image?url=${encodeURIComponent(img.url)}`
   } else {
     img.status = 'error'
@@ -183,7 +184,6 @@ function onKeydown(e) {
   if (e.key === 'Escape') closeLightbox()
 }
 
-import { onMounted, onUnmounted } from 'vue'
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
