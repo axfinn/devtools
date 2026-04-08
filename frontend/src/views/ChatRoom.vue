@@ -1392,7 +1392,7 @@ const fetchAndEnqueueTTS = (text, voice, onDone, force = false) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: s, voice })
         })
-        console.log('[TTS] sent:', JSON.stringify(s), 'voice:', voice, 'status:', res.status)
+
         const data = await res.json()
         if (res.ok && data.url) { url = data.url; break }
       } catch (e) {
