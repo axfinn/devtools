@@ -382,6 +382,17 @@ const toolRoutes = [
       description: '双人小游戏，支持 AI 陪玩'
     }
   },
+  {
+    path: '/image-viewer',
+    name: 'ImageViewer',
+    component: () => import('../views/ImageViewerTool.vue'),
+    meta: {
+      title: '批量看图',
+      icon: 'Picture',
+      category: 'other',
+      description: '批量输入图片 URL，逐一对照展示，支持跨域代理'
+    }
+  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',

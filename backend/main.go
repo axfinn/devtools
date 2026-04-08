@@ -400,6 +400,9 @@ func main() {
 		api.GET("/ip", dnsHandler.GetIP)
 		api.GET("/dns", dnsHandler.Lookup)
 
+		// 图片代理（解决跨域）
+		api.GET("/proxy-image", handlers.ProxyImage)
+
 		// 聊天室 API
 		chat := api.Group("/chat")
 		{

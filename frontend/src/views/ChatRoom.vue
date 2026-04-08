@@ -1330,21 +1330,23 @@ const fetchAndEnqueueTTS = async (text, voice) => {
   if (!clean) return
   const sentences = splitSentences(clean)
   for (const s of sentences) {
-    try {
-      const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: s, voice })
-      })
-      const data = await res.json()
-      if (res.ok && data.url) {
-        // 入队后等这句播完再请求下一句
-        await new Promise(resolve => {
-          enqueueTTS(data.url, resolve)
+    let success = false
+    for (let attempt = 0; attempt < 3 && !success; attempt++) {
+      try {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 800 * attempt))
+        const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: s, voice })
         })
+        const data = await res.json()
+        if (res.ok && data.url) {
+          await new Promise(resolve => { enqueueTTS(data.url, resolve) })
+          success = true
+        }
+      } catch (e) {
+        console.warn('TTS fetch failed:', e)
       }
-    } catch (e) {
-      console.warn('TTS fetch failed:', e)
     }
   }
 }
