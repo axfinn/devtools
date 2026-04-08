@@ -61,18 +61,18 @@ type BotConfig struct {
 	MentionOnly  bool   `json:"mention_only"` // true = 只有 @nickname 才触发
 }
 
-// 角色默认 edge-tts 语音映射（zh-CN Microsoft Neural voices）
+// 角色默认 edge-tts 语音映射（仅保留可用音色）
 var botRoleVoices = map[string]string{
-	"general":      "zh-CN-XiaoxiaoNeural",  // 晓晓，温柔通用
-	"code":         "zh-CN-YunxiNeural",     // 云希，阳光男声
-	"translate":    "zh-CN-XiaohanNeural",   // 晓涵，知性女声
-	"customer":     "zh-CN-XiaoxuanNeural",  // 晓萱，轻松客服
-	"psychology":   "zh-CN-XiaoruiNeural",   // 晓睿，沉稳女声
-	"student_girl": "zh-CN-XiaoyiNeural",    // 晓伊，活泼女生
-	"college":      "zh-CN-YunjianNeural",   // 云健，运动男声
-	"girlfriend":   "zh-CN-XiaoxiaoNeural",  // 晓晓，温柔女友
-	"uncle":        "zh-CN-YunyangNeural",   // 云扬，成熟男声
-	"kid":          "zh-CN-XiaoshuangNeural",// 晓双，儿童音色
+	"general":      "zh-CN-XiaoxiaoNeural", // 晓晓，温柔通用
+	"code":         "zh-CN-YunxiNeural",    // 云希，阳光男声
+	"translate":    "zh-CN-XiaoxuanNeural", // 晓萱，轻松女声
+	"customer":     "zh-CN-XiaoxuanNeural", // 晓萱，轻松客服
+	"psychology":   "zh-CN-XiaoyiNeural",   // 晓伊，活泼女声
+	"student_girl": "zh-CN-XiaoyiNeural",   // 晓伊，活泼女生
+	"college":      "zh-CN-YunjianNeural",  // 云健，运动男声
+	"girlfriend":   "zh-CN-XiaoxiaoNeural", // 晓晓，温柔女友
+	"uncle":        "zh-CN-YunyangNeural",  // 云扬，成熟男声
+	"kid":          "zh-CN-XiaoyiNeural",   // 晓伊，活泼（替代儿童音色）
 }
 
 // BotRoleTemplate 预设角色模板

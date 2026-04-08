@@ -1385,18 +1385,18 @@ const fetchAndEnqueueTTS = (text, voice, onDone, force = false) => {
     }
   }
 
+  const FALLBACK_VOICE = 'zh-CN-XiaoxiaoNeural'
   sentences.forEach(async (s, i) => {
     let url = null
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (gen !== ttsGeneration) return  // 已被 stop，提前退出
+    const voices = voice === FALLBACK_VOICE ? [voice] : [voice, FALLBACK_VOICE]
+    for (const v of voices) {
+      if (gen !== ttsGeneration) return
       try {
-        if (attempt > 0) await new Promise(r => setTimeout(r, 800))
         const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: s, voice })
+          body: JSON.stringify({ text: s, voice: v })
         })
-
         const data = await res.json()
         if (res.ok && data.url) { url = data.url; break }
       } catch (e) {

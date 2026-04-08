@@ -38,21 +38,14 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="TTS Service", docs_url=None, redoc_url=None)
 
-# 完整中文音色列表（角色 → voice name 映射用）
+# 可用中文音色列表（经过验证可正常合成）
 ZH_VOICES = [
     {"id": "zh-CN-XiaoxiaoNeural",   "name": "晓晓", "gender": "female", "style": "温柔"},
     {"id": "zh-CN-XiaoyiNeural",     "name": "晓伊", "gender": "female", "style": "活泼"},
-    {"id": "zh-CN-XiaohanNeural",    "name": "晓涵", "gender": "female", "style": "知性"},
-    {"id": "zh-CN-XiaomouNeural",    "name": "晓墨", "gender": "female", "style": "戏剧"},
-    {"id": "zh-CN-XiaoruiNeural",    "name": "晓睿", "gender": "female", "style": "老年"},
-    {"id": "zh-CN-XiaoshuangNeural", "name": "晓双", "gender": "female", "style": "儿童"},
     {"id": "zh-CN-XiaoxuanNeural",   "name": "晓萱", "gender": "female", "style": "轻松"},
-    {"id": "zh-CN-XiaoyanNeural",    "name": "晓颜", "gender": "female", "style": ""},
-    {"id": "zh-CN-XiaozhenNeural",   "name": "晓甄", "gender": "female", "style": "激情"},
     {"id": "zh-CN-YunxiNeural",      "name": "云希", "gender": "male",   "style": "阳光"},
     {"id": "zh-CN-YunjianNeural",    "name": "云健", "gender": "male",   "style": "运动"},
     {"id": "zh-CN-YunyangNeural",    "name": "云扬", "gender": "male",   "style": "新闻"},
-    {"id": "zh-CN-YunzeNeural",      "name": "云泽", "gender": "male",   "style": "老年"},
 ]
 
 
