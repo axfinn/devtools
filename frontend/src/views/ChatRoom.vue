@@ -1369,11 +1369,15 @@ const fetchAndEnqueueTTS = async (text, voice, onDone, force = false) => {
   const clean = stripMarkdown(text)
   if (!clean) { if (onDone) onDone(); return }
   const sentences = splitSentences(clean)
+  if (!sentences.length) { if (onDone) onDone(); return }
   for (const s of sentences) {
+    // 过滤掉纯 URL、纯符号、过短内容
+    const readable = s.replace(/https?:\/\/\S+/g, '').replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').trim()
+    if (readable.length < 2) continue
     let success = false
-    for (let attempt = 0; attempt < 3 && !success; attempt++) {
+    for (let attempt = 0; attempt < 2 && !success; attempt++) {
       try {
-        if (attempt > 0) await new Promise(r => setTimeout(r, 800 * attempt))
+        if (attempt > 0) await new Promise(r => setTimeout(r, 800))
         const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
