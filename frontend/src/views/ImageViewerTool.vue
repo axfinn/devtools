@@ -7,6 +7,9 @@
         <div class="actions">
           <el-checkbox v-model="proxyFallback" size="small">跨域走代理</el-checkbox>
           <el-button size="small" @click="clearAll">清空</el-button>
+          <el-button size="small" @click="shareLink" :disabled="!urlInput.trim()">
+            <el-icon><Share /></el-icon> 分享
+          </el-button>
           <el-button size="small" type="primary" @click="loadImages">加载图片</el-button>
         </div>
       </div>
@@ -95,7 +98,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Loading, CopyDocument, Picture } from '@element-plus/icons-vue'
+import { Loading, CopyDocument, Picture, Share } from '@element-plus/icons-vue'
 
 const urlInput = ref('')
 const images = ref([])
@@ -155,6 +158,46 @@ function clearAll() {
   images.value = []
 }
 
+async function shareLink() {
+  const urls = urlInput.value.trim()
+  if (!urls) return
+  // 先压缩编码，构造完整页面链接
+  const encoded = await compressToBase64(urls)
+  const fullUrl = `${location.origin}/image-viewer?q=${encoded}`
+  // 调短链接口
+  try {
+    const res = await fetch('/api/shorturl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ original_url: fullUrl, expires_in: 30 })
+    })
+    const data = await res.json()
+    if (data.short_code) {
+      const shortUrl = `${location.origin}/s/${data.short_code}`
+      navigator.clipboard.writeText(shortUrl).then(() => ElMessage.success('短链已复制：' + shortUrl))
+    } else {
+      // 短链失败降级：直接复制长链
+      navigator.clipboard.writeText(fullUrl).then(() => ElMessage.warning('短链生成失败，已复制完整链接'))
+    }
+  } catch {
+    navigator.clipboard.writeText(fullUrl).then(() => ElMessage.warning('短链生成失败，已复制完整链接'))
+  }
+}
+
+async function compressToBase64(str) {
+  const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))
+  const buf = await new Response(stream).arrayBuffer()
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function decompressFromBase64(b64) {
+  const bin = atob(b64.replace(/-/g, '+').replace(/_/g, '/'))
+  const buf = Uint8Array.from(bin, c => c.charCodeAt(0))
+  const stream = new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))
+  return new Response(stream).text()
+}
+
 function copyUrl(url) {
   navigator.clipboard.writeText(url).then(() => ElMessage.success('已复制'))
 }
@@ -184,7 +227,19 @@ function onKeydown(e) {
   if (e.key === 'Escape') closeLightbox()
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(async () => {
+  window.addEventListener('keydown', onKeydown)
+  // 从分享链接恢复
+  const q = new URLSearchParams(location.search).get('q')
+  if (q) {
+    try {
+      urlInput.value = await decompressFromBase64(q)
+      loadImages()
+    } catch {
+      ElMessage.error('分享链接解析失败')
+    }
+  }
+})
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
