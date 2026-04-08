@@ -558,6 +558,7 @@ const ttsEnabled = ref(localStorage.getItem('chat_tts_enabled') !== 'false')
 let ttsAudio = null
 const ttsQueue = []
 let ttsPlaying = false
+let ttsGeneration = 0  // 每次 stop 时递增，用于取消飞行中的 fetch
 const playingMsgId = ref(null)
 
 const messagesContainer = ref(null)
@@ -1361,15 +1362,13 @@ const fetchAndEnqueueTTS = (text, voice, onDone, force = false) => {
   })
   if (!sentences.length) { onDone?.(); return }
 
-  let completed = 0
   const total = sentences.length
-
-  // 并发 fetch，fetch 完立刻按顺序入队
-  // 用 pendingUrls 数组保序：每个位置先占 null，fetch 完填入 url，然后从头连续 flush
-  const pendingUrls = new Array(total).fill(undefined) // undefined=未完成, null=失败, string=url
-  let flushed = 0 // 已经入队到第几个
+  const gen = ttsGeneration  // 捕获当前 generation，stop 后 gen 不匹配则丢弃
+  const pendingUrls = new Array(total).fill(undefined)
+  let flushed = 0
 
   const tryFlush = () => {
+    if (gen !== ttsGeneration) return  // 已被 stop，丢弃
     while (flushed < total && pendingUrls[flushed] !== undefined) {
       const url = pendingUrls[flushed]
       flushed++
@@ -1377,7 +1376,6 @@ const fetchAndEnqueueTTS = (text, voice, onDone, force = false) => {
         const isLast = flushed === total
         enqueueTTS(url, isLast ? () => { onDone?.() } : null, force)
       } else if (flushed === total) {
-        // 最后一句 fetch 失败
         onDone?.()
       }
     }
@@ -1386,6 +1384,7 @@ const fetchAndEnqueueTTS = (text, voice, onDone, force = false) => {
   sentences.forEach(async (s, i) => {
     let url = null
     for (let attempt = 0; attempt < 2; attempt++) {
+      if (gen !== ttsGeneration) return  // 已被 stop，提前退出
       try {
         if (attempt > 0) await new Promise(r => setTimeout(r, 800))
         const res = await fetch(`${API_BASE}/api/edge-tts/tts`, {
@@ -1393,13 +1392,14 @@ const fetchAndEnqueueTTS = (text, voice, onDone, force = false) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: s, voice })
         })
+        console.log('[TTS] sent:', JSON.stringify(s), 'voice:', voice, 'status:', res.status)
         const data = await res.json()
         if (res.ok && data.url) { url = data.url; break }
       } catch (e) {
         console.warn('TTS fetch failed:', e)
       }
     }
-    pendingUrls[i] = url  // null 表示失败
+    pendingUrls[i] = url
     tryFlush()
   })
 }
@@ -1429,6 +1429,7 @@ const playNextTTS = () => {
 }
 
 const stopTTSAudio = () => {
+  ttsGeneration++  // 使所有飞行中的 fetch 失效
   ttsQueue.length = 0
   ttsPlaying = false
   playingMsgId.value = null

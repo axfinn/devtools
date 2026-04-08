@@ -363,7 +363,7 @@ const toolRoutes = [
   {
     path: '/edge-tts',
     name: 'EdgeTTS',
-    component: () => import('../views/EdgeT TSTool.vue'),
+    component: () => import('../views/EdgeTTSTool.vue'),
     meta: {
       title: 'Edge TTS',
       icon: 'Headset',
