@@ -127,19 +127,61 @@
             </el-dialog>
           </div>
 
-          <!-- 非视频文件：下载页 -->
-          <div v-else class="download-area">
-            <el-icon style="font-size:72px;color:#409eff"><Document /></el-icon>
-            <h2>{{ info.name }}</h2>
-            <div class="file-meta">
-              <span>大小：{{ formatSize(info.file_size) }}</span>
-              <span>类型：{{ info.mime_type }}</span>
-              <el-tag :type="remainingTag" size="small">剩余 {{ info.remaining_views }} 次</el-tag>
+          <!-- 非视频文件：预览/下载页 -->
+          <div v-else class="preview-area">
+            <!-- 文件头部信息 -->
+            <div class="preview-header">
+              <div class="preview-title-row">
+                <el-icon class="preview-file-icon" :style="{ color: fileIconColor }">
+                  <component :is="fileIconComponent" />
+                </el-icon>
+                <h2 class="preview-title">{{ info.name }}</h2>
+              </div>
+              <div class="preview-meta">
+                <el-tag type="info" size="small">{{ formatSize(info.file_size) }}</el-tag>
+                <el-tag type="info" size="small">{{ info.mime_type }}</el-tag>
+                <el-tag :type="remainingTag" size="small">剩余 {{ info.remaining_views }} 次</el-tag>
+              </div>
+              <div class="preview-actions">
+                <el-button type="primary" :href="downloadUrl" tag="a" download>
+                  <el-icon><Download /></el-icon>
+                  下载文件
+                </el-button>
+              </div>
             </div>
-            <el-button type="primary" size="large" :href="downloadUrl" tag="a">
-              <el-icon><Download /></el-icon>
-              下载文件
-            </el-button>
+
+            <!-- 图片预览 -->
+            <div v-if="info.is_image" class="preview-image-wrap">
+              <img :src="downloadUrl" :alt="info.name" class="preview-image" @error="previewError = true" />
+              <p v-if="previewError" class="preview-error">图片加载失败，请直接下载</p>
+            </div>
+
+            <!-- 音频播放器 -->
+            <div v-else-if="info.is_audio" class="preview-audio-wrap">
+              <audio :src="downloadUrl" controls class="preview-audio" @error="previewError = true"></audio>
+              <p v-if="previewError" class="preview-error">音频加载失败，请直接下载</p>
+            </div>
+
+            <!-- PDF 预览 -->
+            <div v-else-if="info.is_pdf" class="preview-pdf-wrap">
+              <iframe :src="downloadUrl" class="preview-pdf" @error="previewError = true"></iframe>
+              <p v-if="previewError" class="preview-error">PDF 加载失败，请直接下载</p>
+            </div>
+
+            <!-- 文本/代码预览 -->
+            <div v-else-if="info.is_text" class="preview-text-wrap">
+              <div v-if="textLoading" class="preview-text-loading">
+                <el-icon class="is-loading"><Loading /></el-icon> 加载中...
+              </div>
+              <pre v-else-if="textContent !== null" class="preview-text-content"><code>{{ textContent }}</code></pre>
+              <p v-if="previewError" class="preview-error">文本加载失败，请直接下载</p>
+            </div>
+
+            <!-- 其他文件：仅下载 -->
+            <div v-else class="preview-generic">
+              <el-icon style="font-size:80px;color:#c0c4cc"><Document /></el-icon>
+              <p style="color:#909399;margin-top:12px">该文件类型暂不支持预览</p>
+            </div>
           </div>
         </div>
 
@@ -254,6 +296,26 @@ const inputPassword = ref('')
 const passwordError = ref('')
 const passwordChecking = ref(false)
 
+// ---- 文件预览 ----
+const previewError = ref(false)
+const textContent = ref(null)
+const textLoading = ref(false)
+
+const fileIconComponent = computed(() => {
+  if (info.value.is_image) return 'Picture'
+  if (info.value.is_audio) return 'Headset'
+  if (info.value.is_pdf) return 'Document'
+  if (info.value.is_text) return 'Document'
+  return 'Document'
+})
+const fileIconColor = computed(() => {
+  if (info.value.is_image) return '#67c23a'
+  if (info.value.is_audio) return '#e6a23c'
+  if (info.value.is_pdf) return '#f56c6c'
+  if (info.value.is_text) return '#409eff'
+  return '#909399'
+})
+
 // ---- Watch Party ----
 const watchConnected = ref(false)
 const joinDialogVisible = ref(false)
@@ -267,7 +329,9 @@ const viewerCount = ref(0)
 const isHost = ref(false)
 const myNickname = ref('')
 let ws = null
-let syncLock = false // 防止收到 sync 时触发重复 sync
+let syncLockCount = 0 // 防止收到 sync 时触发重复 sync（计数器，比 boolean 更可靠）
+let watchReconnectTimer = null
+let watchManualClose = false // 用户主动断开时不重连
 
 // ---- Voice Chat (WebRTC) ----
 const voiceActive = ref(false)
@@ -361,6 +425,8 @@ async function loadInfo() {
     } else if (data.is_video) {
       await initPlayer()
       if (data.watch_enabled) connectWatch('匿名用户', '')
+    } else if (data.is_text) {
+      loadTextPreview()
     }
   } catch {
     error.value = '加载失败，请检查网络'
@@ -397,11 +463,32 @@ async function confirmPassword() {
     if (info.value.is_video) {
       await initPlayer()
       if (info.value.watch_enabled) connectWatch('匿名用户', '')
+    } else if (info.value.is_text) {
+      loadTextPreview()
     }
   } catch {
     passwordError.value = '验证失败，请重试'
   } finally {
     passwordChecking.value = false
+  }
+}
+
+// ---- 文本预览 ----
+async function loadTextPreview() {
+  if (info.value.file_size > 512 * 1024) {
+    // 超过 512KB 不预览，只提供下载
+    textContent.value = null
+    return
+  }
+  textLoading.value = true
+  try {
+    const res = await fetch(downloadUrl.value)
+    if (!res.ok) { previewError.value = true; return }
+    textContent.value = await res.text()
+  } catch {
+    previewError.value = true
+  } finally {
+    textLoading.value = false
   }
 }
 
@@ -562,15 +649,15 @@ function onVideoError() {
 
 // ---- 房主同步事件 ----
 function onHostPlay() {
-  if (!isHost.value || syncLock || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (!isHost.value || syncLockCount > 0 || !ws || ws.readyState !== WebSocket.OPEN) return
   wsSend({ type: 'sync', action: 'play', time: art?.currentTime ?? 0 })
 }
 function onHostPause() {
-  if (!isHost.value || syncLock || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (!isHost.value || syncLockCount > 0 || !ws || ws.readyState !== WebSocket.OPEN) return
   wsSend({ type: 'sync', action: 'pause', time: art?.currentTime ?? 0 })
 }
 function onHostSeek() {
-  if (!isHost.value || syncLock || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (!isHost.value || syncLockCount > 0 || !ws || ws.readyState !== WebSocket.OPEN) return
   wsSend({ type: 'sync', action: 'seek', time: art?.currentTime ?? 0 })
 }
 
@@ -594,6 +681,7 @@ function confirmJoin() {
 function connectWatch(nickname, adminPwd) {
   myNickname.value = nickname
   isHost.value = !!adminPwd
+  watchManualClose = false
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   let url = `${proto}://${location.host}/api/nfsshare/${id}/watch/ws?nickname=${encodeURIComponent(nickname)}`
   if (adminPwd) url += `&admin_password=${encodeURIComponent(adminPwd)}`
@@ -601,6 +689,7 @@ function connectWatch(nickname, adminPwd) {
   ws = new WebSocket(url)
   ws.onopen = () => {
     watchConnected.value = true
+    if (watchReconnectTimer) { clearTimeout(watchReconnectTimer); watchReconnectTimer = null }
     addSystemMsg('已加入观看室')
   }
   ws.onmessage = (e) => {
@@ -608,14 +697,21 @@ function connectWatch(nickname, adminPwd) {
   }
   ws.onclose = () => {
     watchConnected.value = false
-    addSystemMsg('已断开连接')
+    if (!watchManualClose) {
+      addSystemMsg('连接断开，3秒后重连...')
+      watchReconnectTimer = setTimeout(() => connectWatch(nickname, adminPwd), 3000)
+    } else {
+      addSystemMsg('已断开连接')
+    }
   }
   ws.onerror = () => {
-    addSystemMsg('连接出错')
+    // onerror 后会触发 onclose，由 onclose 处理重连
   }
 }
 
 function disconnectWatch() {
+  watchManualClose = true
+  if (watchReconnectTimer) { clearTimeout(watchReconnectTimer); watchReconnectTimer = null }
   if (ws) { ws.close(); ws = null }
   watchConnected.value = false
 }
@@ -645,13 +741,13 @@ function handleWsMsg(msg) {
       break
     case 'sync':
       if (!art || isHost.value) break
-      syncLock = true
+      syncLockCount++
       if (msg.action === 'seek' || Math.abs(art.currentTime - msg.time) > 2) {
         art.currentTime = msg.time
       }
       if (msg.action === 'play') art.play()
       else if (msg.action === 'pause') art.pause()
-      setTimeout(() => { syncLock = false }, 500)
+      setTimeout(() => { syncLockCount = Math.max(0, syncLockCount - 1) }, 500)
       break
 
     // ---- WebRTC 语音信令 ----
@@ -880,6 +976,8 @@ onUnmounted(() => {
   if (art) { art.destroy(); art = null }
   if (hls) { hls.destroy(); hls = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  watchManualClose = true
+  if (watchReconnectTimer) { clearTimeout(watchReconnectTimer); watchReconnectTimer = null }
   if (ws) { ws.close(); ws = null }
   if (voiceActive.value) stopVoice()
 })
@@ -1124,6 +1222,141 @@ onUnmounted(() => {
   justify-content: center;
   color: #999;
   font-size: 14px;
+}
+
+/* ===== 文件预览区 ===== */
+.preview-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+}
+
+.preview-header {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preview-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.preview-file-icon {
+  font-size: 32px;
+  flex-shrink: 0;
+}
+
+.preview-title {
+  margin: 0;
+  font-size: 18px;
+  color: #e0e0e0;
+  word-break: break-all;
+}
+
+.preview-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.preview-image-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #111;
+  overflow: auto;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+}
+
+.preview-audio-wrap {
+  padding: 40px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.preview-audio {
+  width: 100%;
+  max-width: 600px;
+}
+
+.preview-pdf-wrap {
+  flex: 1;
+  min-height: 600px;
+}
+
+.preview-pdf {
+  width: 100%;
+  height: 100%;
+  min-height: 600px;
+  border: none;
+  background: #fff;
+}
+
+.preview-text-wrap {
+  flex: 1;
+  overflow: auto;
+  padding: 0;
+}
+
+.preview-text-loading {
+  padding: 40px;
+  text-align: center;
+  color: #909399;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.preview-text-content {
+  margin: 0;
+  padding: 20px 24px;
+  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #d4d4d4;
+  background: #1e1e1e;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-height: 200px;
+}
+
+.preview-generic {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 16px;
+}
+
+.preview-error {
+  color: #f56c6c;
+  font-size: 13px;
+  margin-top: 8px;
 }
 
 /* ===== 手机端适配 ===== */

@@ -820,6 +820,54 @@ func isVideoFile(mimeType, filePath string) bool {
 	return false
 }
 
+func isAudioFile(mimeType, filePath string) bool {
+	if strings.HasPrefix(mimeType, "audio/") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".mp3", ".flac", ".wav", ".aac", ".ogg", ".opus", ".m4a", ".wma", ".ape":
+		return true
+	}
+	return false
+}
+
+func isShareImageFile(mimeType, filePath string) bool {
+	if strings.HasPrefix(mimeType, "image/") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".ico", ".avif", ".tiff":
+		return true
+	}
+	return false
+}
+
+func isShareTextFile(mimeType, filePath string) bool {
+	if strings.HasPrefix(mimeType, "text/") {
+		return true
+	}
+	if mimeType == "application/json" || mimeType == "application/xml" ||
+		mimeType == "application/javascript" || mimeType == "application/x-sh" {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".txt", ".md", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+		".go", ".py", ".js", ".ts", ".jsx", ".tsx", ".vue", ".html", ".css", ".scss",
+		".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd",
+		".c", ".cpp", ".h", ".hpp", ".java", ".kt", ".rs", ".rb", ".php", ".swift",
+		".sql", ".graphql", ".proto", ".tf", ".hcl", ".dockerfile", ".env", ".log":
+		return true
+	}
+	return false
+}
+
+func isPDFFile(mimeType, filePath string) bool {
+	return mimeType == "application/pdf" || strings.ToLower(filepath.Ext(filePath)) == ".pdf"
+}
+
 // nativeVideoMime 浏览器可直接播放的 MIME 类型（无需 HLS 转码）
 var nativeVideoMime = map[string]bool{
 	"video/mp4":       true,
@@ -871,6 +919,10 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 		"exhausted":              share.MaxViews > 0 && share.Views >= share.MaxViews,
 		"is_video":               isVideo,
 		"is_native_video":        isNativeVideo(share.MimeType, share.FilePath),
+		"is_audio":               isAudioFile(share.MimeType, share.FilePath),
+		"is_image":               isShareImageFile(share.MimeType, share.FilePath),
+		"is_text":                isShareTextFile(share.MimeType, share.FilePath),
+		"is_pdf":                 isPDFFile(share.MimeType, share.FilePath),
 		"disable_video_download": h.cfg.DisableVideoDownload && isVideo,
 		"has_password":           share.Password != "",
 		"watch_enabled":          share.WatchEnabled,
@@ -1460,9 +1512,12 @@ type watchClient struct {
 
 // watchRoom 一个视频分享对应的观看室
 type watchRoom struct {
-	mu      sync.RWMutex
-	clients map[*watchClient]bool
-	byPeer  map[string]*watchClient // peerID → client
+	mu         sync.RWMutex
+	clients    map[*watchClient]bool
+	byPeer     map[string]*watchClient // peerID → client
+	lastAction string                  // 最近一次 sync action: "play" | "pause"
+	lastTime   float64                 // 最近一次 sync 时间（秒）
+	lastSyncAt time.Time               // 最近一次 sync 时刻（用于估算当前进度）
 }
 
 func randomPeerID() string {
@@ -1501,14 +1556,13 @@ func (r *watchRoom) sendToPeer(peerID string, msg watchBroadcast) {
 	data, _ := json.Marshal(msg)
 	r.mu.RLock()
 	c, ok := r.byPeer[peerID]
+	if ok {
+		select {
+		case c.send <- data:
+		default:
+		}
+	}
 	r.mu.RUnlock()
-	if !ok {
-		return
-	}
-	select {
-	case c.send <- data:
-	default:
-	}
 }
 
 // voicePeers 返回当前已加入语音的成员（排除 exclude）
@@ -1601,6 +1655,29 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		PeerID:   client.peerID,
 	})
 
+	// 将当前播放状态发给新加入者（如果有）
+	room.mu.RLock()
+	lastAction := room.lastAction
+	lastTime := room.lastTime
+	lastSyncAt := room.lastSyncAt
+	room.mu.RUnlock()
+	if lastAction != "" {
+		// 估算当前时间：如果是 play，加上已过去的秒数
+		estimatedTime := lastTime
+		if lastAction == "play" && !lastSyncAt.IsZero() {
+			estimatedTime += time.Since(lastSyncAt).Seconds()
+		}
+		data, _ := json.Marshal(watchBroadcast{
+			Type:   "sync",
+			Action: lastAction,
+			Time:   estimatedTime,
+		})
+		select {
+		case client.send <- data:
+		default:
+		}
+	}
+
 	// 写 goroutine
 	go func() {
 		defer conn.Close()
@@ -1611,8 +1688,25 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		}
 	}()
 
+	// ping-pong 心跳：每 30s 发一次 ping，60s 内没有任何消息则断开
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+	pingTicker := time.NewTicker(30 * time.Second)
+	go func() {
+		defer pingTicker.Stop()
+		for range pingTicker.C {
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+				return
+			}
+		}
+	}()
+
 	// 读循环（主 goroutine）
 	defer func() {
+		pingTicker.Stop()
 		room.remove(client)
 		close(client.send)
 		// 语音成员断开：通知其他人关闭 RTCPeerConnection
@@ -1640,6 +1734,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		if err != nil {
 			break
 		}
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		var msg watchMsg
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			continue
@@ -1671,6 +1766,12 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 			if !isHost {
 				continue
 			}
+			// 记录最新播放状态，供新加入者使用
+			room.mu.Lock()
+			room.lastAction = msg.Action
+			room.lastTime = msg.Time
+			room.lastSyncAt = time.Now()
+			room.mu.Unlock()
 			room.broadcast(watchBroadcast{
 				Type:   "sync",
 				Action: msg.Action,
