@@ -814,46 +814,47 @@ func dialSocks5(proxyAddr, targetHost string, node *ProxyNode) (net.Conn, error)
 // Tunnel 处理 HTTP CONNECT 方法，让 DevTools 自身端口充当 HTTP 代理
 // 浏览器/系统代理配置：http://yourserver:PORT
 // 密码通过 Proxy-Authorization: Basic base64(user:password) 传递
-func (h *ProxyHandler) Tunnel(c *gin.Context) {
+func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 	// 验证 Proxy-Authorization
-	authHeader := c.GetHeader("Proxy-Authorization")
-	if !h.checkProxyAuth(authHeader) {
-		c.Header("Proxy-Authenticate", `Basic realm="DevTools Proxy"`)
-		c.Status(407)
+	if !h.checkProxyAuth(r.Header.Get("Proxy-Authorization")) {
+		w.Header().Set("Proxy-Authenticate", `Basic realm="DevTools Proxy"`)
+		w.WriteHeader(407)
 		return
 	}
 
-	// 劫持底层 TCP 连接
-	hijacker, ok := c.Writer.(http.Hijacker)
-	if !ok {
-		c.Status(500)
-		return
-	}
-	clientConn, brw, err := hijacker.Hijack()
-	if err != nil {
-		return
-	}
-
-	host := c.Request.Host
+	host := r.Host
 	if host == "" {
-		host = c.Request.URL.Host
+		host = r.URL.Host
 	}
 
 	globalSession.mu.RLock()
 	node := globalSession.active
 	globalSession.mu.RUnlock()
 
-	var upstream net.Conn
+	var (
+		upstream net.Conn
+		err      error
+	)
 	if node != nil {
 		upstream, err = dialUpstream(node, host)
 	} else {
-		// 无代理节点时直连
 		upstream, err = net.DialTimeout("tcp", host, 10*time.Second)
 	}
 	if err != nil {
-		brw.WriteString("HTTP/1.1 502 Bad Gateway\r\n\r\n")
-		brw.Flush()
-		clientConn.Close()
+		http.Error(w, "Bad Gateway", 502)
+		return
+	}
+
+	// 劫持底层 TCP 连接
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		upstream.Close()
+		http.Error(w, "Hijacking not supported", 500)
+		return
+	}
+	clientConn, brw, err := hijacker.Hijack()
+	if err != nil {
+		upstream.Close()
 		return
 	}
 
