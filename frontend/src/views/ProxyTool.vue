@@ -88,6 +88,11 @@
             <el-button size="small" type="primary" @click="downloadClient('linux','amd64')">Linux</el-button>
             <el-button size="small" type="primary" @click="downloadClient('windows','amd64')">Windows</el-button>
           </div>
+          <div class="proxy-hint" style="margin-top:6px">
+            下载后将二进制和 config.txt 放同一目录。
+            Mac/Linux 需先 <code>chmod +x</code> 再双击，或终端运行。
+            Windows 直接双击 .exe。
+          </div>
           <div class="proxy-addr-row" style="margin-top:8px">
             <el-input :value="goClientCmd" readonly size="small" class="proxy-addr-input">
               <template #append>
@@ -492,8 +497,18 @@ const goClientCmd = computed(() => {
 
 function downloadClient(os, arch) {
   const pass = adminPassword()
+  // 先下载二进制
   const url = `/api/proxy/client/download?os=${os}&arch=${arch}&admin_password=${encodeURIComponent(pass)}`
   window.open(url, '_blank')
+  // 再下载 config.txt，让用户双击直接用
+  const host = window.location.host
+  const proto = window.location.protocol === 'https:' ? 'https' : 'http'
+  const cfg = `server=${proto}://${host}\npassword=${pass}\nlisten=127.0.0.1:1080\n`
+  const blob = new Blob([cfg], { type: 'text/plain' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = 'config.txt'
+  a.click()
 }
 </script>
 

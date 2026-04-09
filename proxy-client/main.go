@@ -1,42 +1,45 @@
 package main
 
 import (
-	"flag"
+	"bufio"
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
 func main() {
-	server := flag.String("server", "", "服务器地址，如 yourserver.com 或 wss://yourserver.com")
-	password := flag.String("password", "", "管理员密码")
-	listen := flag.String("listen", "127.0.0.1:1080", "本地 SOCKS5 监听地址")
-	flag.Parse()
+	server, password, listen := loadConfig()
 
-	if *server == "" || *password == "" {
-		fmt.Println("用法: proxy-client -server yourserver.com -password xxx [-listen 127.0.0.1:1080]")
-		fmt.Println("")
-		fmt.Println("参数:")
-		fmt.Println("  -server    服务器地址（如 yourserver.com 或 wss://yourserver.com）")
-		fmt.Println("  -password  管理员密码")
-		fmt.Println("  -listen    本地 SOCKS5 监听地址（默认 127.0.0.1:1080）")
-		fmt.Println("")
-		fmt.Println("启动后浏览器配置 SOCKS5 代理: 127.0.0.1:1080")
-		flag.Usage()
-		return
+	if server == "" || password == "" {
+		fmt.Println("=== Proxy Client ===")
+		fmt.Println("未找到配置，请输入：")
+		if server == "" {
+			fmt.Print("服务器地址（如 yourserver.com）: ")
+			fmt.Scanln(&server)
+		}
+		if password == "" {
+			fmt.Print("密码: ")
+			fmt.Scanln(&password)
+		}
+		// 保存到 config.txt 方便下次直接双击
+		saveConfig(server, password, listen)
+		fmt.Println("已保存到 config.txt，下次双击直接启动")
 	}
 
-	// 规范化服务器地址
-	wsURL := normalizeServerURL(*server)
-	log.Printf("服务器: %s", wsURL)
-	log.Printf("本地监听: %s", *listen)
+	wsURL := normalizeServerURL(server)
+	fmt.Printf("\n服务器: %s\n", wsURL)
+	fmt.Printf("本地 SOCKS5: %s\n", listen)
+	fmt.Println("\n浏览器/系统代理配置: SOCKS5 127.0.0.1:1080")
+	fmt.Println("按 Ctrl+C 停止\n")
 
-	ln, err := net.Listen("tcp", *listen)
+	ln, err := net.Listen("tcp", listen)
 	if err != nil {
-		log.Fatalf("监听失败: %v", err)
+		log.Fatalf("监听失败: %v\n请检查端口 1080 是否被占用", err)
 	}
-	log.Printf("SOCKS5 代理已启动，浏览器配置: SOCKS5 %s", *listen)
+	log.Printf("SOCKS5 代理已启动")
 
 	for {
 		conn, err := ln.Accept()
@@ -44,20 +47,65 @@ func main() {
 			log.Printf("accept error: %v", err)
 			continue
 		}
-		go handleSocks5(conn, wsURL, *password)
+		go handleSocks5(conn, wsURL, password)
 	}
+}
+
+// loadConfig 从同目录 config.txt 读取配置
+func loadConfig() (server, password, listen string) {
+	listen = "127.0.0.1:1080"
+
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cfgPath := filepath.Join(filepath.Dir(exe), "config.txt")
+	f, err := os.Open(cfgPath)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(k) {
+		case "server":
+			server = strings.TrimSpace(v)
+		case "password":
+			password = strings.TrimSpace(v)
+		case "listen":
+			listen = strings.TrimSpace(v)
+		}
+	}
+	return
+}
+
+func saveConfig(server, password, listen string) {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	cfgPath := filepath.Join(filepath.Dir(exe), "config.txt")
+	content := fmt.Sprintf("server=%s\npassword=%s\nlisten=%s\n", server, password, listen)
+	os.WriteFile(cfgPath, []byte(content), 0600)
 }
 
 // normalizeServerURL 把各种格式的服务器地址统一成 ws(s)://host/api/proxy/ws-tunnel
 func normalizeServerURL(server string) string {
-	// 已经是完整 URL
 	if strings.HasPrefix(server, "ws://") || strings.HasPrefix(server, "wss://") {
 		if !strings.Contains(server, "/api/proxy/ws-tunnel") {
 			return strings.TrimRight(server, "/") + "/api/proxy/ws-tunnel"
 		}
 		return server
 	}
-	// http/https 协议
 	if strings.HasPrefix(server, "https://") {
 		host := strings.TrimPrefix(server, "https://")
 		return "wss://" + strings.TrimRight(host, "/") + "/api/proxy/ws-tunnel"
@@ -66,8 +114,6 @@ func normalizeServerURL(server string) string {
 		host := strings.TrimPrefix(server, "http://")
 		return "ws://" + strings.TrimRight(host, "/") + "/api/proxy/ws-tunnel"
 	}
-	// 裸域名或 IP，根据是否有端口判断协议
-	// 有非 443/80 端口或 localhost/IP 用 ws，否则用 wss
 	host := strings.TrimRight(server, "/")
 	if strings.Contains(host, ":") {
 		_, port, _ := net.SplitHostPort(host)

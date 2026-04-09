@@ -63,7 +63,11 @@ func (h *NPSHandler) npsPost(path string, params url.Values) (map[string]interfa
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("NPS 响应解析失败: %s", string(body))
+		preview := string(body)
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+		return nil, fmt.Errorf("NPS 响应非 JSON（可能 auth_key 错误或 URL 不对）: %s", preview)
 	}
 	return result, nil
 }
