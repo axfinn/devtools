@@ -1647,6 +1647,8 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	roomVal, _ := h.watchRooms.LoadOrStore(id, newWatchRoom())
 	room := roomVal.(*watchRoom)
 
+	isPending := nickname == "__pending__"
+
 	client := &watchClient{
 		conn:     conn,
 		nickname: nickname,
@@ -1667,14 +1669,16 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		}, client) // 不发给自己
 	}
 
-	// 广播：有人加入（携带 peerID 供 WebRTC 信令使用）
-	room.broadcastAll(watchBroadcast{
-		Type:     "joined",
-		Nickname: nickname,
-		IsHost:   isHost,
-		Count:    room.count(),
-		PeerID:   client.peerID,
-	})
+	// pending 连接不广播 joined，不影响人数
+	if !isPending {
+		room.broadcastAll(watchBroadcast{
+			Type:     "joined",
+			Nickname: nickname,
+			IsHost:   isHost,
+			Count:    room.count(),
+			PeerID:   client.peerID,
+		})
+	}
 
 	// 将当前播放状态发给新加入者（如果有）
 	room.mu.RLock()
@@ -1771,12 +1775,14 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 				PeerID: client.peerID,
 			})
 		}
-		// 广播：有人离开
-		room.broadcastAll(watchBroadcast{
-			Type:     "left",
-			Nickname: nickname,
-			Count:    room.count(),
-		})
+		// 广播：有人离开（pending 连接不广播）
+		if !isPending {
+			room.broadcastAll(watchBroadcast{
+				Type:     "left",
+				Nickname: nickname,
+				Count:    room.count(),
+			})
+		}
 		// 房间空了就清理
 		if room.count() == 0 {
 			h.watchRooms.Delete(id)

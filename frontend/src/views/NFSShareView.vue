@@ -72,7 +72,7 @@
             </div>
 
             <div class="video-actions">
-              <!-- 一起看：已连接时只显示退出，未连接时显示加入（watch_enabled 时强制） -->
+              <!-- 一起看：已连接时只显示退出，未连接时显示加入和管理员登录 -->
               <el-button
                 v-if="watchConnected"
                 type="danger"
@@ -82,26 +82,43 @@
                 <el-icon><VideoPause /></el-icon>
                 退出一起看
               </el-button>
-              <el-button
-                v-else-if="!info.watch_enabled"
-                type="primary"
-                size="small"
-                @click="toggleWatch"
-              >
-                <el-icon><VideoPlay /></el-icon>
-                一起看
-              </el-button>
-
-              <!-- 语音控制：房主显示开关按钮；观众在语音开启时显示加入/离开 -->
-              <template v-if="watchConnected">
+              <template v-else>
                 <el-button
-                  v-if="isHost"
-                  :type="voiceChannelEnabled ? 'warning' : 'success'"
+                  v-if="!info.watch_enabled"
+                  type="primary"
                   size="small"
-                  @click="toggleVoiceChannel"
+                  @click="toggleWatch"
                 >
-                  {{ voiceChannelEnabled ? '🔇 关闭语音' : '🎤 开启语音' }}
+                  <el-icon><VideoPlay /></el-icon>
+                  一起看
                 </el-button>
+                <el-button
+                  size="small"
+                  @click="openAdminLogin"
+                >
+                  管理员登录
+                </el-button>
+              </template>
+
+              <!-- 语音控制：房主显示开关+静音；观众在语音开启时显示加入/离开 -->
+              <template v-if="watchConnected">
+                <template v-if="isHost">
+                  <el-button
+                    :type="voiceChannelEnabled ? 'warning' : 'success'"
+                    size="small"
+                    @click="toggleVoiceChannel"
+                  >
+                    {{ voiceChannelEnabled ? '🔇 关闭语音' : '🎤 开启语音' }}
+                  </el-button>
+                  <el-button
+                    v-if="voiceChannelEnabled"
+                    :type="voiceMuted ? 'warning' : ''"
+                    size="small"
+                    @click="toggleMute"
+                  >
+                    {{ voiceMuted ? '🔇 已静音' : '🔊 静音' }}
+                  </el-button>
+                </template>
                 <template v-else-if="voiceChannelEnabled">
                   <el-button
                     :type="voiceActive ? 'danger' : 'success'"
@@ -150,20 +167,19 @@
               </el-button>
             </div>
 
-            <!-- 加入一起看 - 昵称输入弹窗（强制，不可跳过） -->
-            <el-dialog v-model="joinDialogVisible" title="加入一起看" width="360px" :show-close="false" :close-on-click-modal="false">
-              <p style="color:#999;font-size:13px;margin:0 0 16px">该分享开启了一起看模式，需要加入才能观看</p>
+            <!-- 加入一起看 - 管理员登录弹窗 -->
+            <el-dialog v-model="joinDialogVisible" title="管理员登录" width="360px" :show-close="true" :close-on-click-modal="true">
               <el-form @submit.prevent="confirmJoin">
                 <el-form-item label="昵称">
                   <el-input v-model="joinNickname" placeholder="输入你的昵称" maxlength="20" autofocus />
                 </el-form-item>
                 <el-form-item label="管理密码">
-                  <el-input v-model="joinAdminPwd" type="password" placeholder="填入则成为房主（可选）" show-password />
+                  <el-input v-model="joinAdminPwd" type="password" placeholder="管理密码" show-password />
                 </el-form-item>
               </el-form>
               <template #footer>
-                <el-button @click="leaveShare">离开</el-button>
-                <el-button type="primary" @click="confirmJoin">加入观看</el-button>
+                <el-button @click="joinDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="confirmJoin">登录</el-button>
               </template>
             </el-dialog>
           </div>
@@ -752,10 +768,14 @@ function toggleWatch() {
   if (watchConnected.value) {
     disconnectWatch()
   } else {
-    joinAdminPwd.value = ''
-    joinNickname.value = ''
-    joinDialogVisible.value = true
+    connectWatch('观众', '')
   }
+}
+
+function openAdminLogin() {
+  joinAdminPwd.value = ''
+  joinNickname.value = ''
+  joinDialogVisible.value = true
 }
 
 // 建立匿名监听连接，仅用于接收 force_watch 信号，不算正式加入
@@ -800,13 +820,14 @@ function connectPendingWatch() {
   pendingWs.onerror = () => {}
 }
 
-function leaveShare() {
-  // 用户拒绝加入一起看，直接跳走
-  window.history.back()
-}
-
-function toggleVoiceChannel() {
+async function toggleVoiceChannel() {
   // 房主开关语音频道
+  if (!voiceChannelEnabled.value && !voiceActive.value) {
+    // 开启语音频道时，房主自动加入语音
+    await startVoice()
+  } else if (voiceChannelEnabled.value && voiceActive.value) {
+    stopVoice()
+  }
   wsSend({ type: 'voice_toggle' })
 }
 
