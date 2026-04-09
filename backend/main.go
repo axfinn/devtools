@@ -876,9 +876,6 @@ func main() {
 			proxyGroup.GET("/resource", proxyHandler.Resource)
 			proxyGroup.GET("/extension", proxyHandler.DownloadExtension)
 		}
-		// HTTP CONNECT 隧道（让 DevTools 端口直接充当 HTTP 代理）
-		// 浏览器代理配置：http://yourserver:PORT，密码用 Proxy-Authorization
-		r.Handle("CONNECT", "/*path", proxyHandler.Tunnel)
 		api.POST("/bg/cache", handlers.CacheBackgroundImages) // 缓存图片
 		api.POST("/bg/replace", handlers.ReplaceRandomImages) // 随机替换图片
 		api.GET("/bg/random", handlers.GetRandomBackground)   // 随机图片
@@ -911,7 +908,18 @@ func main() {
 	})
 
 	log.Printf("服务器启动在端口 %s", port)
-	if err := r.Run(":" + port); err != nil {
+	srv := &http.Server{
+		Addr: ":" + port,
+		// 在 Handler 层拦截 CONNECT 方法，其余交给 Gin
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.Method == http.MethodConnect {
+				proxyHandler.Tunnel(w, req)
+				return
+			}
+			r.ServeHTTP(w, req)
+		}),
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("服务器启动失败: %v", err)
 	}
 }
