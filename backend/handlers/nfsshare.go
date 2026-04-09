@@ -849,6 +849,7 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 		"is_native_video":        isNativeVideo(share.MimeType, share.FilePath),
 		"disable_video_download": h.cfg.DisableVideoDownload && isVideo,
 		"has_password":           share.Password != "",
+		"watch_enabled":          share.WatchEnabled,
 	})
 }
 
@@ -912,6 +913,7 @@ type UpdateNFSShareRequest struct {
 	AddViews      int        `json:"add_views"`
 	ExpiresAt     *time.Time `json:"expires_at"`
 	AddDays       int        `json:"add_days"`
+	WatchEnabled  *bool      `json:"watch_enabled"`
 }
 
 // AdminUpdate 修改分享配置（超管）
@@ -953,7 +955,11 @@ func (h *NFSShareHandler) AdminUpdate(c *gin.Context) {
 	} else {
 		newExpiresAt = share.ExpiresAt
 	}
-	if err := h.db.UpdateNFSShare(id, newMaxViews, newExpiresAt); err != nil {
+	newWatchEnabled := share.WatchEnabled
+	if req.WatchEnabled != nil {
+		newWatchEnabled = *req.WatchEnabled
+	}
+	if err := h.db.UpdateNFSShare(id, newMaxViews, newExpiresAt, newWatchEnabled); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

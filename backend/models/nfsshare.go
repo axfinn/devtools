@@ -9,17 +9,18 @@ import (
 
 // NFSShare NFS 文件分享记录
 type NFSShare struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	FilePath  string     `json:"file_path"`
-	FileSize  int64      `json:"file_size"`
-	MimeType  string     `json:"mime_type"`
-	MaxViews  int        `json:"max_views"`
-	Views     int        `json:"views"`
-	Password  string     `json:"-"` // bcrypt hash，不对外暴露
-	ExpiresAt *time.Time `json:"expires_at"`
-	CreatedAt time.Time  `json:"created_at"`
-	CreatorIP string     `json:"creator_ip"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	FilePath     string     `json:"file_path"`
+	FileSize     int64      `json:"file_size"`
+	MimeType     string     `json:"mime_type"`
+	MaxViews     int        `json:"max_views"`
+	Views        int        `json:"views"`
+	Password     string     `json:"-"` // bcrypt hash，不对外暴露
+	WatchEnabled bool       `json:"watch_enabled"`
+	ExpiresAt    *time.Time `json:"expires_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	CreatorIP    string     `json:"creator_ip"`
 }
 
 // NFSShareLog NFS 分享访问日志
@@ -67,6 +68,8 @@ func (db *DB) InitNFSShare() error {
 	}
 	// 迁移：为旧数据库添加 password 列
 	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN password TEXT NOT NULL DEFAULT ''`)
+	// 迁移：为旧数据库添加 watch_enabled 列
+	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN watch_enabled INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 
@@ -97,9 +100,9 @@ func (db *DB) GetNFSShare(id string) (*NFSShare, error) {
 	s := &NFSShare{}
 	var expiresAt sql.NullTime
 	err := db.conn.QueryRow(
-		`SELECT id, name, file_path, file_size, mime_type, max_views, views, password, expires_at, created_at, creator_ip
+		`SELECT id, name, file_path, file_size, mime_type, max_views, views, password, watch_enabled, expires_at, created_at, creator_ip
 		 FROM nfs_shares WHERE id = ?`, id,
-	).Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.Password, &expiresAt, &s.CreatedAt, &s.CreatorIP)
+	).Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.Password, &s.WatchEnabled, &expiresAt, &s.CreatedAt, &s.CreatorIP)
 	if err != nil {
 		return nil, err
 	}
@@ -191,15 +194,15 @@ func (db *DB) DeleteNFSShare(id string) error {
 	return err
 }
 
-// UpdateNFSShare 更新分享的访问次数上限与过期时间
-func (db *DB) UpdateNFSShare(id string, maxViews int, expiresAt *time.Time) error {
+// UpdateNFSShare 更新分享的访问次数上限、过期时间与一起看开关
+func (db *DB) UpdateNFSShare(id string, maxViews int, expiresAt *time.Time, watchEnabled bool) error {
 	var expiresAtVal interface{}
 	if expiresAt != nil {
 		expiresAtVal = *expiresAt
 	}
 	_, err := db.conn.Exec(
-		`UPDATE nfs_shares SET max_views = ?, expires_at = ? WHERE id = ?`,
-		maxViews, expiresAtVal, id,
+		`UPDATE nfs_shares SET max_views = ?, expires_at = ?, watch_enabled = ? WHERE id = ?`,
+		maxViews, expiresAtVal, watchEnabled, id,
 	)
 	return err
 }

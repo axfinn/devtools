@@ -360,6 +360,7 @@ async function loadInfo() {
       passwordDialogVisible.value = true
     } else if (data.is_video) {
       await initPlayer()
+      if (data.watch_enabled) connectWatch('匿名用户', '')
     }
   } catch {
     error.value = '加载失败，请检查网络'
@@ -395,6 +396,7 @@ async function confirmPassword() {
     await nextTick()
     if (info.value.is_video) {
       await initPlayer()
+      if (info.value.watch_enabled) connectWatch('匿名用户', '')
     }
   } catch {
     passwordError.value = '验证失败，请重试'
@@ -647,7 +649,7 @@ function handleWsMsg(msg) {
       if (msg.action === 'seek' || Math.abs(art.currentTime - msg.time) > 2) {
         art.currentTime = msg.time
       }
-      if (msg.action === 'play') art.play(true)
+      if (msg.action === 'play') art.play()
       else if (msg.action === 'pause') art.pause()
       setTimeout(() => { syncLock = false }, 500)
       break

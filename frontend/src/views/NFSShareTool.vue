@@ -401,6 +401,10 @@
           <el-input-number v-model="editForm.addDays" :min="0" :max="3650" controls-position="right" class="w-full" />
           <div class="text-xs text-gray-400 mt-1">在现有到期日基础上延期</div>
         </el-form-item>
+        <el-form-item label="一起看">
+          <el-switch v-model="editForm.watchEnabled" active-text="开启" inactive-text="关闭" />
+          <div class="text-xs text-gray-400 mt-1">开启后访客进入链接自动加入一起看</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editDialogVisible = false">取消</el-button>
@@ -465,7 +469,7 @@ const mountActionLoading = ref('')
 // 编辑弹窗
 const editDialogVisible = ref(false)
 const editTarget = ref(null)
-const editForm = reactive({ addViews: 0, addDays: 0 })
+const editForm = reactive({ addViews: 0, addDays: 0, watchEnabled: false })
 const editLoading = ref(false)
 
 // -------- 计算属性 --------
@@ -813,6 +817,7 @@ function openEditDialog(row) {
   editTarget.value = row
   editForm.addViews = 0
   editForm.addDays = 0
+  editForm.watchEnabled = row.watch_enabled || false
   editDialogVisible.value = true
 }
 
@@ -826,7 +831,8 @@ async function submitEdit() {
       body: JSON.stringify({
         admin_password: adminPassword.value,
         add_views: editForm.addViews,
-        add_days: editForm.addDays
+        add_days: editForm.addDays,
+        watch_enabled: editForm.watchEnabled
       })
     })
     const data = await res.json()
