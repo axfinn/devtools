@@ -3,7 +3,6 @@ package handlers
 import (
 	"archive/zip"
 	"bufio"
-	"github.com/gorilla/websocket"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -14,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +21,7 @@ import (
 	"devtools/config"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"gopkg.in/yaml.v3"
 )
 
@@ -87,16 +88,98 @@ func savePersistedProxy() {
 
 // ProxyHandler 科学上网处理器
 type ProxyHandler struct {
-	adminPassword string
+	adminPassword  string
+	npcCfg         npcConfig
+	npcTunnelPort  string // NPS 上配置的外网端口，用于前端展示
+	npcCmd         *exec.Cmd
+	npcMu          sync.Mutex
+}
+
+type npcConfig struct {
+	serverAddr string // host:port
+	vkey       string
+	binPath    string // 留空则自动查找
 }
 
 func NewProxyHandler(cfg *config.Config) *ProxyHandler {
 	loadPersistedProxy()
-	return &ProxyHandler{adminPassword: cfg.Proxy.AdminPassword}
+	h := &ProxyHandler{
+		adminPassword: cfg.Proxy.AdminPassword,
+		npcTunnelPort: cfg.Proxy.TunnelPort,
+	}
+	if cfg.NPS.VKey != "" {
+		bridgePort := cfg.NPS.BridgePort
+		if bridgePort == "" {
+			bridgePort = "8024"
+		}
+		host := cfg.NPS.BridgeHost
+		if host == "" {
+			if u, err := url.Parse(cfg.NPS.ServerURL); err == nil && u.Hostname() != "" {
+				host = u.Hostname()
+			}
+		}
+		h.npcCfg = npcConfig{
+			serverAddr: host + ":" + bridgePort,
+			vkey:       cfg.NPS.VKey,
+		}
+	}
+	return h
 }
 
 func (h *ProxyHandler) checkAdmin(password string) bool {
 	return h.adminPassword != "" && password == h.adminPassword
+}
+
+// npcBin 查找 npc 可执行文件路径
+func npcBin() string {
+	if _, err := os.Stat("/usr/local/bin/npc"); err == nil {
+		return "/usr/local/bin/npc"
+	}
+	if _, err := os.Stat("/app/data/npc"); err == nil {
+		return "/app/data/npc"
+	}
+	return ""
+}
+
+// startNPC 启动 npc，代理启动时调用
+func (h *ProxyHandler) startNPC() {
+	if h.npcCfg.vkey == "" {
+		return
+	}
+	bin := h.npcCfg.binPath
+	if bin == "" {
+		bin = npcBin()
+	}
+	if bin == "" {
+		return
+	}
+	h.npcMu.Lock()
+	if h.npcCmd != nil && h.npcCmd.Process != nil {
+		h.npcMu.Unlock()
+		return // 已在运行
+	}
+	cmd := exec.Command(bin, "-server="+h.npcCfg.serverAddr, "-vkey="+h.npcCfg.vkey, "-type=tcp")
+	h.npcCmd = cmd
+	h.npcMu.Unlock()
+	cmd.Start()
+	go func() {
+		cmd.Wait()
+		h.npcMu.Lock()
+		if h.npcCmd == cmd {
+			h.npcCmd = nil
+		}
+		h.npcMu.Unlock()
+	}()
+}
+
+// stopNPC 停止 npc，代理停止时调用
+func (h *ProxyHandler) stopNPC() {
+	h.npcMu.Lock()
+	defer h.npcMu.Unlock()
+	if h.npcCmd != nil && h.npcCmd.Process != nil {
+		h.npcCmd.Process.Kill()
+		h.npcCmd = nil
+	}
 }
 
 // clashConfig Clash YAML 顶层结构（只取 proxies）
@@ -323,6 +406,7 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 	globalSession.mu.Unlock()
 
 	go serveHTTPProxy(ln, target, h.adminPassword)
+	h.startNPC()
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -355,6 +439,7 @@ func (h *ProxyHandler) Stop(c *gin.Context) {
 	globalSession.active = nil
 	globalSession.mu.Unlock()
 
+	h.stopNPC()
 	c.JSON(200, gin.H{"ok": true})
 }
 
@@ -369,10 +454,17 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 	globalSession.mu.RLock()
 	defer globalSession.mu.RUnlock()
 
+	h.npcMu.Lock()
+	npcRunning := h.npcCmd != nil && h.npcCmd.Process != nil
+	h.npcMu.Unlock()
+
 	resp := gin.H{
-		"nodes":      globalSession.nodes,
-		"source_url": globalSession.sourceURL,
-		"running":    false,
+		"nodes":            globalSession.nodes,
+		"source_url":       globalSession.sourceURL,
+		"running":          false,
+		"npc_running":      npcRunning,
+		"npc_tunnel_port":  h.npcTunnelPort,
+		"npc_server_addr":  h.npcCfg.serverAddr,
 	}
 	if globalSession.active != nil && globalSession.listener != nil {
 		port := globalSession.listener.Addr().(*net.TCPAddr).Port
@@ -1063,7 +1155,7 @@ button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:1
 <input id="server" placeholder="example.com 或 1.2.3.4:8082">
 <label>密码</label>
 <input id="pass" type="password" placeholder="管理员密码">
-<div class="hint">⚠️ 仅限直连服务器（不经过 nginx）。经 nginx 反代请用 wstunnel 方案。</div>
+<div class="hint">HTTP 代理，流量经 NPS 隧道转发。安装后可在弹窗中开启/关闭代理。</div>
 <div class="row">
   <span class="status" id="status">检测中...</span>
   <button class="btn-save" id="saveBtn">保存并启用</button>

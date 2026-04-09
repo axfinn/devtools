@@ -119,31 +119,46 @@
           <div class="proxy-hint">
             下载 wstunnel：<a href="https://github.com/erebe/wstunnel/releases" target="_blank">github.com/erebe/wstunnel/releases</a>
           </div>
-          <el-button type="default" size="small" style="margin-top:10px" @click="downloadExtension">
-            下载 Chrome 插件（自动配置，无需 wstunnel）
-          </el-button>
         </el-alert>
 
-        <!-- 方案三：直接 HTTP 代理（需要直连服务器，不经过 nginx） -->
+        <!-- 方案三：NPS 隧道（需配置 NPS，流量经 NPS 服务器转发） -->
         <el-alert type="warning" :closable="false">
-          <template #title><span>方案三：直接 HTTP 代理（仅限直连服务器，不经过 nginx）</span></template>
-          <div class="proxy-addr-row" style="margin-top:8px">
-            <span class="proxy-addr-label">代理地址</span>
-            <el-input :value="externalProxyURL" readonly size="small" class="proxy-addr-input">
-              <template #append>
-                <el-button @click="copy(externalProxyURL)">复制</el-button>
-              </template>
-            </el-input>
+          <template #title>
+            <span>方案三：NPS 隧道</span>
+            <el-tag v-if="npcRunning" type="success" size="small" style="margin-left:8px">npc 运行中</el-tag>
+            <el-tag v-else type="info" size="small" style="margin-left:8px">npc 未运行</el-tag>
+          </template>
+          <div v-if="npsTunnelAddr" style="margin-top:8px">
+            <div class="proxy-addr-row">
+              <span class="proxy-addr-label">代理地址</span>
+              <el-input :value="npsTunnelAddr" readonly size="small" class="proxy-addr-input">
+                <template #append>
+                  <el-button @click="copy(npsTunnelAddr)">复制</el-button>
+                </template>
+              </el-input>
+            </div>
+            <div class="proxy-addr-row">
+              <span class="proxy-addr-label">认证密码</span>
+              <el-input :value="adminPassword()" readonly size="small" type="password" show-password class="proxy-addr-input">
+                <template #append>
+                  <el-button @click="copy(adminPassword())">复制</el-button>
+                </template>
+              </el-input>
+            </div>
           </div>
-          <div class="proxy-addr-row">
-            <span class="proxy-addr-label">认证密码</span>
-            <el-input :value="adminPassword()" readonly size="small" type="password" show-password class="proxy-addr-input">
-              <template #append>
-                <el-button @click="copy(adminPassword())">复制</el-button>
-              </template>
-            </el-input>
+          <div v-else class="proxy-hint" style="margin-top:8px">
+            未配置 NPS（需在 config.yaml 中设置 nps.vkey 和 proxy.tunnel_port）
           </div>
-          <div class="proxy-hint">用户名随意填，密码填上方密码。无认证请求会返回假页面，防止 GFW 探测。nginx 反代下此方式不可用。</div>
+          <div class="proxy-hint" style="margin-top:6px">
+            <b>使用方式：</b>浏览器/系统代理配置 HTTP 代理，地址填上方代理地址，用户名随意，密码填上方密码。<br>
+            <b>原理：</b>npc 客户端在服务器内运行，将代理端口通过 NPS 隧道暴露到公网。流量经 NPS 服务器 TCP 转发，不经过 nginx，适合 nginx 无法访问的场景。<br>
+            <b>安全：</b>无认证请求返回伪装页面，不暴露代理特征。需在 NPS 管理页面提前创建端口映射（可用 NPS 工具页面一键映射）。
+          </div>
+          <div v-if="npsTunnelAddr" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            <el-button type="primary" size="small" @click="downloadExtension(npsTunnelAddr)">
+              下载 Chrome 插件（自动配置代理）
+            </el-button>
+          </div>
         </el-alert>
       </el-card>
 
@@ -244,6 +259,9 @@ const proxyRunning = ref(false)
 const httpPort = ref(0)
 const proxyURL = ref('')
 const activeNode = ref('')
+const npcRunning = ref(false)
+const npcTunnelPort = ref('')
+const npcServerAddr = ref('')
 
 // 多 Tab 浏览器
 let tabIdCounter = 1
@@ -325,6 +343,9 @@ function applyStatus(data) {
     proxyURL.value = data.proxy_url
     activeNode.value = data.node
   }
+  npcRunning.value = !!data.npc_running
+  if (data.npc_tunnel_port) npcTunnelPort.value = data.npc_tunnel_port
+  if (data.npc_server_addr) npcServerAddr.value = data.npc_server_addr
 }
 
 function login() {
@@ -453,8 +474,8 @@ function rowClass({ row }) { return selectedNode.value?.name === row.name ? 'sel
 function latencyType(ms) { return ms < 100 ? 'success' : ms < 300 ? 'warning' : 'danger' }
 function copy(text) { navigator.clipboard.writeText(text).then(() => ElMessage.success('已复制')) }
 
-function downloadExtension() {
-  const host = window.location.host
+function downloadExtension(customHost) {
+  const host = customHost || window.location.host
   const p = adminPassword()
   const url = `/api/proxy/extension?admin_password=${encodeURIComponent(p)}&host=${encodeURIComponent(host)}`
   const a = document.createElement('a')
@@ -473,10 +494,11 @@ const sortedNodes = computed(() => {
   })
 })
 
-// 对外代理地址：用当前页面的 host（即 DevTools 服务器地址）
-// 浏览器/系统代理配置：http://yourserver:PORT，密码用 Proxy-Authorization
-const externalProxyURL = computed(() => {
-  return `${window.location.protocol}//${window.location.host}`
+// NPS 隧道代理地址：npc 将代理端口暴露到 NPS 服务器的 tunnel_port
+const npsTunnelAddr = computed(() => {
+  if (!npcServerAddr.value || !npcTunnelPort.value) return ''
+  const host = npcServerAddr.value.split(':')[0]
+  return `${host}:${npcTunnelPort.value}`
 })
 
 // wstunnel 命令：通过 WebSocket 隧道，支持 nginx 反代

@@ -1,16 +1,12 @@
 package handlers
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,17 +22,10 @@ type NPSHandler struct {
 	tunnelPort string // proxy.tunnel_port，用于前端展示一键映射
 	clientID   int
 	mu         sync.Mutex
-	npcCmd     *exec.Cmd // 当前运行的 npc 进程
-	npcMu      sync.Mutex
 }
 
 func NewNPSHandler(cfg config.NPSConfig, tunnelPort string) *NPSHandler {
-	h := &NPSHandler{cfg: cfg, tunnelPort: tunnelPort}
-	// 如果配置了 vkey 和 tunnel_port，自动启动 npc
-	if cfg.VKey != "" && tunnelPort != "" {
-		go h.startNPC()
-	}
-	return h
+	return &NPSHandler{cfg: cfg, tunnelPort: tunnelPort}
 }
 
 func (h *NPSHandler) checkAdmin(password string) bool {
@@ -299,128 +288,4 @@ func (h *NPSHandler) DeleteTunnel(c *gin.Context) {
 		return
 	}
 	c.JSON(200, result)
-}
-
-// npcBinPath 返回 npc 可执行文件路径，优先用内置的，否则下载
-func (h *NPSHandler) npcBinPath() (string, error) {
-	// 优先用镜像内置的
-	if _, err := os.Stat("/usr/local/bin/npc"); err == nil {
-		return "/usr/local/bin/npc", nil
-	}
-	// 其次用 data 目录缓存的
-	cached := "/app/data/npc"
-	if _, err := os.Stat(cached); err == nil {
-		return cached, nil
-	}
-	// 下载
-	if h.cfg.ServerURL == "" {
-		return "", fmt.Errorf("npc not found and server_url not configured")
-	}
-	dlURL := strings.TrimRight(h.cfg.ServerURL, "/") + "/static/download/client/npc_linux_amd64.tar.gz"
-	resp, err := http.Get(dlURL)
-	if err != nil {
-		return "", fmt.Errorf("download npc: %w", err)
-	}
-	defer resp.Body.Close()
-	gz, err := gzip.NewReader(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("gzip: %w", err)
-	}
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", err
-		}
-		if hdr.Name == "npc" || strings.HasSuffix(hdr.Name, "/npc") {
-			f, err := os.OpenFile(cached, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-			if err != nil {
-				return "", err
-			}
-			io.Copy(f, tr)
-			f.Close()
-			return cached, nil
-		}
-	}
-	return "", fmt.Errorf("npc binary not found in archive")
-}
-
-// startNPC 启动 npc 进程（自动重连）
-func (h *NPSHandler) startNPC() {
-	bin, err := h.npcBinPath()
-	if err != nil {
-		return
-	}
-	bridgePort := h.cfg.BridgePort
-	if bridgePort == "" {
-		bridgePort = "8024"
-	}
-	// 从 server_url 提取纯 hostname（去掉协议和端口）
-	serverHost := h.cfg.BridgeHost
-	if serverHost == "" {
-		if u, err := url.Parse(h.cfg.ServerURL); err == nil && u.Hostname() != "" {
-			serverHost = u.Hostname()
-		} else {
-			serverHost = strings.TrimPrefix(h.cfg.ServerURL, "https://")
-			serverHost = strings.TrimPrefix(serverHost, "http://")
-			serverHost, _, _ = strings.Cut(serverHost, ":")
-			serverHost = strings.TrimRight(serverHost, "/")
-		}
-	}
-	serverAddr := serverHost + ":" + bridgePort
-
-	for {
-		h.npcMu.Lock()
-		cmd := exec.Command(bin, "-server="+serverAddr, "-vkey="+h.cfg.VKey, "-type=tcp")
-		h.npcCmd = cmd
-		h.npcMu.Unlock()
-
-		cmd.Start()
-		cmd.Wait()
-
-		h.npcMu.Lock()
-		h.npcCmd = nil
-		h.npcMu.Unlock()
-		time.Sleep(5 * time.Second)
-	}
-}
-
-// NpcStatus 返回 npc 运行状态
-func (h *NPSHandler) NpcStatus(c *gin.Context) {
-	h.npcMu.Lock()
-	running := h.npcCmd != nil && h.npcCmd.Process != nil
-	h.npcMu.Unlock()
-	c.JSON(200, gin.H{"running": running})
-}
-
-// NpcStop 停止 npc 进程
-func (h *NPSHandler) NpcStop(c *gin.Context) {
-	h.npcMu.Lock()
-	defer h.npcMu.Unlock()
-	if h.npcCmd != nil && h.npcCmd.Process != nil {
-		h.npcCmd.Process.Kill()
-		c.JSON(200, gin.H{"ok": true})
-	} else {
-		c.JSON(200, gin.H{"ok": false, "msg": "not running"})
-	}
-}
-
-// NpcStart 启动 npc 进程
-func (h *NPSHandler) NpcStart(c *gin.Context) {
-	h.npcMu.Lock()
-	running := h.npcCmd != nil && h.npcCmd.Process != nil
-	h.npcMu.Unlock()
-	if running {
-		c.JSON(200, gin.H{"ok": true, "msg": "already running"})
-		return
-	}
-	if h.cfg.VKey == "" {
-		c.JSON(400, gin.H{"error": "vkey not configured"})
-		return
-	}
-	go h.startNPC()
-	c.JSON(200, gin.H{"ok": true})
 }
