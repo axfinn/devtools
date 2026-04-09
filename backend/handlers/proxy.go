@@ -1197,17 +1197,67 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
 const DEFAULT_SERVER = %q;
 const DEFAULT_PASS   = %q;
 
-function buildPac(server) {
-  // PAC 脚本：所有流量走服务器 HTTP 代理
-  // HTTP 流量直接代理；HTTPS 通过 CONNECT 隧道（需服务器直连，不经 nginx）
-  return 'function FindProxyForURL(url, host) {' +
-    'if (isPlainHostName(host) || host === "127.0.0.1" || host === "localhost") return "DIRECT";' +
-    'return "PROXY ' + server + '";' +
-    '}';
+function buildPac(server, mode) {
+  // 被墙域名列表（命中则走代理）
+  const blocked = [
+    'google.com','googleapis.com','googleusercontent.com','gstatic.com','gmail.com',
+    'youtube.com','youtu.be','ytimg.com','ggpht.com',
+    'twitter.com','x.com','t.co','twimg.com',
+    'facebook.com','fbcdn.net','instagram.com','whatsapp.com',
+    'telegram.org','t.me',
+    'github.com','githubusercontent.com','githubassets.com','ghcr.io',
+    'openai.com','chatgpt.com','claude.ai','anthropic.com',
+    'notion.so','notionusercontent.com',
+    'medium.com','substack.com',
+    'reddit.com','redd.it','redditmedia.com','redditstatic.com',
+    'wikipedia.org','wikimedia.org',
+    'dropbox.com','box.com','onedrive.live.com',
+    'spotify.com','netflix.com','twitch.tv',
+    'discord.com','discordapp.com','discordapp.net',
+    'slack.com','zoom.us',
+    'apple.com','icloud.com',
+    'amazon.com','amazonaws.com',
+    'microsoft.com','live.com','bing.com','msn.com',
+    'pixiv.net','fanbox.cc',
+    'dl.google.com','storage.googleapis.com',
+    'cloudflare.com','cdn.cloudflare.net',
+    'jsdelivr.net','unpkg.com','npmjs.com',
+    'docker.com','hub.docker.com',
+    'stackoverflow.com','stackexchange.com',
+    'v2ex.com',
+  ];
+
+  // 全部走代理模式
+  if (mode === 'global') {
+    var blockedStr2 = JSON.stringify(blocked);
+    return (
+      'function FindProxyForURL(url,host){' +
+        'if(isPlainHostName(host)||host==="127.0.0.1"||host==="localhost"||' +
+          'isInNet(host,"10.0.0.0","255.0.0.0")||isInNet(host,"172.16.0.0","255.240.0.0")||' +
+          'isInNet(host,"192.168.0.0","255.255.0.0"))return "DIRECT";' +
+        'return "PROXY ' + server + '";' +
+      '}'
+    );
+  }
+
+  // 智能分流模式（默认）：
+  // 被墙域名 → PROXY（代理不通再直连）
+  // 其余 → DIRECT; PROXY（直连不通再走代理）
+  var blockedStr = JSON.stringify(blocked);
+  return (
+    'var BLOCKED=' + blockedStr + ';' +
+    'function FindProxyForURL(url,host){' +
+      'if(isPlainHostName(host)||host==="127.0.0.1"||host==="localhost"||' +
+        'isInNet(host,"10.0.0.0","255.0.0.0")||isInNet(host,"172.16.0.0","255.240.0.0")||' +
+        'isInNet(host,"192.168.0.0","255.255.0.0"))return "DIRECT";' +
+      'for(var i=0;i<BLOCKED.length;i++){var d=BLOCKED[i];if(host===d||host.slice(-(d.length+1))==="."+d)return "PROXY ' + server + '; DIRECT";}' +
+      'return "DIRECT; PROXY ' + server + '";' +
+    '}'
+  );
 }
 
-function applyProxy(server) {
-  const pac = buildPac(server);
+function applyProxy(server, mode) {
+  const pac = buildPac(server, mode || 'smart');
   chrome.proxy.settings.set({
     value: { mode: 'pac_script', pacScript: { data: pac } },
     scope: 'regular'
@@ -1219,9 +1269,9 @@ function disableProxy() {
 }
 
 function loadAndApply() {
-  chrome.storage.local.get(['proxyEnabled', 'server'], (s) => {
+  chrome.storage.local.get(['proxyEnabled', 'server', 'mode'], (s) => {
     if (s.proxyEnabled !== false) {
-      applyProxy(s.server || DEFAULT_SERVER);
+      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'smart');
     } else {
       disableProxy();
     }
@@ -1229,7 +1279,7 @@ function loadAndApply() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true });
+  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true, mode: 'smart' });
   loadAndApply();
 });
 chrome.runtime.onStartup.addListener(loadAndApply);
@@ -1252,16 +1302,16 @@ chrome.webRequest.onAuthRequired.addListener(
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'update') {
-    chrome.storage.local.set({ server: msg.server, pass: msg.pass, proxyEnabled: true }, () => {
-      applyProxy(msg.server);
+    chrome.storage.local.set({ server: msg.server, pass: msg.pass, mode: msg.mode, proxyEnabled: true }, () => {
+      applyProxy(msg.server, msg.mode);
     });
   } else if (msg.action === 'disable') {
     chrome.storage.local.set({ proxyEnabled: false });
     disableProxy();
   } else if (msg.action === 'enable') {
-    chrome.storage.local.get(['server'], (s) => {
+    chrome.storage.local.get(['server', 'mode'], (s) => {
       chrome.storage.local.set({ proxyEnabled: true });
-      applyProxy(s.server || DEFAULT_SERVER);
+      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'smart');
     });
   }
   sendResponse({});
@@ -1290,6 +1340,11 @@ button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:1
 <input id="server" placeholder="example.com 或 1.2.3.4:8082">
 <label>密码</label>
 <input id="pass" type="password" placeholder="管理员密码">
+<label>模式</label>
+<select id="mode" style="width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+  <option value="smart">智能分流（国内直连，被墙走代理，不通自动切换）</option>
+  <option value="global">全部走代理</option>
+</select>
 <div class="hint">HTTP 代理，流量经 NPS 隧道转发。安装后可在弹窗中开启/关闭代理。</div>
 <div class="row">
   <span class="status" id="status">检测中...</span>
@@ -1302,9 +1357,10 @@ button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:1
 	popupJS := `
 var enabled = true;
 
-chrome.storage.local.get(['server','pass','proxyEnabled'], function(s) {
+chrome.storage.local.get(['server','pass','proxyEnabled','mode'], function(s) {
   document.getElementById('server').value = s.server || '';
   document.getElementById('pass').value = s.pass || '';
+  document.getElementById('mode').value = s.mode || 'smart';
   enabled = s.proxyEnabled !== false;
   updateUI();
 });
@@ -1319,8 +1375,9 @@ function updateUI() {
 document.getElementById('saveBtn').addEventListener('click', function() {
   var server = document.getElementById('server').value.trim();
   var pass = document.getElementById('pass').value.trim();
+  var mode = document.getElementById('mode').value;
   if (!server || !pass) { alert('请填写服务器地址和密码'); return; }
-  chrome.runtime.sendMessage({ action: 'update', server: server, pass: pass });
+  chrome.runtime.sendMessage({ action: 'update', server: server, pass: pass, mode: mode });
   enabled = true;
   updateUI();
 });
