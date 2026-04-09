@@ -902,101 +902,159 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
 		proxyHost = c.Request.Host
 	}
 
+	// MV2 manifest（Chrome 仍支持，webRequestBlocking 在 MV3 中已废弃）
 	manifest := `{
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "DevTools Proxy",
   "version": "1.0",
   "description": "自动配置 DevTools 科学上网代理",
-  "permissions": ["proxy", "storage"],
+  "permissions": [
+    "proxy",
+    "storage",
+    "webRequest",
+    "webRequestBlocking",
+    "<all_urls>"
+  ],
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["background.js"],
+    "persistent": true
   },
-  "action": {
+  "browser_action": {
     "default_popup": "popup.html",
     "default_title": "DevTools Proxy"
   }
 }`
 
-	// background.js：设置代理 + 处理认证
+	// background.js：从 storage 读配置，支持热更新
 	bgJS := fmt.Sprintf(`
-const PROXY_HOST = %q;
-const PROXY_PASS = %q;
+var DEFAULT_HOST = %q;
+var DEFAULT_PASS = %q;
 
-// 解析 host:port
-const parts = PROXY_HOST.split(':');
-const host = parts[0];
-const port = parseInt(parts[1]) || 80;
+var currentHost = DEFAULT_HOST;
+var currentPass = DEFAULT_PASS;
 
-chrome.runtime.onInstalled.addListener(enableProxy);
-chrome.runtime.onStartup.addListener(enableProxy);
+function applyProxy(host, pass) {
+  var parts = host.split(':');
+  var h = parts[0];
+  var p = parseInt(parts[1]) || 80;
+  chrome.proxy.settings.set({
+    value: {
+      mode: "fixed_servers",
+      rules: {
+        singleProxy: { scheme: "http", host: h, port: p },
+        bypassList: ["localhost", "127.0.0.1", "<local>"]
+      }
+    },
+    scope: "regular"
+  });
+  currentHost = host;
+  currentPass = pass;
+}
 
-function enableProxy() {
-  const config = {
-    mode: "fixed_servers",
-    rules: {
-      singleProxy: { scheme: "http", host: host, port: port },
-      bypassList: ["localhost", "127.0.0.1", "<local>"]
+function loadAndApply() {
+  chrome.storage.local.get(['proxyHost', 'proxyPass', 'proxyEnabled'], function(s) {
+    var host = s.proxyHost || DEFAULT_HOST;
+    var pass = s.proxyPass || DEFAULT_PASS;
+    var enabled = s.proxyEnabled !== false;
+    if (enabled) {
+      applyProxy(host, pass);
+    } else {
+      chrome.proxy.settings.clear({ scope: 'regular' });
     }
-  };
-  chrome.proxy.settings.set({ value: config, scope: "regular" }, () => {
-    console.log("DevTools Proxy enabled:", PROXY_HOST);
   });
 }
 
-// 处理代理认证
+chrome.runtime.onInstalled.addListener(function() {
+  chrome.storage.local.set({ proxyHost: DEFAULT_HOST, proxyPass: DEFAULT_PASS, proxyEnabled: true });
+  loadAndApply();
+});
+chrome.runtime.onStartup.addListener(loadAndApply);
+loadAndApply();
+
 chrome.webRequest.onAuthRequired.addListener(
-  (details, callback) => {
+  function(details) {
     if (details.isProxy) {
-      callback({ authCredentials: { username: "devtools", password: PROXY_PASS } });
-    } else {
-      callback({});
+      return { authCredentials: { username: "devtools", password: currentPass } };
     }
   },
   { urls: ["<all_urls>"] },
-  ["asyncBlocking"]
+  ["blocking"]
 );
+
+chrome.runtime.onMessage.addListener(function(msg) {
+  if (msg.action === 'update') {
+    chrome.storage.local.set({ proxyHost: msg.host, proxyPass: msg.pass, proxyEnabled: true }, loadAndApply);
+  }
+  if (msg.action === 'disable') {
+    chrome.storage.local.set({ proxyEnabled: false });
+    chrome.proxy.settings.clear({ scope: 'regular' });
+  }
+  if (msg.action === 'enable') {
+    chrome.storage.local.set({ proxyEnabled: true }, loadAndApply);
+  }
+});
 `, proxyHost, password)
 
-	popupHTML := fmt.Sprintf(`<!DOCTYPE html>
+	popupHTML := `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
-body{font-family:sans-serif;padding:12px;width:260px;font-size:13px;}
-.row{display:flex;justify-content:space-between;margin:6px 0;}
-.label{color:#666;}
-.val{font-weight:bold;word-break:break-all;}
-button{width:100%%;margin-top:10px;padding:6px;cursor:pointer;border-radius:4px;border:1px solid #ccc;}
-.on{background:#67c23a;color:#fff;border-color:#67c23a;}
-.off{background:#f56c6c;color:#fff;border-color:#f56c6c;}
+*{box-sizing:border-box;}
+body{font-family:sans-serif;padding:14px;width:300px;font-size:13px;margin:0;}
+label{display:block;color:#666;margin-bottom:3px;margin-top:10px;}
+input{width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;}
+.row{display:flex;align-items:center;gap:8px;margin-top:12px;}
+.status{flex:1;font-weight:bold;}
+.on{color:#67c23a;} .off{color:#f56c6c;}
+button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;}
+.btn-save{background:#409eff;color:#fff;}
+.btn-on{background:#67c23a;color:#fff;}
+.btn-off{background:#f56c6c;color:#fff;}
+.hint{font-size:11px;color:#999;margin-top:6px;}
 </style></head>
 <body>
-<div class="row"><span class="label">代理地址</span><span class="val">%s</span></div>
-<div class="row"><span class="label">状态</span><span class="val" id="status">检测中...</span></div>
-<button class="on" id="btn" onclick="toggle()">关闭代理</button>
+<label>代理地址（host:port）</label>
+<input id="host" placeholder="yourserver.com:8082">
+<label>密码</label>
+<input id="pass" type="password" placeholder="管理员密码">
+<div class="hint">用户名随意，密码填上方密码</div>
+<div class="row">
+  <span class="status" id="status">检测中...</span>
+  <button class="btn-save" onclick="save()">保存并启用</button>
+  <button id="toggleBtn" onclick="toggle()">-</button>
+</div>
 <script>
-let enabled = true;
+var enabled = true;
+
+chrome.storage.local.get(['proxyHost','proxyPass','proxyEnabled'], function(s) {
+  document.getElementById('host').value = s.proxyHost || '';
+  document.getElementById('pass').value = s.proxyPass || '';
+  enabled = s.proxyEnabled !== false;
+  updateUI();
+});
+
+function updateUI() {
+  document.getElementById('status').textContent = enabled ? '代理已启用' : '代理已关闭';
+  document.getElementById('status').className = 'status ' + (enabled ? 'on' : 'off');
+  document.getElementById('toggleBtn').textContent = enabled ? '关闭' : '开启';
+  document.getElementById('toggleBtn').className = enabled ? 'btn-off' : 'btn-on';
+}
+
+function save() {
+  var host = document.getElementById('host').value.trim();
+  var pass = document.getElementById('pass').value.trim();
+  if (!host || !pass) { alert('请填写代理地址和密码'); return; }
+  chrome.runtime.sendMessage({ action: 'update', host: host, pass: pass });
+  enabled = true;
+  updateUI();
+}
+
 function toggle() {
   enabled = !enabled;
-  if (enabled) {
-    chrome.runtime.sendMessage({action:'enable'});
-    document.getElementById('status').textContent = '已启用';
-    document.getElementById('btn').className = 'on';
-    document.getElementById('btn').textContent = '关闭代理';
-  } else {
-    chrome.proxy.settings.clear({scope:'regular'});
-    document.getElementById('status').textContent = '已关闭';
-    document.getElementById('btn').className = 'off';
-    document.getElementById('btn').textContent = '开启代理';
-  }
+  chrome.runtime.sendMessage({ action: enabled ? 'enable' : 'disable' });
+  updateUI();
 }
-chrome.proxy.settings.get({incognito:false}, d => {
-  const on = d.value.mode === 'fixed_servers';
-  enabled = on;
-  document.getElementById('status').textContent = on ? '已启用' : '已关闭';
-  document.getElementById('btn').className = on ? 'on' : 'off';
-  document.getElementById('btn').textContent = on ? '关闭代理' : '开启代理';
-});
 </script>
-</body></html>`, proxyHost)
+</body></html>`
 
 	// 打包成 zip
 	var buf bytes.Buffer

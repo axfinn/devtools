@@ -72,18 +72,12 @@
         </el-table>
       </el-card>
 
-      <!-- 代理信息 + 内嵌浏览器 -->
-      <el-card v-if="proxyRunning" class="browser-card">
-        <template #header>
-          <div class="card-header">
-            <span>代理浏览器 — {{ activeNode }}</span>
-          </div>
-        </template>
-
-        <!-- 对外代理信息 -->
-        <el-alert type="success" :closable="false" class="proxy-alert">
+      <!-- 代理信息（启动后显示） -->
+      <el-card v-if="proxyRunning" class="config-card">
+        <template #header><span>代理已启动 — {{ activeNode }}</span></template>
+        <el-alert type="success" :closable="false">
           <template #title>
-            <span>HTTP 代理已就绪，将以下地址配到浏览器/系统代理即可全局科学上网</span>
+            <span>将以下地址配到浏览器/系统代理（HTTP 代理）即可全局科学上网</span>
           </template>
           <div class="proxy-addr-row">
             <span class="proxy-addr-label">代理地址</span>
@@ -106,6 +100,17 @@
             下载 Chrome 插件（一键导入自动配置）
           </el-button>
         </el-alert>
+      </el-card>
+
+      <!-- 内嵌浏览器（登录后始终显示） -->
+      <el-card class="browser-card">
+        <template #header>
+          <div class="card-header">
+            <span>内嵌浏览器</span>
+            <el-tag v-if="proxyRunning" type="success" size="small">代理中 — {{ activeNode }}</el-tag>
+            <el-tag v-else type="info" size="small">未启动代理（直连）</el-tag>
+          </div>
+        </template>
 
         <!-- Tab 栏 -->
         <div class="tab-bar">
@@ -128,7 +133,7 @@
 
         <!-- 地址栏 -->
         <div v-if="activeTab" class="browser-bar">
-          <el-button size="small" :disabled="!activeTab.canBack" @click="goBack">
+          <el-button size="small" @click="goBack">
             <el-icon><ArrowLeft /></el-icon>
           </el-button>
           <el-button size="small" @click="reload(activeTab)">
@@ -169,14 +174,14 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Close, Plus, ArrowLeft, Refresh } from '@element-plus/icons-vue'
 
 const SESSION_KEY = 'proxy_admin_password'
 
 const passwordInput = ref('')
-const isAdmin = ref(!!sessionStorage.getItem(SESSION_KEY))
+const isAdmin = ref(false)
 const loginLoading = ref(false)
 
 const configTab = ref('url')
@@ -261,6 +266,23 @@ function adminPassword() {
   return sessionStorage.getItem(SESSION_KEY) || ''
 }
 
+function applyStatus(data) {
+  if (data.nodes && data.nodes.length > 0) {
+    nodes.value = data.nodes
+    testedOnce.value = data.nodes.some(n => n.latency >= 0)
+  }
+  if (data.source_url) {
+    subscribeURL.value = data.source_url
+    configTab.value = 'url'
+  }
+  if (data.running) {
+    proxyRunning.value = true
+    httpPort.value = data.http_port
+    proxyURL.value = data.proxy_url
+    activeNode.value = data.node
+  }
+}
+
 function login() {
   if (!passwordInput.value) { ElMessage.warning('请输入密码'); return }
   loginLoading.value = true
@@ -272,23 +294,29 @@ function login() {
       } else {
         sessionStorage.setItem(SESSION_KEY, passwordInput.value)
         isAdmin.value = true
-        // 恢复持久化的节点列表
-        if (data.nodes && data.nodes.length > 0) {
-          nodes.value = data.nodes
-          testedOnce.value = data.nodes.some(n => n.latency >= 0)
-        }
-        if (data.source_url) subscribeURL.value = data.source_url
-        if (data.running) {
-          proxyRunning.value = true
-          httpPort.value = data.http_port
-          proxyURL.value = data.proxy_url
-          activeNode.value = data.node
-        }
+        applyStatus(data)
       }
     })
     .catch(() => ElMessage.error('请求失败'))
     .finally(() => { loginLoading.value = false })
 }
+
+// 页面加载时，如果 sessionStorage 有密码，自动恢复状态
+onMounted(() => {
+  const saved = sessionStorage.getItem(SESSION_KEY)
+  if (!saved) return
+  fetch(`/api/proxy/status?admin_password=${encodeURIComponent(saved)}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        sessionStorage.removeItem(SESSION_KEY)
+      } else {
+        isAdmin.value = true
+        applyStatus(data)
+      }
+    })
+    .catch(() => {})
+})
 
 function logout() {
   sessionStorage.removeItem(SESSION_KEY)
