@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile
 COPY frontend/ ./
 RUN pnpm build
 
-FROM docker.m.daocloud.io/library/golang:1.21-alpine AS backend-builder
+FROM docker.m.daocloud.io/library/golang:1.26-alpine AS backend-builder
 
 WORKDIR /app/backend
 
@@ -26,7 +26,7 @@ COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
 # 编译 proxy-client 跨平台二进制
-FROM docker.m.daocloud.io/library/golang:1.21-alpine AS proxy-client-builder
+FROM docker.m.daocloud.io/library/golang:1.26-alpine AS proxy-client-builder
 
 WORKDIR /app/proxy-client
 
