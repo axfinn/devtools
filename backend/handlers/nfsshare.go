@@ -1492,18 +1492,19 @@ type voicePeerInfo struct {
 
 // watchBroadcast 服务器 → 所有客户端 消息
 type watchBroadcast struct {
-	Type      string          `json:"type"`               // joined | left | chat | danmaku | sync | voice_*
-	Nickname  string          `json:"nickname,omitempty"` // 消息来源
-	Text      string          `json:"text,omitempty"`
-	Action    string          `json:"action,omitempty"`
-	Time      float64         `json:"time,omitempty"`
-	Count     int             `json:"count,omitempty"`    // viewers 类型：当前人数
-	IsHost    bool            `json:"is_host,omitempty"`  // 是否房主
-	PeerID    string          `json:"peer_id,omitempty"`  // WebRTC: 发起者 peerID
-	From      string          `json:"from,omitempty"`     // WebRTC: 来源 peerID
-	SDP       string          `json:"sdp,omitempty"`      // WebRTC: offer/answer SDP
-	Candidate string          `json:"candidate,omitempty"` // WebRTC: ICE candidate JSON
-	Peers     []voicePeerInfo `json:"peers,omitempty"`    // voice_peers: 已在语音的成员
+	Type         string          `json:"type"`               // joined | left | chat | danmaku | sync | voice_*
+	Nickname     string          `json:"nickname,omitempty"` // 消息来源
+	Text         string          `json:"text,omitempty"`
+	Action       string          `json:"action,omitempty"`
+	Time         float64         `json:"time,omitempty"`
+	Count        int             `json:"count,omitempty"`         // viewers 类型：当前人数
+	IsHost       bool            `json:"is_host,omitempty"`       // 是否房主
+	PeerID       string          `json:"peer_id,omitempty"`       // WebRTC: 发起者 peerID
+	From         string          `json:"from,omitempty"`          // WebRTC: 来源 peerID
+	SDP          string          `json:"sdp,omitempty"`           // WebRTC: offer/answer SDP
+	Candidate    string          `json:"candidate,omitempty"`     // WebRTC: ICE candidate JSON
+	Peers        []voicePeerInfo `json:"peers,omitempty"`         // voice_peers: 已在语音的成员
+	VoiceEnabled bool            `json:"voice_enabled,omitempty"` // voice_state: 语音频道是否开启
 }
 
 // watchClient 单个 WebSocket 连接
@@ -1518,12 +1519,13 @@ type watchClient struct {
 
 // watchRoom 一个视频分享对应的观看室
 type watchRoom struct {
-	mu         sync.RWMutex
-	clients    map[*watchClient]bool
-	byPeer     map[string]*watchClient // peerID → client
-	lastAction string                  // 最近一次 sync action: "play" | "pause"
-	lastTime   float64                 // 最近一次 sync 时间（秒）
-	lastSyncAt time.Time               // 最近一次 sync 时刻（用于估算当前进度）
+	mu           sync.RWMutex
+	clients      map[*watchClient]bool
+	byPeer       map[string]*watchClient // peerID → client
+	lastAction   string                  // 最近一次 sync action: "play" | "pause"
+	lastTime     float64                 // 最近一次 sync 时间（秒）
+	lastSyncAt   time.Time               // 最近一次 sync 时刻（用于估算当前进度）
+	voiceEnabled bool                    // 语音频道是否开启（由房主控制）
 }
 
 func randomPeerID() string {
@@ -1666,6 +1668,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	lastAction := room.lastAction
 	lastTime := room.lastTime
 	lastSyncAt := room.lastSyncAt
+	voiceEnabled := room.voiceEnabled
 	room.mu.RUnlock()
 	if lastAction != "" {
 		// 估算当前时间：如果是 play，加上已过去的秒数
@@ -1677,6 +1680,17 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 			Type:   "sync",
 			Action: lastAction,
 			Time:   estimatedTime,
+		})
+		select {
+		case client.send <- data:
+		default:
+		}
+	}
+	// 将当前语音频道状态发给新加入者
+	{
+		data, _ := json.Marshal(watchBroadcast{
+			Type:         "voice_state",
+			VoiceEnabled: voiceEnabled,
 		})
 		select {
 		case client.send <- data:
@@ -1785,7 +1799,38 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 			}, client) // 不发给自己
 
 		// ---- WebRTC 语音信令 ----
+		case "voice_toggle":
+			// 只有房主可以开关语音频道
+			if !isHost {
+				continue
+			}
+			room.mu.Lock()
+			room.voiceEnabled = !room.voiceEnabled
+			enabled := room.voiceEnabled
+			room.mu.Unlock()
+			// 如果关闭语音，强制所有语音成员离开
+			if !enabled {
+				room.mu.Lock()
+				for c := range room.clients {
+					if c.voiceActive {
+						c.voiceActive = false
+					}
+				}
+				room.mu.Unlock()
+			}
+			room.broadcastAll(watchBroadcast{
+				Type:         "voice_state",
+				VoiceEnabled: enabled,
+			})
+
 		case "voice_join":
+			// 语音频道未开启时拒绝（房主除外）
+			room.mu.RLock()
+			voiceOpen := room.voiceEnabled
+			room.mu.RUnlock()
+			if !voiceOpen && !isHost {
+				continue
+			}
 			// 标记自己已加入语音
 			client.voiceActive = true
 			// 将已在语音的成员列表发回给本人，让其主动发起 offer

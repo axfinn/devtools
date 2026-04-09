@@ -4,7 +4,10 @@
     <el-dialog v-model="passwordDialogVisible" title="访问密码" width="340px" :show-close="false" :close-on-click-modal="false">
       <el-form @submit.prevent="confirmPassword">
         <p style="color:#999;font-size:13px;margin:0 0 16px">该分享需要密码才能访问</p>
-        <el-form-item>
+        <el-form-item label="昵称">
+          <el-input v-model="joinNickname" placeholder="输入你的昵称（可选）" maxlength="20" />
+        </el-form-item>
+        <el-form-item label="访问密码">
           <el-input
             v-model="inputPassword"
             type="password"
@@ -14,10 +17,13 @@
             @keydown.enter.prevent="confirmPassword"
           />
         </el-form-item>
+        <el-form-item label="管理密码">
+          <el-input v-model="joinAdminPwd" type="password" placeholder="填入则成为房主（可选）" show-password />
+        </el-form-item>
         <p v-if="passwordError" style="color:#f56c6c;font-size:12px;margin:4px 0 0">{{ passwordError }}</p>
       </el-form>
       <template #footer>
-        <el-button type="primary" :loading="passwordChecking" @click="confirmPassword">确认</el-button>
+        <el-button type="primary" :loading="passwordChecking" @click="confirmPassword">进入</el-button>
       </template>
     </el-dialog>
 
@@ -72,14 +78,54 @@
             </div>
 
             <div class="video-actions">
+              <!-- 一起看：已连接时只显示退出，未连接时显示加入（watch_enabled 时强制） -->
               <el-button
-                :type="watchConnected ? 'danger' : 'primary'"
+                v-if="watchConnected"
+                type="danger"
+                size="small"
+                @click="disconnectWatch"
+              >
+                <el-icon><VideoPause /></el-icon>
+                退出一起看
+              </el-button>
+              <el-button
+                v-else-if="!info.watch_enabled"
+                type="primary"
                 size="small"
                 @click="toggleWatch"
               >
-                <el-icon><VideoPlay v-if="!watchConnected" /><VideoPause v-else /></el-icon>
-                {{ watchConnected ? '退出一起看' : '一起看' }}
+                <el-icon><VideoPlay /></el-icon>
+                一起看
               </el-button>
+
+              <!-- 语音控制：房主显示开关按钮；观众在语音开启时显示加入/离开 -->
+              <template v-if="watchConnected">
+                <el-button
+                  v-if="isHost"
+                  :type="voiceChannelEnabled ? 'warning' : 'success'"
+                  size="small"
+                  @click="toggleVoiceChannel"
+                >
+                  {{ voiceChannelEnabled ? '🔇 关闭语音' : '🎤 开启语音' }}
+                </el-button>
+                <template v-else-if="voiceChannelEnabled">
+                  <el-button
+                    :type="voiceActive ? 'danger' : 'success'"
+                    size="small"
+                    @click="toggleVoice"
+                  >
+                    {{ voiceActive ? '挂断语音' : '🎤 加入语音' }}
+                  </el-button>
+                  <el-button
+                    v-if="voiceActive"
+                    :type="voiceMuted ? 'warning' : ''"
+                    size="small"
+                    @click="toggleMute"
+                  >
+                    {{ voiceMuted ? '🔇 已静音' : '🔊 静音' }}
+                  </el-button>
+                </template>
+              </template>
 
               <!-- 播放模式切换（原生视频且 HLS 可用时显示） -->
               <el-button-group v-if="isNativeVideo && qualityList.length > 0" size="small">
@@ -110,19 +156,20 @@
               </el-button>
             </div>
 
-            <!-- 加入一起看 - 昵称输入弹窗 -->
-            <el-dialog v-model="joinDialogVisible" title="加入一起看" width="360px" :show-close="false">
+            <!-- 加入一起看 - 昵称输入弹窗（强制，不可跳过） -->
+            <el-dialog v-model="joinDialogVisible" title="加入一起看" width="360px" :show-close="false" :close-on-click-modal="false">
+              <p style="color:#999;font-size:13px;margin:0 0 16px">该分享开启了一起看模式，需要加入才能观看</p>
               <el-form @submit.prevent="confirmJoin">
                 <el-form-item label="昵称">
                   <el-input v-model="joinNickname" placeholder="输入你的昵称" maxlength="20" autofocus />
                 </el-form-item>
-                <el-form-item label="管理密码（可选）">
-                  <el-input v-model="joinAdminPwd" type="password" placeholder="填入则成为房主" show-password />
+                <el-form-item label="管理密码">
+                  <el-input v-model="joinAdminPwd" type="password" placeholder="填入则成为房主（可选）" show-password />
                 </el-form-item>
               </el-form>
               <template #footer>
-                <el-button @click="joinDialogVisible = false">取消</el-button>
-                <el-button type="primary" @click="confirmJoin">加入</el-button>
+                <el-button @click="leaveShare">离开</el-button>
+                <el-button type="primary" @click="confirmJoin">加入观看</el-button>
               </template>
             </el-dialog>
           </div>
@@ -192,25 +239,8 @@
             <span class="viewer-count">{{ viewerCount }} 人在线</span>
           </div>
 
-          <!-- 语音区 -->
-          <div class="voice-area">
-            <div class="voice-bar">
-              <el-button
-                :type="voiceActive ? 'danger' : 'success'"
-                size="small"
-                @click="toggleVoice"
-              >
-                {{ voiceActive ? '挂断语音' : '🎤 加入语音' }}
-              </el-button>
-              <el-button
-                v-if="voiceActive"
-                :type="voiceMuted ? 'warning' : ''"
-                size="small"
-                @click="toggleMute"
-              >
-                {{ voiceMuted ? '🔇 已静音' : '🔊 静音' }}
-              </el-button>
-            </div>
+          <!-- 语音区：仅显示参与者列表 -->
+          <div v-if="voiceChannelEnabled || voiceParticipants.length > 0" class="voice-area">
             <div v-if="voiceParticipants.length > 0" class="voice-participants">
               <div
                 v-for="p in voiceParticipants"
@@ -222,7 +252,7 @@
                 <span class="voice-name">{{ p.nickname }}</span>
               </div>
             </div>
-            <div v-else-if="voiceActive" class="voice-empty">等待他人加入语音...</div>
+            <div v-else-if="voiceChannelEnabled" class="voice-empty">语音已开启，等待成员加入...</div>
           </div>
 
           <div class="chat-messages" ref="chatMessagesEl">
@@ -337,6 +367,7 @@ let pendingSync = null // 播放器未就绪时缓存最新的 sync 消息
 // ---- Voice Chat (WebRTC) ----
 const voiceActive = ref(false)
 const voiceMuted = ref(false)
+const voiceChannelEnabled = ref(false) // 语音频道是否开启（由房主控制）
 const voiceParticipants = ref([]) // [{ peerID, nickname, speaking }]
 let myPeerID = ''
 let localStream = null
@@ -421,11 +452,16 @@ async function loadInfo() {
     loading.value = false
     await nextTick()
     if (data.has_password) {
-      // 需要密码才能继续，弹出密码框
+      // 需要密码才能继续，弹出密码框（密码框里也包含昵称和管理密码输入）
       passwordDialogVisible.value = true
     } else if (data.is_video) {
       await initPlayer()
-      if (data.watch_enabled) connectWatch('匿名用户', '')
+      if (data.watch_enabled) {
+        // 强制弹出加入弹窗，不可跳过
+        joinAdminPwd.value = ''
+        joinNickname.value = ''
+        joinDialogVisible.value = true
+      }
     } else if (data.is_text) {
       loadTextPreview()
     }
@@ -463,7 +499,10 @@ async function confirmPassword() {
     await nextTick()
     if (info.value.is_video) {
       await initPlayer()
-      if (info.value.watch_enabled) connectWatch('匿名用户', '')
+      if (info.value.watch_enabled) {
+        // 强制弹出加入弹窗（昵称已在密码弹窗里填了，直接用）
+        joinDialogVisible.value = true
+      }
     } else if (info.value.is_text) {
       loadTextPreview()
     }
@@ -712,7 +751,25 @@ function toggleWatch() {
   }
 }
 
-function confirmJoin() {
+function leaveShare() {
+  // 用户拒绝加入一起看，直接跳走
+  window.history.back()
+}
+
+function toggleVoiceChannel() {
+  // 房主开关语音频道
+  wsSend({ type: 'voice_toggle' })
+}
+
+async function confirmJoin() {
+  // 必须先获取麦克风权限，否则不允许加入
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+  } catch (e) {
+    ElMessage.error('需要麦克风权限才能加入，请允许后重试')
+    return
+  }
+  await fetchRtcConfig()
   joinDialogVisible.value = false
   const nick = joinNickname.value.trim() || '匿名用户'
   connectWatch(nick, joinAdminPwd.value)
@@ -812,6 +869,16 @@ function handleWsMsg(msg) {
     case 'voice_ice':
       if (msg.from) handleVoiceIce(msg.from, msg.candidate)
       break
+    case 'voice_state':
+      voiceChannelEnabled.value = !!msg.voice_enabled
+      // 语音频道关闭时，强制断开本地语音
+      if (!msg.voice_enabled && voiceActive.value) {
+        leaveVoice()
+        addSystemMsg('房主已关闭语音频道')
+      } else if (msg.voice_enabled) {
+        addSystemMsg('房主已开启语音频道')
+      }
+      break
   }
 }
 
@@ -873,11 +940,13 @@ async function toggleVoice() {
 }
 
 async function startVoice() {
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-  } catch (e) {
-    ElMessage.error('无法获取麦克风：' + (e.message || e))
-    return
+  if (!localStream) {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    } catch (e) {
+      ElMessage.error('无法获取麦克风：' + (e.message || e))
+      return
+    }
   }
   await fetchRtcConfig()
   myPeerID = Math.random().toString(36).slice(2, 10)
@@ -888,6 +957,10 @@ async function startVoice() {
 
 function stopVoice() {
   wsSend({ type: 'voice_leave' })
+  leaveVoice()
+}
+
+function leaveVoice() {
   // 关闭所有 peer 连接
   for (const [, pc] of peerConns) pc.close()
   peerConns.clear()
