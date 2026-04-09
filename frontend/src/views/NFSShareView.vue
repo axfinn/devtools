@@ -4,10 +4,7 @@
     <el-dialog v-model="passwordDialogVisible" title="访问密码" width="340px" :show-close="false" :close-on-click-modal="false">
       <el-form @submit.prevent="confirmPassword">
         <p style="color:#999;font-size:13px;margin:0 0 16px">该分享需要密码才能访问</p>
-        <el-form-item label="昵称">
-          <el-input v-model="joinNickname" placeholder="输入你的昵称（可选）" maxlength="20" />
-        </el-form-item>
-        <el-form-item label="访问密码">
+        <el-form-item>
           <el-input
             v-model="inputPassword"
             type="password"
@@ -16,9 +13,6 @@
             autofocus
             @keydown.enter.prevent="confirmPassword"
           />
-        </el-form-item>
-        <el-form-item label="管理密码">
-          <el-input v-model="joinAdminPwd" type="password" placeholder="填入则成为房主（可选）" show-password />
         </el-form-item>
         <p v-if="passwordError" style="color:#f56c6c;font-size:12px;margin:4px 0 0">{{ passwordError }}</p>
       </el-form>
@@ -456,6 +450,17 @@ async function loadInfo() {
       // 需要密码才能继续，弹出密码框（密码框里也包含昵称和管理密码输入）
       passwordDialogVisible.value = true
     } else if (data.is_video) {
+      if (data.watch_enabled) {
+        // 视频+一起看模式：先申请麦克风，拒绝则禁止播放
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          await fetchRtcConfig()
+        } catch (e) {
+          error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
+          loading.value = false
+          return
+        }
+      }
       await initPlayer()
       if (data.watch_enabled) connectPendingWatch()
     } else if (data.is_text) {
@@ -494,6 +499,15 @@ async function confirmPassword() {
     passwordDialogVisible.value = false
     await nextTick()
     if (info.value.is_video) {
+      if (info.value.watch_enabled) {
+        try {
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          await fetchRtcConfig()
+        } catch (e) {
+          error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
+          return
+        }
+      }
       await initPlayer()
       if (info.value.watch_enabled) connectPendingWatch()
     } else if (info.value.is_text) {
@@ -751,17 +765,26 @@ function connectPendingWatch() {
   let url = `${proto}://${location.host}/api/nfsshare/${id}/watch/ws?nickname=__pending__`
   if (password.value) url += `&password=${encodeURIComponent(password.value)}`
   pendingWs = new WebSocket(url)
-  pendingWs.onmessage = (e) => {
+  pendingWs.onmessage = async (e) => {
     try {
       const msg = JSON.parse(e.data)
       if (msg.type === 'force_watch') {
         if (msg.host_active && !watchConnected.value) {
-          // 管理员上线，强制弹出加入弹窗
-          joinAdminPwd.value = ''
-          joinNickname.value = ''
-          joinDialogVisible.value = true
+          // 管理员上线：暂停视频，申请麦克风，直接自动加入
+          if (art?.video) art.video.pause()
+          if (!localStream) {
+            try {
+              localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+              await fetchRtcConfig()
+            } catch (e) {
+              ElMessage.error('需要麦克风权限才能加入一起看')
+              return
+            }
+          }
+          if (pendingWs) { pendingWs.onclose = null; pendingWs.close(); pendingWs = null }
+          connectWatch(joinNickname.value.trim() || '观众', '')
         } else if (!msg.host_active) {
-          // 管理员下线，关闭弹窗（已加入的不受影响）
+          // 管理员下线：恢复视频可播
           joinDialogVisible.value = false
         }
       }
@@ -788,14 +811,6 @@ function toggleVoiceChannel() {
 }
 
 async function confirmJoin() {
-  // 必须先获取麦克风权限，否则不允许加入
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-  } catch (e) {
-    ElMessage.error('需要麦克风权限才能加入，请允许后重试')
-    return
-  }
-  await fetchRtcConfig()
   // 关闭 pending 监听连接，切换为正式连接
   if (pendingWs) { pendingWs.onclose = null; pendingWs.close(); pendingWs = null }
   joinDialogVisible.value = false
