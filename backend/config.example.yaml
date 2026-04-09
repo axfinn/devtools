@@ -593,12 +593,15 @@ ai_gateway:
 proxy:
   # 管理员密码（必填，留空则功能不可用）
   admin_password: ""
+  # 独立代理端口（供 NPS 映射，绕过 nginx，留空则不启动）
+  # 配置后 NPS 工具页面可一键将此端口映射到公网
+  tunnel_port: "18080"
 
 # NPS 端口映射管理
 # 在 NPS 后台创建好客户端后，填入 vkey 即可通过 devtools 快速管理端口映射
 nps:
   # NPS 管理后台地址（含端口）
-  server_url: "http://nps.example.com:8080"
+  server_url: "http://your-nps-server:8080"
   # NPS 配置文件里的 auth_key
   auth_key: ""
   # 客户端验证密钥（已在 NPS 后台创建好的客户端 vkey）
@@ -608,4 +611,3 @@ nps:
   # 自动分配端口区间（添加映射时不填端口则自动从此区间分配，0 表示不启用）
   port_range_start: 10000
   port_range_end: 20000
-

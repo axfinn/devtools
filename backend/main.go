@@ -337,7 +337,7 @@ func main() {
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 	proxyHandler := handlers.NewProxyHandler(cfg)
-	npsHandler := handlers.NewNPSHandler(cfg.NPS)
+	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
@@ -921,6 +921,23 @@ func main() {
 	})
 
 	log.Printf("服务器启动在端口 %s", port)
+
+	// 启动独立代理端口（供 NPS 映射，绕过 nginx）
+	if cfg.Proxy.TunnelPort != "" {
+		go func() {
+			tunnelSrv := &http.Server{
+				Addr: ":" + cfg.Proxy.TunnelPort,
+				Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					proxyHandler.Tunnel(w, req)
+				}),
+			}
+			log.Printf("独立代理端口启动在 %s（供 NPS 映射）", cfg.Proxy.TunnelPort)
+			if err := tunnelSrv.ListenAndServe(); err != nil {
+				log.Printf("独立代理端口启动失败: %v", err)
+			}
+		}()
+	}
+
 	srv := &http.Server{
 		Addr: ":" + port,
 		// 在 Handler 层拦截 CONNECT 方法，其余交给 Gin

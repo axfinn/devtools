@@ -18,13 +18,14 @@ import (
 )
 
 type NPSHandler struct {
-	cfg      config.NPSConfig
-	clientID int
-	mu       sync.Mutex
+	cfg        config.NPSConfig
+	tunnelPort string // proxy.tunnel_port，用于前端展示一键映射
+	clientID   int
+	mu         sync.Mutex
 }
 
-func NewNPSHandler(cfg config.NPSConfig) *NPSHandler {
-	return &NPSHandler{cfg: cfg}
+func NewNPSHandler(cfg config.NPSConfig, tunnelPort string) *NPSHandler {
+	return &NPSHandler{cfg: cfg, tunnelPort: tunnelPort}
 }
 
 func (h *NPSHandler) checkAdmin(password string) bool {
@@ -157,6 +158,7 @@ func (h *NPSHandler) Status(c *gin.Context) {
 		"vkey":             h.cfg.VKey,
 		"port_range_start": h.cfg.PortRangeStart,
 		"port_range_end":   h.cfg.PortRangeEnd,
+		"tunnel_port":      h.tunnelPort,
 	})
 }
 

@@ -32,6 +32,13 @@
           <span v-if="portRangeStart > 0" class="port-range">
             自动端口区间：{{ portRangeStart }} – {{ portRangeEnd }}
           </span>
+          <el-button
+            v-if="tunnelPort"
+            size="small"
+            type="warning"
+            :loading="addingProxy"
+            @click="addProxyTunnel"
+          >一键映射代理端口 ({{ tunnelPort }})</el-button>
         </div>
         <div v-else class="text-gray">加载中...</div>
       </el-card>
@@ -118,10 +125,12 @@ const loginLoading = ref(false)
 const clientInfo = ref(null)
 const portRangeStart = ref(0)
 const portRangeEnd = ref(0)
+const tunnelPort = ref('')  // proxy.tunnel_port，用于一键映射代理端口
 
 const tunnels = ref([])
 const loadingTunnels = ref(false)
 const adding = ref(false)
+const addingProxy = ref(false)
 const deletingId = ref(null)
 
 const addForm = ref({ type: 'tcp', port: null, target: '', remark: '' })
@@ -158,6 +167,7 @@ function applyStatus(data) {
   clientInfo.value = data.client?.client || data.client
   portRangeStart.value = data.port_range_start || 0
   portRangeEnd.value = data.port_range_end || 0
+  tunnelPort.value = data.tunnel_port || ''
 }
 
 async function loadStatus() {
@@ -202,6 +212,31 @@ async function addTunnel() {
     loadTunnels()
   } catch { ElMessage.error('添加失败') }
   finally { adding.value = false }
+}
+
+// 一键将 proxy.tunnel_port 映射到 NPS 公网
+async function addProxyTunnel() {
+  if (!tunnelPort.value) return
+  addingProxy.value = true
+  try {
+    const body = {
+      admin_password: adminPassword(),
+      type: 'tcp',
+      port: parseInt(tunnelPort.value),
+      target: `127.0.0.1:${tunnelPort.value}`,
+      remark: '代理端口（防探测）',
+    }
+    const r = await fetch('/api/nps/tunnels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await r.json()
+    if (data.error) { ElMessage.error(data.error); return }
+    ElMessage.success(`代理端口已映射到公网端口 ${data.port}`)
+    loadTunnels()
+  } catch { ElMessage.error('映射失败') }
+  finally { addingProxy.value = false }
 }
 
 async function confirmDelete(row) {
