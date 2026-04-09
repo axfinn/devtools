@@ -453,7 +453,7 @@ func (h *ProxyHandler) Stop(c *gin.Context) {
 }
 
 // CreateNPSTunnel POST /api/proxy/nps-tunnel
-// 用 proxy 密码一键将 tunnel_port 映射到 NPS 公网
+// 用 proxy 密码一键将 tunnel_port 映射到 NPS 公网，自动分配公网端口
 func (h *ProxyHandler) CreateNPSTunnel(c *gin.Context) {
 	var req struct {
 		AdminPassword string `json:"admin_password"`
@@ -474,20 +474,17 @@ func (h *ProxyHandler) CreateNPSTunnel(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "proxy.tunnel_port 未配置"})
 		return
 	}
-	port := 0
-	if p, err := strconv.Atoi(h.npcTunnelPort); err == nil {
-		port = p
-	}
-	// 复用 NPSHandler 的 AddTunnel 逻辑：直接调内部方法
+
 	clientID, err := h.npsHandler.getClientID()
 	if err != nil {
 		c.JSON(500, gin.H{"error": "获取 NPS 客户端失败: " + err.Error()})
 		return
 	}
+
 	params := url.Values{}
 	params.Set("type", "tcp")
-	params.Set("port", h.npcTunnelPort)
-	params.Set("target", fmt.Sprintf("127.0.0.1:%d", port))
+	params.Set("port", h.npcTunnelPort)                    // 公网端口 = tunnel_port（如 18080）
+	params.Set("target", "127.0.0.1:"+h.npcTunnelPort)    // target = 本地代理端口
 	params.Set("client_id", strconv.Itoa(clientID))
 	params.Set("remark", "代理端口（防探测）")
 	result, err := h.npsHandler.npsPost("/index/add/", params)
@@ -500,7 +497,8 @@ func (h *ProxyHandler) CreateNPSTunnel(c *gin.Context) {
 		c.JSON(400, gin.H{"error": msg})
 		return
 	}
-	c.JSON(200, gin.H{"port": port})
+	tunnelPort, _ := strconv.Atoi(h.npcTunnelPort)
+	c.JSON(200, gin.H{"port": tunnelPort})
 }
 
 // AutoStart POST /api/proxy/auto-start
