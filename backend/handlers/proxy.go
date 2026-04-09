@@ -322,7 +322,7 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 	globalSession.active = target
 	globalSession.mu.Unlock()
 
-	go serveHTTPProxy(ln, target)
+	go serveHTTPProxy(ln, target, h.adminPassword)
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -671,33 +671,49 @@ func (h *ProxyHandler) Resource(c *gin.Context) {
 	c.Data(status, ct, body)
 }
 
+// fakeWebPage 伪装成普通 nginx 页面，防止 GFW 主动探测识别代理
+const fakeWebPage = "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 55\r\nConnection: close\r\n\r\n<html><body><h1>Welcome to nginx!</h1></body></html>"
+
 // serveHTTPProxy 运行一个简单的 HTTP CONNECT 代理，转发到目标节点
 // 支持 http/socks5 类型节点的上游代理，其他类型直连
-func serveHTTPProxy(ln net.Listener, node *ProxyNode) {
+func serveHTTPProxy(ln net.Listener, node *ProxyNode, adminPassword string) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		go handleProxyConn(conn, node)
+		go handleProxyConn(conn, node, adminPassword)
 	}
 }
 
-func handleProxyConn(clientConn net.Conn, node *ProxyNode) {
+func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string) {
 	defer clientConn.Close()
+	clientConn.SetDeadline(time.Now().Add(30 * time.Second))
 
 	br := bufio.NewReader(clientConn)
 	req, err := http.ReadRequest(br)
 	if err != nil {
+		// 非 HTTP 协议（如二进制探测）：静默关闭
 		return
 	}
+
+	// 防探测：验证 Proxy-Authorization，失败时伪装成普通网站
+	if adminPassword != "" {
+		authHeader := req.Header.Get("Proxy-Authorization")
+		if !checkProxyAuthHeader(authHeader, adminPassword) {
+			clientConn.Write([]byte(fakeWebPage))
+			return
+		}
+	}
+
+	clientConn.SetDeadline(time.Time{}) // 认证通过后取消超时
 
 	if req.Method == http.MethodConnect {
 		// HTTPS CONNECT 隧道
 		host := req.Host
 		upstream, err := dialUpstream(node, host)
 		if err != nil {
-			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nServer: nginx/1.24.0\r\n\r\n"))
 			return
 		}
 		clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
@@ -712,7 +728,7 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode) {
 		}
 		upstream, err := dialUpstream(node, host)
 		if err != nil {
-			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nServer: nginx/1.24.0\r\n\r\n"))
 			return
 		}
 		defer upstream.Close()
@@ -820,10 +836,12 @@ func dialSocks5(proxyAddr, targetHost string, node *ProxyNode) (net.Conn, error)
 // 浏览器/系统代理配置：http://yourserver:PORT
 // 密码通过 Proxy-Authorization: Basic base64(user:password) 传递
 func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
-	// 验证 Proxy-Authorization
+	// 防探测：无认证或认证失败时伪装成普通网站，不暴露 407
 	if !h.checkProxyAuth(r.Header.Get("Proxy-Authorization")) {
-		w.Header().Set("Proxy-Authenticate", `Basic realm="DevTools Proxy"`)
-		w.WriteHeader(407)
+		w.Header().Set("Server", "nginx/1.24.0")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(200)
+		w.Write([]byte("<html><body><h1>Welcome to nginx!</h1></body></html>"))
 		return
 	}
 
@@ -892,6 +910,25 @@ func (h *ProxyHandler) checkProxyAuth(header string) bool {
 	return parts[1] == h.adminPassword
 }
 
+// checkProxyAuthHeader 独立函数版本，供 handleProxyConn 使用
+func checkProxyAuthHeader(header, adminPassword string) bool {
+	if adminPassword == "" {
+		return false
+	}
+	if !strings.HasPrefix(header, "Basic ") {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(header, "Basic "))
+	if err != nil {
+		return false
+	}
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	return parts[1] == adminPassword
+}
+
 // DownloadExtension GET /api/proxy/extension?admin_password=xxx&host=xxx
 // 生成并下载 Chrome 扩展 zip，导入后自动配置代理
 func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
@@ -907,20 +944,17 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
 		proxyHost = c.Request.Host
 	}
 
-	// MV3 manifest — 用 sockets API 实现本地 SOCKS5 代理 + WebSocket 隧道
+	// MV3 manifest — 使用 PAC 脚本代理 + onAuthRequired 自动填充认证
 	manifest := `{
   "manifest_version": 3,
   "name": "DevTools Proxy",
-  "version": "2.0",
-  "description": "本地 SOCKS5 代理，通过 WebSocket 隧道科学上网，无需额外工具",
+  "version": "3.0",
+  "description": "通过服务器 HTTP 代理科学上网，支持自动认证",
   "permissions": [
     "storage",
-    "proxy"
+    "proxy",
+    "webRequest"
   ],
-  "sockets": {
-    "tcpServer": { "listen": "127.0.0.1:1080" },
-    "tcp": { "connect": "*" }
-  },
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
@@ -931,22 +965,24 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
   }
 }`
 
-	// background.js：本地 SOCKS5 服务器 + WebSocket 隧道
-	// 监听 127.0.0.1:1080，每个连接通过 WebSocket 转发到服务器
+	// background.js：PAC 脚本代理 + onAuthRequired 自动填充认证
 	bgJS := fmt.Sprintf(`
-const DEFAULT_SERVER = %q;  // e.g. "t.example.com"
+const DEFAULT_SERVER = %q;
 const DEFAULT_PASS   = %q;
 
-// ── 配置 Chrome 代理指向本地 SOCKS5 ──────────────────────────────────────
-function applyLocalProxy() {
+function buildPac(server) {
+  // PAC 脚本：所有流量走服务器 HTTP 代理
+  // HTTP 流量直接代理；HTTPS 通过 CONNECT 隧道（需服务器直连，不经 nginx）
+  return 'function FindProxyForURL(url, host) {' +
+    'if (isPlainHostName(host) || host === "127.0.0.1" || host === "localhost") return "DIRECT";' +
+    'return "PROXY ' + server + '";' +
+    '}';
+}
+
+function applyProxy(server) {
+  const pac = buildPac(server);
   chrome.proxy.settings.set({
-    value: {
-      mode: 'fixed_servers',
-      rules: {
-        singleProxy: { scheme: 'socks5', host: '127.0.0.1', port: 1080 },
-        bypassList: ['localhost', '127.0.0.1', '<local>']
-      }
-    },
+    value: { mode: 'pac_script', pacScript: { data: pac } },
     scope: 'regular'
   });
 }
@@ -956,193 +992,50 @@ function disableProxy() {
 }
 
 function loadAndApply() {
-  chrome.storage.local.get(['proxyEnabled'], (s) => {
+  chrome.storage.local.get(['proxyEnabled', 'server'], (s) => {
     if (s.proxyEnabled !== false) {
-      applyLocalProxy();
-      startSocks5Server();
+      applyProxy(s.server || DEFAULT_SERVER);
     } else {
       disableProxy();
-      stopSocks5Server();
     }
   });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({
-    server: DEFAULT_SERVER,
-    pass: DEFAULT_PASS,
-    proxyEnabled: true
-  });
+  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true });
   loadAndApply();
 });
 chrome.runtime.onStartup.addListener(loadAndApply);
 loadAndApply();
 
-// ── SOCKS5 服务器 ─────────────────────────────────────────────────────────
-let serverSocketId = null;
-// socketId -> { state, buf, ws, targetHost, targetPort }
-const conns = {};
-
-function startSocks5Server() {
-  if (serverSocketId !== null) return;
-  chrome.sockets.tcpServer.create({}, (info) => {
-    serverSocketId = info.socketId;
-    chrome.sockets.tcpServer.listen(info.socketId, '127.0.0.1', 1080, (result) => {
-      if (result < 0) { serverSocketId = null; }
-    });
-  });
-}
-
-function stopSocks5Server() {
-  if (serverSocketId === null) return;
-  chrome.sockets.tcpServer.close(serverSocketId);
-  serverSocketId = null;
-  for (const id of Object.keys(conns)) {
-    try { chrome.sockets.tcp.close(parseInt(id)); } catch(e) {}
-  }
-  for (const k in conns) delete conns[k];
-}
-
-chrome.sockets.tcpServer.onAccept.addListener((info) => {
-  if (info.socketId !== serverSocketId) return;
-  const cid = info.clientSocketId;
-  conns[cid] = { state: 'greeting', buf: new Uint8Array(0) };
-  chrome.sockets.tcp.setPaused(cid, false);
-});
-
-chrome.sockets.tcp.onReceive.addListener((info) => {
-  const c = conns[info.socketId];
-  if (!c) return;
-  const data = new Uint8Array(info.data);
-  // 追加到缓冲
-  const merged = new Uint8Array(c.buf.length + data.length);
-  merged.set(c.buf); merged.set(data, c.buf.length);
-  c.buf = merged;
-  processSocks5(info.socketId, c);
-});
-
-chrome.sockets.tcp.onReceiveError.addListener((info) => {
-  closeConn(info.socketId);
-});
-
-function send(socketId, arr) {
-  chrome.sockets.tcp.send(socketId, arr.buffer, () => {});
-}
-
-function closeConn(socketId) {
-  const c = conns[socketId];
-  if (!c) return;
-  if (c.ws) { try { c.ws.close(); } catch(e) {} }
-  chrome.sockets.tcp.close(socketId);
-  delete conns[socketId];
-}
-
-function processSocks5(sid, c) {
-  if (c.state === 'greeting') {
-    // +----+----------+----------+
-    // |VER | NMETHODS | METHODS  |
-    if (c.buf.length < 2) return;
-    const nMethods = c.buf[1];
-    if (c.buf.length < 2 + nMethods) return;
-    c.buf = c.buf.slice(2 + nMethods);
-    // 回复：无需认证
-    send(sid, new Uint8Array([0x05, 0x00]));
-    c.state = 'request';
-    processSocks5(sid, c);
-    return;
-  }
-
-  if (c.state === 'request') {
-    // +----+-----+-------+------+----------+----------+
-    // |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-    if (c.buf.length < 4) return;
-    const cmd = c.buf[1];
-    const atyp = c.buf[3];
-    let host = '', port = 0, consumed = 0;
-
-    if (atyp === 0x01) { // IPv4
-      if (c.buf.length < 10) return;
-      host = c.buf[4]+'.'+c.buf[5]+'.'+c.buf[6]+'.'+c.buf[7];
-      port = (c.buf[8] << 8) | c.buf[9];
-      consumed = 10;
-    } else if (atyp === 0x03) { // domain
-      const len = c.buf[4];
-      if (c.buf.length < 5 + len + 2) return;
-      host = new TextDecoder().decode(c.buf.slice(5, 5 + len));
-      port = (c.buf[5 + len] << 8) | c.buf[5 + len + 1];
-      consumed = 5 + len + 2;
-    } else if (atyp === 0x04) { // IPv6
-      if (c.buf.length < 22) return;
-      const parts = [];
-      for (let i = 0; i < 8; i++) parts.push(((c.buf[4+i*2]<<8)|c.buf[5+i*2]).toString(16));
-      host = parts.join(':');
-      port = (c.buf[20] << 8) | c.buf[21];
-      consumed = 22;
-    } else {
-      closeConn(sid); return;
+// 自动填充代理认证（Proxy-Authorization）
+chrome.webRequest.onAuthRequired.addListener(
+  (details, callback) => {
+    if (details.isProxy) {
+      chrome.storage.local.get(['pass'], (s) => {
+        callback({ authCredentials: { username: 'proxy', password: s.pass || DEFAULT_PASS } });
+      });
+      return true; // 异步
     }
+    callback({});
+  },
+  { urls: ['<all_urls>'] },
+  ['asyncBlocking']
+);
 
-    if (cmd !== 0x01) { // 只支持 CONNECT
-      send(sid, new Uint8Array([0x05,0x07,0x00,0x01,0,0,0,0,0,0]));
-      closeConn(sid); return;
-    }
-
-    c.buf = c.buf.slice(consumed);
-    c.targetHost = host + ':' + port;
-    c.state = 'connecting';
-
-    // 回复成功（先告诉客户端连接建立，再实际建立 WebSocket）
-    send(sid, new Uint8Array([0x05,0x00,0x00,0x01,0,0,0,0,0,0]));
-
-    // 建立 WebSocket 隧道
-    chrome.storage.local.get(['server','pass'], (s) => {
-      const srv = s.server || DEFAULT_SERVER;
-      const pw  = s.pass  || DEFAULT_PASS;
-      const proto = srv.startsWith('localhost') || srv.match(/^\d+\.\d+/) ? 'ws' : 'wss';
-      const wsURL = proto + '://' + srv + '/api/proxy/ws-tunnel?p=' + encodeURIComponent(pw) + '&host=' + encodeURIComponent(c.targetHost);
-      const ws = new WebSocket(wsURL);
-      ws.binaryType = 'arraybuffer';
-      c.ws = ws;
-
-      ws.onopen = () => {
-        c.state = 'tunnel';
-        // 把缓冲里剩余的数据（请求头）发过去
-        if (c.buf.length > 0) { ws.send(c.buf.buffer); c.buf = new Uint8Array(0); }
-      };
-      ws.onmessage = (e) => {
-        if (!conns[sid]) return;
-        chrome.sockets.tcp.send(sid, e.data, () => {});
-      };
-      ws.onerror = () => closeConn(sid);
-      ws.onclose = () => closeConn(sid);
-    });
-    return;
-  }
-
-  if (c.state === 'tunnel' && c.ws && c.ws.readyState === WebSocket.OPEN) {
-    c.ws.send(c.buf.buffer);
-    c.buf = new Uint8Array(0);
-  }
-}
-
-// ── 消息处理 ──────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'update') {
     chrome.storage.local.set({ server: msg.server, pass: msg.pass, proxyEnabled: true }, () => {
-      stopSocks5Server();
-      applyLocalProxy();
-      startSocks5Server();
+      applyProxy(msg.server);
     });
-  }
-  if (msg.action === 'disable') {
+  } else if (msg.action === 'disable') {
     chrome.storage.local.set({ proxyEnabled: false });
     disableProxy();
-    stopSocks5Server();
-  }
-  if (msg.action === 'enable') {
-    chrome.storage.local.set({ proxyEnabled: true });
-    applyLocalProxy();
-    startSocks5Server();
+  } else if (msg.action === 'enable') {
+    chrome.storage.local.get(['server'], (s) => {
+      chrome.storage.local.set({ proxyEnabled: true });
+      applyProxy(s.server || DEFAULT_SERVER);
+    });
   }
   sendResponse({});
   return true;
@@ -1153,7 +1046,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 <html>
 <head><meta charset="utf-8"><style>
 *{box-sizing:border-box;}
-body{font-family:sans-serif;padding:14px;width:300px;font-size:13px;margin:0;}
+body{font-family:sans-serif;padding:14px;width:320px;font-size:13px;margin:0;}
 label{display:block;color:#666;margin-bottom:3px;margin-top:10px;}
 input{width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;}
 .row{display:flex;align-items:center;gap:8px;margin-top:12px;}
@@ -1163,20 +1056,23 @@ button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:1
 .btn-save{background:#409eff;color:#fff;}
 .btn-on{background:#67c23a;color:#fff;}
 .btn-off{background:#f56c6c;color:#fff;}
-.hint{font-size:11px;color:#999;margin-top:6px;}
+.hint{font-size:11px;color:#999;margin-top:6px;line-height:1.5;}
 </style></head>
 <body>
-<label>服务器域名（不含协议和路径）</label>
-<input id="server" placeholder="t.example.com">
+<label>服务器地址（host:port 或 域名）</label>
+<input id="server" placeholder="example.com 或 1.2.3.4:8082">
 <label>密码</label>
 <input id="pass" type="password" placeholder="管理员密码">
-<div class="hint">本地 SOCKS5 代理 127.0.0.1:1080，通过 WebSocket 隧道连接服务器</div>
+<div class="hint">⚠️ 仅限直连服务器（不经过 nginx）。经 nginx 反代请用 wstunnel 方案。</div>
 <div class="row">
   <span class="status" id="status">检测中...</span>
-  <button class="btn-save" onclick="save()">保存并启用</button>
-  <button id="toggleBtn" onclick="toggle()">-</button>
+  <button class="btn-save" id="saveBtn">保存并启用</button>
+  <button id="toggleBtn">-</button>
 </div>
-<script>
+<script src="popup.js"></script>
+</body></html>`
+
+	popupJS := `
 var enabled = true;
 
 chrome.storage.local.get(['server','pass','proxyEnabled'], function(s) {
@@ -1187,28 +1083,27 @@ chrome.storage.local.get(['server','pass','proxyEnabled'], function(s) {
 });
 
 function updateUI() {
-  document.getElementById('status').textContent = enabled ? '代理已启用 (SOCKS5 :1080)' : '代理已关闭';
+  document.getElementById('status').textContent = enabled ? '代理已启用' : '代理已关闭';
   document.getElementById('status').className = 'status ' + (enabled ? 'on' : 'off');
   document.getElementById('toggleBtn').textContent = enabled ? '关闭' : '开启';
   document.getElementById('toggleBtn').className = enabled ? 'btn-off' : 'btn-on';
 }
 
-function save() {
+document.getElementById('saveBtn').addEventListener('click', function() {
   var server = document.getElementById('server').value.trim();
   var pass = document.getElementById('pass').value.trim();
-  if (!server || !pass) { alert('请填写服务器域名和密码'); return; }
+  if (!server || !pass) { alert('请填写服务器地址和密码'); return; }
   chrome.runtime.sendMessage({ action: 'update', server: server, pass: pass });
   enabled = true;
   updateUI();
-}
+});
 
-function toggle() {
+document.getElementById('toggleBtn').addEventListener('click', function() {
   enabled = !enabled;
   chrome.runtime.sendMessage({ action: enabled ? 'enable' : 'disable' });
   updateUI();
-}
-</script>
-</body></html>`
+});
+`
 
 	// 打包成 zip
 	var buf bytes.Buffer
@@ -1217,6 +1112,7 @@ function toggle() {
 		"manifest.json": manifest,
 		"background.js": bgJS,
 		"popup.html":    popupHTML,
+		"popup.js":      popupJS,
 	}
 	for name, content := range files {
 		w, err := zw.Create(name)
@@ -1239,6 +1135,38 @@ var wsUpgrader = websocket.Upgrader{
 // WsTunnel GET /api/proxy/ws-tunnel?p=PASSWORD&host=example.com:443
 // 通过 WebSocket 建立 TCP 隧道，绕过 nginx 对 CONNECT 的限制
 // 客户端用 wstunnel: wstunnel client -L 'socks5://127.0.0.1:1080' wss://yourserver.com/api/proxy/ws-tunnel?p=PASS
+// DownloadClient GET /api/proxy/client/download?os=darwin&arch=arm64&admin_password=xxx
+// 下载对应平台的 proxy-client 二进制
+func (h *ProxyHandler) DownloadClient(c *gin.Context) {
+	if !h.checkAdmin(c.Query("admin_password")) {
+		c.JSON(403, gin.H{"error": "密码错误"})
+		return
+	}
+	goos := c.Query("os")
+	arch := c.Query("arch")
+	if goos == "" || arch == "" {
+		c.JSON(400, gin.H{"error": "缺少 os 或 arch 参数"})
+		return
+	}
+
+	var filename string
+	if goos == "windows" {
+		filename = fmt.Sprintf("proxy-client-%s-%s.exe", goos, arch)
+	} else {
+		filename = fmt.Sprintf("proxy-client-%s-%s", goos, arch)
+	}
+
+	filePath := "./proxy-client-bins/" + filename
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		c.JSON(404, gin.H{"error": "该平台的客户端不存在，请联系管理员重新构建"})
+		return
+	}
+
+	c.Header("Content-Disposition", "attachment; filename="+filename)
+	c.Header("Content-Type", "application/octet-stream")
+	c.File(filePath)
+}
+
 func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 	if !h.checkAdmin(c.Query("p")) {
 		c.JSON(403, gin.H{"error": "forbidden"})

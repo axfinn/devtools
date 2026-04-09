@@ -76,9 +76,31 @@
       <el-card v-if="proxyRunning" class="config-card">
         <template #header><span>代理已启动 — {{ activeNode }}</span></template>
 
-        <!-- 方案一：wstunnel（推荐，支持 nginx 反代） -->
+        <!-- 方案一：Go 客户端（推荐，无需第三方工具） -->
         <el-alert type="success" :closable="false" style="margin-bottom:12px">
-          <template #title><span>方案一：wstunnel（推荐，支持 nginx 反代）</span></template>
+          <template #title><span>方案一：Go 客户端（推荐）</span></template>
+          <div style="margin-top:6px;font-size:13px;">
+            下载客户端，本地运行后浏览器配 SOCKS5 代理 <b>127.0.0.1:1080</b>
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+            <el-button size="small" type="primary" @click="downloadClient('darwin','arm64')">Mac (Apple Silicon)</el-button>
+            <el-button size="small" type="primary" @click="downloadClient('darwin','amd64')">Mac (Intel)</el-button>
+            <el-button size="small" type="primary" @click="downloadClient('linux','amd64')">Linux</el-button>
+            <el-button size="small" type="primary" @click="downloadClient('windows','amd64')">Windows</el-button>
+          </div>
+          <div class="proxy-addr-row" style="margin-top:8px">
+            <el-input :value="goClientCmd" readonly size="small" class="proxy-addr-input">
+              <template #append>
+                <el-button @click="copy(goClientCmd)">复制</el-button>
+              </template>
+            </el-input>
+          </div>
+          <div class="proxy-hint">运行后浏览器/系统代理配置 SOCKS5 127.0.0.1:1080。流量走 WebSocket 隧道，支持 nginx 反代，防探测。</div>
+        </el-alert>
+
+        <!-- 方案二：wstunnel（需要第三方工具） -->
+        <el-alert type="info" :closable="false" style="margin-bottom:12px">
+          <template #title><span>方案二：wstunnel</span></template>
           <div style="margin-top:6px;font-size:13px;">
             本地运行 wstunnel，浏览器配 SOCKS5 代理 <b>127.0.0.1:1080</b>
           </div>
@@ -92,14 +114,14 @@
           <div class="proxy-hint">
             下载 wstunnel：<a href="https://github.com/erebe/wstunnel/releases" target="_blank">github.com/erebe/wstunnel/releases</a>
           </div>
-          <el-button type="primary" size="small" style="margin-top:10px" @click="downloadExtension">
+          <el-button type="default" size="small" style="margin-top:10px" @click="downloadExtension">
             下载 Chrome 插件（自动配置，无需 wstunnel）
           </el-button>
         </el-alert>
 
-        <!-- 方案二：直接 HTTP 代理（需要直连服务器，不经过 nginx） -->
-        <el-alert type="info" :closable="false">
-          <template #title><span>方案二：直接 HTTP 代理（仅限直连服务器，不经过 nginx）</span></template>
+        <!-- 方案三：直接 HTTP 代理（需要直连服务器，不经过 nginx） -->
+        <el-alert type="warning" :closable="false">
+          <template #title><span>方案三：直接 HTTP 代理（仅限直连服务器，不经过 nginx）</span></template>
           <div class="proxy-addr-row" style="margin-top:8px">
             <span class="proxy-addr-label">代理地址</span>
             <el-input :value="externalProxyURL" readonly size="small" class="proxy-addr-input">
@@ -116,7 +138,7 @@
               </template>
             </el-input>
           </div>
-          <div class="proxy-hint">用户名随意填，密码填上方密码。nginx 反代下此方式不可用。</div>
+          <div class="proxy-hint">用户名随意填，密码填上方密码。无认证请求会返回假页面，防止 GFW 探测。nginx 反代下此方式不可用。</div>
         </el-alert>
       </el-card>
 
@@ -459,6 +481,20 @@ const wstunnelCmd = computed(() => {
   const pass = adminPassword()
   return `wstunnel client -L 'socks5://127.0.0.1:1080' ${proto}://${host}/api/proxy/ws-tunnel?p=${encodeURIComponent(pass)}`
 })
+
+// Go 客户端命令
+const goClientCmd = computed(() => {
+  const proto = window.location.protocol === 'https:' ? 'https' : 'http'
+  const host = window.location.host
+  const pass = adminPassword()
+  return `./proxy-client -server ${proto}://${host} -password ${pass}`
+})
+
+function downloadClient(os, arch) {
+  const pass = adminPassword()
+  const url = `/api/proxy/client/download?os=${os}&arch=${arch}&admin_password=${encodeURIComponent(pass)}`
+  window.open(url, '_blank')
+}
 </script>
 
 <style scoped>

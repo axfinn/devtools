@@ -25,6 +25,22 @@ RUN go mod download
 COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
+# 编译 proxy-client 跨平台二进制
+FROM docker.m.daocloud.io/library/golang:1.21-alpine AS proxy-client-builder
+
+WORKDIR /app/proxy-client
+
+ENV GOPROXY=https://goproxy.cn,direct
+
+COPY proxy-client/go.mod proxy-client/go.sum ./
+RUN go mod download
+
+COPY proxy-client/ ./
+RUN GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o dist/proxy-client-darwin-arm64   . && \
+    GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w" -o dist/proxy-client-darwin-amd64   . && \
+    GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o dist/proxy-client-linux-amd64    . && \
+    GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/proxy-client-windows-amd64.exe .
+
 FROM docker.m.daocloud.io/library/alpine:latest
 
 WORKDIR /app
@@ -58,6 +74,7 @@ RUN addgroup -g 1001 autodev && \
 # Claude settings are generated dynamically in entrypoint.sh with runtime env vars (e.g. MINIMAX_API_KEY)
 
 COPY --from=backend-builder /app/backend/server ./server
+COPY --from=proxy-client-builder /app/proxy-client/dist ./proxy-client-bins/
 COPY --from=frontend-builder /app/frontend/dist ./dist
 COPY entrypoint.sh ./entrypoint.sh
 COPY tts-service/server.py ./tts_server.py

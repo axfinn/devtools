@@ -337,6 +337,7 @@ func main() {
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 	proxyHandler := handlers.NewProxyHandler(cfg)
+	npsHandler := handlers.NewNPSHandler(cfg.NPS)
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
@@ -877,6 +878,16 @@ func main() {
 			proxyGroup.GET("/resource", proxyHandler.Resource)
 			proxyGroup.GET("/extension", proxyHandler.DownloadExtension)
 			proxyGroup.GET("/ws-tunnel", proxyHandler.WsTunnel)
+			proxyGroup.GET("/client/download", proxyHandler.DownloadClient)
+		}
+
+		// NPS 端口映射管理
+		nps := api.Group("/nps")
+		{
+			nps.GET("/status", npsHandler.Status)
+			nps.GET("/tunnels", npsHandler.ListTunnels)
+			nps.POST("/tunnels", npsHandler.AddTunnel)
+			nps.DELETE("/tunnels/:id", npsHandler.DeleteTunnel)
 		}
 		api.POST("/bg/cache", handlers.CacheBackgroundImages) // 缓存图片
 		api.POST("/bg/replace", handlers.ReplaceRandomImages) // 随机替换图片

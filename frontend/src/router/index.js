@@ -92,6 +92,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/nps',
+    name: 'NPS',
+    component: () => import('../views/NPSTool.vue'),
+    meta: {
+      title: 'NPS 端口映射',
+      icon: 'Share',
+      category: 'other',
+      description: 'NPS 端口映射快速管理'
+    }
+  },
+  {
     path: '/base64',
     name: 'Base64',
     component: () => import('../views/Base64Tool.vue'),
