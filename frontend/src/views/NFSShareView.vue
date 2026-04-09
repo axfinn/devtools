@@ -100,7 +100,7 @@
                 </el-button>
               </template>
 
-              <!-- 语音控制：房主显示开关+静音；观众在语音开启时显示加入/离开 -->
+              <!-- 语音控制：房主显示开关+静音；观众只能退出 -->
               <template v-if="watchConnected">
                 <template v-if="isHost">
                   <el-button
@@ -112,23 +112,6 @@
                   </el-button>
                   <el-button
                     v-if="voiceChannelEnabled"
-                    :type="voiceMuted ? 'warning' : ''"
-                    size="small"
-                    @click="toggleMute"
-                  >
-                    {{ voiceMuted ? '🔇 已静音' : '🔊 静音' }}
-                  </el-button>
-                </template>
-                <template v-else-if="voiceChannelEnabled">
-                  <el-button
-                    :type="voiceActive ? 'danger' : 'success'"
-                    size="small"
-                    @click="toggleVoice"
-                  >
-                    {{ voiceActive ? '挂断语音' : '🎤 加入语音' }}
-                  </el-button>
-                  <el-button
-                    v-if="voiceActive"
                     :type="voiceMuted ? 'warning' : ''"
                     size="small"
                     @click="toggleMute"
@@ -379,6 +362,7 @@ let pendingWs = null  // 匿名监听连接，用于接收 force_watch 信号
 const voiceActive = ref(false)
 const voiceMuted = ref(false)
 const voiceChannelEnabled = ref(false) // 语音频道是否开启（由房主控制）
+const localStreamActive = ref(false)   // 是否持有麦克风流
 const voiceParticipants = ref([]) // [{ peerID, nickname, speaking }]
 let myPeerID = ''
 let localStream = null
@@ -748,7 +732,13 @@ function applySyncMsg(msg) {
 
 // ---- 房主同步事件 ----
 function onHostPlay() {
-  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) {
+    // 观众在一起看中不能自己控制播放，强制暂停
+    if (watchConnected.value && !isHost.value && syncLockCount === 0) {
+      art?.video?.pause()
+    }
+    return
+  }
   if (syncLockCount > 0) { syncLockCount--; return }
   wsSend({ type: 'sync', action: 'play', time: art?.video?.currentTime ?? 0 })
 }
@@ -795,6 +785,7 @@ function connectPendingWatch() {
           if (!localStream) {
             try {
               localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+              localStreamActive.value = true
               await fetchRtcConfig()
             } catch (e) {
               ElMessage.error('需要麦克风权限才能加入一起看')
@@ -1012,6 +1003,7 @@ async function startVoice() {
   if (!localStream) {
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      localStreamActive.value = true
     } catch (e) {
       ElMessage.error('无法获取麦克风：' + (e.message || e))
       return
@@ -1038,6 +1030,7 @@ function leaveVoice() {
   if (localStream) {
     localStream.getTracks().forEach(t => t.stop())
     localStream = null
+    localStreamActive.value = false
   }
   voiceActive.value = false
 }
