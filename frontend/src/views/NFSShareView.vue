@@ -495,11 +495,11 @@ function createArtPlayer(src, mode) {
   art.on('ready', () => {
     videoEl.value = art.video
     if (!isHls) transcoding.value = false
-    art.video.addEventListener('play', onHostPlay)
-    art.video.addEventListener('pause', onHostPause)
-    art.video.addEventListener('seeked', onHostSeek)
     art.video.addEventListener('error', onVideoError)
   })
+  art.on('play', onHostPlay)
+  art.on('pause', onHostPause)
+  art.on('seek', onHostSeek)
 }
 
 async function switchMode(mode) {

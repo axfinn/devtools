@@ -1244,6 +1244,7 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		}
 		if !alreadyCounted {
 			h.db.IncrementNFSShareViews(id)
+			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", 0)
 		}
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
 		c.File(m3u8Path)
@@ -1259,6 +1260,7 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		// 本次请求触发新转码，计入一次 view
 		job.viewCounted = true
 		h.db.IncrementNFSShareViews(id)
+		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", 0)
 		go func() {
 			defer h.hlsJobs.Delete(key)
 			job.err = h.doTranscode(id, share, preset, outDir, m3u8Path)
