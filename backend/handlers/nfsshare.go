@@ -1505,6 +1505,7 @@ type watchBroadcast struct {
 	Candidate    string          `json:"candidate,omitempty"`     // WebRTC: ICE candidate JSON
 	Peers        []voicePeerInfo `json:"peers,omitempty"`         // voice_peers: 已在语音的成员
 	VoiceEnabled bool            `json:"voice_enabled,omitempty"` // voice_state: 语音频道是否开启
+	HostActive   bool            `json:"host_active,omitempty"`   // force_watch: 房主是否在线
 }
 
 // watchClient 单个 WebSocket 连接
@@ -1526,6 +1527,7 @@ type watchRoom struct {
 	lastTime     float64                 // 最近一次 sync 时间（秒）
 	lastSyncAt   time.Time               // 最近一次 sync 时刻（用于估算当前进度）
 	voiceEnabled bool                    // 语音频道是否开启（由房主控制）
+	hostActive   bool                    // 是否有房主在线（控制强制一起看模式）
 }
 
 func randomPeerID() string {
@@ -1654,6 +1656,17 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	}
 	room.add(client)
 
+	// 房主加入：激活强制一起看模式，广播给已在线的所有人
+	if isHost {
+		room.mu.Lock()
+		room.hostActive = true
+		room.mu.Unlock()
+		room.broadcast(watchBroadcast{
+			Type:       "force_watch",
+			HostActive: true,
+		}, client) // 不发给自己
+	}
+
 	// 广播：有人加入（携带 peerID 供 WebRTC 信令使用）
 	room.broadcastAll(watchBroadcast{
 		Type:     "joined",
@@ -1669,6 +1682,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	lastTime := room.lastTime
 	lastSyncAt := room.lastSyncAt
 	voiceEnabled := room.voiceEnabled
+	hostActive := room.hostActive
 	room.mu.RUnlock()
 	if lastAction != "" {
 		// 估算当前时间：如果是 play，加上已过去的秒数
@@ -1691,6 +1705,17 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		data, _ := json.Marshal(watchBroadcast{
 			Type:         "voice_state",
 			VoiceEnabled: voiceEnabled,
+		})
+		select {
+		case client.send <- data:
+		default:
+		}
+	}
+	// 新加入的非房主：如果房主在线，通知其进入强制一起看模式
+	if !isHost && hostActive {
+		data, _ := json.Marshal(watchBroadcast{
+			Type:       "force_watch",
+			HostActive: true,
 		})
 		select {
 		case client.send <- data:
@@ -1729,6 +1754,16 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 		pingTicker.Stop()
 		room.remove(client)
 		close(client.send)
+		// 房主离开：关闭强制一起看模式
+		if isHost {
+			room.mu.Lock()
+			room.hostActive = false
+			room.mu.Unlock()
+			room.broadcastAll(watchBroadcast{
+				Type:       "force_watch",
+				HostActive: false,
+			})
+		}
 		// 语音成员断开：通知其他人关闭 RTCPeerConnection
 		if client.voiceActive {
 			room.broadcastAll(watchBroadcast{
