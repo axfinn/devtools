@@ -407,46 +407,64 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 	h.startNPC()
 }
 
-// ensureActiveNode 若当前无活跃节点，自动选延迟最低的节点并启动代理
-// 供 Tunnel / WsTunnel 在无节点时自动触发，避免直连
-func (h *ProxyHandler) ensureActiveNode() {
+// triggerAutoSelect 若当前无活跃节点且有节点列表，后台异步测速并选最优节点
+// 不阻塞调用方，当前请求继续直连
+var autoSelectMu sync.Mutex
+
+func (h *ProxyHandler) triggerAutoSelect() {
 	globalSession.mu.RLock()
 	active := globalSession.active
-	nodes := make([]ProxyNode, len(globalSession.nodes))
-	copy(nodes, globalSession.nodes)
+	nodeCount := len(globalSession.nodes)
 	globalSession.mu.RUnlock()
 
-	if active != nil || len(nodes) == 0 {
+	if active != nil || nodeCount == 0 {
 		return
 	}
 
-	// 并发测速，选最低延迟节点
-	var mu sync.Mutex
-	var best *ProxyNode
-	var wg sync.WaitGroup
-	for i := range nodes {
-		wg.Add(1)
-		go func(n ProxyNode) {
-			defer wg.Done()
-			n.Latency = tcpPing(n.Server, n.Port)
-			if n.Latency < 0 {
-				return
-			}
-			mu.Lock()
-			if best == nil || n.Latency < best.Latency {
-				cp := n
-				best = &cp
-			}
-			mu.Unlock()
-		}(nodes[i])
-	}
-	wg.Wait()
+	autoSelectMu.Lock()
+	defer autoSelectMu.Unlock()
 
-	if best == nil {
+	// 再次检查，避免并发重复触发
+	globalSession.mu.RLock()
+	active = globalSession.active
+	globalSession.mu.RUnlock()
+	if active != nil {
 		return
 	}
-	startProxyListener(best, h.adminPassword, h.localPort) //nolint
-	h.startNPC()
+
+	go func() {
+		globalSession.mu.RLock()
+		nodes := make([]ProxyNode, len(globalSession.nodes))
+		copy(nodes, globalSession.nodes)
+		globalSession.mu.RUnlock()
+
+		var mu sync.Mutex
+		var best *ProxyNode
+		var wg sync.WaitGroup
+		for i := range nodes {
+			wg.Add(1)
+			go func(n ProxyNode) {
+				defer wg.Done()
+				n.Latency = tcpPing(n.Server, n.Port)
+				if n.Latency < 0 {
+					return
+				}
+				mu.Lock()
+				if best == nil || n.Latency < best.Latency {
+					cp := n
+					best = &cp
+				}
+				mu.Unlock()
+			}(nodes[i])
+		}
+		wg.Wait()
+
+		if best == nil {
+			return
+		}
+		startProxyListener(best, h.adminPassword, h.localPort) //nolint
+		h.startNPC()
+	}()
 }
 
 // startProxyListener 启动 HTTP CONNECT 代理监听，返回 listener
@@ -986,7 +1004,7 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string)
 	if req.Method == http.MethodConnect {
 		// HTTPS CONNECT 隧道
 		host := req.Host
-		upstream, err := dialUpstream(node, host)
+		upstream, err := dialWithGFW(node, host)
 		if err != nil {
 			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nServer: nginx/1.24.0\r\n\r\n"))
 			return
@@ -1001,7 +1019,7 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string)
 		if !strings.Contains(host, ":") {
 			host += ":80"
 		}
-		upstream, err := dialUpstream(node, host)
+		upstream, err := dialWithGFW(node, host)
 		if err != nil {
 			clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nServer: nginx/1.24.0\r\n\r\n"))
 			return
@@ -1045,6 +1063,14 @@ func dialUpstream(node *ProxyNode, targetHost string) (net.Conn, error) {
 		// ss/vmess/trojan 等：直连目标（降级，仅测速可用）
 		return net.DialTimeout("tcp", targetHost, 10*time.Second)
 	}
+}
+
+// dialWithGFW 分流：命中 gfwlist 走节点，否则直连
+func dialWithGFW(node *ProxyNode, targetHost string) (net.Conn, error) {
+	if ShouldProxy(targetHost) {
+		return dialUpstream(node, targetHost)
+	}
+	return net.DialTimeout("tcp", targetHost, 10*time.Second)
 }
 
 // dialSocks5 简单 SOCKS5 握手
@@ -1125,7 +1151,7 @@ func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 		host = r.URL.Host
 	}
 
-	h.ensureActiveNode()
+	h.triggerAutoSelect()
 
 	globalSession.mu.RLock()
 	node := globalSession.active
@@ -1134,7 +1160,7 @@ func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 	var upstream net.Conn
 	var err error
 	if node != nil {
-		upstream, err = dialUpstream(node, host)
+		upstream, err = dialWithGFW(node, host)
 	} else {
 		upstream, err = net.DialTimeout("tcp", host, 10*time.Second)
 	}
@@ -1515,7 +1541,7 @@ func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 	}
 	defer wsConn.Close()
 
-	h.ensureActiveNode()
+	h.triggerAutoSelect()
 
 	globalSession.mu.RLock()
 	node := globalSession.active
@@ -1523,7 +1549,7 @@ func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 
 	var upstream net.Conn
 	if node != nil {
-		upstream, err = dialUpstream(node, host)
+		upstream, err = dialWithGFW(node, host)
 	} else {
 		upstream, err = net.DialTimeout("tcp", host, 10*time.Second)
 	}

@@ -338,6 +338,7 @@ func main() {
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
 	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
+	handlers.InitGFWList()
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
