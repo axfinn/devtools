@@ -1185,12 +1185,18 @@ func dialSocks5(proxyAddr, targetHost string, node *ProxyNode) (net.Conn, error)
 // 浏览器/系统代理配置：http://yourserver:PORT
 // 密码通过 Proxy-Authorization: Basic base64(user:password) 传递
 func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
-	// 防探测：无认证或认证失败时伪装成普通网站，不暴露 407
 	if !h.checkProxyAuth(r.Header.Get("Proxy-Authorization")) {
-		w.Header().Set("Server", "nginx/1.24.0")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(200)
-		w.Write([]byte("<html><body><h1>Welcome to nginx!</h1></body></html>"))
+		if r.Method == http.MethodConnect {
+			// CONNECT 请求必须返回 407，浏览器才会重试带认证头
+			w.Header().Set("Proxy-Authenticate", `Basic realm="proxy"`)
+			w.WriteHeader(407)
+		} else {
+			// 非 CONNECT（端口扫描/探测）返回 200 伪装
+			w.Header().Set("Server", "nginx/1.24.0")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(200)
+			w.Write([]byte("<html><body><h1>Welcome to nginx!</h1></body></html>"))
+		}
 		return
 	}
 
@@ -1353,7 +1359,8 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
   "permissions": [
     "storage",
     "proxy",
-    "webRequest"
+    "webRequest",
+    "webRequestAuthProvider"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -1458,24 +1465,17 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(loadAndApply);
 loadAndApply();
 
-// 主动注入 Proxy-Authorization，不依赖 407 触发
-// onAuthRequired 在服务端返回 200 伪装时不会触发，改用 onBeforeSendHeaders
-chrome.webRequest.onBeforeSendHeaders.addListener(
+// 自动填充代理认证
+chrome.webRequest.onAuthRequired.addListener(
   (details) => {
+    if (!details.isProxy) return {};
     return new Promise((resolve) => {
       chrome.storage.local.get(['pass'], (s) => {
-        const pass = s.pass || DEFAULT_PASS;
-        const cred = btoa('proxy:' + pass);
-        const headers = (details.requestHeaders || []).filter(
-          h => h.name.toLowerCase() !== 'proxy-authorization'
-        );
-        headers.push({ name: 'Proxy-Authorization', value: 'Basic ' + cred });
-        resolve({ requestHeaders: headers });
+        resolve({ authCredentials: { username: 'proxy', password: s.pass || DEFAULT_PASS } });
       });
     });
   },
-  { urls: ['<all_urls>'] },
-  ['requestHeaders', 'extraHeaders']
+  { urls: ['<all_urls>'] }
 );
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
