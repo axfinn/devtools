@@ -762,6 +762,11 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 		return
 	}
 
+	// 禁止下载
+	if h.cfg.DisableDownload {
+		c.JSON(http.StatusForbidden, gin.H{"error": "文件下载已禁用"})
+		return
+	}
 	// 禁止视频直接下载（可通过配置关闭）
 	if h.cfg.DisableVideoDownload && strings.HasPrefix(share.MimeType, "video/") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "视频文件不允许直接下载，请通过播放页面访问"})
@@ -924,6 +929,7 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 		"is_text":                isShareTextFile(share.MimeType, share.FilePath),
 		"is_pdf":                 isPDFFile(share.MimeType, share.FilePath),
 		"disable_video_download": h.cfg.DisableVideoDownload && isVideo,
+		"disable_download":       h.cfg.DisableDownload,
 		"has_password":           share.Password != "",
 		"watch_enabled":          share.WatchEnabled,
 	})

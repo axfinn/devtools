@@ -232,8 +232,9 @@ func main() {
 			if err == nil && historyCount > 0 {
 				log.Printf("已清理 %d 条旧 SSH 历史记录（超过%d天）", historyCount, cfg.SSH.HistoryMaxAgeDays)
 			}
-			// 清理过期上传文件（7天）
-			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7)
+			// 清理过期上传文件（7天），跳过 NFS 分享上传的文件（__uploads__ 目录由 NFS 分享管理，不自动清理）
+			protected, _ := db.ActiveUploadFilenames()
+			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7, protected)
 			if err == nil && uploadCount > 0 {
 				log.Printf("已清理 %d 个过期上传文件", uploadCount)
 			}

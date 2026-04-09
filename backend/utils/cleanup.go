@@ -8,8 +8,8 @@ import (
 )
 
 // CleanExpiredUploads 清理过期的上传文件
-// 删除超过指定天数的文件
-func CleanExpiredUploads(uploadDir string, days int) (int64, error) {
+// 删除超过指定天数的文件，但跳过 protected 集合中的文件名（仍被 NFS 分享引用的文件）
+func CleanExpiredUploads(uploadDir string, days int, protected map[string]struct{}) (int64, error) {
 	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
 		return 0, nil // 目录不存在，无需清理
 	}
@@ -24,7 +24,12 @@ func CleanExpiredUploads(uploadDir string, days int) (int64, error) {
 		if info.IsDir() {
 			return nil // 跳过目录
 		}
-
+		// 跳过仍被 NFS 分享引用的文件
+		if protected != nil {
+			if _, ok := protected[info.Name()]; ok {
+				return nil
+			}
+		}
 		// 检查文件修改时间
 		if info.ModTime().Before(expireTime) {
 			if err := os.Remove(path); err != nil {

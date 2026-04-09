@@ -60,6 +60,7 @@ type NFSShareConfig struct {
 	AdminPassword        string        `yaml:"admin_password"`        // 超管密码，为空则禁用
 	MaxFileSizeMB        int64         `yaml:"max_file_size_mb"`      // 单文件最大大小（MB），0 不限
 	DisableVideoDownload bool          `yaml:"disable_video_download"` // 禁止视频直接下载，只允许 HLS 播放
+	DisableDownload      bool          `yaml:"disable_download"`       // 禁止所有文件直接下载
 	Mounts               []MountConfig `yaml:"mounts"`                // 挂载点列表
 }
 
@@ -398,6 +399,7 @@ func DefaultConfig() *Config {
 			Enabled:              false,
 			MaxFileSizeMB:        0,
 			DisableVideoDownload: true,
+			DisableDownload:      true,
 			Mounts:               []MountConfig{},
 		},
 		TURN: TURNConfig{

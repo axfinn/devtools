@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"strings"
 	"time"
 )
 
@@ -205,6 +206,31 @@ func (db *DB) UpdateNFSShare(id string, maxViews int, expiresAt *time.Time, watc
 		maxViews, expiresAtVal, watchEnabled, id,
 	)
 	return err
+}
+
+// ActiveUploadFilenames 返回所有 NFS 分享中引用的 __uploads__/ 文件名集合（包括已过期的）
+// 用于防止清理任务误删上传文件——NFS 上传文件永不自动清理，只通过管理员手动删除分享来释放
+func (db *DB) ActiveUploadFilenames() (map[string]struct{}, error) {
+	rows, err := db.conn.Query(`
+		SELECT file_path FROM nfs_shares
+		WHERE file_path LIKE '__uploads__/%'
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]struct{})
+	for rows.Next() {
+		var fp string
+		if err := rows.Scan(&fp); err != nil {
+			continue
+		}
+		// fp 格式为 "__uploads__/filename.ext"，提取文件名
+		if idx := strings.LastIndex(fp, "/"); idx >= 0 {
+			result[fp[idx+1:]] = struct{}{}
+		}
+	}
+	return result, rows.Err()
 }
 
 // CleanExpiredNFSShares 清理已过期或已耗尽访问次数的分享

@@ -104,7 +104,7 @@
                 </el-select>
               </template>
 
-              <el-button v-if="!info.disable_video_download" size="small" :href="downloadUrl" tag="a" target="_blank">
+              <el-button v-if="!info.disable_video_download && !info.disable_download" size="small" :href="downloadUrl" tag="a" target="_blank">
                 <el-icon><Download /></el-icon>
                 下载
               </el-button>
@@ -143,7 +143,7 @@
                 <el-tag :type="remainingTag" size="small">剩余 {{ info.remaining_views }} 次</el-tag>
               </div>
               <div class="preview-actions">
-                <el-button type="primary" :href="downloadUrl" tag="a" download>
+                <el-button v-if="!info.disable_download" type="primary" :href="downloadUrl" tag="a" download>
                   <el-icon><Download /></el-icon>
                   下载文件
                 </el-button>
@@ -332,6 +332,7 @@ let ws = null
 let syncLockCount = 0 // 防止收到 sync 时触发重复 sync（计数器，比 boolean 更可靠）
 let watchReconnectTimer = null
 let watchManualClose = false // 用户主动断开时不重连
+let pendingSync = null // 播放器未就绪时缓存最新的 sync 消息
 
 // ---- Voice Chat (WebRTC) ----
 const voiceActive = ref(false)
@@ -585,10 +586,17 @@ function createArtPlayer(src, mode) {
     videoEl.value = art.video
     if (!isHls) transcoding.value = false
     art.video.addEventListener('error', onVideoError)
+    // 直接监听原生 video 事件，ArtPlayer 的封装事件在 programmatic 操作时也会触发
+    art.video.addEventListener('play', onHostPlay)
+    art.video.addEventListener('pause', onHostPause)
+    art.video.addEventListener('seeked', onHostSeek)
+    // 播放器就绪后应用缓存的 sync 消息（新加入者场景）
+    if (pendingSync && !isHost.value) {
+      const msg = pendingSync
+      pendingSync = null
+      applySyncMsg(msg)
+    }
   })
-  art.on('play', onHostPlay)
-  art.on('pause', onHostPause)
-  art.on('seek', onHostSeek)
 }
 
 async function switchMode(mode) {
@@ -643,22 +651,54 @@ function pollTranscoding() {
   }, 5000)
 }
 
-function onVideoError() {
-  if (!transcoding.value) error.value = '视频播放出错'
+async function onVideoError() {
+  if (transcoding.value) return
+  // 尝试获取服务端的具体错误信息
+  try {
+    const pwdParam = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
+    const res = await fetch(`/api/nfsshare/${id}/stream${pwdParam}`, { method: 'HEAD' })
+    if (res.status === 404) {
+      error.value = '源文件不存在，可能已被清理，请联系分享者重新上传'
+      return
+    }
+  } catch (_) {}
+  error.value = '视频播放出错'
+}
+
+// ---- 同步应用（viewer 端） ----
+// syncLockCount: 每次 programmatic 操作前 +1，对应事件触发后 -1
+// 这样无论事件多快触发都能正确屏蔽，不依赖 setTimeout
+function applySyncMsg(msg) {
+  const video = art.video
+  const needSeek = msg.action === 'seek' || Math.abs(video.currentTime - msg.time) > 2
+  if (needSeek) {
+    syncLockCount++ // 屏蔽即将触发的 seeked 事件
+    video.currentTime = msg.time
+  }
+  if (msg.action === 'play') {
+    syncLockCount++ // 屏蔽即将触发的 play 事件
+    video.play().catch(() => {})
+  } else if (msg.action === 'pause') {
+    syncLockCount++ // 屏蔽即将触发的 pause 事件
+    video.pause()
+  }
 }
 
 // ---- 房主同步事件 ----
 function onHostPlay() {
-  if (!isHost.value || syncLockCount > 0 || !ws || ws.readyState !== WebSocket.OPEN) return
-  wsSend({ type: 'sync', action: 'play', time: art?.currentTime ?? 0 })
+  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (syncLockCount > 0) { syncLockCount--; return }
+  wsSend({ type: 'sync', action: 'play', time: art?.video?.currentTime ?? 0 })
 }
 function onHostPause() {
-  if (!isHost.value || syncLockCount > 0 || !ws || ws.readyState !== WebSocket.OPEN) return
-  wsSend({ type: 'sync', action: 'pause', time: art?.currentTime ?? 0 })
+  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (syncLockCount > 0) { syncLockCount--; return }
+  wsSend({ type: 'sync', action: 'pause', time: art?.video?.currentTime ?? 0 })
 }
 function onHostSeek() {
-  if (!isHost.value || syncLockCount > 0 || !ws || ws.readyState !== WebSocket.OPEN) return
-  wsSend({ type: 'sync', action: 'seek', time: art?.currentTime ?? 0 })
+  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (syncLockCount > 0) { syncLockCount--; return }
+  wsSend({ type: 'sync', action: 'seek', time: art?.video?.currentTime ?? 0 })
 }
 
 // ---- 一起看 ----
@@ -739,16 +779,13 @@ function handleWsMsg(msg) {
     case 'danmaku':
       fireDanmaku(msg.text)
       break
-    case 'sync':
-      if (!art || isHost.value) break
-      syncLockCount++
-      if (msg.action === 'seek' || Math.abs(art.currentTime - msg.time) > 2) {
-        art.currentTime = msg.time
-      }
-      if (msg.action === 'play') art.play()
-      else if (msg.action === 'pause') art.pause()
-      setTimeout(() => { syncLockCount = Math.max(0, syncLockCount - 1) }, 500)
+    case 'sync': {
+      if (isHost.value) break
+      // 播放器未就绪时缓存，等 ready 后应用
+      if (!art?.video) { pendingSync = msg; break }
+      applySyncMsg(msg)
       break
+    }
 
     // ---- WebRTC 语音信令 ----
     case 'voice_peers':
