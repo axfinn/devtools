@@ -90,6 +90,7 @@ func savePersistedProxy() {
 // ProxyHandler 科学上网处理器
 type ProxyHandler struct {
 	adminPassword  string
+	localPort      string // 本地节点代理固定端口，空则随机
 	npcCfg         npcConfig
 	npcTunnelPort  string // NPS 上配置的外网端口，用于前端展示
 	npcCmd         *exec.Cmd
@@ -107,6 +108,7 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 	loadPersistedProxy()
 	h := &ProxyHandler{
 		adminPassword: cfg.Proxy.AdminPassword,
+		localPort:     cfg.Proxy.LocalPort,
 		npcTunnelPort: cfg.Proxy.TunnelPort,
 		npsHandler:    npsHandler,
 	}
@@ -388,15 +390,8 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 		return
 	}
 
-	// 停止旧代理
-	globalSession.mu.Lock()
-	if globalSession.listener != nil {
-		globalSession.listener.Close()
-		globalSession.listener = nil
-	}
-	globalSession.mu.Unlock()
-
-	ln, err := startProxyListener(target, h.adminPassword)
+	// 停止旧代理（startProxyListener 内部会处理，这里保留以便提前释放）
+	ln, err := startProxyListener(target, h.adminPassword, h.localPort)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "启动失败: " + err.Error()})
 		return
@@ -413,8 +408,21 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 }
 
 // startProxyListener 启动 HTTP CONNECT 代理监听，返回 listener
-func startProxyListener(target *ProxyNode, adminPassword string) (net.Listener, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+// localPort 非空时固定监听 127.0.0.1:localPort，否则随机端口
+func startProxyListener(target *ProxyNode, adminPassword, localPort string) (net.Listener, error) {
+	addr := "127.0.0.1:0"
+	if localPort != "" {
+		addr = "127.0.0.1:" + localPort
+	}
+	// 关闭旧 listener（固定端口时必须先释放）
+	globalSession.mu.Lock()
+	if globalSession.listener != nil {
+		globalSession.listener.Close()
+		globalSession.listener = nil
+	}
+	globalSession.mu.Unlock()
+
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +568,7 @@ func (h *ProxyHandler) AutoStart(c *gin.Context) {
 	}
 
 	// 启动代理
-	ln, err := startProxyListener(best, h.adminPassword)
+	ln, err := startProxyListener(best, h.adminPassword, h.localPort)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "启动失败: " + err.Error()})
 		return
@@ -1178,7 +1186,8 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
   "permissions": [
     "storage",
     "proxy",
-    "webRequest"
+    "webRequest",
+    "webRequestAuthProvider"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -1283,19 +1292,17 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(loadAndApply);
 loadAndApply();
 
-// 自动填充代理认证（Proxy-Authorization）
+// 自动填充代理认证（MV3：声明 webRequestAuthProvider，返回 Promise）
 chrome.webRequest.onAuthRequired.addListener(
-  (details, callback) => {
-    if (details.isProxy) {
+  (details) => {
+    if (!details.isProxy) return {};
+    return new Promise((resolve) => {
       chrome.storage.local.get(['pass'], (s) => {
-        callback({ authCredentials: { username: 'proxy', password: s.pass || DEFAULT_PASS } });
+        resolve({ authCredentials: { username: 'proxy', password: s.pass || DEFAULT_PASS } });
       });
-      return true; // 异步
-    }
-    callback({});
+    });
   },
-  { urls: ['<all_urls>'] },
-  ['asyncBlocking']
+  { urls: ['<all_urls>'] }
 );
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

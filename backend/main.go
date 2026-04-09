@@ -926,6 +926,9 @@ func main() {
 
 	// 启动独立代理端口（供 NPS 映射，绕过 nginx）
 	if cfg.Proxy.TunnelPort != "" {
+		if cfg.Proxy.AdminPassword == "" {
+			log.Printf("警告：proxy.tunnel_port 已配置但 proxy.admin_password 为空，代理端口将拒绝所有连接")
+		}
 		go func() {
 			tunnelSrv := &http.Server{
 				Addr: ":" + cfg.Proxy.TunnelPort,
