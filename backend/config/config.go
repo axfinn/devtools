@@ -37,6 +37,12 @@ type Config struct {
 	ImageUnderstanding ImageUnderstandingConfig `yaml:"image_understanding"`
 	TURN               TURNConfig               `yaml:"turn"`
 	AutoDev            AutoDevConfig            `yaml:"autodev"`
+	Proxy              ProxyConfig              `yaml:"proxy"`
+}
+
+// ProxyConfig 科学上网代理配置
+type ProxyConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 管理员密码，为空则禁用
 }
 
 // AutoDevConfig AutoDev AI 任务配置

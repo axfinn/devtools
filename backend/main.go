@@ -335,6 +335,7 @@ func main() {
 	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg)
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
+	proxyHandler := handlers.NewProxyHandler(cfg)
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
@@ -862,6 +863,17 @@ func main() {
 
 		// 背景图 API
 		api.GET("/bg", handlers.GetBackgroundImages)
+
+		// 科学上网代理
+		proxyGroup := api.Group("/proxy")
+		{
+			proxyGroup.POST("/config", proxyHandler.LoadConfig)
+			proxyGroup.POST("/speedtest", proxyHandler.SpeedTest)
+			proxyGroup.POST("/start", proxyHandler.Start)
+			proxyGroup.POST("/stop", proxyHandler.Stop)
+			proxyGroup.GET("/status", proxyHandler.Status)
+			proxyGroup.GET("/fetch", proxyHandler.Fetch)
+		}
 		api.POST("/bg/cache", handlers.CacheBackgroundImages) // 缓存图片
 		api.POST("/bg/replace", handlers.ReplaceRandomImages) // 随机替换图片
 		api.GET("/bg/random", handlers.GetRandomBackground)   // 随机图片

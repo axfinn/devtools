@@ -81,6 +81,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/proxy',
+    name: 'Proxy',
+    component: () => import('../views/ProxyTool.vue'),
+    meta: {
+      title: '科学上网',
+      icon: 'Connection',
+      category: 'other',
+      description: 'Clash 节点管理与代理'
+    }
+  },
+  {
     path: '/base64',
     name: 'Base64',
     component: () => import('../views/Base64Tool.vue'),
