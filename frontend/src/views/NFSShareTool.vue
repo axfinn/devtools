@@ -259,6 +259,143 @@
           </div>
         </el-tab-pane>
 
+        <!-- Tab: 上传文件 -->
+        <el-tab-pane label="上传文件" name="upload">
+          <div class="mt-2 max-w-xl mx-auto space-y-4">
+
+            <!-- 目标目录选择 -->
+            <el-card shadow="never">
+              <div class="flex items-center gap-2">
+                <span class="text-sm text-gray-600 shrink-0">上传到：</span>
+                <el-tag v-if="uploadTargetDir" type="info" closable @close="uploadTargetDir = ''">
+                  {{ uploadTargetDir }}
+                </el-tag>
+                <span v-else class="text-sm text-gray-400">内置上传目录（默认）</span>
+                <el-button size="small" class="ml-auto" @click="openTargetDirPicker">选择目录</el-button>
+              </div>
+            </el-card>
+
+            <!-- 拖拽/粘贴上传区 -->
+            <div
+              class="upload-drop-zone"
+              :class="{ 'is-dragover': uploadDragover }"
+              @dragover.prevent="uploadDragover = true"
+              @dragleave="uploadDragover = false"
+              @drop.prevent="onUploadDrop"
+              @paste.prevent="onUploadPaste"
+              @click="$refs.uploadFileInput.click()"
+              tabindex="0"
+              @keydown.enter="$refs.uploadFileInput.click()"
+            >
+              <div v-if="!uploadFile" class="text-center text-gray-400 select-none">
+                <div class="text-4xl mb-2">📁</div>
+                <div class="text-sm">点击选择文件、拖拽文件到此处</div>
+                <div class="text-xs mt-1">或 Ctrl+V 粘贴剪贴板图片</div>
+              </div>
+              <div v-else class="text-center select-none">
+                <div class="text-2xl mb-1">📄</div>
+                <div class="text-sm font-medium text-gray-700">{{ uploadFile.name }}</div>
+                <div class="text-xs text-gray-400 mt-1">{{ formatSize(uploadFile.size) }}</div>
+              </div>
+              <input ref="uploadFileInput" type="file" class="hidden" @change="onUploadFileChange" />
+            </div>
+
+            <!-- 进度 -->
+            <div v-if="uploadProgress > 0 || uploadDone">
+              <el-progress :percentage="uploadProgress" :status="uploadDone ? 'success' : ''" />
+              <div class="text-xs text-gray-400 mt-1 text-center">
+                {{ uploadDone ? '上传完成' : `分片 ${uploadChunkDone} / ${uploadChunkTotal}` }}
+              </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="flex gap-2">
+              <el-button
+                type="primary"
+                :loading="uploading"
+                :disabled="!uploadFile || uploadDone"
+                class="flex-1"
+                @click="startUpload"
+              >上传</el-button>
+              <el-button :disabled="uploading" @click="resetUpload">重置</el-button>
+            </div>
+
+            <!-- 上传完成后的创建分享表单 -->
+            <el-card v-if="uploadDone && uploadedFilePath" shadow="never" class="border-green-300">
+              <template #header><span class="text-sm font-semibold text-green-700">创建分享链接</span></template>
+              <el-form :model="uploadShareForm" label-width="80px" size="small">
+                <el-form-item label="文件名">
+                  <el-input v-model="uploadShareForm.name" placeholder="分享显示名称" />
+                </el-form-item>
+                <el-form-item label="访问次数">
+                  <el-input-number v-model="uploadShareForm.maxViews" :min="1" :max="9999" controls-position="right" class="w-full" />
+                </el-form-item>
+                <el-form-item label="有效期">
+                  <el-select v-model="uploadShareForm.expiresDays" class="w-full">
+                    <el-option :value="1" label="1 天" />
+                    <el-option :value="3" label="3 天" />
+                    <el-option :value="7" label="7 天" />
+                    <el-option :value="30" label="30 天" />
+                    <el-option :value="90" label="90 天" />
+                    <el-option :value="365" label="1 年" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="访问密码">
+                  <el-input v-model="uploadShareForm.password" type="password" placeholder="留空则无需密码" show-password />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="success" :loading="uploadShareLoading" class="w-full" @click="createUploadShare">
+                    创建分享链接
+                  </el-button>
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </div>
+        </el-tab-pane>
+
+        <!-- 目标目录选择弹窗 -->
+        <el-dialog v-model="targetDirPickerVisible" title="选择上传目录" :width="dialogWidth">
+          <div class="space-y-2">
+            <!-- 面包屑 -->
+            <div class="flex items-center gap-1 text-sm text-gray-500 flex-wrap">
+              <span
+                class="cursor-pointer text-blue-500 hover:underline"
+                @click="browseTargetDir('.')"
+              >根目录</span>
+              <template v-for="(seg, i) in targetDirBreadcrumbs" :key="i">
+                <span class="text-gray-300">/</span>
+                <span
+                  :class="i < targetDirBreadcrumbs.length - 1 ? 'cursor-pointer text-blue-500 hover:underline' : 'text-gray-700'"
+                  @click="i < targetDirBreadcrumbs.length - 1 && browseTargetDir(seg.path)"
+                >{{ seg.name }}</span>
+              </template>
+            </div>
+            <!-- 当前选中 -->
+            <div v-if="targetDirCurrent !== '.'" class="text-xs text-green-600 bg-green-50 rounded px-2 py-1">
+              将上传到：{{ targetDirCurrent }}
+            </div>
+            <!-- 目录列表 -->
+            <div v-loading="targetDirLoading" class="max-h-64 overflow-y-auto border rounded">
+              <div
+                v-for="entry in targetDirEntries"
+                :key="entry.path"
+                class="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm border-b last:border-b-0"
+                @click="entry.is_dir && browseTargetDir(entry.path)"
+              >
+                <span>{{ entry.is_dir ? '📁' : '📄' }}</span>
+                <span :class="entry.is_dir ? 'text-blue-600' : 'text-gray-400'">{{ entry.name }}</span>
+              </div>
+              <div v-if="!targetDirLoading && targetDirEntries.length === 0" class="text-center text-gray-400 py-4 text-sm">空目录</div>
+            </div>
+          </div>
+          <template #footer>
+            <el-button @click="targetDirPickerVisible = false">取消</el-button>
+            <el-button type="primary" @click="confirmTargetDir">
+              {{ targetDirCurrent === '.' ? '使用默认目录' : `选择 ${targetDirCurrent}` }}
+            </el-button>
+          </template>
+        </el-dialog>
+
         <!-- Tab 3: 分享列表 -->
         <el-tab-pane name="list">
           <template #label>
@@ -465,6 +602,36 @@ const logsLoading = ref(false)
 const mountsList = ref([])
 const mountsLoading = ref(false)
 const mountActionLoading = ref('')
+
+// 上传文件
+const uploadFile = ref(null)
+const uploadDragover = ref(false)
+const uploading = ref(false)
+const uploadProgress = ref(0)
+const uploadChunkDone = ref(0)
+const uploadChunkTotal = ref(0)
+const uploadDone = ref(false)
+const uploadedFilePath = ref('')
+const uploadShareLoading = ref(false)
+const uploadShareForm = reactive({ name: '', maxViews: 5, expiresDays: 7, password: '' })
+const uploadTargetDir = ref('') // 目标目录，空=默认
+
+// 目标目录选择弹窗
+const targetDirPickerVisible = ref(false)
+const targetDirCurrent = ref('.')
+const targetDirEntries = ref([])
+const targetDirLoading = ref(false)
+const targetDirBreadcrumbs = computed(() => {
+  if (!targetDirCurrent.value || targetDirCurrent.value === '.') return []
+  const segs = []
+  const parts = targetDirCurrent.value.split('/')
+  let built = ''
+  for (const p of parts) {
+    built = built ? `${built}/${p}` : p
+    segs.push({ name: p, path: built })
+  }
+  return segs
+})
 
 // 编辑弹窗
 const editDialogVisible = ref(false)
@@ -812,6 +979,166 @@ async function loadLogs() {
   }
 }
 
+// -------- 上传文件 --------
+const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB
+
+function onUploadFileChange(e) {
+  const f = e.target.files[0]
+  if (f) setUploadFile(f)
+}
+function onUploadDrop(e) {
+  uploadDragover.value = false
+  const f = e.dataTransfer.files[0]
+  if (f) setUploadFile(f)
+}
+function onUploadPaste(e) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const f = item.getAsFile()
+      if (f) { setUploadFile(f); break }
+    }
+  }
+}
+function setUploadFile(f) {
+  uploadFile.value = f
+  uploadDone.value = false
+  uploadProgress.value = 0
+  uploadChunkDone.value = 0
+  uploadedFilePath.value = ''
+  uploadShareForm.name = f.name
+}
+function resetUpload() {
+  uploadFile.value = null
+  uploadDone.value = false
+  uploadProgress.value = 0
+  uploadChunkDone.value = 0
+  uploadedFilePath.value = ''
+}
+
+async function openTargetDirPicker() {
+  targetDirPickerVisible.value = true
+  targetDirCurrent.value = '.'
+  await browseTargetDir('.')
+}
+async function browseTargetDir(path) {
+  targetDirCurrent.value = path
+  targetDirLoading.value = true
+  targetDirEntries.value = []
+  try {
+    const res = await fetch(`/api/nfsshare/admin/browse?admin_password=${encodeURIComponent(adminPassword.value)}&path=${encodeURIComponent(path)}`)
+    const data = await res.json()
+    // 只显示目录（根路径时全部是挂载点，都是目录）
+    targetDirEntries.value = (data.entries || []).filter(e => e.is_dir)
+  } catch {
+    ElMessage.error('加载目录失败')
+  } finally {
+    targetDirLoading.value = false
+  }
+}
+function confirmTargetDir() {
+  uploadTargetDir.value = targetDirCurrent.value === '.' ? '' : targetDirCurrent.value
+  targetDirPickerVisible.value = false
+}
+
+async function startUpload() {
+  if (!uploadFile.value) return
+  uploading.value = true
+  uploadProgress.value = 0
+  uploadDone.value = false
+  const file = uploadFile.value
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1
+  uploadChunkTotal.value = totalChunks
+  uploadChunkDone.value = 0
+  try {
+    // 1. init
+    const initRes = await fetch('/api/nfsshare/admin/upload/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        admin_password: adminPassword.value,
+        filename: file.name,
+        total_size: file.size,
+        total_chunks: totalChunks,
+        target_dir: uploadTargetDir.value || ''
+      })
+    })
+    const initData = await initRes.json()
+    if (!initRes.ok) { ElMessage.error(initData.error || '初始化失败'); return }
+    const token = initData.token
+
+    // 2. chunks
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE
+      const blob = file.slice(start, start + CHUNK_SIZE)
+      const form = new FormData()
+      form.append('chunk_index', String(i))
+      form.append('chunk', blob, file.name)
+      const chunkRes = await fetch(`/api/nfsshare/admin/upload/${token}/chunk`, {
+        method: 'POST',
+        body: form
+      })
+      if (!chunkRes.ok) {
+        const d = await chunkRes.json()
+        ElMessage.error(d.error || `分片 ${i} 上传失败`)
+        return
+      }
+      uploadChunkDone.value = i + 1
+      uploadProgress.value = Math.round(((i + 1) / totalChunks) * 100)
+    }
+
+    // 3. complete
+    const completeRes = await fetch(`/api/nfsshare/admin/upload/${token}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_password: adminPassword.value, total_chunks: totalChunks })
+    })
+    const completeData = await completeRes.json()
+    if (!completeRes.ok) { ElMessage.error(completeData.error || '合并失败'); return }
+    uploadedFilePath.value = completeData.file_path
+    uploadShareForm.name = completeData.filename
+    uploadDone.value = true
+    uploadProgress.value = 100
+    ElMessage.success('上传完成')
+  } catch (e) {
+    ElMessage.error('上传出错: ' + e.message)
+  } finally {
+    uploading.value = false
+  }
+}
+async function createUploadShare() {
+  if (!uploadedFilePath.value) return
+  uploadShareLoading.value = true
+  try {
+    const body = {
+      admin_password: adminPassword.value,
+      name: uploadShareForm.name || uploadedFilePath.value.split('/').pop(),
+      file_path: uploadedFilePath.value,
+      max_views: uploadShareForm.maxViews,
+      expires_days: uploadShareForm.expiresDays,
+    }
+    if (uploadShareForm.password) body.password = uploadShareForm.password
+    const res = await fetch('/api/nfsshare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (!res.ok) { ElMessage.error(data.error || '创建失败'); return }
+    const link = `${location.origin}/nfsshare/${data.id}`
+    await navigator.clipboard.writeText(link).catch(() => {})
+    ElMessage.success('分享链接已复制到剪贴板')
+    resetUpload()
+    activeTab.value = 'list'
+    await loadShareList()
+  } catch (e) {
+    ElMessage.error('创建失败: ' + e.message)
+  } finally {
+    uploadShareLoading.value = false
+  }
+}
+
 // -------- 编辑分享 --------
 function openEditDialog(row) {
   editTarget.value = row
@@ -911,6 +1238,24 @@ function getLogStatusLabel(status) {
 <style scoped>
 .nfs-tabs :deep(.el-tabs__content) {
   overflow: visible;
+}
+
+.upload-drop-zone {
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 40px 20px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  outline: none;
+}
+.upload-drop-zone:hover,
+.upload-drop-zone:focus {
+  border-color: #409eff;
+  background: #f0f7ff;
+}
+.upload-drop-zone.is-dragover {
+  border-color: #409eff;
+  background: #e6f0ff;
 }
 
 /* 文件浏览布局：桌面左右，移动端上下 */

@@ -701,6 +701,9 @@ func main() {
 			nfsshare.GET("/admin/:id/logs", nfsShareHandler.AdminGetLogs)               // 访问日志（超管）
 			nfsshare.PUT("/admin/:id", nfsShareHandler.AdminUpdate)                     // 修改配置（超管）
 			nfsshare.DELETE("/admin/:id", nfsShareHandler.AdminDelete)                  // 删除分享（超管）
+			nfsshare.POST("/admin/upload/init", nfsShareHandler.UploadInit)             // 初始化上传（超管）
+			nfsshare.POST("/admin/upload/:token/chunk", nfsShareHandler.UploadChunk)    // 上传分片（超管）
+			nfsshare.POST("/admin/upload/:token/complete", nfsShareHandler.UploadComplete) // 合并完成（超管）
 		}
 
 		// OCR 文字识别

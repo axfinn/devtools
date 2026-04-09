@@ -122,6 +122,21 @@ func (b *smbBackend) Stat(path string) (os.FileInfo, error) {
 	return info, nil
 }
 
+// Create 在 SMB 共享上创建/覆盖文件，返回 WriteCloser
+func (b *smbBackend) Create(path string) (io.WriteCloser, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.ensureConnected(); err != nil {
+		return nil, err
+	}
+	f, err := b.share.Create(path)
+	if err != nil {
+		b.connected = false
+		return nil, err
+	}
+	return f, nil
+}
+
 // Open 打开文件，返回 ReadSeekCloser 和文件大小
 func (b *smbBackend) Open(path string) (io.ReadSeekCloser, int64, error) {
 	b.mu.Lock()
@@ -202,6 +217,15 @@ func NewNFSShareHandler(db *models.DB, cfg config.NFSShareConfig) *NFSShareHandl
 
 func (h *NFSShareHandler) initMounts() {
 	os.MkdirAll("./data/mounts", 0755)
+	// 内置上传目录挂载点
+	uploadDir := "./data/uploads"
+	os.MkdirAll(uploadDir, 0755)
+	os.MkdirAll(filepath.Join(uploadDir, ".tmp"), 0755)
+	h.mounts["__uploads__"] = &MountStatus{
+		Config:    config.MountConfig{Name: "__uploads__", Type: "local", Export: uploadDir},
+		LocalPath: uploadDir,
+		Mounted:   true,
+	}
 	for _, mc := range h.cfg.Mounts {
 		ms := h.buildMountStatus(mc)
 		h.mounts[mc.Name] = ms
@@ -1746,5 +1770,257 @@ func (h *NFSShareHandler) GetTurnCredentials(c *gin.Context) {
 		"username": username,
 		"credential": password,
 		"ttl": ttl,
+	})
+}
+
+// -------- 文件上传 --------
+
+type uploadInitRequest struct {
+	AdminPassword string `json:"admin_password" binding:"required"`
+	Filename      string `json:"filename" binding:"required"`
+	TotalSize     int64  `json:"total_size"`
+	TotalChunks   int    `json:"total_chunks" binding:"required,min=1"`
+	TargetDir     string `json:"target_dir"` // 可选，格式 "mountName/subdir"，空则存到 __uploads__
+}
+
+// UploadInit 初始化分片上传，返回 token
+func (h *NFSShareHandler) UploadInit(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	var req uploadInitRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !h.verifyAdmin(req.AdminPassword) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+		return
+	}
+	// 文件名安全处理
+	filename := filepath.Base(req.Filename)
+	if filename == "." || filename == "/" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法文件名"})
+		return
+	}
+	// 验证 target_dir（如果指定）
+	targetDir := strings.TrimSpace(req.TargetDir)
+	if targetDir != "" {
+		pp, err := h.parsePath(targetDir + "/.keep")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "目标目录无效: " + err.Error()})
+			return
+		}
+		// 对于 local/nfs，确保目录存在
+		if strings.ToLower(pp.ms.Config.Type) != "smb" {
+			dirPath := filepath.Dir(pp.absPath)
+			if err := os.MkdirAll(dirPath, 0755); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "无法创建目标目录"})
+				return
+			}
+		}
+	}
+	// 生成 token
+	b := make([]byte, 8)
+	crypto_rand.Read(b)
+	token := hex.EncodeToString(b)
+	tmpDir := filepath.Join("./data/uploads/.tmp", token)
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建临时目录失败"})
+		return
+	}
+	// 写入元数据
+	meta := filename + "\n" + targetDir
+	if err := os.WriteFile(filepath.Join(tmpDir, ".meta"), []byte(meta), 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入元数据失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"token": token, "filename": filename})
+}
+
+// UploadChunk 上传单个分片
+func (h *NFSShareHandler) UploadChunk(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	token := c.Param("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 token"})
+		return
+	}
+	tmpDir := filepath.Join("./data/uploads/.tmp", token)
+	if _, err := os.Stat(tmpDir); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 token"})
+		return
+	}
+	chunkIndex := c.PostForm("chunk_index")
+	if chunkIndex == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 chunk_index"})
+		return
+	}
+	idx, err := strconv.Atoi(chunkIndex)
+	if err != nil || idx < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chunk_index 无效"})
+		return
+	}
+	file, _, err := c.Request.FormFile("chunk")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 chunk 数据"})
+		return
+	}
+	defer file.Close()
+	chunkPath := filepath.Join(tmpDir, fmt.Sprintf("%05d", idx))
+	dst, err := os.Create(chunkPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入分片失败"})
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入分片失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"received": idx})
+}
+
+type uploadCompleteRequest struct {
+	AdminPassword string `json:"admin_password" binding:"required"`
+	TotalChunks   int    `json:"total_chunks" binding:"required,min=1"`
+}
+
+// UploadComplete 合并分片，写入目标位置，返回 file_path
+func (h *NFSShareHandler) UploadComplete(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	token := c.Param("token")
+	var req uploadCompleteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !h.verifyAdmin(req.AdminPassword) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+		return
+	}
+	tmpDir := filepath.Join("./data/uploads/.tmp", token)
+	metaBytes, err := os.ReadFile(filepath.Join(tmpDir, ".meta"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 token"})
+		return
+	}
+	parts := strings.SplitN(string(metaBytes), "\n", 2)
+	filename := parts[0]
+	targetDir := ""
+	if len(parts) > 1 {
+		targetDir = strings.TrimSpace(parts[1])
+	}
+
+	// 决定写入位置
+	var filePath string // 最终 file_path（mountName/rel）
+	var writeFunc func(r io.Reader) error
+
+	if targetDir == "" {
+		// 默认写到 __uploads__
+		destPath := filepath.Join("./data/uploads", filename)
+		if _, err := os.Stat(destPath); err == nil {
+			ext := filepath.Ext(filename)
+			base := strings.TrimSuffix(filename, ext)
+			filename = fmt.Sprintf("%s_%d%s", base, time.Now().UnixMilli(), ext)
+			destPath = filepath.Join("./data/uploads", filename)
+		}
+		filePath = "__uploads__/" + filename
+		writeFunc = func(r io.Reader) error {
+			f, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.Copy(f, r)
+			return err
+		}
+	} else {
+		// 写到指定挂载点目录
+		pp, err := h.parsePath(targetDir + "/" + filename)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "目标路径无效: " + err.Error()})
+			return
+		}
+		// 处理同名冲突
+		isSMB := strings.ToLower(pp.ms.Config.Type) == "smb"
+		if isSMB {
+			if _, statErr := pp.ms.smb.Stat(pp.relPath); statErr == nil {
+				ext := filepath.Ext(filename)
+				base := strings.TrimSuffix(filename, ext)
+				filename = fmt.Sprintf("%s_%d%s", base, time.Now().UnixMilli(), ext)
+				pp, _ = h.parsePath(targetDir + "/" + filename)
+			}
+			filePath = targetDir + "/" + filename
+			writeFunc = func(r io.Reader) error {
+				w, err := pp.ms.smb.Create(pp.relPath)
+				if err != nil {
+					return err
+				}
+				defer w.Close()
+				_, err = io.Copy(w, r)
+				return err
+			}
+		} else {
+			if _, statErr := os.Stat(pp.absPath); statErr == nil {
+				ext := filepath.Ext(filename)
+				base := strings.TrimSuffix(filename, ext)
+				filename = fmt.Sprintf("%s_%d%s", base, time.Now().UnixMilli(), ext)
+				pp, _ = h.parsePath(targetDir + "/" + filename)
+			}
+			os.MkdirAll(filepath.Dir(pp.absPath), 0755)
+			filePath = targetDir + "/" + filename
+			writeFunc = func(r io.Reader) error {
+				f, err := os.Create(pp.absPath)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				_, err = io.Copy(f, r)
+				return err
+			}
+		}
+	}
+
+	// 合并分片并写入目标
+	pr, pw := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- writeFunc(pr)
+	}()
+	for i := 0; i < req.TotalChunks; i++ {
+		chunkPath := filepath.Join(tmpDir, fmt.Sprintf("%05d", i))
+		chunk, err := os.Open(chunkPath)
+		if err != nil {
+			pw.CloseWithError(fmt.Errorf("分片 %d 缺失", i))
+			<-errCh
+			os.RemoveAll(tmpDir)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("分片 %d 缺失", i)})
+			return
+		}
+		_, copyErr := io.Copy(pw, chunk)
+		chunk.Close()
+		if copyErr != nil {
+			pw.CloseWithError(copyErr)
+			<-errCh
+			os.RemoveAll(tmpDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "合并分片失败"})
+			return
+		}
+	}
+	pw.Close()
+	if writeErr := <-errCh; writeErr != nil {
+		os.RemoveAll(tmpDir)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入目标文件失败: " + writeErr.Error()})
+		return
+	}
+	os.RemoveAll(tmpDir)
+	c.JSON(http.StatusOK, gin.H{
+		"file_path": filePath,
+		"filename":  filename,
 	})
 }
