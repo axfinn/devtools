@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -129,6 +130,53 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 		}
 	}
 	return h
+}
+
+// AutoSelectOnStartup 启动时若有持久化节点但无活跃节点，后台自动选最优节点
+func (h *ProxyHandler) AutoSelectOnStartup() {
+	globalSession.mu.RLock()
+	active := globalSession.active
+	nodeCount := len(globalSession.nodes)
+	globalSession.mu.RUnlock()
+
+	if active != nil || nodeCount == 0 {
+		return
+	}
+
+	go func() {
+		globalSession.mu.RLock()
+		nodes := make([]ProxyNode, len(globalSession.nodes))
+		copy(nodes, globalSession.nodes)
+		globalSession.mu.RUnlock()
+
+		var mu sync.Mutex
+		var best *ProxyNode
+		var wg sync.WaitGroup
+		for i := range nodes {
+			wg.Add(1)
+			go func(n ProxyNode) {
+				defer wg.Done()
+				n.Latency = tcpPing(n.Server, n.Port)
+				if n.Latency < 0 {
+					return
+				}
+				mu.Lock()
+				if best == nil || n.Latency < best.Latency {
+					cp := n
+					best = &cp
+				}
+				mu.Unlock()
+			}(nodes[i])
+		}
+		wg.Wait()
+
+		if best == nil {
+			return
+		}
+		startProxyListener(best, h.adminPassword, h.localPort) //nolint
+		h.startNPC()
+		log.Printf("proxy: 启动自动选节点 %s (延迟 %dms)", best.Name, best.Latency)
+	}()
 }
 
 func (h *ProxyHandler) checkAdmin(password string) bool {

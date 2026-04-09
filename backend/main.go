@@ -339,6 +339,7 @@ func main() {
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
 	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
 	handlers.InitGFWList()
+	proxyHandler.AutoSelectOnStartup()
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
