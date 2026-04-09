@@ -935,7 +935,7 @@ func main() {
 			tunnelSrv := &http.Server{
 				Addr: ":" + cfg.Proxy.TunnelPort,
 				Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-					proxyHandler.Tunnel(w, req)
+					proxyHandler.TunnelDirect(w, req)
 				}),
 			}
 			log.Printf("独立代理端口启动在 %s（供 NPS 映射）", cfg.Proxy.TunnelPort)

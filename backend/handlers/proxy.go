@@ -1239,7 +1239,58 @@ func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 	clientConn.Close()
 }
 
-// checkProxyAuth 验证 Proxy-Authorization Basic 头
+// TunnelDirect 与 Tunnel 相同，但认证失败返回 407（供 NPS tunnel_port 使用）
+// NPS 已有自身认证，不需要防探测伪装
+func (h *ProxyHandler) TunnelDirect(w http.ResponseWriter, r *http.Request) {
+	if !h.checkProxyAuth(r.Header.Get("Proxy-Authorization")) {
+		w.Header().Set("Proxy-Authenticate", `Basic realm="proxy"`)
+		w.WriteHeader(407)
+		return
+	}
+
+	host := r.Host
+	if host == "" {
+		host = r.URL.Host
+	}
+
+	h.triggerAutoSelect()
+
+	globalSession.mu.RLock()
+	node := globalSession.active
+	globalSession.mu.RUnlock()
+
+	var upstream net.Conn
+	var err error
+	if node != nil {
+		upstream, err = dialWithGFW(node, host)
+	} else {
+		upstream, err = net.DialTimeout("tcp", host, 10*time.Second)
+	}
+	if err != nil {
+		http.Error(w, "Bad Gateway", 502)
+		return
+	}
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		upstream.Close()
+		http.Error(w, "Hijacking not supported", 500)
+		return
+	}
+	clientConn, brw, err := hijacker.Hijack()
+	if err != nil {
+		upstream.Close()
+		return
+	}
+
+	brw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+	brw.Flush()
+
+	go io.Copy(upstream, brw)
+	io.Copy(clientConn, upstream)
+	upstream.Close()
+	clientConn.Close()
+}
 func (h *ProxyHandler) checkProxyAuth(header string) bool {
 	if h.adminPassword == "" {
 		return false
@@ -1293,17 +1344,16 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
 		proxyHost = c.Request.Host
 	}
 
-	// MV3 manifest — 使用 PAC 脚本代理 + onAuthRequired 自动填充认证
+	// MV3 manifest — 使用 PAC 脚本代理 + 主动注入认证头
 	manifest := `{
   "manifest_version": 3,
   "name": "DevTools Proxy",
-  "version": "3.0",
+  "version": "3.1",
   "description": "通过服务器 HTTP 代理科学上网，支持自动认证",
   "permissions": [
     "storage",
     "proxy",
-    "webRequest",
-    "webRequestAuthProvider"
+    "webRequest"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -1315,7 +1365,7 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
   }
 }`
 
-	// background.js：PAC 脚本代理 + onAuthRequired 自动填充认证
+	// background.js：PAC 脚本代理 + 主动注入认证头
 	bgJS := fmt.Sprintf(`
 const DEFAULT_SERVER = %q;
 const DEFAULT_PASS   = %q;
@@ -1408,17 +1458,24 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onStartup.addListener(loadAndApply);
 loadAndApply();
 
-// 自动填充代理认证（MV3：声明 webRequestAuthProvider，返回 Promise）
-chrome.webRequest.onAuthRequired.addListener(
+// 主动注入 Proxy-Authorization，不依赖 407 触发
+// onAuthRequired 在服务端返回 200 伪装时不会触发，改用 onBeforeSendHeaders
+chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
-    if (!details.isProxy) return {};
     return new Promise((resolve) => {
       chrome.storage.local.get(['pass'], (s) => {
-        resolve({ authCredentials: { username: 'proxy', password: s.pass || DEFAULT_PASS } });
+        const pass = s.pass || DEFAULT_PASS;
+        const cred = btoa('proxy:' + pass);
+        const headers = (details.requestHeaders || []).filter(
+          h => h.name.toLowerCase() !== 'proxy-authorization'
+        );
+        headers.push({ name: 'Proxy-Authorization', value: 'Basic ' + cred });
+        resolve({ requestHeaders: headers });
       });
     });
   },
-  { urls: ['<all_urls>'] }
+  { urls: ['<all_urls>'] },
+  ['requestHeaders', 'extraHeaders']
 );
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
