@@ -586,3 +586,10 @@ ai_gateway:
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
+
+# 科学上网代理配置
+# 支持 Clash 订阅链接或粘贴 YAML 配置，自动测速选最优节点
+# 启动后提供 HTTP 代理端口，也支持页面内嵌代理浏览
+proxy:
+  # 管理员密码（必填，留空则功能不可用）
+  admin_password: ""

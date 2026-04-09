@@ -1,14 +1,18 @@
 package handlers
 
 import (
+	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -21,23 +25,64 @@ import (
 
 // ProxyNode 代理节点
 type ProxyNode struct {
-	Name     string                 `json:"name"`
-	Type     string                 `json:"type"`
-	Server   string                 `json:"server"`
-	Port     int                    `json:"port"`
-	Extra    map[string]interface{} `json:"extra,omitempty"`
-	Latency  int64                  `json:"latency"` // ms，-1=失败
+	Name    string                 `json:"name"`
+	Type    string                 `json:"type"`
+	Server  string                 `json:"server"`
+	Port    int                    `json:"port"`
+	Extra   map[string]interface{} `json:"extra,omitempty"`
+	Latency int64                  `json:"latency"` // ms，-1=失败
 }
+
+// proxyPersist 持久化到磁盘的数据
+type proxyPersist struct {
+	SourceURL   string      `json:"source_url,omitempty"`
+	YAMLContent string      `json:"yaml_content,omitempty"`
+	Nodes       []ProxyNode `json:"nodes"`
+}
+
+const proxyDataFile = "./data/proxy_config.json"
 
 // proxySession 当前会话（内存单例）
 type proxySession struct {
-	mu       sync.RWMutex
-	nodes    []ProxyNode
-	active   *ProxyNode
-	listener net.Listener // HTTP CONNECT 代理监听
+	mu          sync.RWMutex
+	nodes       []ProxyNode
+	sourceURL   string
+	yamlContent string
+	active      *ProxyNode
+	listener    net.Listener // HTTP CONNECT 代理监听
 }
 
 var globalSession = &proxySession{}
+
+// loadPersistedProxy 启动时从磁盘恢复节点配置
+func loadPersistedProxy() {
+	data, err := os.ReadFile(proxyDataFile)
+	if err != nil {
+		return
+	}
+	var p proxyPersist
+	if err := json.Unmarshal(data, &p); err != nil {
+		return
+	}
+	globalSession.mu.Lock()
+	globalSession.nodes = p.Nodes
+	globalSession.sourceURL = p.SourceURL
+	globalSession.yamlContent = p.YAMLContent
+	globalSession.mu.Unlock()
+}
+
+// savePersistedProxy 将节点配置写入磁盘
+func savePersistedProxy() {
+	globalSession.mu.RLock()
+	p := proxyPersist{
+		SourceURL:   globalSession.sourceURL,
+		YAMLContent: globalSession.yamlContent,
+		Nodes:       globalSession.nodes,
+	}
+	globalSession.mu.RUnlock()
+	data, _ := json.Marshal(p)
+	os.WriteFile(proxyDataFile, data, 0644)
+}
 
 // ProxyHandler 科学上网处理器
 type ProxyHandler struct {
@@ -45,6 +90,7 @@ type ProxyHandler struct {
 }
 
 func NewProxyHandler(cfg *config.Config) *ProxyHandler {
+	loadPersistedProxy()
 	return &ProxyHandler{adminPassword: cfg.Proxy.AdminPassword}
 }
 
@@ -158,7 +204,11 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 
 	globalSession.mu.Lock()
 	globalSession.nodes = nodes
+	globalSession.sourceURL = req.SourceURL
+	globalSession.yamlContent = req.YAMLContent
 	globalSession.mu.Unlock()
+
+	go savePersistedProxy()
 
 	c.JSON(200, gin.H{"nodes": nodes, "count": len(nodes)})
 }
@@ -202,6 +252,8 @@ func (h *ProxyHandler) SpeedTest(c *gin.Context) {
 	globalSession.mu.Lock()
 	globalSession.nodes = results
 	globalSession.mu.Unlock()
+
+	go savePersistedProxy()
 
 	c.JSON(200, gin.H{"results": results})
 }
@@ -316,21 +368,234 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 	globalSession.mu.RLock()
 	defer globalSession.mu.RUnlock()
 
-	if globalSession.active == nil || globalSession.listener == nil {
-		c.JSON(200, gin.H{"running": false})
-		return
+	resp := gin.H{
+		"nodes":      globalSession.nodes,
+		"source_url": globalSession.sourceURL,
+		"running":    false,
 	}
-	port := globalSession.listener.Addr().(*net.TCPAddr).Port
-	c.JSON(200, gin.H{
-		"running":   true,
-		"node":      globalSession.active.Name,
-		"http_port": port,
-		"proxy_url": fmt.Sprintf("http://127.0.0.1:%d", port),
-	})
+	if globalSession.active != nil && globalSession.listener != nil {
+		port := globalSession.listener.Addr().(*net.TCPAddr).Port
+		resp["running"] = true
+		resp["node"] = globalSession.active.Name
+		resp["http_port"] = port
+		resp["proxy_url"] = fmt.Sprintf("http://127.0.0.1:%d", port)
+	}
+	c.JSON(200, resp)
+}
+
+// makeProxyClient 构建走代理节点的 http.Client
+func makeProxyClient() *http.Client {
+	globalSession.mu.RLock()
+	ln := globalSession.listener
+	globalSession.mu.RUnlock()
+
+	var transport *http.Transport
+	if ln != nil {
+		port := ln.Addr().(*net.TCPAddr).Port
+		pu, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+		transport = &http.Transport{Proxy: http.ProxyURL(pu)}
+	} else {
+		transport = &http.Transport{}
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   20 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
+		},
+	}
+}
+
+// proxyGet 通过代理节点 GET 目标 URL，返回 body 和 Content-Type
+func proxyGet(targetURL string) ([]byte, string, int, error) {
+	client := makeProxyClient()
+	req, err := http.NewRequestWithContext(context.Background(), "GET", targetURL, nil)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+	return body, resp.Header.Get("Content-Type"), resp.StatusCode, err
+}
+
+// rewriteURLToProxy 将一个 URL 改写为 /api/proxy/resource?url=xxx&p=PASSWORD
+func rewriteURLToProxy(rawURL, baseURL, password string) string {
+	if rawURL == "" || strings.HasPrefix(rawURL, "data:") ||
+		strings.HasPrefix(rawURL, "javascript:") || strings.HasPrefix(rawURL, "#") ||
+		strings.HasPrefix(rawURL, "mailto:") {
+		return rawURL
+	}
+	// 解析为绝对 URL
+	abs := rawURL
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		base, err := url.Parse(baseURL)
+		if err != nil {
+			return rawURL
+		}
+		ref, err := url.Parse(rawURL)
+		if err != nil {
+			return rawURL
+		}
+		abs = base.ResolveReference(ref).String()
+	}
+	return "/api/proxy/resource?p=" + url.QueryEscape(password) + "&url=" + url.QueryEscape(abs)
+}
+
+// rewriteHTML 将 HTML 中所有资源/链接 URL 改写为代理路径
+func rewriteHTML(html, baseURL, password string) string {
+	// 改写属性值：src= href= action= srcset= poster=
+	for _, attr := range []string{"src", "href", "action", "poster"} {
+		html = rewriteAttrAll(html, attr, baseURL, password)
+	}
+	// 改写 CSS url(...)
+	html = rewriteCSSURLs(html, baseURL, password)
+	// 注入 <base> 标签防止相对路径逃逸，并注入拦截脚本
+	inject := fmt.Sprintf(`<base href="%s">
+<script>
+(function(){
+  var _p = %q;
+  var _base = %q;
+  function toProxy(u){
+    if(!u||u.startsWith('data:')||u.startsWith('javascript:')||u.startsWith('#')||u.startsWith('/api/proxy/'))return u;
+    try{
+      var abs = new URL(u, _base).href;
+      return '/api/proxy/resource?p='+encodeURIComponent(_p)+'&url='+encodeURIComponent(abs);
+    }catch(e){return u;}
+  }
+  // 拦截 fetch
+  var _fetch = window.fetch;
+  window.fetch = function(input, init){
+    if(typeof input === 'string') input = toProxy(input);
+    return _fetch.call(this, input, init);
+  };
+  // 拦截 XHR
+  var _open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(m, u){
+    arguments[1] = toProxy(u);
+    return _open.apply(this, arguments);
+  };
+  // 拦截链接点击，在同一 iframe 内导航
+  document.addEventListener('click', function(e){
+    var a = e.target.closest('a');
+    if(!a) return;
+    var href = a.getAttribute('href');
+    if(!href||href.startsWith('#')||href.startsWith('javascript:')) return;
+    e.preventDefault();
+    var abs;
+    try{ abs = new URL(href, _base).href; }catch(e){ return; }
+    window.location.href = toProxy(abs);
+  }, true);
+})();
+</script>`, baseURL, password, baseURL)
+	if idx := strings.Index(html, "<head>"); idx >= 0 {
+		html = html[:idx+6] + inject + html[idx+6:]
+	} else if idx := strings.Index(html, "<html"); idx >= 0 {
+		end := strings.Index(html[idx:], ">")
+		if end >= 0 {
+			pos := idx + end + 1
+			html = html[:pos] + "<head>" + inject + "</head>" + html[pos:]
+		}
+	} else {
+		html = "<head>" + inject + "</head>" + html
+	}
+	return html
+}
+
+func rewriteAttrAll(html, attr, baseURL, password string) string {
+	var sb strings.Builder
+	remaining := html
+	// 匹配 attr="..." 和 attr='...'
+	for _, quote := range []string{`"`, `'`} {
+		prefix := attr + "=" + quote
+		var out strings.Builder
+		rem := remaining
+		for {
+			idx := strings.Index(rem, prefix)
+			if idx < 0 {
+				out.WriteString(rem)
+				break
+			}
+			out.WriteString(rem[:idx+len(prefix)])
+			rest := rem[idx+len(prefix):]
+			end := strings.IndexByte(rest, quote[0])
+			if end < 0 {
+				out.WriteString(rest)
+				break
+			}
+			link := rest[:end]
+			link = rewriteURLToProxy(link, baseURL, password)
+			out.WriteString(link)
+			rem = rest[end:]
+		}
+		remaining = out.String()
+	}
+	sb.WriteString(remaining)
+	return sb.String()
+}
+
+func rewriteCSSURLs(html, baseURL, password string) string {
+	// 替换 url("...") url('...') url(...)
+	var sb strings.Builder
+	rem := html
+	prefix := "url("
+	for {
+		idx := strings.Index(rem, prefix)
+		if idx < 0 {
+			sb.WriteString(rem)
+			break
+		}
+		sb.WriteString(rem[:idx+len(prefix)])
+		rest := rem[idx+len(prefix):]
+		var link, tail string
+		if strings.HasPrefix(rest, `"`) {
+			end := strings.Index(rest[1:], `"`)
+			if end < 0 {
+				sb.WriteString(rest)
+				break
+			}
+			link = rest[1 : end+1]
+			tail = rest[end+2:]
+			link = rewriteURLToProxy(link, baseURL, password)
+			sb.WriteString(`"` + link + `"`)
+		} else if strings.HasPrefix(rest, `'`) {
+			end := strings.Index(rest[1:], `'`)
+			if end < 0 {
+				sb.WriteString(rest)
+				break
+			}
+			link = rest[1 : end+1]
+			tail = rest[end+2:]
+			link = rewriteURLToProxy(link, baseURL, password)
+			sb.WriteString(`'` + link + `'`)
+		} else {
+			end := strings.IndexByte(rest, ')')
+			if end < 0 {
+				sb.WriteString(rest)
+				break
+			}
+			link = strings.TrimSpace(rest[:end])
+			tail = rest[end:]
+			link = rewriteURLToProxy(link, baseURL, password)
+			sb.WriteString(link)
+		}
+		rem = tail
+	}
+	return sb.String()
 }
 
 // Fetch GET /api/proxy/fetch?url=xxx&admin_password=xxx
-// 通过当前代理抓取 URL，返回 HTML（替换相对路径）
+// 抓取目标 HTML，将所有资源改写为代理路径，注入拦截脚本
 func (h *ProxyHandler) Fetch(c *gin.Context) {
 	password := c.Query("admin_password")
 	if !h.checkAdmin(password) {
@@ -347,100 +612,58 @@ func (h *ProxyHandler) Fetch(c *gin.Context) {
 		targetURL = "https://" + targetURL
 	}
 
-	globalSession.mu.RLock()
-	ln := globalSession.listener
-	globalSession.mu.RUnlock()
-
-	var transport http.RoundTripper
-	if ln != nil {
-		port := ln.Addr().(*net.TCPAddr).Port
-		proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
-		transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
-	} else {
-		transport = http.DefaultTransport
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   20 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("too many redirects")
-			}
-			return nil
-		},
-	}
-
-	req, err := http.NewRequestWithContext(context.Background(), "GET", targetURL, nil)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "URL 无效: " + err.Error()})
-		return
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; DevTools/1.0)")
-
-	resp, err := client.Do(req)
+	body, ct, _, err := proxyGet(targetURL)
 	if err != nil {
 		c.JSON(502, gin.H{"error": "请求失败: " + err.Error()})
 		return
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		c.JSON(502, gin.H{"error": "读取响应失败"})
+	if strings.Contains(ct, "text/html") || ct == "" {
+		html := rewriteHTML(string(body), targetURL, password)
+		c.Data(200, "text/html; charset=utf-8", []byte(html))
+	} else {
+		c.Data(200, ct, body)
+	}
+}
+
+// Resource GET /api/proxy/resource?url=xxx&p=PASSWORD
+// 代理任意资源（CSS/JS/图片等），CSS 内容也做 URL 改写
+func (h *ProxyHandler) Resource(c *gin.Context) {
+	password := c.Query("p")
+	if !h.checkAdmin(password) {
+		c.Data(403, "text/plain", []byte("forbidden"))
 		return
 	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "text/html") {
-		// 替换相对路径为绝对路径
-		html := rewriteHTML(string(body), targetURL)
-		c.Data(200, "text/html; charset=utf-8", []byte(html))
-	} else {
-		c.Data(resp.StatusCode, contentType, body)
+	targetURL := c.Query("url")
+	if targetURL == "" {
+		c.Data(400, "text/plain", []byte("missing url"))
+		return
 	}
-}
 
-// rewriteHTML 将 HTML 中的相对路径替换为绝对路径
-func rewriteHTML(html, baseURL string) string {
-	base, err := url.Parse(baseURL)
+	body, ct, status, err := proxyGet(targetURL)
 	if err != nil {
-		return html
+		c.Data(502, "text/plain", []byte("proxy error: "+err.Error()))
+		return
 	}
-	// 简单替换 href="/ src="/ action="/
-	for _, attr := range []string{`href="`, `src="`, `action="`} {
-		html = rewriteAttr(html, attr, base)
-	}
-	return html
-}
 
-func rewriteAttr(html, attr string, base *url.URL) string {
-	var sb strings.Builder
-	remaining := html
-	for {
-		idx := strings.Index(remaining, attr)
-		if idx < 0 {
-			sb.WriteString(remaining)
-			break
-		}
-		sb.WriteString(remaining[:idx+len(attr)])
-		rest := remaining[idx+len(attr):]
-		end := strings.IndexByte(rest, '"')
-		if end < 0 {
-			sb.WriteString(rest)
-			break
-		}
-		link := rest[:end]
-		if !strings.HasPrefix(link, "http://") && !strings.HasPrefix(link, "https://") && !strings.HasPrefix(link, "//") && !strings.HasPrefix(link, "javascript:") && !strings.HasPrefix(link, "data:") && !strings.HasPrefix(link, "#") {
-			ref, err := url.Parse(link)
-			if err == nil {
-				link = base.ResolveReference(ref).String()
-			}
-		}
-		sb.WriteString(link)
-		remaining = rest[end:]
+	// CSS 内也做 URL 改写
+	if strings.Contains(ct, "text/css") {
+		rewritten := rewriteCSSURLs(string(body), targetURL, password)
+		c.Data(status, ct, []byte(rewritten))
+		return
 	}
-	return sb.String()
+	// HTML（跳转到的子页面）
+	if strings.Contains(ct, "text/html") {
+		html := rewriteHTML(string(body), targetURL, password)
+		c.Data(status, "text/html; charset=utf-8", []byte(html))
+		return
+	}
+
+	// 其他资源直接透传，去掉 CSP 头
+	c.Header("Content-Security-Policy", "")
+	c.Header("X-Frame-Options", "")
+	c.Data(status, ct, body)
 }
 
 // serveHTTPProxy 运行一个简单的 HTTP CONNECT 代理，转发到目标节点
@@ -586,4 +809,212 @@ func dialSocks5(proxyAddr, targetHost string, node *ProxyNode) (net.Conn, error)
 		return nil, fmt.Errorf("socks5 连接失败")
 	}
 	return conn, nil
+}
+
+// Tunnel 处理 HTTP CONNECT 方法，让 DevTools 自身端口充当 HTTP 代理
+// 浏览器/系统代理配置：http://yourserver:PORT
+// 密码通过 Proxy-Authorization: Basic base64(user:password) 传递
+func (h *ProxyHandler) Tunnel(c *gin.Context) {
+	// 验证 Proxy-Authorization
+	authHeader := c.GetHeader("Proxy-Authorization")
+	if !h.checkProxyAuth(authHeader) {
+		c.Header("Proxy-Authenticate", `Basic realm="DevTools Proxy"`)
+		c.Status(407)
+		return
+	}
+
+	// 劫持底层 TCP 连接
+	hijacker, ok := c.Writer.(http.Hijacker)
+	if !ok {
+		c.Status(500)
+		return
+	}
+	clientConn, brw, err := hijacker.Hijack()
+	if err != nil {
+		return
+	}
+
+	host := c.Request.Host
+	if host == "" {
+		host = c.Request.URL.Host
+	}
+
+	globalSession.mu.RLock()
+	node := globalSession.active
+	globalSession.mu.RUnlock()
+
+	var upstream net.Conn
+	if node != nil {
+		upstream, err = dialUpstream(node, host)
+	} else {
+		// 无代理节点时直连
+		upstream, err = net.DialTimeout("tcp", host, 10*time.Second)
+	}
+	if err != nil {
+		brw.WriteString("HTTP/1.1 502 Bad Gateway\r\n\r\n")
+		brw.Flush()
+		clientConn.Close()
+		return
+	}
+
+	brw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+	brw.Flush()
+
+	go io.Copy(upstream, brw)
+	io.Copy(clientConn, upstream)
+	upstream.Close()
+	clientConn.Close()
+}
+
+// checkProxyAuth 验证 Proxy-Authorization Basic 头
+func (h *ProxyHandler) checkProxyAuth(header string) bool {
+	if h.adminPassword == "" {
+		return false
+	}
+	if !strings.HasPrefix(header, "Basic ") {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(header, "Basic "))
+	if err != nil {
+		return false
+	}
+	// 格式 user:password，user 随意，password 必须匹配
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	return parts[1] == h.adminPassword
+}
+
+// DownloadExtension GET /api/proxy/extension?admin_password=xxx&host=xxx
+// 生成并下载 Chrome 扩展 zip，导入后自动配置代理
+func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
+	password := c.Query("admin_password")
+	if !h.checkAdmin(password) {
+		c.JSON(403, gin.H{"error": "密码错误"})
+		return
+	}
+
+	// 优先用请求头里的 Host，也支持前端传 host 参数
+	proxyHost := c.Query("host")
+	if proxyHost == "" {
+		proxyHost = c.Request.Host
+	}
+
+	manifest := `{
+  "manifest_version": 3,
+  "name": "DevTools Proxy",
+  "version": "1.0",
+  "description": "自动配置 DevTools 科学上网代理",
+  "permissions": ["proxy", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DevTools Proxy"
+  }
+}`
+
+	// background.js：设置代理 + 处理认证
+	bgJS := fmt.Sprintf(`
+const PROXY_HOST = %q;
+const PROXY_PASS = %q;
+
+// 解析 host:port
+const parts = PROXY_HOST.split(':');
+const host = parts[0];
+const port = parseInt(parts[1]) || 80;
+
+chrome.runtime.onInstalled.addListener(enableProxy);
+chrome.runtime.onStartup.addListener(enableProxy);
+
+function enableProxy() {
+  const config = {
+    mode: "fixed_servers",
+    rules: {
+      singleProxy: { scheme: "http", host: host, port: port },
+      bypassList: ["localhost", "127.0.0.1", "<local>"]
+    }
+  };
+  chrome.proxy.settings.set({ value: config, scope: "regular" }, () => {
+    console.log("DevTools Proxy enabled:", PROXY_HOST);
+  });
+}
+
+// 处理代理认证
+chrome.webRequest.onAuthRequired.addListener(
+  (details, callback) => {
+    if (details.isProxy) {
+      callback({ authCredentials: { username: "devtools", password: PROXY_PASS } });
+    } else {
+      callback({});
+    }
+  },
+  { urls: ["<all_urls>"] },
+  ["asyncBlocking"]
+);
+`, proxyHost, password)
+
+	popupHTML := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+body{font-family:sans-serif;padding:12px;width:260px;font-size:13px;}
+.row{display:flex;justify-content:space-between;margin:6px 0;}
+.label{color:#666;}
+.val{font-weight:bold;word-break:break-all;}
+button{width:100%%;margin-top:10px;padding:6px;cursor:pointer;border-radius:4px;border:1px solid #ccc;}
+.on{background:#67c23a;color:#fff;border-color:#67c23a;}
+.off{background:#f56c6c;color:#fff;border-color:#f56c6c;}
+</style></head>
+<body>
+<div class="row"><span class="label">代理地址</span><span class="val">%s</span></div>
+<div class="row"><span class="label">状态</span><span class="val" id="status">检测中...</span></div>
+<button class="on" id="btn" onclick="toggle()">关闭代理</button>
+<script>
+let enabled = true;
+function toggle() {
+  enabled = !enabled;
+  if (enabled) {
+    chrome.runtime.sendMessage({action:'enable'});
+    document.getElementById('status').textContent = '已启用';
+    document.getElementById('btn').className = 'on';
+    document.getElementById('btn').textContent = '关闭代理';
+  } else {
+    chrome.proxy.settings.clear({scope:'regular'});
+    document.getElementById('status').textContent = '已关闭';
+    document.getElementById('btn').className = 'off';
+    document.getElementById('btn').textContent = '开启代理';
+  }
+}
+chrome.proxy.settings.get({incognito:false}, d => {
+  const on = d.value.mode === 'fixed_servers';
+  enabled = on;
+  document.getElementById('status').textContent = on ? '已启用' : '已关闭';
+  document.getElementById('btn').className = on ? 'on' : 'off';
+  document.getElementById('btn').textContent = on ? '关闭代理' : '开启代理';
+});
+</script>
+</body></html>`, proxyHost)
+
+	// 打包成 zip
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	files := map[string]string{
+		"manifest.json": manifest,
+		"background.js": bgJS,
+		"popup.html":    popupHTML,
+	}
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			c.JSON(500, gin.H{"error": "打包失败"})
+			return
+		}
+		w.Write([]byte(content))
+	}
+	zw.Close()
+
+	c.Header("Content-Disposition", `attachment; filename="devtools-proxy.zip"`)
+	c.Data(200, "application/zip", buf.Bytes())
 }
