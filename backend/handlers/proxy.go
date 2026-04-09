@@ -407,6 +407,48 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 	h.startNPC()
 }
 
+// ensureActiveNode 若当前无活跃节点，自动选延迟最低的节点并启动代理
+// 供 Tunnel / WsTunnel 在无节点时自动触发，避免直连
+func (h *ProxyHandler) ensureActiveNode() {
+	globalSession.mu.RLock()
+	active := globalSession.active
+	nodes := make([]ProxyNode, len(globalSession.nodes))
+	copy(nodes, globalSession.nodes)
+	globalSession.mu.RUnlock()
+
+	if active != nil || len(nodes) == 0 {
+		return
+	}
+
+	// 并发测速，选最低延迟节点
+	var mu sync.Mutex
+	var best *ProxyNode
+	var wg sync.WaitGroup
+	for i := range nodes {
+		wg.Add(1)
+		go func(n ProxyNode) {
+			defer wg.Done()
+			n.Latency = tcpPing(n.Server, n.Port)
+			if n.Latency < 0 {
+				return
+			}
+			mu.Lock()
+			if best == nil || n.Latency < best.Latency {
+				cp := n
+				best = &cp
+			}
+			mu.Unlock()
+		}(nodes[i])
+	}
+	wg.Wait()
+
+	if best == nil {
+		return
+	}
+	startProxyListener(best, h.adminPassword, h.localPort) //nolint
+	h.startNPC()
+}
+
 // startProxyListener 启动 HTTP CONNECT 代理监听，返回 listener
 // localPort 非空时固定监听 127.0.0.1:localPort，否则随机端口
 func startProxyListener(target *ProxyNode, adminPassword, localPort string) (net.Listener, error) {
@@ -1083,14 +1125,14 @@ func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 		host = r.URL.Host
 	}
 
+	h.ensureActiveNode()
+
 	globalSession.mu.RLock()
 	node := globalSession.active
 	globalSession.mu.RUnlock()
 
-	var (
-		upstream net.Conn
-		err      error
-	)
+	var upstream net.Conn
+	var err error
 	if node != nil {
 		upstream, err = dialUpstream(node, host)
 	} else {
@@ -1472,6 +1514,8 @@ func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 		return
 	}
 	defer wsConn.Close()
+
+	h.ensureActiveNode()
 
 	globalSession.mu.RLock()
 	node := globalSession.active
