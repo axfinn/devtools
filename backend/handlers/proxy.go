@@ -1038,11 +1038,17 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string)
 		return
 	}
 
-	// 防探测：验证 Proxy-Authorization，失败时伪装成普通网站
+	// 防探测：验证 Proxy-Authorization，失败时根据请求类型响应
 	if adminPassword != "" {
 		authHeader := req.Header.Get("Proxy-Authorization")
 		if !checkProxyAuthHeader(authHeader, adminPassword) {
-			clientConn.Write([]byte(fakeWebPage))
+			if req.Method == http.MethodConnect {
+				// CONNECT 必须返回 407，系统/浏览器才会重试带认证头
+				clientConn.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"proxy\"\r\n\r\n"))
+			} else {
+				// 非 CONNECT（端口扫描/探测）返回 200 伪装
+				clientConn.Write([]byte(fakeWebPage))
+			}
 			return
 		}
 	}
