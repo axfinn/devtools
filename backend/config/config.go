@@ -46,6 +46,8 @@ type NPSConfig struct {
 	ServerURL      string `yaml:"server_url"`       // NPS 管理后台地址，如 http://nps.example.com:8080
 	AuthKey        string `yaml:"auth_key"`         // NPS 配置文件里的 auth_key
 	VKey           string `yaml:"vkey"`             // 客户端验证密钥（已在 NPS 里创建好）
+	BridgeHost     string `yaml:"bridge_host"`      // npc 连接的 bridge 主机，留空则从 server_url 提取
+	BridgePort     string `yaml:"bridge_port"`      // npc 连接 NPS 的端口，默认 8024
 	AdminPassword  string `yaml:"admin_password"`   // devtools 访问密码（为空则禁用）
 	PortRangeStart int    `yaml:"port_range_start"` // 自动分配端口区间起始（0 表示不启用）
 	PortRangeEnd   int    `yaml:"port_range_end"`   // 自动分配端口区间结束

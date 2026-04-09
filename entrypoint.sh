@@ -92,4 +92,37 @@ for i in $(seq 1 10); do
     sleep 1
 done
 
+# 启动 npc，将 tunnel_port 注册到 NPS（需要 NPS_SERVER / NPS_VKEY / PROXY_TUNNEL_PORT 环境变量）
+if [ -n "$NPS_SERVER" ] && [ -n "$NPS_VKEY" ] && [ -n "$PROXY_TUNNEL_PORT" ]; then
+    NPC_BIN=/app/data/npc
+    if [ ! -f "$NPC_BIN" ]; then
+        echo "[entrypoint] Downloading npc..."
+        wget -qO /tmp/npc.tar.gz "${NPS_SERVER}/static/download/client/npc_linux_amd64.tar.gz" && \
+            tar -xzf /tmp/npc.tar.gz -C /tmp && \
+            mv /tmp/npc "$NPC_BIN" && \
+            chmod +x "$NPC_BIN" && \
+            echo "[entrypoint] npc downloaded" || \
+            echo "[entrypoint] npc download failed, skipping"
+    fi
+    if [ -f "$NPC_BIN" ]; then
+        mkdir -p /app/data/npc-conf
+        cat > /app/data/npc-conf/npc.conf << EOF
+[common]
+server_addr=${NPS_SERVER}
+conn_type=tcp
+vkey=${NPS_VKEY}
+auto_reconnect=true
+log_level=3
+
+[proxy]
+mode=tcp
+server_port=${PROXY_TUNNEL_PORT}
+target_addr=127.0.0.1:${PROXY_TUNNEL_PORT}
+EOF
+        echo "[entrypoint] Starting npc (server=${NPS_SERVER} tunnel_port=${PROXY_TUNNEL_PORT})..."
+        "$NPC_BIN" -config /app/data/npc-conf/npc.conf &
+        echo "[entrypoint] npc started"
+    fi
+fi
+
 exec ./server

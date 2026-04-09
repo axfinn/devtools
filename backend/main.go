@@ -888,6 +888,9 @@ func main() {
 			nps.GET("/tunnels", npsHandler.ListTunnels)
 			nps.POST("/tunnels", npsHandler.AddTunnel)
 			nps.DELETE("/tunnels/:id", npsHandler.DeleteTunnel)
+			nps.GET("/npc/status", npsHandler.NpcStatus)
+			nps.POST("/npc/start", npsHandler.NpcStart)
+			nps.POST("/npc/stop", npsHandler.NpcStop)
 		}
 		api.POST("/bg/cache", handlers.CacheBackgroundImages) // 缓存图片
 		api.POST("/bg/replace", handlers.ReplaceRandomImages) // 随机替换图片

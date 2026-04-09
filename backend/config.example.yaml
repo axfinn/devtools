@@ -605,7 +605,13 @@ nps:
   # NPS 配置文件里的 auth_key
   auth_key: ""
   # 客户端验证密钥（已在 NPS 后台创建好的客户端 vkey）
+  # 填写后服务启动时会自动在容器内运行 npc，连接 NPS 服务端
   vkey: ""
+  # npc 连接的 bridge 主机，留空则自动从 server_url 提取 hostname
+  # 如果 bridge 和 web 管理后台不是同一个域名，在这里单独填
+  bridge_host: ""
+  # npc 连接 NPS 的 bridge 端口（默认 8024，通常不需要改）
+  bridge_port: "8024"
   # devtools 访问密码（留空则功能不可用）
   admin_password: ""
   # 自动分配端口区间（添加映射时不填端口则自动从此区间分配，0 表示不启用）

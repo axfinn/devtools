@@ -48,6 +48,15 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
     nodejs npm git bash openssh-client hugo
 
+# 内置 npc 客户端（从 NPS 服务端下载，避免运行时下载）
+# 如果构建时无法访问，npc 将在首次启动时由 Go 服务自动下载
+ARG NPS_SERVER_URL=https://npss.jaxiu.cn
+RUN wget -qO /tmp/npc.tar.gz "${NPS_SERVER_URL}/static/download/client/npc_linux_amd64.tar.gz" && \
+    tar -xzf /tmp/npc.tar.gz -C /tmp && \
+    mv /tmp/npc /usr/local/bin/npc && \
+    chmod +x /usr/local/bin/npc && \
+    rm /tmp/npc.tar.gz || echo "npc download skipped (will download at runtime)"
+
 # Create isolated venv for TTS service (edge-tts + FastAPI)
 RUN python3 -m venv /app/tts-venv && \
     /app/tts-venv/bin/pip install --upgrade pip && \

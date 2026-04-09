@@ -39,6 +39,12 @@
             :loading="addingProxy"
             @click="addProxyTunnel"
           >一键映射代理端口 ({{ tunnelPort }})</el-button>
+          <el-button
+            size="small"
+            :type="npcRunning ? 'danger' : 'success'"
+            :loading="npcLoading"
+            @click="toggleNpc"
+          >npc {{ npcRunning ? '停止' : '启动' }}</el-button>
         </div>
         <div v-else class="text-gray">加载中...</div>
       </el-card>
@@ -126,6 +132,8 @@ const clientInfo = ref(null)
 const portRangeStart = ref(0)
 const portRangeEnd = ref(0)
 const tunnelPort = ref('')  // proxy.tunnel_port，用于一键映射代理端口
+const npcRunning = ref(false)
+const npcLoading = ref(false)
 
 const tunnels = ref([])
 const loadingTunnels = ref(false)
@@ -175,7 +183,24 @@ async function loadStatus() {
     const r = await fetch(`/api/nps/status?admin_password=${encodeURIComponent(adminPassword())}`)
     const data = await r.json()
     if (!data.error) applyStatus(data)
+    // 同步 npc 状态
+    const nr = await fetch(`/api/nps/npc/status?admin_password=${encodeURIComponent(adminPassword())}`)
+    const nd = await nr.json()
+    npcRunning.value = nd.running
   } catch {}
+}
+
+async function toggleNpc() {
+  npcLoading.value = true
+  try {
+    const action = npcRunning.value ? 'stop' : 'start'
+    await fetch(`/api/nps/npc/${action}?admin_password=${encodeURIComponent(adminPassword())}`, { method: 'POST' })
+    await new Promise(r => setTimeout(r, 1000))
+    const nr = await fetch(`/api/nps/npc/status?admin_password=${encodeURIComponent(adminPassword())}`)
+    const nd = await nr.json()
+    npcRunning.value = nd.running
+  } catch { ElMessage.error('操作失败') }
+  finally { npcLoading.value = false }
 }
 
 async function loadTunnels() {
