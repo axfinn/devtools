@@ -43,6 +43,7 @@ type Config struct {
 // ProxyConfig 科学上网代理配置
 type ProxyConfig struct {
 	AdminPassword string `yaml:"admin_password"` // 管理员密码，为空则禁用
+	TunnelPort    string `yaml:"tunnel_port"`    // 独立 CONNECT 代理端口，留空则不启动（用于绕过 nginx）
 }
 
 // AutoDevConfig AutoDev AI 任务配置

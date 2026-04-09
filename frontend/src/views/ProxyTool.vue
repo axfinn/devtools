@@ -75,11 +75,32 @@
       <!-- 代理信息（启动后显示） -->
       <el-card v-if="proxyRunning" class="config-card">
         <template #header><span>代理已启动 — {{ activeNode }}</span></template>
-        <el-alert type="success" :closable="false">
-          <template #title>
-            <span>将以下地址配到浏览器/系统代理（HTTP 代理）即可全局科学上网</span>
-          </template>
-          <div class="proxy-addr-row">
+
+        <!-- 方案一：wstunnel（推荐，支持 nginx 反代） -->
+        <el-alert type="success" :closable="false" style="margin-bottom:12px">
+          <template #title><span>方案一：wstunnel（推荐，支持 nginx 反代）</span></template>
+          <div style="margin-top:6px;font-size:13px;">
+            本地运行 wstunnel，浏览器配 SOCKS5 代理 <b>127.0.0.1:1080</b>
+          </div>
+          <div class="proxy-addr-row" style="margin-top:8px">
+            <el-input :value="wstunnelCmd" readonly size="small" class="proxy-addr-input">
+              <template #append>
+                <el-button @click="copy(wstunnelCmd)">复制</el-button>
+              </template>
+            </el-input>
+          </div>
+          <div class="proxy-hint">
+            下载 wstunnel：<a href="https://github.com/erebe/wstunnel/releases" target="_blank">github.com/erebe/wstunnel/releases</a>
+          </div>
+          <el-button type="primary" size="small" style="margin-top:10px" @click="downloadExtension">
+            下载 Chrome 插件（自动配置，无需 wstunnel）
+          </el-button>
+        </el-alert>
+
+        <!-- 方案二：直接 HTTP 代理（需要直连服务器，不经过 nginx） -->
+        <el-alert type="info" :closable="false">
+          <template #title><span>方案二：直接 HTTP 代理（仅限直连服务器，不经过 nginx）</span></template>
+          <div class="proxy-addr-row" style="margin-top:8px">
             <span class="proxy-addr-label">代理地址</span>
             <el-input :value="externalProxyURL" readonly size="small" class="proxy-addr-input">
               <template #append>
@@ -95,10 +116,7 @@
               </template>
             </el-input>
           </div>
-          <div class="proxy-hint">用户名随意填，密码填上方密码。推荐搭配 SwitchyOmega 使用。</div>
-          <el-button type="primary" size="small" style="margin-top:10px" @click="downloadExtension">
-            下载 Chrome 插件（一键导入自动配置）
-          </el-button>
+          <div class="proxy-hint">用户名随意填，密码填上方密码。nginx 反代下此方式不可用。</div>
         </el-alert>
       </el-card>
 
@@ -158,7 +176,6 @@
               <iframe
                 v-if="tab.src"
                 :src="tab.src"
-                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                 class="browser-frame"
                 @load="onFrameLoad(tab, $event)"
               />
@@ -433,6 +450,14 @@ const sortedNodes = computed(() => {
 // 浏览器/系统代理配置：http://yourserver:PORT，密码用 Proxy-Authorization
 const externalProxyURL = computed(() => {
   return `${window.location.protocol}//${window.location.host}`
+})
+
+// wstunnel 命令：通过 WebSocket 隧道，支持 nginx 反代
+const wstunnelCmd = computed(() => {
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const host = window.location.host
+  const pass = adminPassword()
+  return `wstunnel client -L 'socks5://127.0.0.1:1080' ${proto}://${host}/api/proxy/ws-tunnel?p=${encodeURIComponent(pass)}`
 })
 </script>
 

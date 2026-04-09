@@ -876,6 +876,7 @@ func main() {
 			proxyGroup.GET("/fetch", proxyHandler.Fetch)
 			proxyGroup.GET("/resource", proxyHandler.Resource)
 			proxyGroup.GET("/extension", proxyHandler.DownloadExtension)
+			proxyGroup.GET("/ws-tunnel", proxyHandler.WsTunnel)
 		}
 		api.POST("/bg/cache", handlers.CacheBackgroundImages) // 缓存图片
 		api.POST("/bg/replace", handlers.ReplaceRandomImages) // 随机替换图片
