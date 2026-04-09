@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,7 @@ type ProxyHandler struct {
 	npcTunnelPort  string // NPS 上配置的外网端口，用于前端展示
 	npcCmd         *exec.Cmd
 	npcMu          sync.Mutex
+	npsHandler     *NPSHandler // 用于一键创建 NPS 端口映射
 }
 
 type npcConfig struct {
@@ -101,11 +103,12 @@ type npcConfig struct {
 	binPath    string // 留空则自动查找
 }
 
-func NewProxyHandler(cfg *config.Config) *ProxyHandler {
+func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 	loadPersistedProxy()
 	h := &ProxyHandler{
 		adminPassword: cfg.Proxy.AdminPassword,
 		npcTunnelPort: cfg.Proxy.TunnelPort,
+		npsHandler:    npsHandler,
 	}
 	if cfg.NPS.VKey != "" {
 		bridgePort := cfg.NPS.BridgePort
@@ -393,20 +396,11 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 	}
 	globalSession.mu.Unlock()
 
-	// 启动 HTTP CONNECT 代理
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := startProxyListener(target, h.adminPassword)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "监听失败: " + err.Error()})
+		c.JSON(500, gin.H{"error": "启动失败: " + err.Error()})
 		return
 	}
-
-	globalSession.mu.Lock()
-	globalSession.listener = ln
-	globalSession.active = target
-	globalSession.mu.Unlock()
-
-	go serveHTTPProxy(ln, target, h.adminPassword)
-	h.startNPC()
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -415,6 +409,21 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 		"proxy_url": proxyURL,
 		"node":      target.Name,
 	})
+	h.startNPC()
+}
+
+// startProxyListener 启动 HTTP CONNECT 代理监听，返回 listener
+func startProxyListener(target *ProxyNode, adminPassword string) (net.Listener, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	globalSession.mu.Lock()
+	globalSession.listener = ln
+	globalSession.active = target
+	globalSession.mu.Unlock()
+	go serveHTTPProxy(ln, target, adminPassword)
+	return ln, nil
 }
 
 // Stop POST /api/proxy/stop
@@ -441,6 +450,132 @@ func (h *ProxyHandler) Stop(c *gin.Context) {
 
 	h.stopNPC()
 	c.JSON(200, gin.H{"ok": true})
+}
+
+// CreateNPSTunnel POST /api/proxy/nps-tunnel
+// 用 proxy 密码一键将 tunnel_port 映射到 NPS 公网
+func (h *ProxyHandler) CreateNPSTunnel(c *gin.Context) {
+	var req struct {
+		AdminPassword string `json:"admin_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误"})
+		return
+	}
+	if !h.checkAdmin(req.AdminPassword) {
+		c.JSON(403, gin.H{"error": "密码错误"})
+		return
+	}
+	if h.npsHandler == nil || h.npsHandler.cfg.ServerURL == "" {
+		c.JSON(400, gin.H{"error": "NPS 未配置"})
+		return
+	}
+	if h.npcTunnelPort == "" {
+		c.JSON(400, gin.H{"error": "proxy.tunnel_port 未配置"})
+		return
+	}
+	port := 0
+	if p, err := strconv.Atoi(h.npcTunnelPort); err == nil {
+		port = p
+	}
+	// 复用 NPSHandler 的 AddTunnel 逻辑：直接调内部方法
+	clientID, err := h.npsHandler.getClientID()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "获取 NPS 客户端失败: " + err.Error()})
+		return
+	}
+	params := url.Values{}
+	params.Set("type", "tcp")
+	params.Set("port", h.npcTunnelPort)
+	params.Set("target", fmt.Sprintf("127.0.0.1:%d", port))
+	params.Set("client_id", strconv.Itoa(clientID))
+	params.Set("remark", "代理端口（防探测）")
+	result, err := h.npsHandler.npsPost("/index/add/", params)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	if status, _ := result["status"].(float64); status != 1 {
+		msg, _ := result["msg"].(string)
+		c.JSON(400, gin.H{"error": msg})
+		return
+	}
+	c.JSON(200, gin.H{"port": port})
+}
+
+// AutoStart POST /api/proxy/auto-start
+// 测速后自动选延迟最低的可用节点启动代理
+func (h *ProxyHandler) AutoStart(c *gin.Context) {
+	var req struct {
+		AdminPassword string `json:"admin_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误"})
+		return
+	}
+	if !h.checkAdmin(req.AdminPassword) {
+		c.JSON(403, gin.H{"error": "密码错误"})
+		return
+	}
+
+	globalSession.mu.RLock()
+	nodes := make([]ProxyNode, len(globalSession.nodes))
+	copy(nodes, globalSession.nodes)
+	globalSession.mu.RUnlock()
+
+	if len(nodes) == 0 {
+		c.JSON(400, gin.H{"error": "请先加载节点配置"})
+		return
+	}
+
+	// 并发测速
+	var wg sync.WaitGroup
+	results := make([]ProxyNode, len(nodes))
+	for i, node := range nodes {
+		wg.Add(1)
+		go func(idx int, n ProxyNode) {
+			defer wg.Done()
+			n.Latency = tcpPing(n.Server, n.Port)
+			results[idx] = n
+		}(i, node)
+	}
+	wg.Wait()
+
+	// 保存测速结果
+	globalSession.mu.Lock()
+	globalSession.nodes = results
+	globalSession.mu.Unlock()
+	go savePersistedProxy()
+
+	// 选延迟最低的可用节点
+	var best *ProxyNode
+	for i := range results {
+		if results[i].Latency >= 0 {
+			if best == nil || results[i].Latency < best.Latency {
+				best = &results[i]
+			}
+		}
+	}
+	if best == nil {
+		c.JSON(400, gin.H{"error": "所有节点均不可用", "results": results})
+		return
+	}
+
+	// 启动代理
+	ln, err := startProxyListener(best, h.adminPassword)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "启动失败: " + err.Error()})
+		return
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	c.JSON(200, gin.H{
+		"node":       best.Name,
+		"latency":    best.Latency,
+		"http_port":  port,
+		"proxy_url":  fmt.Sprintf("http://127.0.0.1:%d", port),
+		"results":    results,
+	})
+	h.startNPC()
 }
 
 // Status GET /api/proxy/status

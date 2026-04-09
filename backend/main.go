@@ -336,8 +336,8 @@ func main() {
 	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg)
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
-	proxyHandler := handlers.NewProxyHandler(cfg)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
+	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
@@ -872,7 +872,9 @@ func main() {
 			proxyGroup.POST("/config", proxyHandler.LoadConfig)
 			proxyGroup.POST("/speedtest", proxyHandler.SpeedTest)
 			proxyGroup.POST("/start", proxyHandler.Start)
+			proxyGroup.POST("/auto-start", proxyHandler.AutoStart)
 			proxyGroup.POST("/stop", proxyHandler.Stop)
+			proxyGroup.POST("/nps-tunnel", proxyHandler.CreateNPSTunnel)
 			proxyGroup.GET("/status", proxyHandler.Status)
 			proxyGroup.GET("/fetch", proxyHandler.Fetch)
 			proxyGroup.GET("/resource", proxyHandler.Resource)

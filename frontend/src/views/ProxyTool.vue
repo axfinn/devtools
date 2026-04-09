@@ -39,6 +39,9 @@
           <el-button type="success" @click="startProxy" :loading="startingProxy" :disabled="!selectedNode">
             启动代理
           </el-button>
+          <el-button type="warning" @click="autoStart" :loading="autoStarting" :disabled="nodes.length === 0">
+            自动选线路
+          </el-button>
           <el-button type="danger" @click="stopProxy" :loading="stoppingProxy" v-if="proxyRunning">
             停止代理
           </el-button>
@@ -158,6 +161,9 @@
             <el-button type="primary" size="small" @click="downloadExtension(npsTunnelAddr)">
               下载 Chrome 插件（自动配置代理）
             </el-button>
+            <el-button type="warning" size="small" :loading="creatingTunnel" @click="createNPSTunnel">
+              一键创建端口映射
+            </el-button>
           </div>
         </el-alert>
       </el-card>
@@ -255,6 +261,8 @@ const selectedNode = ref(null)
 
 const startingProxy = ref(false)
 const stoppingProxy = ref(false)
+const autoStarting = ref(false)
+const creatingTunnel = ref(false)
 const proxyRunning = ref(false)
 const httpPort = ref(0)
 const proxyURL = ref('')
@@ -467,6 +475,40 @@ async function stopProxy() {
     }
   } catch (e) { ElMessage.error('停止失败') }
   finally { stoppingProxy.value = false }
+}
+
+async function autoStart() {
+  autoStarting.value = true
+  try {
+    const r = await fetch('/api/proxy/auto-start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_password: adminPassword() })
+    })
+    const data = await r.json()
+    if (data.error) { ElMessage.error(data.error); return }
+    nodes.value = data.results
+    testedOnce.value = true
+    proxyRunning.value = true
+    httpPort.value = data.http_port
+    proxyURL.value = data.proxy_url
+    activeNode.value = data.node
+    ElMessage.success(`已自动选择节点「${data.node}」（延迟 ${data.latency}ms）`)
+  } catch (e) { ElMessage.error('自动选线路失败') }
+  finally { autoStarting.value = false }
+}
+
+async function createNPSTunnel() {
+  creatingTunnel.value = true
+  try {
+    const r = await fetch('/api/proxy/nps-tunnel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_password: adminPassword() })
+    })
+    const data = await r.json()
+    if (data.error) ElMessage.error(data.error)
+    else ElMessage.success(`端口映射已创建，公网端口 ${data.port}`)
+  } catch (e) { ElMessage.error('创建失败') }
+  finally { creatingTunnel.value = false }
 }
 
 function selectNode(row) { selectedNode.value = row }
