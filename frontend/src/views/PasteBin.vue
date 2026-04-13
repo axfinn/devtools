@@ -83,6 +83,15 @@
           <el-icon :size="48"><Upload /></el-icon>
           <span>拖放文件到此处</span>
         </div>
+        <!-- 文字统计 -->
+        <div class="text-stats" v-if="content">
+          <span>字数 {{ textStats.chars }}</span>
+          <span>词数 {{ textStats.words }}</span>
+          <span>行数 {{ textStats.lines }}</span>
+          <span>字符(不含空) {{ textStats.charsNoSpace }}</span>
+          <span>段落 {{ textStats.paragraphs }}</span>
+          <span>句子 {{ textStats.sentences }}</span>
+        </div>
       </div>
 
       <!-- 文件上传区域 -->
@@ -289,6 +298,15 @@
         <div v-if="isDragging" class="drop-overlay">
           <el-icon :size="48"><Upload /></el-icon>
           <span>拖放文件到此处</span>
+        </div>
+        <!-- 文字统计 -->
+        <div class="text-stats" v-if="content">
+          <span>字数 {{ textStats.chars }}</span>
+          <span>词数 {{ textStats.words }}</span>
+          <span>行数 {{ textStats.lines }}</span>
+          <span>字符(不含空) {{ textStats.charsNoSpace }}</span>
+          <span>段落 {{ textStats.paragraphs }}</span>
+          <span>句子 {{ textStats.sentences }}</span>
         </div>
       </div>
 
@@ -1234,6 +1252,24 @@ const canAddMore = computed(() => files.value.length < MAX_FILES)
 
 const hasVideo = computed(() => files.value.some(f => f.type === 'video'))
 
+// 文字统计
+const textStats = computed(() => {
+  const text = content.value
+  if (!text) return { chars: 0, words: 0, lines: 0, charsNoSpace: 0, paragraphs: 0, sentences: 0 }
+
+  const chars = text.length
+  const charsNoSpace = text.replace(/\s/g, '').length
+  const lines = text ? text.split('\n').length : 0
+  // 中英文词分割：中文按字符分词，英文按空格分词
+  const words = text.trim().split(/\s+/).filter(w => w.length > 0).length
+  // 段落数：连续非空行
+  const paragraphs = text.split(/\n+/).filter(p => p.trim().length > 0).length
+  // 句子数：按句号、问号、感叹号分割
+  const sentences = text.split(/[.。?？!！]+/).filter(s => s.trim().length > 0).length
+
+  return { chars, words, lines, charsNoSpace, paragraphs, sentences }
+})
+
 // 快捷创建
 const quickCreate = async () => {
   await createPaste()
@@ -2002,6 +2038,7 @@ restoreAdminPassword()
   overflow: hidden;
   min-height: 200px;
   display: flex;
+  flex-direction: column;
   position: relative;
 }
 
@@ -2016,6 +2053,22 @@ restoreAdminPassword()
   font-size: 15px;
   line-height: 1.6;
   outline: none;
+}
+
+/* 文字统计条 */
+.text-stats {
+  display: flex;
+  gap: 16px;
+  padding: 8px 16px;
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--border-base);
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.text-stats span {
+  white-space: nowrap;
 }
 
 .quick-actions {

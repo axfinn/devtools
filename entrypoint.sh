@@ -76,6 +76,41 @@ else
 fi
 chown -R autodev:autodev "${CODEX_HOME}"
 
+# ──────────────────────────────────────────────────────────────
+# 修复：确保 autodev 用户可以运行 uvx (MCP server) 和创建任务目录
+# ──────────────────────────────────────────────────────────────
+
+# 修复1: 创建 uv 缓存目录（Go 代码设置 UV_CACHE_DIR=/tmp/uv-cache-autodev）
+mkdir -p /tmp/uv-cache-autodev
+chown autodev:autodev /tmp/uv-cache-autodev
+
+# 修复2: uvx 安装在 /root/.local/bin/ 下，但 /root/ 是 700 权限，autodev 无法访问
+# /root/.local/bin/ 本身也是 700，所以即使 symlink 也无法访问目标
+# 必须复制二进制文件到 /usr/local/bin/（autodev 的 PATH 包含此目录）
+if [ ! -f /usr/local/bin/uvx ] && [ -f /root/.local/bin/uvx ]; then
+    cp /root/.local/bin/uvx /usr/local/bin/uvx
+    chmod 755 /usr/local/bin/uvx
+    echo "[entrypoint] Copied uvx to /usr/local/bin/"
+fi
+if [ ! -f /usr/local/bin/uv ] && [ -f /root/.local/bin/uv ]; then
+    cp /root/.local/bin/uv /usr/local/bin/uv
+    chmod 755 /usr/local/bin/uv
+    echo "[entrypoint] Copied uv to /usr/local/bin/"
+fi
+
+# 修复3: 确保 autodev 用户可以在 /app/data/autodev 中创建任务目录
+chown autodev:autodev /app/data/autodev
+
+# 修复4: /tmp 需要对所有用户可写（Claude Code 等工具需要）
+chmod 777 /tmp
+
+# 修复5: Claude Code 运行时需要可写的临时目录
+mkdir -p /tmp/claude-1001
+chown autodev:autodev /tmp/claude-1001
+
+# 修复6: 设置 TMPDIR 作为默认临时目录
+export TMPDIR=/tmp/uv-cache-autodev
+
 cd /app
 
 # Start TTS HTTP service in background (edge-tts via FastAPI on 127.0.0.1:8083)

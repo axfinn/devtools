@@ -332,10 +332,10 @@ func DefaultConfig() *Config {
 			Window:          time.Minute,
 		},
 		Limits: LimitsConfig{
-			PasteMaxContentSize: 100 * 1024, // 100KB
+			PasteMaxContentSize: 10 * 1024 * 1024, // 10MB
 			PasteMaxImages:      15,
-			PasteMaxTotalSize:   30 * 1024 * 1024, // 30MB
-			MaxUploadSize:       55 * 1024 * 1024, // 55MB
+			PasteMaxTotalSize:   50 * 1024 * 1024, // 50MB
+			MaxUploadSize:       200 * 1024 * 1024, // 200MB
 		},
 		Paste: PasteConfig{
 			DefaultVideoMaxViews: 10,

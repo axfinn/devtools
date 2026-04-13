@@ -283,8 +283,8 @@ func main() {
 		MaxAge:        12 * time.Hour,
 	}))
 
-	// 内容大小限制（55MB，支持50MB视频上传）
-	r.Use(middleware.ContentSizeLimiter(55 * 1024 * 1024))
+	// 内容大小限制（支持大文件上传）
+	r.Use(middleware.ContentSizeLimiter(200 * 1024 * 1024))
 
 	// 创建限流（仅用于上传，每 IP 每分钟 10 次）
 	createRateLimiter := middleware.NewRateLimiter(10, time.Minute)

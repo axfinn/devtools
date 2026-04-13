@@ -27,10 +27,10 @@ rate_limit:
 
 # 内容大小限制
 limits:
-  paste_max_content_size: 102400      # 粘贴板最大文本大小（100KB）
+  paste_max_content_size: 10485760      # 粘贴板最大文本大小（10MB）
   paste_max_images: 15                # 粘贴板最大图片数量
-  paste_max_total_size: 31457280      # 粘贴板总大小（30MB）
-  max_upload_size: 57671680           # 最大上传文件大小（55MB，支持视频上传）
+  paste_max_total_size: 52428800      # 粘贴板总大小（50MB）
+  max_upload_size: 209715200           # 最大上传文件大小（200MB，支持大文件上传）
 
 # 短链服务配置
 shorturl:
