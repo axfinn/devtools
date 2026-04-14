@@ -1895,7 +1895,7 @@ function loadAndApply() {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true, mode: 'smart' });
+  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true, mode: 'global' });
   loadAndApply();
 });
 chrome.runtime.onStartup.addListener(loadAndApply);
@@ -1974,7 +1974,7 @@ var enabled = true;
 chrome.storage.local.get(['server','pass','proxyEnabled','mode'], function(s) {
   document.getElementById('server').value = s.server || '';
   document.getElementById('pass').value = s.pass || '';
-  document.getElementById('mode').value = s.mode || 'smart';
+  document.getElementById('mode').value = s.mode || 'global';
   enabled = s.proxyEnabled !== false;
   updateUI();
 });
