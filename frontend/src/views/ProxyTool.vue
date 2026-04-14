@@ -36,6 +36,9 @@
         <div class="action-row">
           <el-button type="primary" @click="loadConfig" :loading="loadingConfig">解析节点</el-button>
           <el-button @click="speedTest" :loading="testingSpeed" :disabled="nodes.length === 0">全部测速</el-button>
+          <el-button @click="checkNodes" :loading="checkingNodes" :disabled="nodes.length === 0">
+            验证可用（curl google）
+          </el-button>
           <el-button type="success" @click="startProxy" :loading="startingProxy" :disabled="!selectedNode">
             启动代理
           </el-button>
@@ -63,6 +66,13 @@
                 {{ row.latency }} ms
               </el-tag>
               <el-tag v-else-if="testedOnce" type="danger" size="small">超时</el-tag>
+              <span v-else class="text-gray">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="真实可用" width="90" v-if="checkedOnce">
+            <template #default="{ row }">
+              <el-tag v-if="checkResults[row.name] === true" type="success" size="small">✓ 可用</el-tag>
+              <el-tag v-else-if="checkResults[row.name] === false" type="danger" size="small">✗ 不可用</el-tag>
               <span v-else class="text-gray">—</span>
             </template>
           </el-table-column>
@@ -255,6 +265,9 @@ const yamlContent = ref('')
 const loadingConfig = ref(false)
 const testingSpeed = ref(false)
 const testedOnce = ref(false)
+const checkingNodes = ref(false)
+const checkedOnce = ref(false)
+const checkResults = ref({}) // name -> true/false
 
 const nodes = ref([])
 const selectedNode = ref(null)
@@ -475,6 +488,28 @@ async function stopProxy() {
     }
   } catch (e) { ElMessage.error('停止失败') }
   finally { stoppingProxy.value = false }
+}
+
+async function checkNodes() {
+  checkingNodes.value = true
+  try {
+    const r = await fetch('/api/proxy/check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_password: adminPassword() })
+    })
+    const data = await r.json()
+    if (data.error) { ElMessage.error(data.error); return }
+    const map = {}
+    let ok = 0
+    for (const item of data.results) {
+      map[item.name] = item.reachable
+      if (item.reachable) ok++
+    }
+    checkResults.value = map
+    checkedOnce.value = true
+    ElMessage.success(`验证完成，${ok}/${data.results.length} 个节点真实可用（curl google）`)
+  } catch (e) { ElMessage.error('验证失败') }
+  finally { checkingNodes.value = false }
 }
 
 async function autoStart() {

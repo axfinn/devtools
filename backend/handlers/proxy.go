@@ -129,6 +129,7 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 			vkey:       cfg.NPS.VKey,
 		}
 	}
+	globalProxyHandler = h
 	return h
 }
 
@@ -181,6 +182,129 @@ func (h *ProxyHandler) AutoSelectOnStartup() {
 
 func (h *ProxyHandler) checkAdmin(password string) bool {
 	return h.adminPassword != "" && password == h.adminPassword
+}
+
+const probeURL = "https://www.google.com"
+
+// probeActive 检测当前活跃节点是否真实可用，返回 true=可用
+func probeActive() bool {
+	globalSession.mu.RLock()
+	node := globalSession.active
+	globalSession.mu.RUnlock()
+	if node == nil {
+		return false
+	}
+	return checkNodeReachability(node, probeURL) >= 0
+}
+
+// switchToBestNode 测速所有节点，选延迟最低且真实可用的节点启动代理
+func (h *ProxyHandler) switchToBestNode() {
+	globalSession.mu.RLock()
+	nodes := make([]ProxyNode, len(globalSession.nodes))
+	copy(nodes, globalSession.nodes)
+	globalSession.mu.RUnlock()
+
+	if len(nodes) == 0 {
+		return
+	}
+
+	type candidate struct {
+		node    ProxyNode
+		latency int64
+	}
+	ch := make(chan candidate, len(nodes))
+	var wg sync.WaitGroup
+	for _, n := range nodes {
+		wg.Add(1)
+		go func(n ProxyNode) {
+			defer wg.Done()
+			lat := checkNodeReachability(&n, probeURL)
+			if lat >= 0 {
+				ch <- candidate{n, lat}
+			}
+		}(n)
+	}
+	wg.Wait()
+	close(ch)
+
+	var best *candidate
+	for c := range ch {
+		c := c
+		if best == nil || c.latency < best.latency {
+			best = &c
+		}
+	}
+	if best == nil {
+		log.Printf("proxy: 自动切换失败，所有节点均不可用")
+		return
+	}
+	if _, err := startProxyListener(&best.node, h.adminPassword, h.localPort); err != nil {
+		log.Printf("proxy: 切换节点失败: %v", err)
+		return
+	}
+	h.startNPC()
+	log.Printf("proxy: 已切换到节点 %s（延迟 %dms）", best.node.Name, best.latency)
+}
+
+// refreshSubscription 重新拉取订阅 URL，更新节点列表
+func (h *ProxyHandler) refreshSubscription() {
+	globalSession.mu.RLock()
+	sourceURL := globalSession.sourceURL
+	globalSession.mu.RUnlock()
+
+	if sourceURL == "" {
+		return
+	}
+	text, err := fetchSubscription(sourceURL)
+	if err != nil {
+		log.Printf("proxy: 订阅更新失败: %v", err)
+		return
+	}
+	nodes, err := parseClashYAML(text)
+	if err != nil || len(nodes) == 0 {
+		log.Printf("proxy: 订阅解析失败或节点为空")
+		return
+	}
+	globalSession.mu.Lock()
+	globalSession.nodes = nodes
+	globalSession.mu.Unlock()
+	go savePersistedProxy()
+	log.Printf("proxy: 订阅已更新，共 %d 个节点", len(nodes))
+}
+
+// StartAutoMaintenance 启动后台维护：定期更新订阅 + 定期探测切换
+func (h *ProxyHandler) StartAutoMaintenance() {
+	go func() {
+		// 订阅更新：每 6 小时
+		subTicker := time.NewTicker(6 * time.Hour)
+		// 节点探测：每 10 分钟
+		probeTicker := time.NewTicker(10 * time.Minute)
+		defer subTicker.Stop()
+		defer probeTicker.Stop()
+
+		for {
+			select {
+			case <-subTicker.C:
+				h.refreshSubscription()
+				// 更新订阅后立即探测，若当前节点不可用则切换
+				if !probeActive() {
+					log.Printf("proxy: 订阅更新后探测失败，触发切换")
+					h.switchToBestNode()
+				}
+			case <-probeTicker.C:
+				globalSession.mu.RLock()
+				active := globalSession.active
+				globalSession.mu.RUnlock()
+				if active == nil {
+					continue
+				}
+				if !probeActive() {
+					log.Printf("proxy: 节点 %s 探测失败，触发自动切换", active.Name)
+					h.switchToBestNode()
+				}
+			}
+		}
+	}()
 }
 
 // npcBin 查找 npc 可执行文件路径
@@ -405,6 +529,113 @@ func tcpPing(host string, port int) int64 {
 	}
 	conn.Close()
 	return time.Since(start).Milliseconds()
+}
+
+// checkNodeReachability 通过节点实际发 HTTP 请求到 testURL，验证代理真实可用性
+// 返回延迟 ms，失败返回 -1
+func checkNodeReachability(node *ProxyNode, testURL string) int64 {
+	// 临时启动一个代理监听
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return -1
+	}
+	defer ln.Close()
+
+	// 用一个临时 session 跑代理
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		handleProxyConn(conn, node, "") // 无密码，内部调用
+	}()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   8 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse // 不跟重定向，只要能连上就算成功
+		},
+	}
+
+	start := time.Now()
+	resp, err := client.Get(testURL)
+	if err != nil {
+		return -1
+	}
+	resp.Body.Close()
+	return time.Since(start).Milliseconds()
+}
+
+// CheckNodes POST /api/proxy/check
+// 对节点列表做真实可用性检测（通过节点实际访问 google.com）
+func (h *ProxyHandler) CheckNodes(c *gin.Context) {
+	var req struct {
+		AdminPassword string   `json:"admin_password"`
+		NodeNames     []string `json:"node_names"` // 空则检测所有节点
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误"})
+		return
+	}
+	if !h.checkAdmin(req.AdminPassword) {
+		c.JSON(403, gin.H{"error": "密码错误"})
+		return
+	}
+
+	globalSession.mu.RLock()
+	allNodes := make([]ProxyNode, len(globalSession.nodes))
+	copy(allNodes, globalSession.nodes)
+	globalSession.mu.RUnlock()
+
+	if len(allNodes) == 0 {
+		c.JSON(400, gin.H{"error": "请先加载节点配置"})
+		return
+	}
+
+	// 过滤要检测的节点
+	nameSet := make(map[string]bool, len(req.NodeNames))
+	for _, n := range req.NodeNames {
+		nameSet[n] = true
+	}
+	targets := allNodes
+	if len(nameSet) > 0 {
+		targets = targets[:0]
+		for _, n := range allNodes {
+			if nameSet[n.Name] {
+				targets = append(targets, n)
+			}
+		}
+	}
+
+	const testURL = "https://www.google.com"
+	type result struct {
+		Name      string `json:"name"`
+		Reachable bool   `json:"reachable"`
+		Latency   int64  `json:"latency"` // ms，-1=失败
+	}
+
+	results := make([]result, len(targets))
+	var wg sync.WaitGroup
+	for i, node := range targets {
+		wg.Add(1)
+		go func(idx int, n ProxyNode) {
+			defer wg.Done()
+			lat := checkNodeReachability(&n, testURL)
+			results[idx] = result{
+				Name:      n.Name,
+				Reachable: lat >= 0,
+				Latency:   lat,
+			}
+		}(i, node)
+	}
+	wg.Wait()
+
+	c.JSON(200, gin.H{"results": results})
 }
 
 // Start POST /api/proxy/start
@@ -1120,12 +1351,38 @@ func dialUpstream(node *ProxyNode, targetHost string) (net.Conn, error) {
 }
 
 // dialWithGFW 分流：命中 gfwlist 走节点，否则直连
+// 节点连接失败时异步触发切换
 func dialWithGFW(node *ProxyNode, targetHost string) (net.Conn, error) {
 	if ShouldProxy(targetHost) {
-		return dialUpstream(node, targetHost)
+		conn, err := dialUpstream(node, targetHost)
+		if err != nil {
+			// 节点连接失败，异步触发切换（不阻塞当前请求）
+			go triggerFailover()
+		}
+		return conn, err
 	}
 	return net.DialTimeout("tcp", targetHost, 10*time.Second)
 }
+
+var failoverMu sync.Mutex
+var lastFailover time.Time
+
+// triggerFailover 请求失败时触发节点切换，60s 内只触发一次
+func triggerFailover() {
+	failoverMu.Lock()
+	if time.Since(lastFailover) < 60*time.Second {
+		failoverMu.Unlock()
+		return
+	}
+	lastFailover = time.Now()
+	failoverMu.Unlock()
+
+	log.Printf("proxy: 请求异常，触发自动切换节点")
+	globalProxyHandler.switchToBestNode()
+}
+
+// globalProxyHandler 供 triggerFailover 调用
+var globalProxyHandler *ProxyHandler
 
 // dialSocks5 简单 SOCKS5 握手
 func dialSocks5(proxyAddr, targetHost string, node *ProxyNode) (net.Conn, error) {

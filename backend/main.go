@@ -340,6 +340,7 @@ func main() {
 	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
 	handlers.InitGFWList()
 	proxyHandler.AutoSelectOnStartup()
+	proxyHandler.StartAutoMaintenance()
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
@@ -876,6 +877,7 @@ func main() {
 			proxyGroup.POST("/start", proxyHandler.Start)
 			proxyGroup.POST("/auto-start", proxyHandler.AutoStart)
 			proxyGroup.POST("/stop", proxyHandler.Stop)
+			proxyGroup.POST("/check", proxyHandler.CheckNodes)
 			proxyGroup.POST("/nps-tunnel", proxyHandler.CreateNPSTunnel)
 			proxyGroup.GET("/status", proxyHandler.Status)
 			proxyGroup.GET("/fetch", proxyHandler.Fetch)
