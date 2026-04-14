@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"database/sql"
 	"encoding/base64"
 	"log"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -19,14 +22,21 @@ const (
 
 type gfwlistMatcher struct {
 	mu        sync.RWMutex
-	domains   map[string]bool // 精确域名及其父域名
+	domains   map[string]bool // gfwlist 规则
+	custom    map[string]bool // 用户自定义强制走代理的域名
 	lastFetch time.Time
 }
 
-var globalGFW = &gfwlistMatcher{domains: map[string]bool{}}
+var globalGFW = &gfwlistMatcher{
+	domains: map[string]bool{},
+	custom:  map[string]bool{},
+}
+
+var customDomainDB *sql.DB
 
 // InitGFWList 启动时加载，后台定期刷新
-func InitGFWList() {
+func InitGFWList(dbPath string) {
+	initCustomDomainDB(dbPath)
 	if err := globalGFW.load(); err != nil {
 		log.Printf("gfwlist 初始加载失败: %v，使用空列表", err)
 	}
@@ -39,16 +49,104 @@ func InitGFWList() {
 	}()
 }
 
+func initCustomDomainDB(dbPath string) {
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		log.Printf("custom domain db 打开失败: %v", err)
+		return
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS proxy_custom_domains (
+		domain TEXT PRIMARY KEY,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		log.Printf("custom domain db 初始化失败: %v", err)
+		return
+	}
+	customDomainDB = db
+	// 加载到内存
+	rows, err := db.Query("SELECT domain FROM proxy_custom_domains")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	globalGFW.mu.Lock()
+	for rows.Next() {
+		var d string
+		rows.Scan(&d)
+		globalGFW.custom[d] = true
+	}
+	globalGFW.mu.Unlock()
+	log.Printf("自定义代理域名加载完成，共 %d 条", len(globalGFW.custom))
+}
+
 // ShouldProxy 判断 host（可含端口）是否需要走代理
 func ShouldProxy(host string) bool {
 	domain := host
 	if idx := strings.LastIndex(host, ":"); idx > 0 {
-		// 排除 IPv6 的情况
 		if !strings.Contains(host[:idx], ":") {
 			domain = host[:idx]
 		}
 	}
+	if globalGFW.matchCustom(domain) {
+		return true
+	}
 	return globalGFW.match(domain)
+}
+
+// AddCustomDomain 添加自定义代理域名
+func AddCustomDomain(domain string) error {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if customDomainDB != nil {
+		if _, err := customDomainDB.Exec("INSERT OR IGNORE INTO proxy_custom_domains(domain) VALUES(?)", domain); err != nil {
+			return err
+		}
+	}
+	globalGFW.mu.Lock()
+	globalGFW.custom[domain] = true
+	globalGFW.mu.Unlock()
+	return nil
+}
+
+// RemoveCustomDomain 删除自定义代理域名
+func RemoveCustomDomain(domain string) error {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if customDomainDB != nil {
+		if _, err := customDomainDB.Exec("DELETE FROM proxy_custom_domains WHERE domain=?", domain); err != nil {
+			return err
+		}
+	}
+	globalGFW.mu.Lock()
+	delete(globalGFW.custom, domain)
+	globalGFW.mu.Unlock()
+	return nil
+}
+
+// ListCustomDomains 返回自定义域名列表
+func ListCustomDomains() []string {
+	globalGFW.mu.RLock()
+	defer globalGFW.mu.RUnlock()
+	list := make([]string, 0, len(globalGFW.custom))
+	for d := range globalGFW.custom {
+		list = append(list, d)
+	}
+	return list
+}
+
+func (g *gfwlistMatcher) matchCustom(domain string) bool {
+	domain = strings.ToLower(strings.TrimSuffix(domain, "."))
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	for {
+		if g.custom[domain] {
+			return true
+		}
+		idx := strings.Index(domain, ".")
+		if idx < 0 {
+			return false
+		}
+		domain = domain[idx+1:]
+	}
 }
 
 func (g *gfwlistMatcher) match(domain string) bool {

@@ -338,7 +338,7 @@ func main() {
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
 	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
-	handlers.InitGFWList()
+	handlers.InitGFWList("./data/proxy.db")
 	proxyHandler.AutoSelectOnStartup()
 	proxyHandler.StartAutoMaintenance()
 
@@ -885,6 +885,9 @@ func main() {
 			proxyGroup.GET("/extension", proxyHandler.DownloadExtension)
 			proxyGroup.GET("/ws-tunnel", proxyHandler.WsTunnel)
 			proxyGroup.GET("/client/download", proxyHandler.DownloadClient)
+			proxyGroup.GET("/custom-domains", proxyHandler.ListCustomDomains)
+			proxyGroup.POST("/custom-domains", proxyHandler.AddCustomDomain)
+			proxyGroup.DELETE("/custom-domains", proxyHandler.RemoveCustomDomain)
 		}
 
 		// NPS 端口映射管理

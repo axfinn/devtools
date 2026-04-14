@@ -929,6 +929,55 @@ func (h *ProxyHandler) AutoStart(c *gin.Context) {
 	h.startNPC()
 }
 
+// ListCustomDomains GET /api/proxy/custom-domains
+func (h *ProxyHandler) ListCustomDomains(c *gin.Context) {
+	if !h.checkAdmin(c.Query("admin_password")) {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	c.JSON(200, gin.H{"domains": ListCustomDomains()})
+}
+
+// AddCustomDomain POST /api/proxy/custom-domains  body: {"domain":"example.com"}
+func (h *ProxyHandler) AddCustomDomain(c *gin.Context) {
+	if !h.checkAdmin(c.Query("admin_password")) {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Domain == "" {
+		c.JSON(400, gin.H{"error": "domain required"})
+		return
+	}
+	if err := AddCustomDomain(req.Domain); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true})
+}
+
+// RemoveCustomDomain DELETE /api/proxy/custom-domains  body: {"domain":"example.com"}
+func (h *ProxyHandler) RemoveCustomDomain(c *gin.Context) {
+	if !h.checkAdmin(c.Query("admin_password")) {
+		c.JSON(401, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Domain == "" {
+		c.JSON(400, gin.H{"error": "domain required"})
+		return
+	}
+	if err := RemoveCustomDomain(req.Domain); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true})
+}
+
 // Status GET /api/proxy/status
 func (h *ProxyHandler) Status(c *gin.Context) {
 	password := c.Query("admin_password")

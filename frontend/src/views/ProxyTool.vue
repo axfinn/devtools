@@ -178,6 +178,29 @@
         </el-alert>
       </el-card>
 
+      <!-- 自定义代理域名 -->
+      <el-card class="config-card">
+        <template #header>
+          <div class="card-header">
+            <span>自定义代理域名</span>
+            <span class="text-gray" style="font-size:12px">加入后强制走代理，不走国内直连</span>
+          </div>
+        </template>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <el-input v-model="newCustomDomain" placeholder="example.com" clearable
+            @keyup.enter="addCustomDomain" style="max-width:320px" />
+          <el-button type="primary" @click="addCustomDomain" :loading="addingDomain">添加</el-button>
+        </div>
+        <el-table :data="customDomains" size="small" empty-text="暂无自定义域名">
+          <el-table-column prop="domain" label="域名" />
+          <el-table-column label="" width="80">
+            <template #default="{ row }">
+              <el-button size="small" type="danger" @click="removeCustomDomain(row.domain)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
       <!-- 内嵌浏览器（登录后始终显示） -->
       <el-card class="browser-card">
         <template #header>
@@ -284,6 +307,10 @@ const npcRunning = ref(false)
 const npcTunnelPort = ref('')
 const npcServerAddr = ref('')
 
+const customDomains = ref([])
+const newCustomDomain = ref('')
+const addingDomain = ref(false)
+
 // 多 Tab 浏览器
 let tabIdCounter = 1
 function makeTab() {
@@ -381,6 +408,7 @@ function login() {
         sessionStorage.setItem(SESSION_KEY, passwordInput.value)
         isAdmin.value = true
         applyStatus(data)
+        fetchCustomDomains()
       }
     })
     .catch(() => ElMessage.error('请求失败'))
@@ -399,10 +427,45 @@ onMounted(() => {
       } else {
         isAdmin.value = true
         applyStatus(data)
+        fetchCustomDomains()
       }
     })
     .catch(() => {})
 })
+
+function fetchCustomDomains() {
+  fetch(`/api/proxy/custom-domains?admin_password=${encodeURIComponent(adminPassword())}`)
+    .then(r => r.json())
+    .then(data => { customDomains.value = (data.domains || []).map(d => ({ domain: d })) })
+    .catch(() => {})
+}
+
+async function addCustomDomain() {
+  const d = newCustomDomain.value.trim()
+  if (!d) return
+  addingDomain.value = true
+  try {
+    const r = await fetch(`/api/proxy/custom-domains?admin_password=${encodeURIComponent(adminPassword())}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: d })
+    })
+    const data = await r.json()
+    if (data.error) { ElMessage.error(data.error); return }
+    newCustomDomain.value = ''
+    fetchCustomDomains()
+    ElMessage.success('已添加')
+  } finally {
+    addingDomain.value = false
+  }
+}
+
+async function removeCustomDomain(domain) {
+  await fetch(`/api/proxy/custom-domains?admin_password=${encodeURIComponent(adminPassword())}`, {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  })
+  fetchCustomDomains()
+}
 
 function logout() {
   sessionStorage.removeItem(SESSION_KEY)
