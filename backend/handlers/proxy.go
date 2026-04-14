@@ -100,6 +100,11 @@ type ProxyHandler struct {
 	npcCmd         *exec.Cmd
 	npcMu          sync.Mutex
 	npsHandler     *NPSHandler // 用于一键创建 NPS 端口映射
+	alertEmail     string
+	smtpHost       string
+	smtpPort       int
+	smtpUser       string
+	smtpPass       string
 }
 
 type npcConfig struct {
@@ -115,6 +120,11 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 		localPort:     cfg.Proxy.LocalPort,
 		npcTunnelPort: cfg.Proxy.TunnelPort,
 		npsHandler:    npsHandler,
+		alertEmail:    cfg.Proxy.AlertEmail,
+		smtpHost:      cfg.Proxy.SMTPHost,
+		smtpPort:      cfg.Proxy.SMTPPort,
+		smtpUser:      cfg.Proxy.SMTPUser,
+		smtpPass:      cfg.Proxy.SMTPPass,
 	}
 	if cfg.NPS.VKey != "" {
 		bridgePort := cfg.NPS.BridgePort
@@ -239,6 +249,7 @@ func (h *ProxyHandler) switchToBestNode() {
 	}
 	if best == nil {
 		log.Printf("proxy: 自动切换失败，所有节点均不可用")
+		go h.sendAlert("代理节点全部不可用", "所有节点均无法连接，请检查订阅或节点状态。")
 		return
 	}
 	if _, err := startProxyListener(&best.node, h.adminPassword, h.localPort); err != nil {
@@ -1501,6 +1512,51 @@ func dialTrojan(nodeAddr, targetHost string, node *ProxyNode) (net.Conn, error) 
 		return nil, err
 	}
 	return conn, nil
+}
+
+// sendAlert 发送告警邮件（SMTP SSL，465 端口）
+func (h *ProxyHandler) sendAlert(subject, body string) {
+	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" {
+		return
+	}
+	port := h.smtpPort
+	if port == 0 {
+		port = 465
+	}
+	addr := fmt.Sprintf("%s:%d", h.smtpHost, port)
+	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: [DevTools] %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",
+		h.smtpUser, h.alertEmail, subject, body)
+
+	tlsCfg := &tls.Config{ServerName: h.smtpHost}
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, tlsCfg)
+	if err != nil {
+		log.Printf("proxy alert: SMTP 连接失败: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	fmt.Fprintf(conn, "EHLO localhost\r\n")
+	buf := make([]byte, 1024)
+	conn.Read(buf)
+	conn.Read(buf)
+
+	fmt.Fprintf(conn, "AUTH LOGIN\r\n")
+	conn.Read(buf)
+	fmt.Fprintf(conn, "%s\r\n", base64.StdEncoding.EncodeToString([]byte(h.smtpUser)))
+	conn.Read(buf)
+	fmt.Fprintf(conn, "%s\r\n", base64.StdEncoding.EncodeToString([]byte(h.smtpPass)))
+	conn.Read(buf)
+
+	fmt.Fprintf(conn, "MAIL FROM:<%s>\r\n", h.smtpUser)
+	conn.Read(buf)
+	fmt.Fprintf(conn, "RCPT TO:<%s>\r\n", h.alertEmail)
+	conn.Read(buf)
+	fmt.Fprintf(conn, "DATA\r\n")
+	conn.Read(buf)
+	fmt.Fprintf(conn, "%s\r\n.\r\n", msg)
+	conn.Read(buf)
+	fmt.Fprintf(conn, "QUIT\r\n")
+	log.Printf("proxy alert: 告警邮件已发送至 %s", h.alertEmail)
 }
 
 // Tunnel 处理 HTTP CONNECT 方法，让 DevTools 自身端口充当 HTTP 代理

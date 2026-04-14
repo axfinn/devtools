@@ -596,6 +596,18 @@ proxy:
   # 独立代理端口（供 NPS 映射，绕过 nginx，留空则不启动）
   # 配置后 NPS 工具页面可一键将此端口映射到公网
   tunnel_port: "18080"
+  # 本地节点代理固定端口，留空则随机分配
+  local_port: "18081"
+  # 所有节点不可用时的告警邮件收件人，留空则不发送
+  alert_email: "your@email.com"
+  # SMTP 服务器地址，如 smtp.exmail.qq.com / smtp.qq.com / smtp.gmail.com
+  smtp_host: "smtp.exmail.qq.com"
+  # SMTP 端口：465（SSL）或 587（STARTTLS），企业邮箱通常用 465
+  smtp_port: 465
+  # 发件人邮箱（SMTP 登录用户名）
+  smtp_user: "devtools@your-domain.com"
+  # SMTP 授权码/密码（QQ 邮箱需在「设置→账户」生成授权码，不是登录密码）
+  smtp_pass: ""
 
 # NPS 端口映射管理
 # 在 NPS 后台创建好客户端后，填入 vkey 即可通过 devtools 快速管理端口映射

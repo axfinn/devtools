@@ -58,6 +58,11 @@ type ProxyConfig struct {
 	AdminPassword string `yaml:"admin_password"` // 管理员密码，为空则禁用
 	TunnelPort    string `yaml:"tunnel_port"`    // 独立 CONNECT 代理端口，留空则不启动（用于绕过 nginx）
 	LocalPort     string `yaml:"local_port"`     // 本地节点代理端口，固定监听 127.0.0.1:port，留空则随机
+	AlertEmail    string `yaml:"alert_email"`    // 所有节点不可用时的告警邮件收件人
+	SMTPHost      string `yaml:"smtp_host"`      // SMTP 服务器，如 smtp.qq.com
+	SMTPPort      int    `yaml:"smtp_port"`      // SMTP 端口，如 465（SSL）或 587（STARTTLS）
+	SMTPUser      string `yaml:"smtp_user"`      // SMTP 登录用户名（发件人邮箱）
+	SMTPPass      string `yaml:"smtp_pass"`      // SMTP 授权码/密码
 }
 
 // AutoDevConfig AutoDev AI 任务配置
