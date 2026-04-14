@@ -249,7 +249,7 @@ func (h *ProxyHandler) switchToBestNode() {
 	}
 	if best == nil {
 		log.Printf("proxy: 自动切换失败，所有节点均不可用")
-		go h.sendAlert("代理节点全部不可用", "所有节点均无法连接，请检查订阅或节点状态。")
+		go h.sendAlert("代理节点全部不可用", fmt.Sprintf("时间：%s\n节点总数：%d\n所有节点均无法连接，请检查订阅或节点状态。", time.Now().Format("2006-01-02 15:04:05"), len(nodes)))
 		return
 	}
 	if _, err := startProxyListener(&best.node, h.adminPassword, h.localPort); err != nil {
