@@ -5,7 +5,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -534,23 +537,14 @@ func tcpPing(host string, port int) int64 {
 // checkNodeReachability 通过节点实际发 HTTP 请求到 testURL，验证代理真实可用性
 // 返回延迟 ms，失败返回 -1
 func checkNodeReachability(node *ProxyNode, testURL string) int64 {
-	// 临时启动一个代理监听
+	// 临时启动一个无密码代理监听
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return -1
 	}
 	defer ln.Close()
 
-	// 用一个临时 session 跑代理
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		handleProxyConn(conn, node, "") // 无密码，内部调用
-	}()
+	go serveHTTPProxy(ln, node, "") // 无密码，内部调用，持续 accept
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
@@ -558,7 +552,7 @@ func checkNodeReachability(node *ProxyNode, testURL string) int64 {
 		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
 		Timeout:   8 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse // 不跟重定向，只要能连上就算成功
+			return http.ErrUseLastResponse
 		},
 	}
 
@@ -873,14 +867,15 @@ func (h *ProxyHandler) AutoStart(c *gin.Context) {
 		return
 	}
 
-	// 并发测速
+	// 并发测速（用真实可用性检测，过滤掉 ss/vmess/trojan 等不支持的节点）
 	var wg sync.WaitGroup
 	results := make([]ProxyNode, len(nodes))
 	for i, node := range nodes {
 		wg.Add(1)
 		go func(idx int, n ProxyNode) {
 			defer wg.Done()
-			n.Latency = tcpPing(n.Server, n.Port)
+			lat := checkNodeReachability(&n, probeURL)
+			n.Latency = lat
 			results[idx] = n
 		}(i, node)
 	}
@@ -966,6 +961,10 @@ func makeProxyClient() *http.Client {
 	if ln != nil {
 		port := ln.Addr().(*net.TCPAddr).Port
 		pu, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+		// 带上代理认证，避免被自己的密码保护拦截
+		if globalProxyHandler != nil && globalProxyHandler.adminPassword != "" {
+			pu.User = url.UserPassword("proxy", globalProxyHandler.adminPassword)
+		}
 		transport = &http.Transport{Proxy: http.ProxyURL(pu)}
 	} else {
 		transport = &http.Transport{}
@@ -1344,6 +1343,9 @@ func dialUpstream(node *ProxyNode, targetHost string) (net.Conn, error) {
 		// 通过 SOCKS5 节点
 		return dialSocks5(nodeAddr, targetHost, node)
 
+	case "trojan":
+		return dialTrojan(nodeAddr, targetHost, node)
+
 	default:
 		// ss/vmess/trojan 等：直连目标（降级，仅测速可用）
 		return net.DialTimeout("tcp", targetHost, 10*time.Second)
@@ -1440,6 +1442,63 @@ func dialSocks5(proxyAddr, targetHost string, node *ProxyNode) (net.Conn, error)
 	if _, err := io.ReadFull(conn, resp); err != nil || resp[1] != 0x00 {
 		conn.Close()
 		return nil, fmt.Errorf("socks5 连接失败")
+	}
+	return conn, nil
+}
+
+// dialTrojan 通过 Trojan 节点建立到目标的连接
+// Trojan 协议：TLS 连接 + SHA224(password) + CRLF + SOCKS5 地址格式 + CRLF
+func dialTrojan(nodeAddr, targetHost string, node *ProxyNode) (net.Conn, error) {
+	password, _ := node.Extra["password"].(string)
+	if password == "" {
+		password, _ = node.Extra["Password"].(string)
+	}
+	sni := node.Server
+	if v, ok := node.Extra["sni"].(string); ok && v != "" {
+		sni = v
+	}
+	skipVerify := false
+	if v, ok := node.Extra["skip-cert-verify"].(bool); ok {
+		skipVerify = v
+	}
+
+	tlsCfg := &tls.Config{
+		ServerName:         sni,
+		InsecureSkipVerify: skipVerify,
+	}
+	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", nodeAddr, tlsCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// SHA224(password) hex
+	h := sha256.New224()
+	h.Write([]byte(password))
+	hexPass := hex.EncodeToString(h.Sum(nil))
+
+	// 解析目标地址
+	host, portStr, err := net.SplitHostPort(targetHost)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	var portNum int
+	fmt.Sscanf(portStr, "%d", &portNum)
+
+	// Trojan 请求头：hex(sha224(pass)) CRLF 0x01(TCP) ATYP host port CRLF
+	var req []byte
+	req = append(req, []byte(hexPass)...)
+	req = append(req, '\r', '\n')
+	req = append(req, 0x01) // CMD: TCP connect
+	// ATYP: 0x03 = domain
+	req = append(req, 0x03, byte(len(host)))
+	req = append(req, []byte(host)...)
+	req = append(req, byte(portNum>>8), byte(portNum))
+	req = append(req, '\r', '\n')
+
+	if _, err := conn.Write(req); err != nil {
+		conn.Close()
+		return nil, err
 	}
 	return conn, nil
 }
@@ -1612,6 +1671,15 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
 	if proxyHost == "" {
 		proxyHost = c.Request.Host
 	}
+	// 去掉 host 里可能带的端口，换成 tunnel_port（nginx 不支持 CONNECT，必须直连 tunnel_port）
+	tunnelHost := proxyHost
+	if h.npcTunnelPort != "" {
+		hostname := proxyHost
+		if hn, _, err := net.SplitHostPort(proxyHost); err == nil {
+			hostname = hn
+		}
+		tunnelHost = hostname + ":" + h.npcTunnelPort
+	}
 
 	// MV3 manifest — 使用 PAC 脚本代理 + 主动注入认证头
 	manifest := `{
@@ -1758,7 +1826,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   sendResponse({});
   return true;
 });
-`, proxyHost, password)
+`, tunnelHost, password)
 
 	popupHTML := `<!DOCTYPE html>
 <html>
