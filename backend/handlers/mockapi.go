@@ -194,7 +194,7 @@ func (h *MockAPIHandler) Create(c *gin.Context) {
 
 	// Build mock URL
 	scheme := "http"
-	if c.Request.TLS != nil {
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
 	mockURL := fmt.Sprintf("%s://%s/mock/%s", scheme, c.Request.Host, mockAPI.ID)

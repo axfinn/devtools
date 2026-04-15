@@ -164,9 +164,9 @@ func (h *ShortURLHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Build short URL
+	// Build short URL — respect X-Forwarded-Proto for reverse proxy (nginx TLS termination)
 	scheme := "http"
-	if c.Request.TLS != nil {
+	if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
 	fullShortURL := fmt.Sprintf("%s://%s/s/%s", scheme, c.Request.Host, shortURL.ID)

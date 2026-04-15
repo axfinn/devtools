@@ -225,7 +225,7 @@ func (h *EdgeTTSHandler) ConvertAudioFormat(c *gin.Context) {
 		// 相对路径，拼接当前请求的 host
 		host := c.Request.Host
 		scheme := "http"
-		if c.Request.TLS != nil {
+		if c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https" {
 			scheme = "https"
 		}
 		sourceURL = fmt.Sprintf("%s://%s%s", scheme, host, sourceURL)
