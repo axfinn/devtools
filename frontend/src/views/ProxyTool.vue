@@ -178,6 +178,78 @@
         </el-alert>
       </el-card>
 
+      <!-- 终端快速接入 -->
+      <el-card v-if="npsTunnelAddr" class="config-card">
+        <template #header>
+          <div class="card-header">
+            <span>终端快速接入</span>
+            <span class="text-gray" style="font-size:12px">HTTP 代理 {{ npsTunnelAddr }}，用户名 proxy，密码见上方</span>
+          </div>
+        </template>
+
+        <el-tabs v-model="quickAccessTab">
+          <!-- macOS / Linux -->
+          <el-tab-pane label="macOS / Linux" name="unix">
+            <div class="qa-section">
+              <div class="qa-label">临时生效（当前终端会话）</div>
+              <el-input :value="unixExportCmd" readonly size="small" type="textarea" :rows="3" class="qa-code" />
+              <el-button size="small" @click="copy(unixExportCmd)" style="margin-top:6px">复制</el-button>
+            </div>
+            <div class="qa-section">
+              <div class="qa-label">永久生效（写入 ~/.zshrc 或 ~/.bashrc）</div>
+              <el-input :value="unixPermanentCmd" readonly size="small" type="textarea" :rows="5" class="qa-code" />
+              <el-button size="small" @click="copy(unixPermanentCmd)" style="margin-top:6px">复制</el-button>
+            </div>
+            <div class="qa-section">
+              <div class="qa-label">macOS 系统代理（网络设置）</div>
+              <div class="qa-hint">系统设置 → 网络 → 代理 → HTTP 代理<br>主机：<b>{{ npsTunnelAddr.split(':')[0] }}</b>　端口：<b>{{ npsTunnelAddr.split(':')[1] }}</b>　用户名：<b>proxy</b>　密码：<b>{{ adminPassword() }}</b></div>
+            </div>
+          </el-tab-pane>
+
+          <!-- Windows -->
+          <el-tab-pane label="Windows" name="win">
+            <div class="qa-section">
+              <div class="qa-label">CMD（临时）</div>
+              <el-input :value="winCmdExport" readonly size="small" type="textarea" :rows="3" class="qa-code" />
+              <el-button size="small" @click="copy(winCmdExport)" style="margin-top:6px">复制</el-button>
+            </div>
+            <div class="qa-section">
+              <div class="qa-label">PowerShell（临时）</div>
+              <el-input :value="winPsExport" readonly size="small" type="textarea" :rows="3" class="qa-code" />
+              <el-button size="small" @click="copy(winPsExport)" style="margin-top:6px">复制</el-button>
+            </div>
+            <div class="qa-section">
+              <div class="qa-label">系统代理（图形界面）</div>
+              <div class="qa-hint">设置 → 网络和 Internet → 代理 → 手动代理设置<br>地址：<b>{{ npsTunnelAddr.split(':')[0] }}</b>　端口：<b>{{ npsTunnelAddr.split(':')[1] }}</b><br>（Windows 系统代理不支持认证，建议用 Chrome 插件或 Clash）</div>
+            </div>
+          </el-tab-pane>
+
+          <!-- Git / npm / pip -->
+          <el-tab-pane label="Git / npm / pip" name="tools">
+            <div class="qa-section">
+              <div class="qa-label">Git</div>
+              <el-input :value="gitCmd" readonly size="small" type="textarea" :rows="2" class="qa-code" />
+              <el-button size="small" @click="copy(gitCmd)" style="margin-top:6px">复制</el-button>
+            </div>
+            <div class="qa-section">
+              <div class="qa-label">npm</div>
+              <el-input :value="npmCmd" readonly size="small" type="textarea" :rows="2" class="qa-code" />
+              <el-button size="small" @click="copy(npmCmd)" style="margin-top:6px">复制</el-button>
+            </div>
+            <div class="qa-section">
+              <div class="qa-label">pip</div>
+              <el-input :value="pipCmd" readonly size="small" type="textarea" :rows="2" class="qa-code" />
+              <el-button size="small" @click="copy(pipCmd)" style="margin-top:6px">复制</el-button>
+            </div>
+            <div class="qa-section">
+              <div class="qa-label">curl（单次）</div>
+              <el-input :value="curlCmd" readonly size="small" type="textarea" :rows="2" class="qa-code" />
+              <el-button size="small" @click="copy(curlCmd)" style="margin-top:6px">复制</el-button>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </el-card>
+
       <!-- 自定义代理域名 -->
       <el-card class="config-card">
         <template #header>
@@ -641,6 +713,69 @@ const npsTunnelAddr = computed(() => {
   return `${host}:${npcTunnelPort.value}`
 })
 
+// 终端快速接入
+const quickAccessTab = ref('unix')
+
+const unixExportCmd = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  const url = `http://proxy:${pass}@${addr}`
+  return `export http_proxy="${url}"\nexport https_proxy="${url}"\nexport no_proxy="localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"`
+})
+
+const unixPermanentCmd = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  const url = `http://proxy:${pass}@${addr}`
+  return `# 追加到 ~/.zshrc 或 ~/.bashrc\nexport http_proxy="${url}"\nexport https_proxy="${url}"\nexport no_proxy="localhost,127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"\n# 生效：source ~/.zshrc`
+})
+
+const winCmdExport = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  const url = `http://proxy:${pass}@${addr}`
+  return `set http_proxy=${url}\nset https_proxy=${url}`
+})
+
+const winPsExport = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  const url = `http://proxy:${pass}@${addr}`
+  return `$env:http_proxy="${url}"\n$env:https_proxy="${url}"`
+})
+
+const gitCmd = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  return `git config --global http.proxy "http://proxy:${pass}@${addr}"\ngit config --global https.proxy "http://proxy:${pass}@${addr}"`
+})
+
+const npmCmd = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  return `npm config set proxy "http://proxy:${pass}@${addr}"\nnpm config set https-proxy "http://proxy:${pass}@${addr}"`
+})
+
+const pipCmd = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  return `pip install <package> --proxy "http://proxy:${pass}@${addr}"`
+})
+
+const curlCmd = computed(() => {
+  if (!npsTunnelAddr.value) return ''
+  const addr = npsTunnelAddr.value
+  const pass = adminPassword()
+  return `curl -x "http://proxy:${pass}@${addr}" https://www.google.com`
+})
+
 // wstunnel 命令：通过 WebSocket 隧道，支持 nginx 反代
 const wstunnelCmd = computed(() => {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
@@ -768,5 +903,27 @@ function downloadClient(os, arch) {
   margin-top: 6px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.qa-section {
+  margin-bottom: 16px;
+}
+.qa-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+  margin-bottom: 6px;
+}
+.qa-code :deep(textarea) {
+  font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.qa-hint {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.8;
+  padding: 8px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 4px;
 }
 </style>

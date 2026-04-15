@@ -1960,6 +1960,7 @@ button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:1
   <option value="global">全部走代理</option>
 </select>
 <div class="hint">HTTP 代理，流量经 NPS 隧道转发。安装后可在弹窗中开启/关闭代理。</div>
+<div class="hint" style="margin-top:8px;padding:6px 8px;background:#fff7e6;border-radius:4px;color:#b45309;">⚠️ Chrome 内置翻译、拼写检查等功能不走扩展代理。如需翻译，请在系统设置中配置 HTTP 代理：<span id="sysProxy" style="font-family:monospace;user-select:all;"></span></div>
 <div class="row">
   <span class="status" id="status">检测中...</span>
   <button class="btn-save" id="saveBtn">保存并启用</button>
@@ -1976,6 +1977,8 @@ chrome.storage.local.get(['server','pass','proxyEnabled','mode'], function(s) {
   document.getElementById('pass').value = s.pass || '';
   document.getElementById('mode').value = s.mode || 'global';
   enabled = s.proxyEnabled !== false;
+  var srv = s.server || '';
+  if (srv) { document.getElementById('sysProxy').textContent = srv; }
   updateUI();
 });
 
