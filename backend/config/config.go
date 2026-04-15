@@ -37,8 +37,14 @@ type Config struct {
 	ImageUnderstanding ImageUnderstandingConfig `yaml:"image_understanding"`
 	TURN               TURNConfig               `yaml:"turn"`
 	AutoDev            AutoDevConfig            `yaml:"autodev"`
+	Console            ConsoleConfig            `yaml:"console"`
 	Proxy              ProxyConfig              `yaml:"proxy"`
 	NPS                NPSConfig                `yaml:"nps"`
+}
+
+// ConsoleConfig 控制台配置
+type ConsoleConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 控制台管理员密码，为空则禁用
 }
 
 // NPSConfig NPS 端口映射管理配置

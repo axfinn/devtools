@@ -307,7 +307,7 @@ func main() {
 	glucoseHandler := handlers.NewGlucoseHandler(db, cfg)
 	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
 	householdHandler := handlers.NewHouseholdHandler(db, cfg)
-	consoleHandler := handlers.NewConsoleHandler(db, cfg.Proxy.AdminPassword)
+	consoleHandler := handlers.NewConsoleHandler(db, cfg.Console.AdminPassword)
 
 	// 创建加密服务（用于 SSH 密码加密）
 	// 优先使用配置文件中设置的密钥，如果没有则使用环境变量

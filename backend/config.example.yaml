@@ -587,6 +587,12 @@ ai_gateway:
       request_cost: 0
       currency: "CNY"
 
+# 控制台配置
+# 管理导航模块显隐，需要密码才能进入控制台
+console:
+  # 控制台管理员密码（留空则控制台不可用）
+  admin_password: ""
+
 # 科学上网代理配置
 # 支持 Clash 订阅链接或粘贴 YAML 配置，自动测速选最优节点
 # 启动后提供 HTTP 代理端口，也支持页面内嵌代理浏览
