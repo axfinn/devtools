@@ -184,6 +184,12 @@ const isCollapse = ref(false)
 const showDrawer = ref(false)
 const isMobile = ref(false)
 const showDonateDialog = ref(false)
+const hiddenRoutes = ref([])
+
+// 启动时拉取隐藏路由配置
+fetch('/api/console/settings').then(r => r.json()).then(d => {
+  hiddenRoutes.value = d.hidden_routes || []
+}).catch(() => {})
 
 // 主题管理
 const { themeMode, currentTheme, setThemeMode, toggleTheme } = useTheme()
@@ -201,7 +207,8 @@ import { categories } from './router'
 
 const menuRoutes = computed(() => {
   return router.options.routes.filter(route =>
-    route.meta && route.meta.title && !route.path.includes(':') && route.meta.category && route.meta.category !== 'home'
+    route.meta && route.meta.title && !route.path.includes(':') && route.meta.category && route.meta.category !== 'home' &&
+    (route.path === '/console' || !hiddenRoutes.value.includes(route.path))
   )
 })
 

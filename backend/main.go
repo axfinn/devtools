@@ -150,6 +150,11 @@ func main() {
 		log.Fatalf("AutoDev 任务数据库初始化失败: %v", err)
 	}
 
+	// 初始化控制台设置表
+	if err := db.InitConsoleSettings(); err != nil {
+		log.Fatalf("控制台设置数据库初始化失败: %v", err)
+	}
+
 	// 后台预加载背景图（如果缓存目录为空）
 	go func() {
 		// 等待服务器启动完成
@@ -302,6 +307,7 @@ func main() {
 	glucoseHandler := handlers.NewGlucoseHandler(db, cfg)
 	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
 	householdHandler := handlers.NewHouseholdHandler(db, cfg)
+	consoleHandler := handlers.NewConsoleHandler(db, cfg.Proxy.AdminPassword)
 
 	// 创建加密服务（用于 SSH 密码加密）
 	// 优先使用配置文件中设置的密钥，如果没有则使用环境变量
@@ -907,6 +913,11 @@ func main() {
 		api.GET("/health", func(c *gin.Context) {
 			c.JSON(200, gin.H{"status": "ok"})
 		})
+
+		// 控制台设置
+		api.GET("/console/settings", consoleHandler.GetSettings)
+		api.POST("/console/settings", consoleHandler.SaveSettings)
+		api.POST("/console/verify", consoleHandler.VerifyPassword)
 	}
 
 	// 短链重定向（非 API 路径）

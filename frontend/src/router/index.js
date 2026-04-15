@@ -415,6 +415,17 @@ const toolRoutes = [
       description: '批量输入图片 URL，逐一对照展示，支持跨域代理'
     }
   },
+  {
+    path: '/console',
+    name: 'Console',
+    component: () => import('../views/ConsoleTool.vue'),
+    meta: {
+      title: '控制台',
+      icon: 'Setting',
+      category: 'other',
+      description: '管理导航模块显隐'
+    }
+  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',
