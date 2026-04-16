@@ -990,8 +990,8 @@ func (h *NFSShareHandler) AdminGetLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": logs, "total": total, "page": page, "page_size": pageSize})
 }
 
-// UploadRecord POST /api/nfsshare/:id/record?password=xxx
-// 访客上传录音文件，关联到最近一条访问日志
+// UploadRecord POST /api/nfsshare/:id/record?password=xxx&session=xxx&seq=N&final=1
+// 访客上传录音分片，final=1 时触发服务端拼接
 func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -1007,23 +1007,47 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 		return
 	}
 	if share.Password != "" {
-		pwd := c.Query("password")
-		if !utils.VerifyPassword(pwd, share.Password) {
+		if !utils.VerifyPassword(c.Query("password"), share.Password) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
 			return
 		}
 	}
 
+	sessionID := c.Query("session")
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 session"})
+		return
+	}
+	// 防路径穿越
+	sessionID = filepath.Base(sessionID)
+
+	seqStr := c.Query("seq")
+	seq, _ := strconv.Atoi(seqStr)
+	isFinal := c.Query("final") == "1"
+
 	file, header, err := c.Request.FormFile("audio")
 	if err != nil {
+		// final=1 且无 audio 时，只触发拼接
+		if isFinal {
+			go h.finalizeRecording(id, sessionID, c.ClientIP())
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 audio 文件"})
 		return
 	}
 	defer file.Close()
 
-	// 限制 50MB
-	if header.Size > 50*1024*1024 {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "录音文件超过 50MB"})
+	if header.Size > 10*1024*1024 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "分片超过 10MB"})
+		return
+	}
+	// 静音分片过滤：小于 1KB 的分片认为无声音，丢弃
+	if header.Size < 1024 {
+		if isFinal {
+			go h.finalizeRecording(id, sessionID, c.ClientIP())
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "skipped": true})
 		return
 	}
 
@@ -1031,16 +1055,13 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 	if ext == "" {
 		ext = ".webm"
 	}
-	dir := filepath.Join("./data/records", id)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "存储目录创建失败"})
+	chunkDir := filepath.Join("./data/records", id, "chunks", sessionID)
+	if err := os.MkdirAll(chunkDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "目录创建失败"})
 		return
 	}
-	b := make([]byte, 8)
-	crypto_rand.Read(b)
-	filename := hex.EncodeToString(b) + ext
-	dst := filepath.Join(dir, filename)
-	out, err := os.Create(dst)
+	chunkFile := filepath.Join(chunkDir, fmt.Sprintf("%06d%s", seq, ext))
+	out, err := os.Create(chunkFile)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件创建失败"})
 		return
@@ -1051,12 +1072,76 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 		return
 	}
 
-	audioURL := "/api/nfsshare/" + id + "/record/" + filename
-	logID := h.db.LastNFSShareLogID(id, c.ClientIP())
+	if isFinal {
+		go h.finalizeRecording(id, sessionID, c.ClientIP())
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// finalizeRecording 拼接同一 session 的所有分片为一个文件，关联到访问日志
+func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string) {
+	chunkDir := filepath.Join("./data/records", shareID, "chunks", sessionID)
+	entries, err := os.ReadDir(chunkDir)
+	if err != nil || len(entries) == 0 {
+		return
+	}
+
+	// 按文件名排序（已用 %06d 序号命名）
+	var chunks []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			chunks = append(chunks, filepath.Join(chunkDir, e.Name()))
+		}
+	}
+	if len(chunks) == 0 {
+		return
+	}
+
+	outDir := filepath.Join("./data/records", shareID)
+	os.MkdirAll(outDir, 0755)
+	b := make([]byte, 8)
+	crypto_rand.Read(b)
+	outFile := filepath.Join(outDir, hex.EncodeToString(b)+".webm")
+
+	// 用 ffmpeg concat 拼接
+	// 写 concat list 文件
+	listFile := filepath.Join(chunkDir, "list.txt")
+	var listContent string
+	for _, c := range chunks {
+		abs, _ := filepath.Abs(c)
+		listContent += fmt.Sprintf("file '%s'\n", abs)
+	}
+	if err := os.WriteFile(listFile, []byte(listContent), 0644); err != nil {
+		return
+	}
+
+	absOut, _ := filepath.Abs(outFile)
+	cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0",
+		"-i", listFile, "-c", "copy", absOut)
+	if err := cmd.Run(); err != nil {
+		// ffmpeg 不可用时，直接拼接原始字节（webm 分片可直接拼接）
+		outF, err2 := os.Create(outFile)
+		if err2 != nil {
+			return
+		}
+		for _, c := range chunks {
+			data, err3 := os.ReadFile(c)
+			if err3 == nil {
+				outF.Write(data)
+			}
+		}
+		outF.Close()
+	}
+
+	// 清理分片目录
+	os.RemoveAll(chunkDir)
+
+	// 关联到访问日志
+	audioURL := "/api/nfsshare/" + shareID + "/record/" + filepath.Base(outFile)
+	logID := h.db.LastNFSShareLogID(shareID, clientIP)
 	if logID > 0 {
 		h.db.AppendNFSShareLogAudio(logID, audioURL)
 	}
-	c.JSON(http.StatusOK, gin.H{"audio_url": audioURL})
 }
 
 // ServeRecord GET /api/nfsshare/:id/record/:filename?admin_password=xxx

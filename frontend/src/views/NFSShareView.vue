@@ -1176,7 +1176,15 @@ onUnmounted(() => {
 // ---- 录音 ----
 let mediaRecorder = null
 let recordStream = null
-const CHUNK_INTERVAL = 30000 // 每 30 秒上传一段
+let recordMimeType = 'audio/webm'
+let recordSessionId = null
+let recordSeq = 0
+const CHUNK_INTERVAL = 2000 // 每 2 秒上传一段
+const MIN_CHUNK_SIZE = 1024  // 小于 1KB 认为静音，不上传
+
+function genSessionId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
 
 // 返回 true 表示录音已启动（或无需录音），false 表示用户拒绝麦克风
 async function startRecording() {
@@ -1184,8 +1192,24 @@ async function startRecording() {
   try {
     recordStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
     mediaRecorder = new MediaRecorder(recordStream)
+    recordMimeType = mediaRecorder.mimeType || 'audio/webm'
+    recordSessionId = genSessionId()
+    recordSeq = 0
     mediaRecorder.ondataavailable = e => {
-      if (e.data && e.data.size > 0) uploadChunk(e.data, mediaRecorder.mimeType)
+      if (e.data && e.data.size >= MIN_CHUNK_SIZE) {
+        uploadChunk(e.data, recordMimeType, recordSessionId, recordSeq++, false)
+      }
+    }
+    mediaRecorder.onstop = () => {
+      // final=1 通知服务端拼接（不带 audio，只触发拼接）
+      const pwd = password.value ? `&password=${encodeURIComponent(password.value)}` : ''
+      fetch(`/api/nfsshare/${id}/record?session=${recordSessionId}&seq=0&final=1${pwd}`, {
+        method: 'POST', body: new FormData()
+      }).catch(() => {})
+      if (recordStream) {
+        recordStream.getTracks().forEach(t => t.stop())
+        recordStream = null
+      }
     }
     mediaRecorder.start(CHUNK_INTERVAL)
     window.addEventListener('pagehide', stopRecording)
@@ -1195,20 +1219,22 @@ async function startRecording() {
   }
 }
 
-function uploadChunk(blob, mimeType) {
+function uploadChunk(blob, mimeType, sessionId, seq, isFinal) {
   const ext = (mimeType || 'audio/webm').includes('ogg') ? '.ogg' : '.webm'
   const formData = new FormData()
   formData.append('audio', blob, 'record' + ext)
-  const pwd = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
-  fetch(`/api/nfsshare/${id}/record${pwd}`, { method: 'POST', body: formData }).catch(() => {})
+  const pwd = password.value ? `&password=${encodeURIComponent(password.value)}` : ''
+  const finalParam = isFinal ? '&final=1' : ''
+  fetch(`/api/nfsshare/${id}/record?session=${sessionId}&seq=${seq}${finalParam}${pwd}`, {
+    method: 'POST', body: formData
+  }).catch(() => {})
 }
 
 function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop()
     mediaRecorder = null
-  }
-  if (recordStream) {
+  } else if (recordStream) {
     recordStream.getTracks().forEach(t => t.stop())
     recordStream = null
   }
