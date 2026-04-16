@@ -18,25 +18,46 @@ import (
 )
 
 type MermaidHandler struct {
-	db     *models.DB
-	cfg    *config.Config
-	client *http.Client
+	db            *models.DB
+	cfg           *config.Config
+	client        *http.Client
+	adminPassword string
 }
 
 func NewMermaidHandler(db *models.DB, cfg *config.Config) *MermaidHandler {
 	return &MermaidHandler{
-		db:  db,
-		cfg: cfg,
+		db:            db,
+		cfg:           cfg,
+		adminPassword: cfg.Mermaid.AdminPassword,
 		client: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout:   120 * time.Second,
 			Transport: &http.Transport{Proxy: nil},
 		},
 	}
 }
 
+func (h *MermaidHandler) checkAuth(c *gin.Context) bool {
+	if h.adminPassword == "" {
+		return true
+	}
+	pwd := c.Query("admin_password")
+	if pwd == "" {
+		// 也支持 JSON body 里带
+		pwd = c.GetHeader("X-Admin-Password")
+	}
+	if pwd != h.adminPassword {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return false
+	}
+	return true
+}
+
 // ─── 档案 ────────────────────────────────────────────────────
 
 func (h *MermaidHandler) CreateProject(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	var req struct {
 		Name string `json:"name" binding:"required"`
 	}
@@ -53,6 +74,9 @@ func (h *MermaidHandler) CreateProject(c *gin.Context) {
 }
 
 func (h *MermaidHandler) ListProjects(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	list, err := h.db.ListMermaidProjects()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -65,6 +89,9 @@ func (h *MermaidHandler) ListProjects(c *gin.Context) {
 }
 
 func (h *MermaidHandler) DeleteProject(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	id := c.Param("id")
 	if err := h.db.DeleteMermaidProject(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -76,6 +103,9 @@ func (h *MermaidHandler) DeleteProject(c *gin.Context) {
 // ─── 版本 ────────────────────────────────────────────────────
 
 func (h *MermaidHandler) SaveVersion(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	id := c.Param("id")
 	var req struct {
 		Code string `json:"code" binding:"required"`
@@ -93,6 +123,9 @@ func (h *MermaidHandler) SaveVersion(c *gin.Context) {
 }
 
 func (h *MermaidHandler) ListVersions(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	id := c.Param("id")
 	list, err := h.db.ListMermaidVersions(id)
 	if err != nil {
@@ -108,6 +141,9 @@ func (h *MermaidHandler) ListVersions(c *gin.Context) {
 // ─── 对话历史 ─────────────────────────────────────────────────
 
 func (h *MermaidHandler) ListMessages(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	id := c.Param("id")
 	list, err := h.db.ListMermaidMessages(id)
 	if err != nil {
@@ -121,6 +157,9 @@ func (h *MermaidHandler) ListMessages(c *gin.Context) {
 }
 
 func (h *MermaidHandler) ClearMessages(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	id := c.Param("id")
 	if err := h.db.ClearMermaidMessages(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -142,6 +181,9 @@ func extractMermaidCode(text string) string {
 }
 
 func (h *MermaidHandler) AIGenerate(c *gin.Context) {
+	if !h.checkAuth(c) {
+		return
+	}
 	projectID := c.Param("id")
 
 	var req struct {

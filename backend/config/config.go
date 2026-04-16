@@ -40,6 +40,12 @@ type Config struct {
 	Console            ConsoleConfig            `yaml:"console"`
 	Proxy              ProxyConfig              `yaml:"proxy"`
 	NPS                NPSConfig                `yaml:"nps"`
+	Mermaid            MermaidConfig            `yaml:"mermaid"`
+}
+
+// MermaidConfig Mermaid 图表工具配置
+type MermaidConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 访问密码，为空则不鉴权（不推荐）
 }
 
 // ConsoleConfig 控制台配置

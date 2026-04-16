@@ -291,6 +291,13 @@
         <el-button type="primary" :disabled="!newProjectName.trim()" @click="createProject">创建</el-button>
       </template>
     </el-dialog>
+    <!-- 密码验证弹窗 -->
+    <el-dialog v-model="authDialogVisible" title="请输入访问密码" width="360px" :close-on-click-modal="false" :show-close="false">
+      <el-input v-model="authInput" type="password" placeholder="密码" show-password @keydown.enter="submitAuth" autofocus />
+      <template #footer>
+        <el-button type="primary" @click="submitAuth">确认</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -298,6 +305,28 @@
 import { ref, onMounted, watch, nextTick } from 'vue'
 import mermaid from 'mermaid'
 import { ElMessage, ElMessageBox } from 'element-plus'
+
+// ─── 鉴权 ─────────────────────────────────────────────────────
+const STORAGE_KEY = 'mermaid_admin_password'
+const adminPassword = ref(localStorage.getItem(STORAGE_KEY) || '')
+const authDialogVisible = ref(false)
+const authInput = ref('')
+
+function mermaidFetch(url, options = {}) {
+  const sep = url.includes('?') ? '&' : '?'
+  const authedUrl = adminPassword.value
+    ? `${url}${sep}admin_password=${encodeURIComponent(adminPassword.value)}`
+    : url
+  return fetch(authedUrl, options)
+}
+
+async function verifyAndSave(pwd) {
+  const res = await fetch(`/api/mermaid/projects?admin_password=${encodeURIComponent(pwd)}`)
+  if (res.status === 401) return false
+  adminPassword.value = pwd
+  localStorage.setItem(STORAGE_KEY, pwd)
+  return true
+}
 
 // ─── AI / 档案 / 版本 状态 ────────────────────────────────────
 const sidebarTab = ref('ai')
@@ -312,9 +341,19 @@ const newProjectName = ref('')
 const pendingActionAfterCreate = ref(null)
 const messagesListRef = ref(null)
 
+async function submitAuth() {
+  if (!authInput.value) return
+  const ok = await verifyAndSave(authInput.value)
+  if (!ok) { ElMessage.error('密码错误'); return }
+  authDialogVisible.value = false
+  authInput.value = ''
+  loadProjects()
+}
+
 async function loadProjects() {
   try {
-    const res = await fetch('/api/mermaid/projects')
+    const res = await mermaidFetch('/api/mermaid/projects')
+    if (res.status === 401) { authDialogVisible.value = true; return }
     const data = await res.json()
     projects.value = data.projects || []
   } catch {}
@@ -329,7 +368,7 @@ function openCreateProject(pendingAction) {
 async function createProject() {
   if (!newProjectName.value.trim()) return
   try {
-    const res = await fetch('/api/mermaid/projects', {
+    const res = await mermaidFetch('/api/mermaid/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newProjectName.value.trim() })
@@ -359,8 +398,8 @@ async function onProjectChange(id) {
 async function loadProjectData(id) {
   try {
     const [mRes, vRes] = await Promise.all([
-      fetch(`/api/mermaid/projects/${id}/messages`),
-      fetch(`/api/mermaid/projects/${id}/versions`)
+      mermaidFetch(`/api/mermaid/projects/${id}/messages`),
+      mermaidFetch(`/api/mermaid/projects/${id}/versions`)
     ])
     const mData = await mRes.json()
     const vData = await vRes.json()
@@ -383,7 +422,7 @@ async function deleteProject() {
     await ElMessageBox.confirm('确定删除该档案及所有版本和对话记录？', '删除档案', { type: 'warning' })
   } catch { return }
   try {
-    await fetch(`/api/mermaid/projects/${currentProjectId.value}`, { method: 'DELETE' })
+    await mermaidFetch(`/api/mermaid/projects/${currentProjectId.value}`, { method: 'DELETE' })
     projects.value = projects.value.filter(p => p.id !== currentProjectId.value)
     currentProjectId.value = null
     messages.value = []
@@ -404,7 +443,7 @@ async function sendAIMessage() {
   messages.value.push({ id: Date.now(), role: 'user', content: prompt })
   await nextTick(); scrollMessagesToBottom()
   try {
-    const res = await fetch(`/api/mermaid/projects/${currentProjectId.value}/generate`, {
+    const res = await mermaidFetch(`/api/mermaid/projects/${currentProjectId.value}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, current_code: code.value })
@@ -428,14 +467,14 @@ async function saveVersion() {
     return
   }
   try {
-    const res = await fetch(`/api/mermaid/projects/${currentProjectId.value}/versions`, {
+    const res = await mermaidFetch(`/api/mermaid/projects/${currentProjectId.value}/versions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: code.value })
     })
     if (!res.ok) { ElMessage.error('保存失败'); return }
     ElMessage.success('版本已保存')
-    const vRes = await fetch(`/api/mermaid/projects/${currentProjectId.value}/versions`)
+    const vRes = await mermaidFetch(`/api/mermaid/projects/${currentProjectId.value}/versions`)
     const vData = await vRes.json()
     versions.value = vData.versions || []
   } catch { ElMessage.error('保存失败') }
@@ -453,7 +492,7 @@ async function clearMessages() {
     await ElMessageBox.confirm('确定清空该档案的所有对话记录？', '清空对话', { type: 'warning' })
   } catch { return }
   try {
-    await fetch(`/api/mermaid/projects/${currentProjectId.value}/messages`, { method: 'DELETE' })
+    await mermaidFetch(`/api/mermaid/projects/${currentProjectId.value}/messages`, { method: 'DELETE' })
     messages.value = []
     ElMessage.success('对话已清空')
   } catch { ElMessage.error('清空失败') }
@@ -1130,19 +1169,30 @@ const exportPng = async () => {
     const serializer = new XMLSerializer()
     let svgString = serializer.serializeToString(clonedSvg)
 
-    // 移除所有外部 URL 引用（@font-face、url(http...)），防止 canvas 被污染
+    // 彻底清除所有可能导致 canvas 污染的外部引用
+    // 1. 移除 @font-face 和 @import
     svgString = svgString.replace(/@font-face\s*\{[^}]*\}/g, '')
+    svgString = svgString.replace(/@import\s+[^;]+;/g, '')
+    // 2. 移除所有外部 url() 引用
     svgString = svgString.replace(/url\(['"]?https?:\/\/[^'")\s]+['"]?\)/g, 'none')
-    // 移除 <style> 块中残留的空规则
+    svgString = svgString.replace(/url\(['"]?\/\/[^'")\s]+['"]?\)/g, 'none')
+    // 3. 移除 xlink:href 和 href 指向外部资源的属性（保留 # 内部引用）
+    svgString = svgString.replace(/\s(?:xlink:)?href=['"]https?:\/\/[^'"]+['"]/g, '')
+    // 4. 移除 <image> 标签的外部 src
+    svgString = svgString.replace(/<image[^>]+>/g, (match) => {
+      if (match.includes('data:') || match.includes('#')) return match
+      return ''
+    })
+    // 5. 移除空 style 块
     svgString = svgString.replace(/<style[^>]*>\s*<\/style>/g, '')
 
-    // 创建 Blob URL（更可靠）
-    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
-    const url = URL.createObjectURL(svgBlob)
+    // 用 base64 data URI 而不是 blob URL，避免 canvas tainted 问题
+    const base64 = btoa(unescape(encodeURIComponent(svgString)))
+    const dataUri = `data:image/svg+xml;base64,${base64}`
 
     // 创建 Image 并等待加载
     const img = new Image()
-    img.crossOrigin = 'anonymous'
+    // 不设置 crossOrigin，data URI 不需要
 
     img.onload = () => {
       try {
@@ -1166,9 +1216,6 @@ const exportPng = async () => {
         // 绘制图像
         ctx.drawImage(img, 0, 0, width, height)
 
-        // 清理 URL
-        URL.revokeObjectURL(url)
-
         // 导出 PNG
         canvas.toBlob((blob) => {
           if (blob) {
@@ -1185,19 +1232,17 @@ const exportPng = async () => {
         }, 'image/png', 1.0)
       } catch (err) {
         console.error('Canvas 处理失败:', err)
-        URL.revokeObjectURL(url)
         ElMessage.error('PNG 导出失败: ' + err.message)
       }
     }
 
     img.onerror = (err) => {
       console.error('图片加载失败:', err)
-      URL.revokeObjectURL(url)
       ElMessage.error('PNG 导出失败')
     }
 
-    // 加载图片
-    img.src = url
+    // 加载图片（data URI 不会污染 canvas）
+    img.src = dataUri
   } catch (e) {
     console.error('导出 PNG 失败:', e)
     ElMessage.error('PNG 导出失败: ' + e.message)
