@@ -54,6 +54,9 @@
       <el-tag size="small">主题切换</el-tag>
     </div>
 
+    <div class="main-layout">
+      <!-- 左侧编辑器 + 预览 -->
+      <div class="left-panel">
     <div class="editor-container">
       <div class="editor-panel">
         <div class="panel-header">
@@ -120,6 +123,117 @@
         </div>
       </div>
     </div>
+      </div>
+
+      <!-- 右侧边栏 -->
+      <div class="right-sidebar">
+        <div class="sidebar-tabs">
+          <button :class="['sidebar-tab', sidebarTab === 'ai' && 'active']" @click="sidebarTab = 'ai'">AI 对话</button>
+          <button :class="['sidebar-tab', sidebarTab === 'versions' && 'active']" @click="sidebarTab = 'versions'">版本历史</button>
+        </div>
+
+        <!-- AI 对话 tab -->
+        <div v-if="sidebarTab === 'ai'" class="sidebar-content">
+          <!-- 档案选择 -->
+          <div class="project-bar">
+            <el-select
+              v-model="currentProjectId"
+              placeholder="选择档案"
+              size="small"
+              style="flex:1;min-width:0"
+              @change="onProjectChange"
+              clearable
+            >
+              <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+            <el-button size="small" type="primary" @click="openCreateProject">新建</el-button>
+            <el-button
+              v-if="currentProjectId"
+              size="small"
+              type="danger"
+              plain
+              @click="deleteProject"
+            >删除</el-button>
+          </div>
+
+          <!-- 消息列表 -->
+          <div class="messages-list" ref="messagesListRef">
+            <div v-if="messages.length === 0" class="messages-empty">
+              选择或新建档案后，输入描述让 AI 生成图表
+            </div>
+            <div
+              v-for="m in messages"
+              :key="m.id"
+              :class="['message-item', m.role]"
+            >
+              <div class="message-bubble">
+                <pre class="message-text">{{ m.role === 'assistant' ? extractDisplayText(m.content) : m.content }}</pre>
+              </div>
+            </div>
+            <div v-if="aiLoading" class="message-item assistant">
+              <div class="message-bubble loading-bubble">
+                <span class="dot-flashing"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 输入区 -->
+          <div class="ai-input-area">
+            <el-input
+              v-model="aiInput"
+              type="textarea"
+              :rows="3"
+              placeholder="描述你想要的图表，或追加修改指令..."
+              resize="none"
+              @keydown.ctrl.enter="sendAIMessage"
+            />
+            <div class="ai-input-actions">
+              <span class="input-hint">Ctrl+Enter 发送</span>
+              <el-button
+                type="primary"
+                size="small"
+                :loading="aiLoading"
+                :disabled="!aiInput.trim()"
+                @click="sendAIMessage"
+              >发送</el-button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 版本历史 tab -->
+        <div v-if="sidebarTab === 'versions'" class="sidebar-content">
+          <div class="versions-toolbar">
+            <el-button
+              size="small"
+              type="success"
+              :disabled="!currentProjectId || !code.trim()"
+              @click="saveVersion"
+            >
+              <el-icon><FolderAdd /></el-icon>
+              手动保存当前版本
+            </el-button>
+            <el-button
+              v-if="currentProjectId"
+              size="small"
+              @click="clearMessages"
+            >清空对话</el-button>
+          </div>
+          <div v-if="versions.length === 0" class="messages-empty">
+            暂无版本记录
+          </div>
+          <div v-for="v in versions" :key="v.id" class="version-item">
+            <div class="version-meta">
+              <el-tag :type="v.source === 'ai' ? 'primary' : 'success'" size="small">
+                {{ v.source === 'ai' ? 'AI' : '手动' }}
+              </el-tag>
+              <span class="version-time">{{ formatTime(v.created_at) }}</span>
+            </div>
+            <div class="version-preview">{{ v.code.slice(0, 60) }}{{ v.code.length > 60 ? '...' : '' }}</div>
+            <el-button size="small" @click="rollbackToVersion(v)">回滚</el-button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- 全屏预览模态框 -->
     <teleport to="body">
@@ -165,13 +279,192 @@
         </div>
       </div>
     </teleport>
+    <!-- 新建档案弹窗 -->
+    <el-dialog v-model="createProjectDialogVisible" title="新建档案" width="360px" :close-on-click-modal="false">
+      <el-input v-model="newProjectName" placeholder="档案名称" @keydown.enter="createProject" autofocus />
+      <template #footer>
+        <el-button @click="createProjectDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!newProjectName.trim()" @click="createProject">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import mermaid from 'mermaid'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+// ─── AI / 档案 / 版本 状态 ────────────────────────────────────
+const sidebarTab = ref('ai')
+const projects = ref([])
+const currentProjectId = ref(null)
+const messages = ref([])
+const versions = ref([])
+const aiInput = ref('')
+const aiLoading = ref(false)
+const createProjectDialogVisible = ref(false)
+const newProjectName = ref('')
+const pendingActionAfterCreate = ref(null)
+const messagesListRef = ref(null)
+
+async function loadProjects() {
+  try {
+    const res = await fetch('/api/mermaid/projects')
+    const data = await res.json()
+    projects.value = data.projects || []
+  } catch {}
+}
+
+function openCreateProject(pendingAction) {
+  pendingActionAfterCreate.value = pendingAction || null
+  newProjectName.value = ''
+  createProjectDialogVisible.value = true
+}
+
+async function createProject() {
+  if (!newProjectName.value.trim()) return
+  try {
+    const res = await fetch('/api/mermaid/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newProjectName.value.trim() })
+    })
+    const p = await res.json()
+    projects.value.unshift(p)
+    currentProjectId.value = p.id
+    messages.value = []
+    versions.value = []
+    createProjectDialogVisible.value = false
+    ElMessage.success('档案已创建')
+    if (pendingActionAfterCreate.value) {
+      const action = pendingActionAfterCreate.value
+      pendingActionAfterCreate.value = null
+      action()
+    }
+  } catch (e) {
+    ElMessage.error('创建失败')
+  }
+}
+
+async function onProjectChange(id) {
+  if (!id) { messages.value = []; versions.value = []; return }
+  await loadProjectData(id)
+}
+
+async function loadProjectData(id) {
+  try {
+    const [mRes, vRes] = await Promise.all([
+      fetch(`/api/mermaid/projects/${id}/messages`),
+      fetch(`/api/mermaid/projects/${id}/versions`)
+    ])
+    const mData = await mRes.json()
+    const vData = await vRes.json()
+    messages.value = mData.messages || []
+    versions.value = vData.versions || []
+    await nextTick()
+    scrollMessagesToBottom()
+  } catch {}
+}
+
+function scrollMessagesToBottom() {
+  if (messagesListRef.value) {
+    messagesListRef.value.scrollTop = messagesListRef.value.scrollHeight
+  }
+}
+
+async function deleteProject() {
+  if (!currentProjectId.value) return
+  try {
+    await ElMessageBox.confirm('确定删除该档案及所有版本和对话记录？', '删除档案', { type: 'warning' })
+  } catch { return }
+  try {
+    await fetch(`/api/mermaid/projects/${currentProjectId.value}`, { method: 'DELETE' })
+    projects.value = projects.value.filter(p => p.id !== currentProjectId.value)
+    currentProjectId.value = null
+    messages.value = []
+    versions.value = []
+    ElMessage.success('已删除')
+  } catch { ElMessage.error('删除失败') }
+}
+
+async function sendAIMessage() {
+  if (!aiInput.value.trim() || aiLoading.value) return
+  if (!currentProjectId.value) {
+    openCreateProject(sendAIMessage)
+    return
+  }
+  const prompt = aiInput.value.trim()
+  aiInput.value = ''
+  aiLoading.value = true
+  messages.value.push({ id: Date.now(), role: 'user', content: prompt })
+  await nextTick(); scrollMessagesToBottom()
+  try {
+    const res = await fetch(`/api/mermaid/projects/${currentProjectId.value}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, current_code: code.value })
+    })
+    const data = await res.json()
+    if (!res.ok) { ElMessage.error(data.error || 'AI 生成失败'); aiLoading.value = false; return }
+    code.value = data.code
+    render()
+    await loadProjectData(currentProjectId.value)
+  } catch (e) {
+    ElMessage.error('请求失败: ' + e.message)
+  } finally {
+    aiLoading.value = false
+  }
+}
+
+async function saveVersion() {
+  if (!code.value.trim()) return
+  if (!currentProjectId.value) {
+    openCreateProject(saveVersion)
+    return
+  }
+  try {
+    const res = await fetch(`/api/mermaid/projects/${currentProjectId.value}/versions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code.value })
+    })
+    if (!res.ok) { ElMessage.error('保存失败'); return }
+    ElMessage.success('版本已保存')
+    const vRes = await fetch(`/api/mermaid/projects/${currentProjectId.value}/versions`)
+    const vData = await vRes.json()
+    versions.value = vData.versions || []
+  } catch { ElMessage.error('保存失败') }
+}
+
+function rollbackToVersion(v) {
+  code.value = v.code
+  render()
+  ElMessage.success('已回滚到该版本')
+}
+
+async function clearMessages() {
+  if (!currentProjectId.value) return
+  try {
+    await ElMessageBox.confirm('确定清空该档案的所有对话记录？', '清空对话', { type: 'warning' })
+  } catch { return }
+  try {
+    await fetch(`/api/mermaid/projects/${currentProjectId.value}/messages`, { method: 'DELETE' })
+    messages.value = []
+    ElMessage.success('对话已清空')
+  } catch { ElMessage.error('清空失败') }
+}
+
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+}
+
+function extractDisplayText(content) {
+  const m = content.match(/```(?:mermaid)?\s*\n?([\s\S]*?)```/)
+  return m ? '[Mermaid 代码已生成]' : content
+}
 
 const code = ref('')
 const svgContent = ref('')
@@ -972,9 +1265,9 @@ const copyCode = async () => {
 // 初始化
 onMounted(() => {
   initMermaid()
-  // 设置默认示例
   code.value = templates.flowchart
   render()
+  loadProjects()
 })
 
 // 监听主题变化
@@ -1259,5 +1552,238 @@ watch(theme, () => {
 .fullscreen-diagram :deep(svg) {
   max-width: 100%;
   height: auto;
+}
+
+/* ─── 主布局 ─────────────────────────────────────────────── */
+.main-layout {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.left-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── 右侧边栏 ───────────────────────────────────────────── */
+.right-sidebar {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  overflow: hidden;
+  min-height: 500px;
+}
+
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-base);
+  flex-shrink: 0;
+}
+
+.sidebar-tab {
+  flex: 1;
+  padding: 10px 0;
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.sidebar-tab.active {
+  background: var(--bg-primary);
+  color: var(--el-color-primary);
+  font-weight: 600;
+  border-bottom: 2px solid var(--el-color-primary);
+}
+
+.sidebar-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.project-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-base);
+  flex-shrink: 0;
+}
+
+.messages-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.messages-empty {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  text-align: center;
+  padding: 20px 10px;
+}
+
+.message-item {
+  display: flex;
+}
+
+.message-item.user {
+  justify-content: flex-end;
+}
+
+.message-item.assistant {
+  justify-content: flex-start;
+}
+
+.message-bubble {
+  max-width: 85%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.message-item.user .message-bubble {
+  background: var(--el-color-primary-light-8);
+  color: var(--text-primary);
+}
+
+.message-item.assistant .message-bubble {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.message-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.loading-bubble {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.dot-flashing {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--el-color-primary);
+  animation: dot-flashing 1s infinite linear alternate;
+  animation-delay: 0.5s;
+}
+
+.dot-flashing::before,
+.dot-flashing::after {
+  content: '';
+  display: inline-block;
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--el-color-primary);
+}
+
+.dot-flashing::before {
+  left: -14px;
+  animation: dot-flashing 1s infinite alternate;
+  animation-delay: 0s;
+}
+
+.dot-flashing::after {
+  left: 14px;
+  animation: dot-flashing 1s infinite alternate;
+  animation-delay: 1s;
+}
+
+@keyframes dot-flashing {
+  0% { background-color: var(--el-color-primary); }
+  100% { background-color: var(--el-color-primary-light-7); }
+}
+
+.ai-input-area {
+  padding: 8px;
+  border-top: 1px solid var(--border-base);
+  flex-shrink: 0;
+}
+
+.ai-input-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.input-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.versions-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-base);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.version-item {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-base);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.version-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.version-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.version-preview {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+  .main-layout {
+    flex-direction: column;
+  }
+  .right-sidebar {
+    width: 100%;
+    min-height: 300px;
+  }
 }
 </style>

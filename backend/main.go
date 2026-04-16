@@ -155,6 +155,11 @@ func main() {
 		log.Fatalf("控制台设置数据库初始化失败: %v", err)
 	}
 
+	// 初始化 Mermaid 档案表
+	if err := db.InitMermaid(); err != nil {
+		log.Fatalf("Mermaid 数据库初始化失败: %v", err)
+	}
+
 	// 后台预加载背景图（如果缓存目录为空）
 	go func() {
 		// 等待服务器启动完成
@@ -342,6 +347,7 @@ func main() {
 	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg)
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
+	mermaidHandler := handlers.NewMermaidHandler(db, cfg)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
 	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
 	handlers.InitGFWList("./data/proxy.db")
@@ -876,6 +882,19 @@ func main() {
 
 		// 背景图 API
 		api.GET("/bg", handlers.GetBackgroundImages)
+
+		// Mermaid 档案 + AI 生图
+		mermaid := api.Group("/mermaid")
+		{
+			mermaid.POST("/projects", mermaidHandler.CreateProject)
+			mermaid.GET("/projects", mermaidHandler.ListProjects)
+			mermaid.DELETE("/projects/:id", mermaidHandler.DeleteProject)
+			mermaid.POST("/projects/:id/versions", mermaidHandler.SaveVersion)
+			mermaid.GET("/projects/:id/versions", mermaidHandler.ListVersions)
+			mermaid.POST("/projects/:id/generate", mermaidHandler.AIGenerate)
+			mermaid.GET("/projects/:id/messages", mermaidHandler.ListMessages)
+			mermaid.DELETE("/projects/:id/messages", mermaidHandler.ClearMessages)
+		}
 
 		// 科学上网代理
 		proxyGroup := api.Group("/proxy")

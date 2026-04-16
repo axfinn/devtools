@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -134,9 +135,21 @@ func (db *DB) AddNFSShareLog(shareID, clientIP, userAgent, status string, bytesS
 	return err
 }
 
-// SetNFSShareLogAudio 为已有日志记录设置录音文件路径
-func (db *DB) SetNFSShareLogAudio(logID int64, audioURL string) error {
-	_, err := db.conn.Exec(`UPDATE nfs_share_logs SET audio_url = ? WHERE id = ?`, audioURL, logID)
+// AppendNFSShareLogAudio 追加录音文件路径到日志（JSON 数组）
+func (db *DB) AppendNFSShareLogAudio(logID int64, audioURL string) error {
+	var existing string
+	db.conn.QueryRow(`SELECT audio_url FROM nfs_share_logs WHERE id = ?`, logID).Scan(&existing)
+	var urls []string
+	if existing != "" {
+		// try JSON array first
+		if err := json.Unmarshal([]byte(existing), &urls); err != nil {
+			// legacy single URL
+			urls = []string{existing}
+		}
+	}
+	urls = append(urls, audioURL)
+	b, _ := json.Marshal(urls)
+	_, err := db.conn.Exec(`UPDATE nfs_share_logs SET audio_url = ? WHERE id = ?`, string(b), logID)
 	return err
 }
 

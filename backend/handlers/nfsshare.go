@@ -1054,7 +1054,7 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 	audioURL := "/api/nfsshare/" + id + "/record/" + filename
 	logID := h.db.LastNFSShareLogID(id, c.ClientIP())
 	if logID > 0 {
-		h.db.SetNFSShareLogAudio(logID, audioURL)
+		h.db.AppendNFSShareLogAudio(logID, audioURL)
 	}
 	c.JSON(http.StatusOK, gin.H{"audio_url": audioURL})
 }

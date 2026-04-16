@@ -515,15 +515,18 @@
             <span class="text-xs text-gray-500 truncate block" :title="row.user_agent">{{ row.user_agent }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="录音" width="80" align="center">
+        <el-table-column label="录音" width="100" align="center">
           <template #default="{ row }">
-            <el-button
-              v-if="row.audio_url"
-              size="small"
-              type="success"
-              link
-              @click="playRecord(row)"
-            >▶ 播放</el-button>
+            <template v-if="row.audio_url">
+              <el-button
+                v-for="(url, idx) in parseAudioUrls(row.audio_url)"
+                :key="idx"
+                size="small"
+                type="success"
+                link
+                @click="playRecord(url)"
+              >▶ {{ idx + 1 }}</el-button>
+            </template>
             <span v-else class="text-xs text-gray-400">—</span>
           </template>
         </el-table-column>
@@ -541,7 +544,7 @@
 
     <!-- 录音播放弹窗 -->
     <el-dialog v-model="recordDialogVisible" title="录音播放" width="420px" destroy-on-close>
-      <audio v-if="recordPlayURL" :src="recordPlayURL" controls style="width:100%" />
+      <audio v-if="recordPlayURL" :src="recordPlayURL" controls autoplay style="width:100%" />
     </el-dialog>
 
     <!-- 调整分享配置弹窗 -->
@@ -1009,8 +1012,17 @@ async function loadLogs() {
   }
 }
 
-function playRecord(row) {
-  recordPlayURL.value = `${row.audio_url}?admin_password=${encodeURIComponent(adminPassword.value)}`
+function parseAudioUrls(audioUrl) {
+  if (!audioUrl) return []
+  try {
+    const arr = JSON.parse(audioUrl)
+    if (Array.isArray(arr)) return arr
+  } catch {}
+  return [audioUrl]
+}
+
+function playRecord(url) {
+  recordPlayURL.value = `${url}?admin_password=${encodeURIComponent(adminPassword.value)}`
   recordDialogVisible.value = true
 }
 

@@ -945,7 +945,14 @@ function handleWsMsg(msg) {
       }
       break
     case 'force_watch':
-      if (!msg.host_active) {
+      if (msg.host_active) {
+        // 管理员上线：非房主用户暂停视频，等待同步
+        if (!isHost.value && art?.video) {
+          syncLockCount++
+          art.video.pause()
+        }
+        addSystemMsg('管理员已加入，进入同步模式')
+      } else {
         addSystemMsg('管理员已离开，一起看模式结束')
       }
       break
@@ -1163,40 +1170,47 @@ onUnmounted(() => {
   if (ws) { ws.close(); ws = null }
   if (voiceActive.value) stopVoice()
   stopRecording()
+  window.removeEventListener('pagehide', stopRecording)
 })
 
 // ---- 录音 ----
 let mediaRecorder = null
-let recordChunks = []
+let recordStream = null
+const CHUNK_INTERVAL = 30000 // 每 30 秒上传一段
 
 // 返回 true 表示录音已启动（或无需录音），false 表示用户拒绝麦克风
 async function startRecording() {
   if (!info.value?.record_enabled) return true
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    mediaRecorder = new MediaRecorder(stream)
-    recordChunks = []
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordChunks.push(e.data) }
-    mediaRecorder.onstop = () => {
-      const blob = new Blob(recordChunks, { type: mediaRecorder.mimeType || 'audio/webm' })
-      const ext = (mediaRecorder.mimeType || 'audio/webm').includes('ogg') ? '.ogg' : '.webm'
-      const formData = new FormData()
-      formData.append('audio', blob, 'record' + ext)
-      const pwd = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
-      fetch(`/api/nfsshare/${id}/record${pwd}`, { method: 'POST', body: formData }).catch(() => {})
-      stream.getTracks().forEach(t => t.stop())
+    recordStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    mediaRecorder = new MediaRecorder(recordStream)
+    mediaRecorder.ondataavailable = e => {
+      if (e.data && e.data.size > 0) uploadChunk(e.data, mediaRecorder.mimeType)
     }
-    mediaRecorder.start()
+    mediaRecorder.start(CHUNK_INTERVAL)
+    window.addEventListener('pagehide', stopRecording)
     return true
   } catch {
     return false
   }
 }
 
+function uploadChunk(blob, mimeType) {
+  const ext = (mimeType || 'audio/webm').includes('ogg') ? '.ogg' : '.webm'
+  const formData = new FormData()
+  formData.append('audio', blob, 'record' + ext)
+  const pwd = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
+  fetch(`/api/nfsshare/${id}/record${pwd}`, { method: 'POST', body: formData }).catch(() => {})
+}
+
 function stopRecording() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop()
     mediaRecorder = null
+  }
+  if (recordStream) {
+    recordStream.getTracks().forEach(t => t.stop())
+    recordStream = null
   }
 }
 </script>
