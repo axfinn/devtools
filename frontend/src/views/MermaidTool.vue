@@ -1,5 +1,27 @@
 <template>
   <div class="tool-container">
+
+    <!-- 分享模式：图优先，代码可折叠 -->
+    <div v-if="isShareMode" class="share-view">
+      <div class="share-diagram" v-html="svgContent"></div>
+      <div class="share-actions">
+        <el-button type="success" size="small" @click="exportPng">
+          <el-icon><Picture /></el-icon> 下载 PNG
+        </el-button>
+        <el-button type="primary" size="small" @click="exportSvg">
+          <el-icon><Download /></el-icon> 下载 SVG
+        </el-button>
+        <el-button size="small" @click="shareCodeCollapsed = !shareCodeCollapsed">
+          <el-icon><Document /></el-icon> {{ shareCodeCollapsed ? '查看代码' : '收起代码' }}
+        </el-button>
+      </div>
+      <div v-if="!shareCodeCollapsed" class="share-code">
+        <pre>{{ code }}</pre>
+      </div>
+    </div>
+
+    <!-- 正常编辑模式 -->
+    <template v-else>
     <div class="tool-header">
       <h2>Mermaid 图表编辑器</h2>
       <div class="actions">
@@ -298,6 +320,7 @@
         <el-button type="primary" @click="submitAuth">确认</el-button>
       </template>
     </el-dialog>
+    </template><!-- end v-else -->
   </div>
 </template>
 
@@ -1341,6 +1364,10 @@ const copyCode = async () => {
   }
 }
 
+// 分享模式
+const isShareMode = ref(false)
+const shareCodeCollapsed = ref(true)
+
 // 初始化
 onMounted(() => {
   initMermaid()
@@ -1350,6 +1377,7 @@ onMounted(() => {
   if (shared) {
     try {
       code.value = decodeURIComponent(escape(atob(shared)))
+      isShareMode.value = true
     } catch {
       code.value = templates.flowchart
     }
@@ -1874,6 +1902,49 @@ watch(theme, () => {
   .right-sidebar {
     width: 100%;
     min-height: 300px;
+  }
+}
+
+.share-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px;
+  gap: 16px;
+  min-height: 100vh;
+  background: #fff;
+}
+
+.share-diagram {
+  max-width: 100%;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+
+  svg {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+.share-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.share-code {
+  width: 100%;
+  max-width: 900px;
+  background: #f5f5f5;
+  border-radius: 6px;
+  padding: 16px;
+
+  pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 13px;
+    color: #333;
   }
 }
 </style>
