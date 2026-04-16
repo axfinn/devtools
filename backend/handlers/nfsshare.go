@@ -1119,7 +1119,7 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 	// 按文件名排序（已用 %06d 序号命名）
 	var chunks []string
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() && e.Name() != "list.txt" {
 			chunks = append(chunks, filepath.Join(chunkDir, e.Name()))
 		}
 	}
@@ -1127,14 +1127,22 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 		return
 	}
 
+	// 根据第一个 chunk 的扩展名决定输出格式
+	firstExt := strings.ToLower(filepath.Ext(chunks[0]))
+	outExt := ".webm"
+	if firstExt == ".mp4" {
+		outExt = ".mp4"
+	} else if firstExt == ".ogg" {
+		outExt = ".ogg"
+	}
+
 	outDir := filepath.Join("./data/records", shareID)
 	os.MkdirAll(outDir, 0755)
 	b := make([]byte, 8)
 	crypto_rand.Read(b)
-	outFile := filepath.Join(outDir, hex.EncodeToString(b)+".webm")
+	outFile := filepath.Join(outDir, hex.EncodeToString(b)+outExt)
 
 	// 用 ffmpeg concat 拼接
-	// 写 concat list 文件
 	listFile := filepath.Join(chunkDir, "list.txt")
 	var listContent string
 	for _, c := range chunks {
@@ -1146,10 +1154,17 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 	}
 
 	absOut, _ := filepath.Abs(outFile)
-	cmd := exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0",
-		"-i", listFile, "-c", "copy", absOut)
+	var cmd *exec.Cmd
+	if outExt == ".mp4" {
+		// mp4 分片需要重新封装，不能直接 concat copy
+		cmd = exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0",
+			"-i", listFile, "-c", "copy", "-movflags", "+faststart", absOut)
+	} else {
+		cmd = exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0",
+			"-i", listFile, "-c", "copy", absOut)
+	}
 	if err := cmd.Run(); err != nil {
-		// ffmpeg 不可用时，直接拼接原始字节（webm 分片可直接拼接）
+		// ffmpeg 不可用时，直接拼接原始字节（webm/ogg 分片可直接拼接，mp4 不行但聊胜于无）
 		outF, err2 := os.Create(outFile)
 		if err2 != nil {
 			return
@@ -1190,6 +1205,18 @@ func (h *NFSShareHandler) ServeRecord(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "录音不存在"})
 		return
 	}
+	// 根据扩展名设置正确的 Content-Type，确保移动端能播放
+	ext := strings.ToLower(filepath.Ext(filename))
+	ct := "audio/webm"
+	switch ext {
+	case ".mp4":
+		ct = "audio/mp4"
+	case ".ogg":
+		ct = "audio/ogg"
+	case ".mp3":
+		ct = "audio/mpeg"
+	}
+	c.Header("Content-Type", ct)
 	c.File(path)
 }
 

@@ -268,13 +268,12 @@ func (db *DB) ActiveUploadFilenames() (map[string]struct{}, error) {
 	return result, rows.Err()
 }
 
-// CleanExpiredNFSShares 清理已过期或已耗尽访问次数的分享
+// CleanExpiredNFSShares 清理已过期超过 7 天的分享（次数耗尽的不自动删除，由管理员手动清理）
 // 有录音的日志永久保留，不随分享删除
 func (db *DB) CleanExpiredNFSShares() (int, error) {
 	rows, err := db.conn.Query(`
 		SELECT id FROM nfs_shares
-		WHERE (expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP)
-		   OR (max_views > 0 AND views >= max_views)
+		WHERE expires_at IS NOT NULL AND expires_at < datetime('now', '-7 days')
 	`)
 	if err != nil {
 		return 0, err

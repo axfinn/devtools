@@ -1191,7 +1191,11 @@ async function startRecording() {
   if (!info.value?.record_enabled) return true
   try {
     recordStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    mediaRecorder = new MediaRecorder(recordStream)
+
+    // 按优先级选择浏览器支持的 mimeType（iOS Safari 只支持 audio/mp4）
+    const preferred = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', '']
+    const mimeType = preferred.find(m => m === '' || MediaRecorder.isTypeSupported(m)) || ''
+    mediaRecorder = mimeType ? new MediaRecorder(recordStream, { mimeType }) : new MediaRecorder(recordStream)
     recordMimeType = mediaRecorder.mimeType || 'audio/webm'
     recordSessionId = genSessionId()
     recordSeq = 0
@@ -1208,6 +1212,8 @@ async function startRecording() {
       }
     }
 
+    mediaRecorder.onerror = () => { stopRecording() }
+
     mediaRecorder.start(CHUNK_INTERVAL)
     window.addEventListener('pagehide', stopRecording)
     return true
@@ -1217,7 +1223,9 @@ async function startRecording() {
 }
 
 function uploadChunk(blob, mimeType, sessionId, seq) {
-  const ext = (mimeType || 'audio/webm').includes('ogg') ? '.ogg' : '.webm'
+  let ext = '.webm'
+  if ((mimeType || '').includes('mp4')) ext = '.mp4'
+  else if ((mimeType || '').includes('ogg')) ext = '.ogg'
   const formData = new FormData()
   formData.append('audio', blob, 'record' + ext)
   const pwd = password.value ? `&password=${encodeURIComponent(password.value)}` : ''
