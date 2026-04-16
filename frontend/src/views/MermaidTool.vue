@@ -330,9 +330,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onActivated, watch, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import mermaid from 'mermaid'
 import { ElMessage, ElMessageBox } from 'element-plus'
+
+const route = useRoute()
 
 // ─── 鉴权 ─────────────────────────────────────────────────────
 const STORAGE_KEY = 'mermaid_admin_password'
@@ -1381,24 +1384,34 @@ const copyCode = async () => {
 const isShareMode = ref(false)
 const shareCodeCollapsed = ref(true)
 
-// 初始化
-onMounted(() => {
-  initMermaid()
-  // 检查分享参数
-  const params = new URLSearchParams(location.search)
-  const shared = params.get('share')
+// 分享模式初始化
+const initShareMode = () => {
+  const shared = route.query.share
   if (shared) {
     try {
       code.value = decodeURIComponent(escape(atob(shared)))
       isShareMode.value = true
     } catch {
       code.value = templates.flowchart
+      isShareMode.value = false
     }
   } else {
-    code.value = templates.flowchart
+    isShareMode.value = false
+    if (!code.value) code.value = templates.flowchart
   }
   render()
-  loadProjects()
+}
+
+// 初始化
+onMounted(() => {
+  initMermaid()
+  initShareMode()
+  if (!isShareMode.value) loadProjects()
+})
+
+// keep-alive 重新激活时重新检查（从其他页面切回来时）
+onActivated(() => {
+  initShareMode()
 })
 
 // 监听主题变化
