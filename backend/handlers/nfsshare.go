@@ -650,7 +650,8 @@ type CreateNFSShareRequest struct {
 	FilePath      string `json:"file_path" binding:"required"`
 	MaxViews      int    `json:"max_views" binding:"required,min=1"`
 	ExpiresDays   int    `json:"expires_days"`
-	Password      string `json:"password"` // 可选，访问密码
+	Password      string `json:"password"`       // 可选，访问密码
+	RecordEnabled bool   `json:"record_enabled"` // 是否开启访客录音
 }
 
 // Create 创建分享（超管）
@@ -721,7 +722,7 @@ func (h *NFSShareHandler) Create(c *gin.Context) {
 		}
 	}
 
-	share, err := h.db.CreateNFSShare(req.Name, req.FilePath, mimeType, hashedPwd, fileSize, req.MaxViews, expiresAt, c.ClientIP())
+	share, err := h.db.CreateNFSShare(req.Name, req.FilePath, mimeType, hashedPwd, fileSize, req.MaxViews, expiresAt, c.ClientIP(), req.RecordEnabled)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败: " + err.Error()})
 		return
@@ -932,6 +933,7 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 		"disable_download":       h.cfg.DisableDownload,
 		"has_password":           share.Password != "",
 		"watch_enabled":          share.WatchEnabled,
+		"record_enabled":         share.RecordEnabled,
 	})
 }
 
@@ -988,7 +990,95 @@ func (h *NFSShareHandler) AdminGetLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": logs, "total": total, "page": page, "page_size": pageSize})
 }
 
-// UpdateNFSShareRequest 更新分享配置
+// UploadRecord POST /api/nfsshare/:id/record?password=xxx
+// 访客上传录音文件，关联到最近一条访问日志
+func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	id := c.Param("id")
+	share, err := h.db.GetNFSShare(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
+		return
+	}
+	if !share.RecordEnabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": "该分享未开启录音"})
+		return
+	}
+	if share.Password != "" {
+		pwd := c.Query("password")
+		if !utils.VerifyPassword(pwd, share.Password) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+			return
+		}
+	}
+
+	file, header, err := c.Request.FormFile("audio")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 audio 文件"})
+		return
+	}
+	defer file.Close()
+
+	// 限制 50MB
+	if header.Size > 50*1024*1024 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "录音文件超过 50MB"})
+		return
+	}
+
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		ext = ".webm"
+	}
+	dir := filepath.Join("./data/records", id)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "存储目录创建失败"})
+		return
+	}
+	b := make([]byte, 8)
+	crypto_rand.Read(b)
+	filename := hex.EncodeToString(b) + ext
+	dst := filepath.Join(dir, filename)
+	out, err := os.Create(dst)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件创建失败"})
+		return
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, file); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "写入失败"})
+		return
+	}
+
+	audioURL := "/api/nfsshare/" + id + "/record/" + filename
+	logID := h.db.LastNFSShareLogID(id, c.ClientIP())
+	if logID > 0 {
+		h.db.SetNFSShareLogAudio(logID, audioURL)
+	}
+	c.JSON(http.StatusOK, gin.H{"audio_url": audioURL})
+}
+
+// ServeRecord GET /api/nfsshare/:id/record/:filename?admin_password=xxx
+// 超管播放录音文件
+func (h *NFSShareHandler) ServeRecord(c *gin.Context) {
+	if !h.verifyAdmin(c.Query("admin_password")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+		return
+	}
+	id := c.Param("id")
+	filename := c.Param("filename")
+	// 防路径穿越
+	filename = filepath.Base(filename)
+	path := filepath.Join("./data/records", id, filename)
+	if _, err := os.Stat(path); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "录音不存在"})
+		return
+	}
+	c.File(path)
+}
+
+
 type UpdateNFSShareRequest struct {
 	AdminPassword string     `json:"admin_password" binding:"required"`
 	MaxViews      int        `json:"max_views"`
@@ -996,6 +1086,7 @@ type UpdateNFSShareRequest struct {
 	ExpiresAt     *time.Time `json:"expires_at"`
 	AddDays       int        `json:"add_days"`
 	WatchEnabled  *bool      `json:"watch_enabled"`
+	RecordEnabled *bool      `json:"record_enabled"`
 }
 
 // AdminUpdate 修改分享配置（超管）
@@ -1041,7 +1132,11 @@ func (h *NFSShareHandler) AdminUpdate(c *gin.Context) {
 	if req.WatchEnabled != nil {
 		newWatchEnabled = *req.WatchEnabled
 	}
-	if err := h.db.UpdateNFSShare(id, newMaxViews, newExpiresAt, newWatchEnabled); err != nil {
+	newRecordEnabled := share.RecordEnabled
+	if req.RecordEnabled != nil {
+		newRecordEnabled = *req.RecordEnabled
+	}
+	if err := h.db.UpdateNFSShare(id, newMaxViews, newExpiresAt, newWatchEnabled, newRecordEnabled); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

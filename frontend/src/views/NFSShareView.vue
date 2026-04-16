@@ -449,22 +449,28 @@ async function loadInfo() {
     if (data.has_password) {
       // 需要密码才能继续，弹出密码框（密码框里也包含昵称和管理密码输入）
       passwordDialogVisible.value = true
-    } else if (data.is_video) {
-      if (data.watch_enabled) {
-        // 视频+一起看模式：先申请麦克风，拒绝则禁止播放
-        try {
-          localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-          await fetchRtcConfig()
-        } catch (e) {
-          error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
-          loading.value = false
-          return
-        }
+    } else {
+      if (data.record_enabled) {
+        const ok = await startRecording()
+        if (!ok) { error.value = '该分享需要麦克风录音权限，请允许后刷新页面'; loading.value = false; return }
       }
-      await initPlayer()
-      if (data.watch_enabled) connectPendingWatch()
-    } else if (data.is_text) {
-      loadTextPreview()
+      if (data.is_video) {
+        if (data.watch_enabled) {
+          // 视频+一起看模式：先申请麦克风，拒绝则禁止播放
+          try {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+            await fetchRtcConfig()
+          } catch (e) {
+            error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
+            loading.value = false
+            return
+          }
+        }
+        await initPlayer()
+        if (data.watch_enabled) connectPendingWatch()
+      } else if (data.is_text) {
+        loadTextPreview()
+      }
     }
   } catch {
     error.value = '加载失败，请检查网络'
@@ -498,6 +504,10 @@ async function confirmPassword() {
     password.value = pwd
     passwordDialogVisible.value = false
     await nextTick()
+    if (info.value.record_enabled) {
+      const ok = await startRecording()
+      if (!ok) { error.value = '该分享需要麦克风录音权限，请允许后刷新页面'; return }
+    }
     if (info.value.is_video) {
       if (info.value.watch_enabled) {
         try {
@@ -1152,7 +1162,43 @@ onUnmounted(() => {
   if (watchReconnectTimer) { clearTimeout(watchReconnectTimer); watchReconnectTimer = null }
   if (ws) { ws.close(); ws = null }
   if (voiceActive.value) stopVoice()
+  stopRecording()
 })
+
+// ---- 录音 ----
+let mediaRecorder = null
+let recordChunks = []
+
+// 返回 true 表示录音已启动（或无需录音），false 表示用户拒绝麦克风
+async function startRecording() {
+  if (!info.value?.record_enabled) return true
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    mediaRecorder = new MediaRecorder(stream)
+    recordChunks = []
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordChunks.push(e.data) }
+    mediaRecorder.onstop = () => {
+      const blob = new Blob(recordChunks, { type: mediaRecorder.mimeType || 'audio/webm' })
+      const ext = (mediaRecorder.mimeType || 'audio/webm').includes('ogg') ? '.ogg' : '.webm'
+      const formData = new FormData()
+      formData.append('audio', blob, 'record' + ext)
+      const pwd = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
+      fetch(`/api/nfsshare/${id}/record${pwd}`, { method: 'POST', body: formData }).catch(() => {})
+      stream.getTracks().forEach(t => t.stop())
+    }
+    mediaRecorder.start()
+    return true
+  } catch {
+    return false
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop()
+    mediaRecorder = null
+  }
+}
 </script>
 
 <style scoped>

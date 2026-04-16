@@ -176,6 +176,9 @@
                     show-password
                   />
                 </el-form-item>
+                <el-form-item label="录音">
+                  <el-switch v-model="createForm.recordEnabled" active-text="开启（访客观看时自动录音）" />
+                </el-form-item>
                 <el-form-item>
                   <el-button
                     type="primary"
@@ -512,6 +515,18 @@
             <span class="text-xs text-gray-500 truncate block" :title="row.user_agent">{{ row.user_agent }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="录音" width="80" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.audio_url"
+              size="small"
+              type="success"
+              link
+              @click="playRecord(row)"
+            >▶ 播放</el-button>
+            <span v-else class="text-xs text-gray-400">—</span>
+          </template>
+        </el-table-column>
       </el-table>
       <div class="flex justify-end mt-3">
         <el-pagination
@@ -522,6 +537,11 @@
           @current-change="loadLogs"
         />
       </div>
+    </el-dialog>
+
+    <!-- 录音播放弹窗 -->
+    <el-dialog v-model="recordDialogVisible" title="录音播放" width="420px" destroy-on-close>
+      <audio v-if="recordPlayURL" :src="recordPlayURL" controls style="width:100%" />
     </el-dialog>
 
     <!-- 调整分享配置弹窗 -->
@@ -541,6 +561,10 @@
         <el-form-item label="一起看">
           <el-switch v-model="editForm.watchEnabled" active-text="开启" inactive-text="关闭" />
           <div class="text-xs text-gray-400 mt-1">开启后访客进入链接自动加入一起看</div>
+        </el-form-item>
+        <el-form-item label="录音">
+          <el-switch v-model="editForm.recordEnabled" active-text="开启" inactive-text="关闭" />
+          <div class="text-xs text-gray-400 mt-1">开启后访客观看时自动录音并保存</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -578,7 +602,8 @@ const createForm = reactive({
   name: '',
   maxViews: 5,
   expiresDays: 7,
-  password: ''
+  password: '',
+  recordEnabled: false
 })
 const createLoading = ref(false)
 
@@ -636,8 +661,12 @@ const targetDirBreadcrumbs = computed(() => {
 // 编辑弹窗
 const editDialogVisible = ref(false)
 const editTarget = ref(null)
-const editForm = reactive({ addViews: 0, addDays: 0, watchEnabled: false })
+const editForm = reactive({ addViews: 0, addDays: 0, watchEnabled: false, recordEnabled: false })
 const editLoading = ref(false)
+
+// 录音播放
+const recordDialogVisible = ref(false)
+const recordPlayURL = ref('')
 
 // -------- 计算属性 --------
 const breadcrumbs = computed(() => {
@@ -780,7 +809,8 @@ async function createShare() {
         file_path: createForm.filePath,
         max_views: createForm.maxViews,
         expires_days: createForm.expiresDays,
-        password: createForm.password || ''
+        password: createForm.password || '',
+        record_enabled: createForm.recordEnabled || false
       })
     })
     const data = await res.json()
@@ -979,6 +1009,11 @@ async function loadLogs() {
   }
 }
 
+function playRecord(row) {
+  recordPlayURL.value = `${row.audio_url}?admin_password=${encodeURIComponent(adminPassword.value)}`
+  recordDialogVisible.value = true
+}
+
 // -------- 上传文件 --------
 const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB
 
@@ -1145,6 +1180,7 @@ function openEditDialog(row) {
   editForm.addViews = 0
   editForm.addDays = 0
   editForm.watchEnabled = row.watch_enabled || false
+  editForm.recordEnabled = row.record_enabled || false
   editDialogVisible.value = true
 }
 
@@ -1159,7 +1195,8 @@ async function submitEdit() {
         admin_password: adminPassword.value,
         add_views: editForm.addViews,
         add_days: editForm.addDays,
-        watch_enabled: editForm.watchEnabled
+        watch_enabled: editForm.watchEnabled,
+        record_enabled: editForm.recordEnabled
       })
     })
     const data = await res.json()

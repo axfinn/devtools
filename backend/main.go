@@ -705,6 +705,8 @@ func main() {
 			})
 			nfsshare.GET("/:id", nfsShareHandler.Access)                                // 访问/下载文件（公开，消耗次数）
 			nfsshare.GET("/:id/watch/ws", nfsShareHandler.WatchWS)                      // 一起看 WebSocket（公开）
+			nfsshare.POST("/:id/record", nfsShareHandler.UploadRecord)                  // 上传录音（公开，需分享密码）
+			nfsshare.GET("/:id/record/:filename", nfsShareHandler.ServeRecord)          // 播放录音（超管）
 			nfsshare.POST("", nfsShareHandler.Create)                                   // 创建分享（超管）
 			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)                       // 浏览目录（超管）
 			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)                      // 分享列表（超管）

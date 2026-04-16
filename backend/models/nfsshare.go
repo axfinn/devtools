@@ -10,18 +10,19 @@ import (
 
 // NFSShare NFS 文件分享记录
 type NFSShare struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	FilePath     string     `json:"file_path"`
-	FileSize     int64      `json:"file_size"`
-	MimeType     string     `json:"mime_type"`
-	MaxViews     int        `json:"max_views"`
-	Views        int        `json:"views"`
-	Password     string     `json:"-"` // bcrypt hash，不对外暴露
-	WatchEnabled bool       `json:"watch_enabled"`
-	ExpiresAt    *time.Time `json:"expires_at"`
-	CreatedAt    time.Time  `json:"created_at"`
-	CreatorIP    string     `json:"creator_ip"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	FilePath      string     `json:"file_path"`
+	FileSize      int64      `json:"file_size"`
+	MimeType      string     `json:"mime_type"`
+	MaxViews      int        `json:"max_views"`
+	Views         int        `json:"views"`
+	Password      string     `json:"-"` // bcrypt hash，不对外暴露
+	WatchEnabled  bool       `json:"watch_enabled"`
+	RecordEnabled bool       `json:"record_enabled"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	CreatorIP     string     `json:"creator_ip"`
 }
 
 // NFSShareLog NFS 分享访问日志
@@ -32,6 +33,7 @@ type NFSShareLog struct {
 	UserAgent  string    `json:"user_agent"`
 	Status     string    `json:"status"`     // success / denied_views / denied_expired / file_missing / error
 	BytesSent  int64     `json:"bytes_sent"`
+	AudioURL   string    `json:"audio_url"`  // 录音文件路径，非空则永久保留
 	AccessedAt time.Time `json:"accessed_at"`
 }
 
@@ -71,11 +73,15 @@ func (db *DB) InitNFSShare() error {
 	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN password TEXT NOT NULL DEFAULT ''`)
 	// 迁移：为旧数据库添加 watch_enabled 列
 	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN watch_enabled INTEGER NOT NULL DEFAULT 0`)
+	// 迁移：为旧数据库添加 record_enabled 列
+	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN record_enabled INTEGER NOT NULL DEFAULT 0`)
+	// 迁移：为旧数据库添加 audio_url 列
+	db.conn.Exec(`ALTER TABLE nfs_share_logs ADD COLUMN audio_url TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
 // CreateNFSShare 创建 NFS 分享
-func (db *DB) CreateNFSShare(name, filePath, mimeType, password string, fileSize int64, maxViews int, expiresAt *time.Time, creatorIP string) (*NFSShare, error) {
+func (db *DB) CreateNFSShare(name, filePath, mimeType, password string, fileSize int64, maxViews int, expiresAt *time.Time, creatorIP string, recordEnabled bool) (*NFSShare, error) {
 	b := make([]byte, 4)
 	rand.Read(b)
 	id := hex.EncodeToString(b)
@@ -86,9 +92,9 @@ func (db *DB) CreateNFSShare(name, filePath, mimeType, password string, fileSize
 	}
 
 	_, err := db.conn.Exec(
-		`INSERT INTO nfs_shares (id, name, file_path, file_size, mime_type, max_views, views, password, expires_at, creator_ip)
-		 VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-		id, name, filePath, fileSize, mimeType, maxViews, password, expiresAtVal, creatorIP,
+		`INSERT INTO nfs_shares (id, name, file_path, file_size, mime_type, max_views, views, password, record_enabled, expires_at, creator_ip)
+		 VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+		id, name, filePath, fileSize, mimeType, maxViews, password, recordEnabled, expiresAtVal, creatorIP,
 	)
 	if err != nil {
 		return nil, err
@@ -101,9 +107,9 @@ func (db *DB) GetNFSShare(id string) (*NFSShare, error) {
 	s := &NFSShare{}
 	var expiresAt sql.NullTime
 	err := db.conn.QueryRow(
-		`SELECT id, name, file_path, file_size, mime_type, max_views, views, password, watch_enabled, expires_at, created_at, creator_ip
+		`SELECT id, name, file_path, file_size, mime_type, max_views, views, password, watch_enabled, record_enabled, expires_at, created_at, creator_ip
 		 FROM nfs_shares WHERE id = ?`, id,
-	).Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.Password, &s.WatchEnabled, &expiresAt, &s.CreatedAt, &s.CreatorIP)
+	).Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.Password, &s.WatchEnabled, &s.RecordEnabled, &expiresAt, &s.CreatedAt, &s.CreatorIP)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +132,22 @@ func (db *DB) AddNFSShareLog(shareID, clientIP, userAgent, status string, bytesS
 		shareID, clientIP, userAgent, status, bytesSent,
 	)
 	return err
+}
+
+// SetNFSShareLogAudio 为已有日志记录设置录音文件路径
+func (db *DB) SetNFSShareLogAudio(logID int64, audioURL string) error {
+	_, err := db.conn.Exec(`UPDATE nfs_share_logs SET audio_url = ? WHERE id = ?`, audioURL, logID)
+	return err
+}
+
+// LastNFSShareLogID 返回最近插入的日志 ID（用于关联录音）
+func (db *DB) LastNFSShareLogID(shareID, clientIP string) int64 {
+	var id int64
+	db.conn.QueryRow(
+		`SELECT id FROM nfs_share_logs WHERE share_id = ? AND client_ip = ? ORDER BY accessed_at DESC LIMIT 1`,
+		shareID, clientIP,
+	).Scan(&id)
+	return id
 }
 
 // GetAllNFSShares 分页获取所有分享（管理员用）
@@ -163,7 +185,7 @@ func (db *DB) GetAllNFSShares(page, pageSize int) ([]NFSShare, int, error) {
 func (db *DB) GetNFSShareLogs(shareID string, page, pageSize int) ([]NFSShareLog, int, error) {
 	offset := (page - 1) * pageSize
 	rows, err := db.conn.Query(
-		`SELECT id, share_id, client_ip, user_agent, status, bytes_sent, accessed_at
+		`SELECT id, share_id, client_ip, user_agent, status, bytes_sent, audio_url, accessed_at
 		 FROM nfs_share_logs WHERE share_id = ? ORDER BY accessed_at DESC LIMIT ? OFFSET ?`,
 		shareID, pageSize, offset,
 	)
@@ -175,7 +197,7 @@ func (db *DB) GetNFSShareLogs(shareID string, page, pageSize int) ([]NFSShareLog
 	var logs []NFSShareLog
 	for rows.Next() {
 		var l NFSShareLog
-		if err := rows.Scan(&l.ID, &l.ShareID, &l.ClientIP, &l.UserAgent, &l.Status, &l.BytesSent, &l.AccessedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.ShareID, &l.ClientIP, &l.UserAgent, &l.Status, &l.BytesSent, &l.AudioURL, &l.AccessedAt); err != nil {
 			continue
 		}
 		logs = append(logs, l)
@@ -195,15 +217,15 @@ func (db *DB) DeleteNFSShare(id string) error {
 	return err
 }
 
-// UpdateNFSShare 更新分享的访问次数上限、过期时间与一起看开关
-func (db *DB) UpdateNFSShare(id string, maxViews int, expiresAt *time.Time, watchEnabled bool) error {
+// UpdateNFSShare 更新分享的访问次数上限、过期时间与开关
+func (db *DB) UpdateNFSShare(id string, maxViews int, expiresAt *time.Time, watchEnabled, recordEnabled bool) error {
 	var expiresAtVal interface{}
 	if expiresAt != nil {
 		expiresAtVal = *expiresAt
 	}
 	_, err := db.conn.Exec(
-		`UPDATE nfs_shares SET max_views = ?, expires_at = ?, watch_enabled = ? WHERE id = ?`,
-		maxViews, expiresAtVal, watchEnabled, id,
+		`UPDATE nfs_shares SET max_views = ?, expires_at = ?, watch_enabled = ?, record_enabled = ? WHERE id = ?`,
+		maxViews, expiresAtVal, watchEnabled, recordEnabled, id,
 	)
 	return err
 }
@@ -234,6 +256,7 @@ func (db *DB) ActiveUploadFilenames() (map[string]struct{}, error) {
 }
 
 // CleanExpiredNFSShares 清理已过期或已耗尽访问次数的分享
+// 有录音的日志永久保留，不随分享删除
 func (db *DB) CleanExpiredNFSShares() (int, error) {
 	rows, err := db.conn.Query(`
 		SELECT id FROM nfs_shares
@@ -252,7 +275,8 @@ func (db *DB) CleanExpiredNFSShares() (int, error) {
 	rows.Close()
 
 	for _, id := range ids {
-		db.conn.Exec(`DELETE FROM nfs_share_logs WHERE share_id = ?`, id)
+		// 只删除没有录音的日志，有录音的永久保留
+		db.conn.Exec(`DELETE FROM nfs_share_logs WHERE share_id = ? AND (audio_url IS NULL OR audio_url = '')`, id)
 		db.conn.Exec(`DELETE FROM nfs_shares WHERE id = ?`, id)
 	}
 	return len(ids), nil
