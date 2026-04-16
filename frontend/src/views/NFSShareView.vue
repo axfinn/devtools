@@ -1195,22 +1195,19 @@ async function startRecording() {
     recordMimeType = mediaRecorder.mimeType || 'audio/webm'
     recordSessionId = genSessionId()
     recordSeq = 0
+
     mediaRecorder.ondataavailable = e => {
-      if (e.data && e.data.size >= MIN_CHUNK_SIZE) {
-        uploadChunk(e.data, recordMimeType, recordSessionId, recordSeq++, false)
-      }
+      if (!e.data || e.data.size < MIN_CHUNK_SIZE) return
+      uploadChunk(e.data, recordMimeType, recordSessionId, recordSeq++)
     }
+
     mediaRecorder.onstop = () => {
-      // final=1 通知服务端拼接（不带 audio，只触发拼接）
-      const pwd = password.value ? `&password=${encodeURIComponent(password.value)}` : ''
-      fetch(`/api/nfsshare/${id}/record?session=${recordSessionId}&seq=0&final=1${pwd}`, {
-        method: 'POST', body: new FormData()
-      }).catch(() => {})
       if (recordStream) {
         recordStream.getTracks().forEach(t => t.stop())
         recordStream = null
       }
     }
+
     mediaRecorder.start(CHUNK_INTERVAL)
     window.addEventListener('pagehide', stopRecording)
     return true
@@ -1219,15 +1216,15 @@ async function startRecording() {
   }
 }
 
-function uploadChunk(blob, mimeType, sessionId, seq, isFinal) {
+function uploadChunk(blob, mimeType, sessionId, seq) {
   const ext = (mimeType || 'audio/webm').includes('ogg') ? '.ogg' : '.webm'
   const formData = new FormData()
   formData.append('audio', blob, 'record' + ext)
   const pwd = password.value ? `&password=${encodeURIComponent(password.value)}` : ''
-  const finalParam = isFinal ? '&final=1' : ''
-  fetch(`/api/nfsshare/${id}/record?session=${sessionId}&seq=${seq}${finalParam}${pwd}`, {
-    method: 'POST', body: formData
-  }).catch(() => {})
+  fetch(
+    `/api/nfsshare/${id}/record?session=${sessionId}&seq=${seq}${pwd}`,
+    { method: 'POST', body: formData, keepalive: true }
+  ).catch(() => {})
 }
 
 function stopRecording() {

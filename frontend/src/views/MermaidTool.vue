@@ -40,6 +40,10 @@
           <el-icon><Download /></el-icon>
           导出 SVG
         </el-button>
+        <el-button type="warning" @click="shareDiagram">
+          <el-icon><Share /></el-icon>
+          分享
+        </el-button>
         <el-button @click="copyCode">
           <el-icon><CopyDocument /></el-icon>
           复制代码
@@ -1126,6 +1130,12 @@ const exportPng = async () => {
     const serializer = new XMLSerializer()
     let svgString = serializer.serializeToString(clonedSvg)
 
+    // 移除所有外部 URL 引用（@font-face、url(http...)），防止 canvas 被污染
+    svgString = svgString.replace(/@font-face\s*\{[^}]*\}/g, '')
+    svgString = svgString.replace(/url\(['"]?https?:\/\/[^'")\s]+['"]?\)/g, 'none')
+    // 移除 <style> 块中残留的空规则
+    svgString = svgString.replace(/<style[^>]*>\s*<\/style>/g, '')
+
     // 创建 Blob URL（更可靠）
     const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(svgBlob)
@@ -1238,6 +1248,30 @@ const exportSvg = () => {
   }
 }
 
+// 分享图表（生成短链）
+const shareDiagram = async () => {
+  if (!code.value.trim()) {
+    ElMessage.warning('没有可分享的图表')
+    return
+  }
+  try {
+    const encoded = btoa(unescape(encodeURIComponent(code.value)))
+    const longUrl = `${location.origin}/mermaid?share=${encoded}`
+    const res = await fetch('/api/shorturl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ original_url: longUrl })
+    })
+    if (!res.ok) throw new Error('短链创建失败')
+    const data = await res.json()
+    const shortUrl = data.short_url || `${location.origin}/s/${data.id}`
+    await navigator.clipboard.writeText(shortUrl)
+    ElMessage.success('分享链接已复制：' + shortUrl)
+  } catch (e) {
+    ElMessage.error('分享失败: ' + e.message)
+  }
+}
+
 // 复制代码
 const copyCode = async () => {
   if (!code.value) {
@@ -1265,7 +1299,18 @@ const copyCode = async () => {
 // 初始化
 onMounted(() => {
   initMermaid()
-  code.value = templates.flowchart
+  // 检查分享参数
+  const params = new URLSearchParams(location.search)
+  const shared = params.get('share')
+  if (shared) {
+    try {
+      code.value = decodeURIComponent(escape(atob(shared)))
+    } catch {
+      code.value = templates.flowchart
+    }
+  } else {
+    code.value = templates.flowchart
+  }
   render()
   loadProjects()
 })

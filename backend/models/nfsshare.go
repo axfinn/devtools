@@ -167,7 +167,7 @@ func (db *DB) LastNFSShareLogID(shareID, clientIP string) int64 {
 func (db *DB) GetAllNFSShares(page, pageSize int) ([]NFSShare, int, error) {
 	offset := (page - 1) * pageSize
 	rows, err := db.conn.Query(
-		`SELECT id, name, file_path, file_size, mime_type, max_views, views, expires_at, created_at, creator_ip
+		`SELECT id, name, file_path, file_size, mime_type, max_views, views, watch_enabled, record_enabled, expires_at, created_at, creator_ip
 		 FROM nfs_shares ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		pageSize, offset,
 	)
@@ -180,7 +180,7 @@ func (db *DB) GetAllNFSShares(page, pageSize int) ([]NFSShare, int, error) {
 	for rows.Next() {
 		var s NFSShare
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &expiresAt, &s.CreatedAt, &s.CreatorIP); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.WatchEnabled, &s.RecordEnabled, &expiresAt, &s.CreatedAt, &s.CreatorIP); err != nil {
 			continue
 		}
 		if expiresAt.Valid {

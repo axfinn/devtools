@@ -194,13 +194,24 @@ type hlsJob struct {
 
 // NFSShareHandler NFS/SMB 文件分享处理器
 type NFSShareHandler struct {
-	db         *models.DB
-	cfg        config.NFSShareConfig
-	mounts     map[string]*MountStatus
-	mu         sync.RWMutex
-	hlsJobs    sync.Map // key: shareID, value: *hlsJob
-	watchRooms sync.Map // key: shareID, value: *watchRoom
+	db           *models.DB
+	cfg          config.NFSShareConfig
+	mounts       map[string]*MountStatus
+	mu           sync.RWMutex
+	hlsJobs      sync.Map // key: shareID, value: *hlsJob
+	watchRooms   sync.Map // key: shareID, value: *watchRoom
+	recordSessions sync.Map // key: shareID+"/"+sessionID, value: *recordSession
 }
+
+type recordSession struct {
+	shareID  string
+	sessionID string
+	clientIP string
+	timer    *time.Timer
+	mu       sync.Mutex
+}
+
+const recordIdleTimeout = 10 * time.Second
 
 // NewNFSShareHandler 创建 Handler 并初始化所有挂载点
 func NewNFSShareHandler(db *models.DB, cfg config.NFSShareConfig) *NFSShareHandler {
@@ -990,8 +1001,8 @@ func (h *NFSShareHandler) AdminGetLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"logs": logs, "total": total, "page": page, "page_size": pageSize})
 }
 
-// UploadRecord POST /api/nfsshare/:id/record?password=xxx&session=xxx&seq=N&final=1
-// 访客上传录音分片，final=1 时触发服务端拼接
+// UploadRecord POST /api/nfsshare/:id/record?password=xxx&session=xxx&seq=N
+// 访客上传录音分片，10 秒无新分片自动触发服务端拼接
 func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -1018,36 +1029,23 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 session"})
 		return
 	}
-	// 防路径穿越
-	sessionID = filepath.Base(sessionID)
+	sessionID = filepath.Base(sessionID) // 防路径穿越
 
 	seqStr := c.Query("seq")
 	seq, _ := strconv.Atoi(seqStr)
-	isFinal := c.Query("final") == "1"
+	clientIP := c.ClientIP()
 
 	file, header, err := c.Request.FormFile("audio")
-	if err != nil {
-		// final=1 且无 audio 时，只触发拼接
-		if isFinal {
-			go h.finalizeRecording(id, sessionID, c.ClientIP())
-			c.JSON(http.StatusOK, gin.H{"ok": true})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 audio 文件"})
+	if err != nil || header.Size < 1024 {
+		// 静音或无 audio：只重置定时器
+		h.touchRecordSession(id, sessionID, clientIP)
+		c.JSON(http.StatusOK, gin.H{"ok": true, "skipped": true})
 		return
 	}
 	defer file.Close()
 
 	if header.Size > 10*1024*1024 {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "分片超过 10MB"})
-		return
-	}
-	// 静音分片过滤：小于 1KB 的分片认为无声音，丢弃
-	if header.Size < 1024 {
-		if isFinal {
-			go h.finalizeRecording(id, sessionID, c.ClientIP())
-		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "skipped": true})
 		return
 	}
 
@@ -1072,10 +1070,42 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 		return
 	}
 
-	if isFinal {
-		go h.finalizeRecording(id, sessionID, c.ClientIP())
-	}
+	// 每次收到有效 chunk，重置 10s 空闲定时器
+	h.touchRecordSession(id, sessionID, clientIP)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// touchRecordSession 重置（或创建）session 的空闲定时器
+func (h *NFSShareHandler) touchRecordSession(shareID, sessionID, clientIP string) {
+	key := shareID + "/" + sessionID
+	val, loaded := h.recordSessions.Load(key)
+	if loaded {
+		sess := val.(*recordSession)
+		sess.mu.Lock()
+		sess.timer.Reset(recordIdleTimeout)
+		sess.mu.Unlock()
+		return
+	}
+	sess := &recordSession{
+		shareID:   shareID,
+		sessionID: sessionID,
+		clientIP:  clientIP,
+	}
+	sess.timer = time.AfterFunc(recordIdleTimeout, func() {
+		h.recordSessions.Delete(key)
+		h.finalizeRecording(shareID, sessionID, clientIP)
+	})
+	// 防止并发重复创建
+	if _, existed := h.recordSessions.LoadOrStore(key, sess); existed {
+		sess.timer.Stop()
+		// 已有 session，重置它
+		if v, ok := h.recordSessions.Load(key); ok {
+			s := v.(*recordSession)
+			s.mu.Lock()
+			s.timer.Reset(recordIdleTimeout)
+			s.mu.Unlock()
+		}
+	}
 }
 
 // finalizeRecording 拼接同一 session 的所有分片为一个文件，关联到访问日志
