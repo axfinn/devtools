@@ -194,8 +194,8 @@ fetch('/api/console/settings').then(r => r.json()).then(d => {
 // 主题管理
 const { themeMode, currentTheme, setThemeMode, toggleTheme } = useTheme()
 
-// 是否隐藏侧边栏（全屏模式）
-const hideSidebar = computed(() => route.meta?.hideSidebar === true)
+// 是否隐藏侧边栏（全屏模式，或分享预览页）
+const hideSidebar = computed(() => route.meta?.hideSidebar === true || !!route.query.share)
 
 // 当前页面标题
 const currentTitle = computed(() => {

@@ -434,6 +434,11 @@ async function loadProjectData(id) {
     const vData = await vRes.json()
     messages.value = mData.messages || []
     versions.value = vData.versions || []
+    // 加载最新版本代码到编辑器
+    if (versions.value.length > 0) {
+      code.value = versions.value[0].code
+      render()
+    }
     await nextTick()
     scrollMessagesToBottom()
   } catch {}
