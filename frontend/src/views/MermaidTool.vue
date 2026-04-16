@@ -152,14 +152,19 @@
       </div>
 
       <!-- 右侧边栏 -->
-      <div class="right-sidebar">
+      <div :class="['right-sidebar', sidebarCollapsed && 'sidebar-collapsed']">
         <div class="sidebar-tabs">
-          <button :class="['sidebar-tab', sidebarTab === 'ai' && 'active']" @click="sidebarTab = 'ai'">AI 对话</button>
-          <button :class="['sidebar-tab', sidebarTab === 'versions' && 'active']" @click="sidebarTab = 'versions'">版本历史</button>
+          <template v-if="!sidebarCollapsed">
+            <button :class="['sidebar-tab', sidebarTab === 'ai' && 'active']" @click="sidebarTab = 'ai'">AI 对话</button>
+            <button :class="['sidebar-tab', sidebarTab === 'versions' && 'active']" @click="sidebarTab = 'versions'">版本历史</button>
+          </template>
+          <button class="sidebar-collapse-btn" @click="sidebarCollapsed = !sidebarCollapsed" :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'">
+            <el-icon><ArrowRight v-if="sidebarCollapsed" /><ArrowLeft v-else /></el-icon>
+          </button>
         </div>
 
         <!-- AI 对话 tab -->
-        <div v-if="sidebarTab === 'ai'" class="sidebar-content">
+        <div v-if="!sidebarCollapsed && sidebarTab === 'ai'" class="sidebar-content">
           <!-- 档案选择 -->
           <div class="project-bar">
             <el-select
@@ -227,7 +232,7 @@
         </div>
 
         <!-- 版本历史 tab -->
-        <div v-if="sidebarTab === 'versions'" class="sidebar-content">
+        <div v-if="!sidebarCollapsed && sidebarTab === 'versions'" class="sidebar-content">
           <div class="versions-toolbar">
             <el-button
               size="small"
@@ -353,6 +358,7 @@ async function verifyAndSave(pwd) {
 
 // ─── AI / 档案 / 版本 状态 ────────────────────────────────────
 const sidebarTab = ref('ai')
+const sidebarCollapsed = ref(false)
 const projects = ref([])
 const currentProjectId = ref(null)
 const messages = ref([])
@@ -1701,11 +1707,43 @@ watch(theme, () => {
   min-height: 500px;
 }
 
-.sidebar-tabs {
+.sidebar-collapse-btn {
+  margin-left: auto;
+  padding: 0 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
   display: flex;
-  border-bottom: 1px solid var(--border-base);
+  align-items: center;
+  font-size: 14px;
   flex-shrink: 0;
+
+  &:hover {
+    color: var(--primary);
+  }
 }
+
+.right-sidebar.sidebar-collapsed {
+  width: 36px;
+  min-height: unset;
+
+  .sidebar-tabs {
+    flex-direction: column;
+    border-bottom: none;
+    border-right: 1px solid var(--border-base);
+    height: 100%;
+  }
+
+  .sidebar-collapse-btn {
+    margin-left: 0;
+    padding: 10px 0;
+    justify-content: center;
+    width: 100%;
+  }
+}
+
+
 
 .sidebar-tab {
   flex: 1;
