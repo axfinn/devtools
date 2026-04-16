@@ -271,6 +271,14 @@ func (db *DB) CreateShortURLFromStruct(shortURL *ShortURL) error {
 	return err
 }
 
+// UpdateShortURL updates url, max_clicks, expires_at of a short URL
+func (db *DB) UpdateShortURL(s *ShortURL) error {
+	_, err := db.conn.Exec(
+		"UPDATE short_urls SET original_url=?, max_clicks=?, expires_at=? WHERE id=?",
+		s.OriginalURL, s.MaxClicks, s.ExpiresAt, s.ID)
+	return err
+}
+
 // UpdateShortURLExpires updates the expiration time of a short URL
 func (db *DB) UpdateShortURLExpires(id string, expiresAt *time.Time) error {
 	_, err := db.conn.Exec("UPDATE short_urls SET expires_at = ? WHERE id = ?", expiresAt, id)

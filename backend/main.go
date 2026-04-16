@@ -483,6 +483,8 @@ func main() {
 			shorturl.POST("", createRateLimiter.Middleware(), shortURLHandler.Create)
 			shorturl.GET("/list", shortURLHandler.List)
 			shorturl.GET("/:id/stats", shortURLHandler.GetStats)
+			shorturl.PUT("/:id", shortURLHandler.Update)
+			shorturl.DELETE("/:id", shortURLHandler.Delete)
 		}
 
 		// Mock API

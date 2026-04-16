@@ -1796,7 +1796,8 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
     "storage",
     "proxy",
     "webRequest",
-    "webRequestAuthProvider"
+    "webRequestAuthProvider",
+    "alarms"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -1894,12 +1895,21 @@ function loadAndApply() {
   });
 }
 
+// 启动时立即用默认值同步设置代理，避免 storage 异步导致新标签页第一个请求走直连
+applyProxy(DEFAULT_SERVER, 'global');
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true, mode: 'global' });
   loadAndApply();
 });
 chrome.runtime.onStartup.addListener(loadAndApply);
 loadAndApply();
+
+// MV3 service worker 会被 Chrome 休眠，用 alarm 每25秒唤醒一次保持代理设置
+chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepAlive') loadAndApply();
+});
 
 // 自动填充代理认证
 chrome.webRequest.onAuthRequired.addListener(

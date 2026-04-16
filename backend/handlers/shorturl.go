@@ -253,6 +253,86 @@ func (h *ShortURLHandler) GetStats(c *gin.Context) {
 	})
 }
 
+// Update handles PUT /api/shorturl/:id
+func (h *ShortURLHandler) Update(c *gin.Context) {
+	if h.password == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "未配置管理密码"})
+		return
+	}
+	password := c.Query("password")
+	if password != h.password {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return
+	}
+
+	id := c.Param("id")
+	var req struct {
+		OriginalURL string `json:"original_url"`
+		MaxClicks   *int   `json:"max_clicks"`
+		ExpiresIn   *int   `json:"expires_in"`   // 续期小时数（正数延期，0=立即失效）
+		Invalidate  bool   `json:"invalidate"`   // true=立即失效
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	shortURL, err := h.db.GetShortURL(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "短链不存在"})
+		return
+	}
+
+	if req.OriginalURL != "" {
+		if err := validateURL(req.OriginalURL); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		shortURL.OriginalURL = req.OriginalURL
+	}
+
+	if req.MaxClicks != nil {
+		mc := *req.MaxClicks
+		if mc < 1 { mc = 1 }
+		if mc > 100000 { mc = 100000 }
+		shortURL.MaxClicks = mc
+	}
+
+	if req.Invalidate {
+		past := time.Now().Add(-time.Second)
+		shortURL.ExpiresAt = &past
+	} else if req.ExpiresIn != nil {
+		t := time.Now().Add(time.Duration(*req.ExpiresIn) * time.Hour)
+		shortURL.ExpiresAt = &t
+	}
+
+	if err := h.db.UpdateShortURL(shortURL); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, shortURL)
+}
+
+// Delete handles DELETE /api/shorturl/:id
+func (h *ShortURLHandler) Delete(c *gin.Context) {
+	if h.password == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "未配置管理密码"})
+		return
+	}
+	password := c.Query("password")
+	if password != h.password {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误"})
+		return
+	}
+	id := c.Param("id")
+	if err := h.db.DeleteShortURL(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // List handles GET /api/shorturl/list?password=xxx
 func (h *ShortURLHandler) List(c *gin.Context) {
 	// 需要密码验证

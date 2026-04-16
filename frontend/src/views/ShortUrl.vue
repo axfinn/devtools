@@ -280,17 +280,21 @@
         <el-table-column prop="original_url" label="原始URL" show-overflow-tooltip />
         <el-table-column prop="clicks" label="点击" width="80" align="center">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.clicks }}</el-tag>
+            <el-tag size="small">{{ row.clicks }} / {{ row.max_clicks }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="expires_at" label="过期时间" width="160">
           <template #default="{ row }">
-            {{ formatDateTime(row.expires_at) }}
+            <span :style="isExpired(row.expires_at) ? 'color:var(--el-color-danger)' : ''">
+              {{ formatDateTime(row.expires_at) }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80" align="center">
+        <el-table-column label="操作" width="140" align="center">
           <template #default="{ row }">
             <el-button link size="small" @click="copyLink(row.id)">复制</el-button>
+            <el-button link size="small" type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link size="small" type="danger" @click="deleteUrl(row.id)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -298,11 +302,37 @@
       <div v-else class="empty-text">输入密码后点击加载</div>
     </el-card>
   </div>
+
+  <!-- 编辑对话框 -->
+  <el-dialog v-model="editDialogVisible" title="编辑短链" width="480px">
+    <el-form :model="editForm" label-width="110px">
+      <el-form-item label="原始 URL">
+        <el-input v-model="editForm.original_url" clearable />
+      </el-form-item>
+      <el-form-item label="最大点击数">
+        <el-input-number v-model="editForm.max_clicks" :min="1" :max="100000" :step="100" style="width:100%" />
+      </el-form-item>
+      <el-form-item label="续期">
+        <el-select v-model="editForm.expires_in_preset" style="width:100%" @change="onPresetChange">
+          <el-option label="不修改" :value="null" />
+          <el-option label="1 天" :value="24" />
+          <el-option label="7 天" :value="168" />
+          <el-option label="30 天" :value="720" />
+          <el-option label="1 年" :value="8760" />
+          <el-option label="立即失效" :value="0" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="editDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="submitEdit" :loading="editLoading">保存</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
 import { ref, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Link, DocumentCopy, Refresh, Plus, Right, Lock, Edit } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
 
@@ -544,6 +574,81 @@ const copyLink = async (id) => {
     ElMessage.success('已复制')
   } catch {
     ElMessage.warning('复制失败')
+  }
+}
+
+// 判断是否已过期
+const isExpired = (dateStr) => {
+  if (!dateStr) return false
+  return new Date(dateStr) < new Date()
+}
+
+// 编辑
+const editDialogVisible = ref(false)
+const editLoading = ref(false)
+const editForm = ref({ id: '', original_url: '', max_clicks: 1000, expires_in_preset: null, invalidate: false })
+
+const onPresetChange = (val) => {
+  editForm.value.invalidate = val === 0
+}
+
+const openEdit = (row) => {
+  editForm.value = {
+    id: row.id,
+    original_url: row.original_url,
+    max_clicks: row.max_clicks,
+    expires_in_preset: null,
+    invalidate: false
+  }
+  editDialogVisible.value = true
+}
+
+const submitEdit = async () => {
+  editLoading.value = true
+  try {
+    const body = {
+      original_url: editForm.value.original_url,
+      max_clicks: editForm.value.max_clicks,
+    }
+    if (editForm.value.invalidate) {
+      body.invalidate = true
+    } else if (editForm.value.expires_in_preset) {
+      body.expires_in = editForm.value.expires_in_preset
+    }
+    const res = await fetch(`/api/shorturl/${editForm.value.id}?password=${encodeURIComponent(listPassword.value)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '更新失败')
+    // 更新列表中的数据
+    const idx = urlList.value.findIndex(u => u.id === editForm.value.id)
+    if (idx !== -1) urlList.value[idx] = data
+    editDialogVisible.value = false
+    ElMessage.success('已更新')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    editLoading.value = false
+  }
+}
+
+// 删除
+const deleteUrl = async (id) => {
+  try {
+    await ElMessageBox.confirm(`确认删除短链 ${id}？`, '删除', { type: 'warning' })
+  } catch { return }
+  try {
+    const res = await fetch(`/api/shorturl/${id}?password=${encodeURIComponent(listPassword.value)}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const d = await res.json()
+      throw new Error(d.error || '删除失败')
+    }
+    urlList.value = urlList.value.filter(u => u.id !== id)
+    ElMessage.success('已删除')
+  } catch (e) {
+    ElMessage.error(e.message)
   }
 }
 </script>
