@@ -1330,7 +1330,9 @@ const shareDiagram = async () => {
   }
   try {
     const encoded = btoa(unescape(encodeURIComponent(code.value)))
-    const longUrl = `${location.origin}/mermaid?share=${encoded}`
+    // 强制 https（反代场景下 location.protocol 可能是 http）
+    const origin = location.origin.replace(/^http:\/\//, 'https://')
+    const longUrl = `${origin}/mermaid?share=${encoded}`
     const res = await fetch('/api/shorturl', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1338,7 +1340,7 @@ const shareDiagram = async () => {
     })
     if (!res.ok) throw new Error('短链创建失败')
     const data = await res.json()
-    const shortUrl = data.short_url || `${location.origin}/s/${data.id}`
+    const shortUrl = (data.short_url || `${origin}/s/${data.id}`).replace(/^http:\/\//, 'https://')
     await navigator.clipboard.writeText(shortUrl)
     ElMessage.success('分享链接已复制：' + shortUrl)
   } catch (e) {
