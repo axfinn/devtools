@@ -1330,25 +1330,33 @@ const exportSvg = () => {
   }
 }
 
-// 分享图表（生成短链）
+// 分享图表（存 paste，生成短链）
 const shareDiagram = async () => {
   if (!code.value.trim()) {
     ElMessage.warning('没有可分享的图表')
     return
   }
   try {
-    const encoded = btoa(unescape(encodeURIComponent(code.value)))
-    // 强制 https（反代场景下 location.protocol 可能是 http）
+    // 1. 存到 paste
+    const pasteRes = await fetch('/api/paste', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: code.value, title: 'Mermaid Share', expires_in: 168 })
+    })
+    if (!pasteRes.ok) throw new Error('内容保存失败')
+    const pasteData = await pasteRes.json()
+
+    // 2. 生成长链并创建短链
     const origin = location.origin.replace(/^http:\/\//, 'https://')
-    const longUrl = `${origin}/mermaid?share=${encoded}`
-    const res = await fetch('/api/shorturl', {
+    const longUrl = `${origin}/mermaid?paste=${pasteData.id}`
+    const shortRes = await fetch('/api/shorturl', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ original_url: longUrl })
     })
-    if (!res.ok) throw new Error('短链创建失败')
-    const data = await res.json()
-    const shortUrl = (data.short_url || `${origin}/s/${data.id}`).replace(/^http:\/\//, 'https://')
+    if (!shortRes.ok) throw new Error('短链创建失败')
+    const shortData = await shortRes.json()
+    const shortUrl = (shortData.short_url || `${origin}/s/${shortData.id}`).replace(/^http:\/\//, 'https://')
     await navigator.clipboard.writeText(shortUrl)
     ElMessage.success('分享链接已复制：' + shortUrl)
   } catch (e) {
@@ -1385,9 +1393,22 @@ const isShareMode = ref(false)
 const shareCodeCollapsed = ref(true)
 
 // 分享模式初始化
-const initShareMode = () => {
-  const shared = route.query.share
-  if (shared) {
+const initShareMode = async () => {
+  const pasteId = route.query.paste
+  const shared = route.query.share  // 兼容旧链接
+  if (pasteId) {
+    try {
+      const res = await fetch(`/api/paste/${pasteId}`)
+      if (!res.ok) throw new Error('内容已过期或不存在')
+      const data = await res.json()
+      code.value = data.content
+      isShareMode.value = true
+    } catch {
+      ElMessage.error('分享内容已过期或不存在')
+      isShareMode.value = false
+      if (!code.value) code.value = templates.flowchart
+    }
+  } else if (shared) {
     try {
       code.value = decodeURIComponent(escape(atob(shared)))
       isShareMode.value = true
@@ -1403,15 +1424,17 @@ const initShareMode = () => {
 }
 
 // 初始化
-onMounted(() => {
+onMounted(async () => {
   initMermaid()
-  initShareMode()
+  await initShareMode()
   if (!isShareMode.value) loadProjects()
 })
 
 // keep-alive 重新激活时重新检查（从其他页面切回来时）
 onActivated(() => {
-  initShareMode()
+  if (route.query.paste || route.query.share) {
+    initShareMode()
+  }
 })
 
 // 监听主题变化
