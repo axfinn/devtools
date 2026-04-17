@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"devtools/config"
 	"devtools/models"
+	"devtools/state"
 	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +33,7 @@ func setupTestDB(t *testing.T) *models.DB {
 
 // 创建测试 Handler
 func setupTestHandler(db *models.DB) *PasteHandler {
-	return NewPasteHandler(db)
+	return NewPasteHandler(db, config.DefaultConfig(), state.NewMemoryStore())
 }
 
 // 创建 Gin 上下文
@@ -110,8 +112,8 @@ func TestPasteHandler_Create(t *testing.T) {
 			c := createTestContext(w)
 
 			body := map[string]interface{}{
-				"content":  tt.content,
-				"language": tt.language,
+				"content":    tt.content,
+				"language":   tt.language,
 				"expires_in": 24,
 			}
 			jsonBody, _ := json.Marshal(body)
@@ -172,13 +174,13 @@ func TestPasteHandler_Get(t *testing.T) {
 
 	// 创建一个测试 paste
 	paste := &models.Paste{
-		Content:     `console.log("Hello");`,
-		Title:       "Test",
-		Language:    "javascript",
-		ExpiresAt:   time.Now().Add(time.Hour),
-		MaxViews:    100,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   `console.log("Hello");`,
+		Title:     "Test",
+		Language:  "javascript",
+		ExpiresAt: time.Now().Add(time.Hour),
+		MaxViews:  100,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 	err := db.CreatePaste(paste)
 	if err != nil {
@@ -239,13 +241,13 @@ func TestPasteHandler_GetInfo(t *testing.T) {
 
 	// 创建一个测试 paste
 	paste := &models.Paste{
-		Content:     "Test content",
-		Title:       "Test",
-		Language:    "text",
-		ExpiresAt:   time.Now().Add(time.Hour),
-		MaxViews:    100,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   "Test content",
+		Title:     "Test",
+		Language:  "text",
+		ExpiresAt: time.Now().Add(time.Hour),
+		MaxViews:  100,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 	err := db.CreatePaste(paste)
 	if err != nil {
@@ -283,13 +285,13 @@ func TestPasteHandler_IncrementViews(t *testing.T) {
 
 	// 创建一个测试 paste
 	paste := &models.Paste{
-		Content:     "Test content",
-		Title:       "Test",
-		Language:    "text",
-		ExpiresAt:   time.Now().Add(time.Hour),
-		MaxViews:    100,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   "Test content",
+		Title:     "Test",
+		Language:  "text",
+		ExpiresAt: time.Now().Add(time.Hour),
+		MaxViews:  100,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 	err := db.CreatePaste(paste)
 	if err != nil {
@@ -324,13 +326,13 @@ func TestPasteHandler_Delete(t *testing.T) {
 
 	// 创建一个测试 paste
 	paste := &models.Paste{
-		Content:     "Test content",
-		Title:       "Test",
-		Language:    "text",
-		ExpiresAt:   time.Now().Add(time.Hour),
-		MaxViews:    100,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   "Test content",
+		Title:     "Test",
+		Language:  "text",
+		ExpiresAt: time.Now().Add(time.Hour),
+		MaxViews:  100,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 	err := db.CreatePaste(paste)
 	if err != nil {
@@ -453,14 +455,14 @@ func TestPasteHandler_PasswordProtection(t *testing.T) {
 	// Create a paste with password
 	password := "testpassword123"
 	paste := &models.Paste{
-		Content:     "Secret content",
-		Title:       "Password Protected",
-		Language:    "text",
-		Password:    "", // Will be set during creation
-		ExpiresAt:   time.Now().Add(time.Hour),
-		MaxViews:    100,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   "Secret content",
+		Title:     "Password Protected",
+		Language:  "text",
+		Password:  "", // Will be set during creation
+		ExpiresAt: time.Now().Add(time.Hour),
+		MaxViews:  100,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 
 	// Hash the password
@@ -648,13 +650,13 @@ func TestPasteHandler_Expiration(t *testing.T) {
 
 	// Create an expired paste
 	paste := &models.Paste{
-		Content:     "Expired content",
-		Title:       "Expired",
-		Language:    "text",
-		ExpiresAt:   time.Now().Add(-time.Hour), // Already expired
-		MaxViews:    100,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   "Expired content",
+		Title:     "Expired",
+		Language:  "text",
+		ExpiresAt: time.Now().Add(-time.Hour), // Already expired
+		MaxViews:  100,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 	err := db.CreatePaste(paste)
 	if err != nil {
@@ -688,13 +690,13 @@ func TestPasteHandler_MaxViews(t *testing.T) {
 
 	// Create a paste with max views = 1
 	paste := &models.Paste{
-		Content:     "Limited views",
-		Title:       "Limited",
-		Language:    "text",
-		ExpiresAt:   time.Now().Add(time.Hour),
-		MaxViews:    1,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   "Limited views",
+		Title:     "Limited",
+		Language:  "text",
+		ExpiresAt: time.Now().Add(time.Hour),
+		MaxViews:  1,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 	err := db.CreatePaste(paste)
 	if err != nil {
@@ -810,13 +812,13 @@ func TestPasteHandler_GetStats(t *testing.T) {
 
 	// Create a test paste
 	paste := &models.Paste{
-		Content:     "Test content",
-		Title:       "Test",
-		Language:    "text",
-		ExpiresAt:   time.Now().Add(time.Hour),
-		MaxViews:    100,
-		Views:       0,
-		CreatorIP:   "127.0.0.1",
+		Content:   "Test content",
+		Title:     "Test",
+		Language:  "text",
+		ExpiresAt: time.Now().Add(time.Hour),
+		MaxViews:  100,
+		Views:     0,
+		CreatorIP: "127.0.0.1",
 	}
 	db.CreatePaste(paste)
 
@@ -913,31 +915,31 @@ func TestPasteHandler_SearchPastes(t *testing.T) {
 	// Create test pastes
 	pastes := []*models.Paste{
 		{
-			Content:     "JavaScript code here",
-			Title:       "JS Example",
-			Language:    "javascript",
-			ExpiresAt:   time.Now().Add(time.Hour),
-			MaxViews:    100,
-			Views:       0,
-			CreatorIP:   "127.0.0.1",
+			Content:   "JavaScript code here",
+			Title:     "JS Example",
+			Language:  "javascript",
+			ExpiresAt: time.Now().Add(time.Hour),
+			MaxViews:  100,
+			Views:     0,
+			CreatorIP: "127.0.0.1",
 		},
 		{
-			Content:     "Python code here",
-			Title:       "Python Example",
-			Language:    "python",
-			ExpiresAt:   time.Now().Add(time.Hour),
-			MaxViews:    100,
-			Views:       0,
-			CreatorIP:   "127.0.0.1",
+			Content:   "Python code here",
+			Title:     "Python Example",
+			Language:  "python",
+			ExpiresAt: time.Now().Add(time.Hour),
+			MaxViews:  100,
+			Views:     0,
+			CreatorIP: "127.0.0.1",
 		},
 		{
-			Content:     "Go code here",
-			Title:       "Go Example",
-			Language:    "go",
-			ExpiresAt:   time.Now().Add(time.Hour),
-			MaxViews:    100,
-			Views:       0,
-			CreatorIP:   "127.0.0.1",
+			Content:   "Go code here",
+			Title:     "Go Example",
+			Language:  "go",
+			ExpiresAt: time.Now().Add(time.Hour),
+			MaxViews:  100,
+			Views:     0,
+			CreatorIP: "127.0.0.1",
 		},
 	}
 
@@ -971,9 +973,9 @@ func TestPasteHandler_SearchPastes(t *testing.T) {
 // TestPasteHandler_FileCategoryInfo tests file category info
 func TestPasteHandler_FileCategoryInfo(t *testing.T) {
 	tests := []struct {
-		mimeType   string
-		wantCat    string
-		wantIcon   string
+		mimeType string
+		wantCat  string
+		wantIcon string
 	}{
 		{"image/jpeg", "image", "🖼️"},
 		{"video/mp4", "video", "🎬"},

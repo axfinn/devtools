@@ -361,8 +361,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import mermaid from 'mermaid'
 import { API_BASE } from '../api'
+import { getMermaid } from '../utils/vendor-loaders'
 
 // ===== 状态 =====
 const title = ref('新建思维导图')
@@ -713,7 +713,7 @@ function syncCodeFromVisual() {
 async function renderFromCode() {
   if (!mermaidCode.value.trim()) return
   try {
-    mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' })
+    const mermaid = await getMermaid({ theme: 'default' })
     const id = `mm-${Date.now()}`
     const { svg } = await mermaid.render(id, mermaidCode.value)
     codeSvg.value = svg
@@ -1038,7 +1038,6 @@ function onKeyDown(e) {
 }
 
 onMounted(() => {
-  mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' })
   loadFromURL()
   document.addEventListener('keydown', onKeyDown)
   // 响应式画布尺寸

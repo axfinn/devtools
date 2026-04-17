@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -11,6 +12,7 @@ import (
 type Config struct {
 	Server              ServerConfig              `yaml:"server"`
 	Database            DatabaseConfig            `yaml:"database"`
+	Redis               RedisConfig               `yaml:"redis"`
 	Security            SecurityConfig            `yaml:"security"`
 	RateLimit           RateLimitConfig           `yaml:"rate_limit"`
 	Limits              LimitsConfig              `yaml:"limits"`
@@ -136,6 +138,17 @@ type ServerConfig struct {
 type DatabaseConfig struct {
 	Path           string `yaml:"path"`            // 数据库文件路径
 	MaxConnections int    `yaml:"max_connections"` // 最大连接数
+}
+
+// RedisConfig Redis 配置
+type RedisConfig struct {
+	Enabled             bool   `yaml:"enabled"`                // 是否启用 Redis 瞬时状态存储
+	Addr                string `yaml:"addr"`                   // Redis 地址，如 redis:6379
+	Password            string `yaml:"password"`               // Redis 密码
+	DB                  int    `yaml:"db"`                     // Redis DB
+	KeyPrefix           string `yaml:"key_prefix"`             // Redis key 前缀
+	ImageTaskTTLHours   int    `yaml:"image_task_ttl_hours"`   // 图像任务保留时长
+	ChunkUploadTTLHours int    `yaml:"chunk_upload_ttl_hours"` // 分片上传状态保留时长
 }
 
 // SecurityConfig 安全配置
@@ -349,6 +362,14 @@ func DefaultConfig() *Config {
 			Path:           "./data/paste.db",
 			MaxConnections: 10,
 		},
+		Redis: RedisConfig{
+			Enabled:             false,
+			Addr:                "127.0.0.1:6379",
+			DB:                  0,
+			KeyPrefix:           "devtools:",
+			ImageTaskTTLHours:   168,
+			ChunkUploadTTLHours: 24,
+		},
 		Security: SecurityConfig{
 			CORSOrigins: []string{"*"},
 			BcryptCost:  10,
@@ -474,17 +495,14 @@ func Load(path string) (*Config, error) {
 	// 尝试读取配置文件
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// 如果配置文件不存在，返回默认配置
-		if os.IsNotExist(err) {
-			globalConfig = cfg
-			return globalConfig, nil
+		if !os.IsNotExist(err) {
+			return nil, err
 		}
-		return nil, err
-	}
-
-	// 解析配置文件，覆盖默认值
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, err
+	} else {
+		// 解析配置文件，覆盖默认值
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	// 从环境变量覆盖配置
@@ -493,6 +511,23 @@ func Load(path string) (*Config, error) {
 	}
 	if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
 		cfg.Database.Path = dbPath
+	}
+	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
+		cfg.Redis.Addr = redisAddr
+	}
+	if redisPassword := os.Getenv("REDIS_PASSWORD"); redisPassword != "" {
+		cfg.Redis.Password = redisPassword
+	}
+	if redisEnabled := os.Getenv("REDIS_ENABLED"); redisEnabled != "" {
+		cfg.Redis.Enabled = redisEnabled == "1" || redisEnabled == "true" || redisEnabled == "TRUE"
+	}
+	if redisDB := os.Getenv("REDIS_DB"); redisDB != "" {
+		if db, convErr := strconv.Atoi(redisDB); convErr == nil {
+			cfg.Redis.DB = db
+		}
+	}
+	if redisPrefix := os.Getenv("REDIS_KEY_PREFIX"); redisPrefix != "" {
+		cfg.Redis.KeyPrefix = redisPrefix
 	}
 	// DeepSeek API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("DEEPSEEK_API_KEY"); apiKey != "" {

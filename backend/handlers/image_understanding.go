@@ -17,38 +17,29 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"devtools/config"
+	"devtools/state"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 const imageUnderstandingMaxSize = 10 * 1024 * 1024 // 10MB
 
-// 图像理解任务状态
-type imageTask struct {
-	ID        string
-	Status    string // pending, processing, completed, failed
-	Tool      string
-	Text      string
-	Result    []byte
-	Args      map[string]interface{}
-	Error     string
-	CreatedAt time.Time
-}
-
-// imageTaskStore 任务存储（内存）
-var imageTaskStore = make(map[string]*imageTask)
-var imageTaskMu sync.RWMutex
-
-func newImageTask() *imageTask {
-	return &imageTask{
+func newImageTask(args map[string]interface{}) *state.ImageTask {
+	task := &state.ImageTask{
 		ID:        generateTaskID(),
 		Status:    "pending",
 		CreatedAt: time.Now(),
 	}
+	if len(args) > 0 {
+		if data, err := json.Marshal(args); err == nil {
+			task.Args = data
+		}
+	}
+	return task
 }
 
 func generateTaskID() string {
@@ -58,7 +49,9 @@ func generateTaskID() string {
 }
 
 type ImageUnderstandingHandler struct {
-	cfg config.MiniMaxMCPConfig
+	cfg     config.MiniMaxMCPConfig
+	store   state.TransientStore
+	taskTTL time.Duration
 }
 
 type imageUnderstandingRequest struct {
@@ -80,8 +73,33 @@ type mcpTool struct {
 	InputSchema map[string]interface{} `json:"inputSchema"`
 }
 
-func NewImageUnderstandingHandler(cfg *config.Config) *ImageUnderstandingHandler {
-	return &ImageUnderstandingHandler{cfg: cfg.MiniMaxMCP}
+func NewImageUnderstandingHandler(cfg *config.Config, store state.TransientStore) *ImageUnderstandingHandler {
+	taskTTL := time.Duration(cfg.Redis.ImageTaskTTLHours) * time.Hour
+	if taskTTL <= 0 {
+		taskTTL = 7 * 24 * time.Hour
+	}
+
+	return &ImageUnderstandingHandler{
+		cfg:     cfg.MiniMaxMCP,
+		store:   store,
+		taskTTL: taskTTL,
+	}
+}
+
+func (h *ImageUnderstandingHandler) saveTask(task *state.ImageTask) error {
+	return h.store.SaveImageTask(context.Background(), task, h.taskTTL)
+}
+
+func (h *ImageUnderstandingHandler) getTask(taskID string) (*state.ImageTask, bool) {
+	task, err := h.store.GetImageTask(context.Background(), taskID)
+	if err != nil {
+		return nil, false
+	}
+	return task, true
+}
+
+func isTaskMissing(err error) bool {
+	return errors.Is(err, redis.Nil)
 }
 
 func (h *ImageUnderstandingHandler) ListTools(c *gin.Context) {
@@ -182,9 +200,9 @@ func (h *ImageUnderstandingHandler) Describe(c *gin.Context) {
 
 	text := extractToolText(result)
 	c.JSON(200, gin.H{
-		"tool":       tool.Name,
-		"text":       text,
-		"result":     result,
+		"tool":         tool.Name,
+		"text":         text,
+		"result":       result,
 		"args_preview": sanitizeArgs(args),
 	})
 }
@@ -260,9 +278,9 @@ func (h *ImageUnderstandingHandler) DescribeFromUpload(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{
-		"tool":       toolName,
-		"text":       text,
-		"result":     result,
+		"tool":         toolName,
+		"text":         text,
+		"result":       result,
 		"args_preview": sanitizeArgs(payload),
 	})
 }
@@ -339,8 +357,7 @@ func prepareToolArgs(req imageUnderstandingRequest, tool mcpTool) (map[string]in
 				cleanup = func() { _ = os.Remove(imagePath) }
 			}
 			args[sourceKey] = strings.TrimPrefix(imagePath, "@")
-		} else
-		if hasAnySchemaKey(schemaProps, pathKeys...) || hasAnySchemaKey(schemaProps, pathsKeys...) {
+		} else if hasAnySchemaKey(schemaProps, pathKeys...) || hasAnySchemaKey(schemaProps, pathsKeys...) {
 			if imagePath == "" {
 				var err error
 				imagePath, err = writeTempImage(req.Image)
@@ -1010,29 +1027,20 @@ func (h *ImageUnderstandingHandler) CreateSseTask(c *gin.Context) {
 	scheduleDelete(imagePath, 10*time.Minute)
 
 	// 创建任务
-	task := newImageTask()
+	task := newImageTask(req.Args)
 	task.Tool = req.Tool
-	task.Args = req.Args
 	task.Status = "processing"
-
-	imageTaskMu.Lock()
-	imageTaskStore[task.ID] = task
-	imageTaskMu.Unlock()
+	if err := h.saveTask(task); err != nil {
+		c.JSON(500, gin.H{"error": "保存任务失败"})
+		return
+	}
 
 	// 后台执行
-	go func() {
+	go func(task *state.ImageTask) {
 		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.Timeout())
 		defer cancel()
 
 		toolName, text, result, payload, err := h.ExecuteWithPath(ctx, req.Tool, req.Prompt, req.Args, imagePath)
-
-		imageTaskMu.Lock()
-		defer imageTaskMu.Unlock()
-
-		task := imageTaskStore[task.ID]
-		if task == nil {
-			return
-		}
 
 		if err != nil {
 			task.Status = "failed"
@@ -1044,8 +1052,11 @@ func (h *ImageUnderstandingHandler) CreateSseTask(c *gin.Context) {
 			task.Result, _ = json.Marshal(result)
 			log.Printf("[SSE] Task %s completed, text length: %d", task.ID, len(text))
 		}
+		if saveErr := h.saveTask(task); saveErr != nil {
+			log.Printf("[SSE] 保存任务状态失败 %s: %v", task.ID, saveErr)
+		}
 		_ = payload // 忽略
-	}()
+	}(task)
 
 	c.JSON(200, gin.H{
 		"task_id": task.ID,
@@ -1092,29 +1103,20 @@ func (h *ImageUnderstandingHandler) CreateSseTaskFromFile(c *gin.Context) {
 	scheduleDelete(imagePath, 10*time.Minute)
 
 	// 创建任务
-	task := newImageTask()
+	task := newImageTask(args)
 	task.Tool = tool
-	task.Args = args
 	task.Status = "processing"
-
-	imageTaskMu.Lock()
-	imageTaskStore[task.ID] = task
-	imageTaskMu.Unlock()
+	if err := h.saveTask(task); err != nil {
+		c.JSON(500, gin.H{"error": "保存任务失败"})
+		return
+	}
 
 	// 后台执行
-	go func() {
+	go func(task *state.ImageTask) {
 		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.Timeout())
 		defer cancel()
 
 		toolName, text, result, payload, err := h.ExecuteWithPath(ctx, tool, prompt, args, imagePath)
-
-		imageTaskMu.Lock()
-		defer imageTaskMu.Unlock()
-
-		task := imageTaskStore[task.ID]
-		if task == nil {
-			return
-		}
 
 		if err != nil {
 			task.Status = "failed"
@@ -1126,8 +1128,11 @@ func (h *ImageUnderstandingHandler) CreateSseTaskFromFile(c *gin.Context) {
 			task.Result, _ = json.Marshal(result)
 			log.Printf("[SSE] Task %s completed, text length: %d", task.ID, len(text))
 		}
+		if saveErr := h.saveTask(task); saveErr != nil {
+			log.Printf("[SSE] 保存任务状态失败 %s: %v", task.ID, saveErr)
+		}
 		_ = payload
-	}()
+	}(task)
 
 	c.JSON(200, gin.H{
 		"task_id": task.ID,
@@ -1139,10 +1144,7 @@ func (h *ImageUnderstandingHandler) CreateSseTaskFromFile(c *gin.Context) {
 func (h *ImageUnderstandingHandler) GetSseTask(c *gin.Context) {
 	taskID := c.Param("id")
 
-	imageTaskMu.RLock()
-	task, ok := imageTaskStore[taskID]
-	imageTaskMu.RUnlock()
-
+	task, ok := h.getTask(taskID)
 	if !ok {
 		c.JSON(404, gin.H{"error": "任务不存在"})
 		return
@@ -1180,11 +1182,12 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 	taskID := c.Param("id")
 	log.Printf("[SSE] Stream started for task: %s", taskID)
 
-	imageTaskMu.RLock()
-	task, ok := imageTaskStore[taskID]
-	imageTaskMu.RUnlock()
-
-	log.Printf("[SSE] Task found: %v, status: %s", ok, task.Status)
+	task, ok := h.getTask(taskID)
+	if ok {
+		log.Printf("[SSE] Task found: %v, status: %s", ok, task.Status)
+	} else {
+		log.Printf("[SSE] Task found: %v", ok)
+	}
 
 	if !ok {
 		c.Header("Content-Type", "text/event-stream")
@@ -1254,11 +1257,8 @@ func (h *ImageUnderstandingHandler) StreamSseTask(c *gin.Context) {
 			// 发送 ping 保持连接活跃
 			sendEvent("ping", `{"time":"`+time.Now().Format(time.RFC3339)+`"}`)
 		case <-ticker.C:
-			imageTaskMu.RLock()
-			t := imageTaskStore[taskID]
-			imageTaskMu.RUnlock()
-
-			if t == nil {
+			t, found := h.getTask(taskID)
+			if !found {
 				sendEvent("error", `{"error":"任务不存在"}`)
 				return
 			}

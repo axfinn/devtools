@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,7 +97,7 @@ func NewSSHSessionManager(db *models.DB, encryption *utils.EncryptionService, co
 // CreateSession 创建新的 SSH 会话
 func (m *SSHSessionManager) CreateSession(sessionID string, config *SSHConnectConfig, width, height int) (*ActiveSSHSession, error) {
 	// 构建 SSH 连接地址
-	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	addr := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
 
 	// 配置认证方法
 	var authMethods []ssh.AuthMethod

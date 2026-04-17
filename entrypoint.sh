@@ -4,6 +4,8 @@ CLAWTEST_DIR=/app/data/clawtest
 CLAUDE_HOME=/home/autodev/.claude
 CODEX_HOME=/home/autodev/.codex
 HOST_CODEX_HOME=/tmp/host-codex
+CONFIG_SRC_DIR=/app/config-src
+CONFIG_TARGET_PATH=${CONFIG_PATH:-/app/config.yaml}
 
 # 1. 更新 clawtest（在 data volume 里，重建镜像不丢失）
 if [ -d "${CLAWTEST_DIR}/.git" ]; then
@@ -112,6 +114,17 @@ chown autodev:autodev /tmp/claude-1001
 export TMPDIR=/tmp/uv-cache-autodev
 
 cd /app
+
+# 准备运行时配置文件：优先使用自定义 config.yaml，不存在时回落到 config.example.yaml
+if [ -d "${CONFIG_SRC_DIR}" ]; then
+    if [ -f "${CONFIG_SRC_DIR}/config.yaml" ]; then
+        cp "${CONFIG_SRC_DIR}/config.yaml" "${CONFIG_TARGET_PATH}"
+        echo "[entrypoint] Using custom config.yaml"
+    elif [ -f "${CONFIG_SRC_DIR}/config.example.yaml" ]; then
+        cp "${CONFIG_SRC_DIR}/config.example.yaml" "${CONFIG_TARGET_PATH}"
+        echo "[entrypoint] Using config.example.yaml"
+    fi
+fi
 
 # Start TTS HTTP service in background (edge-tts via FastAPI on 127.0.0.1:8083)
 echo "[entrypoint] Starting TTS service on port 8083..."

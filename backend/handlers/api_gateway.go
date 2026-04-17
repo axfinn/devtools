@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"devtools/models"
+	"devtools/state"
 
 	"github.com/gin-gonic/gin"
 )
@@ -216,17 +217,16 @@ func (h *APIGatewayHandler) ImageUnderstandingSSE(c *gin.Context) {
 	scheduleDelete(imagePath, 10*time.Minute)
 
 	// 创建任务
-	task := newImageTask()
+	task := newImageTask(req.Args)
 	task.Tool = req.Tool
-	task.Args = req.Args
 	task.Status = "processing"
-
-	imageTaskMu.Lock()
-	imageTaskStore[task.ID] = task
-	imageTaskMu.Unlock()
+	if err := h.image.saveTask(task); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存任务失败"})
+		return
+	}
 
 	// 后台执行
-	go func() {
+	go func(task *state.ImageTask) {
 		ctx, cancel := context.WithTimeout(context.Background(), h.image.cfg.Timeout())
 		defer cancel()
 
@@ -234,27 +234,22 @@ func (h *APIGatewayHandler) ImageUnderstandingSSE(c *gin.Context) {
 		toolName, text, result, payload, err := h.image.ExecuteWithPath(ctx, req.Tool, req.Prompt, req.Args, imagePath)
 		latency := time.Since(start)
 
-		imageTaskMu.Lock()
-		defer imageTaskMu.Unlock()
-
-		t := imageTaskStore[task.ID]
-		if t == nil {
-			return
-		}
-
 		if err != nil {
-			t.Status = "failed"
-			t.Error = err.Error()
+			task.Status = "failed"
+			task.Error = err.Error()
 			h.logImageUsage(key, model, toolName, latency, false, err.Error(), req, nil, c.ClientIP())
 		} else {
-			t.Status = "completed"
-			t.Tool = toolName
-			t.Text = text
-			t.Result, _ = json.Marshal(result)
+			task.Status = "completed"
+			task.Tool = toolName
+			task.Text = text
+			task.Result, _ = json.Marshal(result)
 			h.logImageUsage(key, model, toolName, latency, true, "", req, result, c.ClientIP())
 		}
+		if saveErr := h.image.saveTask(task); saveErr != nil {
+			return
+		}
 		_ = payload
-	}()
+	}(task)
 
 	c.JSON(http.StatusOK, gin.H{
 		"task_id": task.ID,
@@ -305,17 +300,16 @@ func (h *APIGatewayHandler) ImageUnderstandingSSEFile(c *gin.Context) {
 	scheduleDelete(imagePath, 10*time.Minute)
 
 	// 创建任务
-	task := newImageTask()
+	task := newImageTask(args)
 	task.Tool = tool
-	task.Args = args
 	task.Status = "processing"
-
-	imageTaskMu.Lock()
-	imageTaskStore[task.ID] = task
-	imageTaskMu.Unlock()
+	if err := h.image.saveTask(task); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存任务失败"})
+		return
+	}
 
 	// 后台执行
-	go func() {
+	go func(task *state.ImageTask) {
 		ctx, cancel := context.WithTimeout(context.Background(), h.image.cfg.Timeout())
 		defer cancel()
 
@@ -323,27 +317,22 @@ func (h *APIGatewayHandler) ImageUnderstandingSSEFile(c *gin.Context) {
 		toolName, text, result, payload, err := h.image.ExecuteWithPath(ctx, tool, prompt, args, imagePath)
 		latency := time.Since(start)
 
-		imageTaskMu.Lock()
-		defer imageTaskMu.Unlock()
-
-		t := imageTaskStore[task.ID]
-		if t == nil {
-			return
-		}
-
 		if err != nil {
-			t.Status = "failed"
-			t.Error = err.Error()
+			task.Status = "failed"
+			task.Error = err.Error()
 			h.logImageUsage(key, model, toolName, latency, false, err.Error(), nil, nil, c.ClientIP())
 		} else {
-			t.Status = "completed"
-			t.Tool = toolName
-			t.Text = text
-			t.Result, _ = json.Marshal(result)
+			task.Status = "completed"
+			task.Tool = toolName
+			task.Text = text
+			task.Result, _ = json.Marshal(result)
 			h.logImageUsage(key, model, toolName, latency, true, "", nil, result, c.ClientIP())
 		}
+		if saveErr := h.image.saveTask(task); saveErr != nil {
+			return
+		}
 		_ = payload
-	}()
+	}(task)
 
 	c.JSON(http.StatusOK, gin.H{
 		"task_id": task.ID,
@@ -355,9 +344,7 @@ func (h *APIGatewayHandler) ImageUnderstandingSSEFile(c *gin.Context) {
 func (h *APIGatewayHandler) ImageUnderstandingStream(c *gin.Context) {
 	taskID := c.Param("id")
 
-	imageTaskMu.RLock()
-	task, ok := imageTaskStore[taskID]
-	imageTaskMu.RUnlock()
+	task, ok := h.image.getTask(taskID)
 
 	if !ok {
 		c.Header("Content-Type", "text/event-stream")
@@ -420,11 +407,8 @@ func (h *APIGatewayHandler) ImageUnderstandingStream(c *gin.Context) {
 		case <-pingTicker.C:
 			sendEvent("ping", `{"time":"`+time.Now().Format(time.RFC3339)+`"}`)
 		case <-ticker.C:
-			imageTaskMu.RLock()
-			t := imageTaskStore[taskID]
-			imageTaskMu.RUnlock()
-
-			if t == nil {
+			t, found := h.image.getTask(taskID)
+			if !found {
 				sendEvent("error", `{"error":"任务不存在"}`)
 				return
 			}

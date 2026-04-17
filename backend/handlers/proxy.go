@@ -535,7 +535,7 @@ func (h *ProxyHandler) SpeedTest(c *gin.Context) {
 
 // tcpPing 测量 TCP 连接延迟（ms），失败返回 -1
 func tcpPing(host string, port int) int64 {
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
@@ -1380,7 +1380,7 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string)
 
 // dialUpstream 根据节点类型建立到目标的连接
 func dialUpstream(node *ProxyNode, targetHost string) (net.Conn, error) {
-	nodeAddr := fmt.Sprintf("%s:%d", node.Server, node.Port)
+	nodeAddr := net.JoinHostPort(node.Server, strconv.Itoa(node.Port))
 
 	switch node.Type {
 	case "http":
@@ -1572,7 +1572,7 @@ func (h *ProxyHandler) sendAlert(subject, body string) {
 	if port == 0 {
 		port = 465
 	}
-	addr := fmt.Sprintf("%s:%d", h.smtpHost, port)
+	addr := net.JoinHostPort(h.smtpHost, strconv.Itoa(port))
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: [DevTools] %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",
 		h.smtpUser, h.alertEmail, subject, body)
 

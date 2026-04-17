@@ -764,8 +764,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-// ECharts 完整引入（解决按需引入可能的问题）
-import * as echarts from 'echarts'
+import { getECharts } from '../utils/vendor-loaders'
 
 const API_BASE = '/api'
 
@@ -1344,8 +1343,6 @@ async function parseAndSubmitVoice(text) {
   voiceRecordMessage.value = '正在解析...'
   voiceText.value = text
 
-  console.log('开始语音记账:', { profileId: profileId.value, password: password.value, text })
-
   if (!profileId.value || !password.value) {
     voiceRecordStatus.value = 'failed'
     voiceRecordMessage.value = '请先创建或加载档案'
@@ -1359,16 +1356,12 @@ async function parseAndSubmitVoice(text) {
       body: JSON.stringify({ text: text })
     })
 
-    console.log('voice-parse 响应状态:', res.status)
-
     if (!res.ok) {
       const errText = await res.text()
       throw new Error('解析请求失败: ' + errText)
     }
 
     const data = await res.json()
-    console.log('解析结果:', data)
-
     if (!data.amount || data.amount <= 0) {
       voiceRecordStatus.value = 'failed'
       voiceRecordMessage.value = '未能识别金额，请手动记账'
@@ -1411,8 +1404,6 @@ async function parseAndSubmitVoice(text) {
       }
     }
 
-    console.log('提交数据:', txData)
-
     // 3. 提交记账
     const submitRes = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions`, {
       method: 'POST',
@@ -1424,8 +1415,7 @@ async function parseAndSubmitVoice(text) {
       throw new Error('提交失败: ' + errText)
     }
 
-    const result = await submitRes.json()
-    console.log('记账结果:', result)
+    await submitRes.json()
 
     // 4. 成功
     voiceRecordStatus.value = 'success'
@@ -1964,18 +1954,15 @@ async function loadTransactions() {
 }
 
 async function loadStats() {
-  console.log('loadStats called, profileId:', profileId.value, 'period:', statsPeriod.value)
   try {
     const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/stats?period=${statsPeriod.value}`)
-    console.log('Stats response status:', res.status)
     if (res.ok) {
       const data = await res.json()
-      console.log('Stats data received:', data)
       stats.value = data
       await nextTick()
       // 延迟一点确保DOM完全渲染
       setTimeout(() => {
-        renderCharts()
+        void renderCharts()
       }, 100)
     } else {
       console.error('Stats API error:', res.status, await res.text())
@@ -2201,12 +2188,6 @@ async function confirmDelete() {
 }
 
 async function runAnalyze() {
-  console.log('=== runAnalyze called ===')
-  console.log('profileId:', profileId.value)
-  console.log('password set:', !!password.value)
-  console.log('password value:', password.value)
-  console.log('analyzePeriod:', analyzePeriod.value)
-
   if (!profileId.value || !password.value) {
     ElMessage.error('请先登录')
     return
@@ -2215,22 +2196,15 @@ async function runAnalyze() {
   analyzing.value = true
   analysisResult.value = ''
   try {
-    const url = `${API_BASE}/expense/${profileId.value}/analyze`
-    console.log('Request URL:', url)
-
-    const res = await expenseFetch(url, {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/analyze`, {
       method: 'POST',
       body: JSON.stringify({ period: analyzePeriod.value })
     })
-    console.log('Response status:', res.status)
-    console.log('Response ok:', res.ok)
 
     const text = await res.text()
-    console.log('Response text:', text)
 
     if (res.ok) {
       const data = JSON.parse(text)
-      console.log('Parsed data:', data)
       analysisResult.value = data.analysis
       if (!data.ai_enabled) {
         ElMessage.info('未配置 DeepSeek API，使用基础分析')
@@ -2262,26 +2236,18 @@ function onTabChange(tabName) {
   }
 }
 
-function renderCharts() {
-  console.log('renderCharts called', {
-    categoryRef: !!categoryChartRef.value,
-    monthRef: !!monthChartRef.value,
-    accountRef: !!accountChartRef.value,
-    stats: stats.value
-  })
-
+async function renderCharts() {
   // 确保DOM已渲染
   if (!stats.value) {
-    console.log('No stats data')
     return
   }
+
+  const echarts = await getECharts()
 
   // 支出分类饼图
   if (categoryChartRef.value) {
     const byCategory = stats.value.by_category || {}
     const categoryKeys = Object.keys(byCategory)
-    console.log('Category data:', byCategory, 'keys:', categoryKeys)
-
     // 先销毁旧图表
     if (categoryChart) {
       categoryChart.dispose()
@@ -2308,8 +2274,6 @@ function renderCharts() {
   if (monthChartRef.value) {
     const byMonth = stats.value.by_month || {}
     const monthKeys = Object.keys(byMonth)
-    console.log('Month data:', byMonth, 'keys:', monthKeys)
-
     if (monthChart) {
       monthChart.dispose()
       monthChart = null
@@ -2337,8 +2301,6 @@ function renderCharts() {
   if (accountChartRef.value) {
     const byAccount = stats.value.by_account || {}
     const accountKeys = Object.keys(byAccount)
-    console.log('Account data:', byAccount, 'keys:', accountKeys)
-
     if (accountChart) {
       accountChart.dispose()
       accountChart = null
@@ -2393,7 +2355,7 @@ watch(() => accounts.value, (newAccounts) => {
 watch(() => activeTab.value, (newTab) => {
   if (newTab === 'stats') {
     nextTick(() => {
-      renderCharts()
+      void renderCharts()
     })
   }
   if (newTab === 'calendar') {

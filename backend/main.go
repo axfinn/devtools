@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"devtools/handlers"
 	"devtools/middleware"
 	"devtools/models"
+	"devtools/state"
 	"devtools/utils"
 
 	"github.com/gin-contrib/cors"
@@ -27,6 +29,23 @@ func main() {
 	if err != nil {
 		log.Printf("加载配置文件失败，使用默认配置: %v", err)
 		cfg = config.Get()
+	}
+
+	transientStore, err := state.New(cfg.Redis)
+	if err != nil {
+		log.Fatalf("Redis 初始化失败: %v", err)
+	}
+
+	imageTaskTTL := time.Duration(cfg.Redis.ImageTaskTTLHours) * time.Hour
+	if imageTaskTTL <= 0 {
+		imageTaskTTL = 7 * 24 * time.Hour
+	}
+	if err := transientStore.FailProcessingImageTasks(
+		context.Background(),
+		"服务已重启，任务中断，请重新提交",
+		imageTaskTTL,
+	); err != nil {
+		log.Printf("恢复图像任务状态失败: %v", err)
 	}
 
 	// 配置
@@ -297,10 +316,10 @@ func main() {
 	r.Use(middleware.ContentSizeLimiter(200 * 1024 * 1024))
 
 	// 创建限流（仅用于上传，每 IP 每分钟 10 次）
-	createRateLimiter := middleware.NewRateLimiter(10, time.Minute)
+	createRateLimiter := middleware.NewRateLimiter(10, time.Minute, transientStore)
 
 	// 处理器
-	pasteHandler := handlers.NewPasteHandler(db)
+	pasteHandler := handlers.NewPasteHandler(db, cfg, transientStore)
 	dnsHandler := handlers.NewDNSHandler()
 	chatHandler := handlers.NewChatHandler(db, cfg.Chat.AdminPassword, cfg.MiniMax, cfg.Chat.TTSServiceURL)
 	shortURLHandler := handlers.NewShortURLHandler(db, cfg.ShortURL.Password)
@@ -344,7 +363,7 @@ func main() {
 	ocrHandler := handlers.NewOCRHandler()
 	bailianHandler := handlers.NewBailianHandler(db, cfg)
 	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler)
-	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg)
+	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg, transientStore)
 	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 	mermaidHandler := handlers.NewMermaidHandler(db, cfg)

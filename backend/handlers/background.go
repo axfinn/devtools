@@ -21,13 +21,13 @@ const (
 )
 
 var (
-	cacheDir       string
-	cacheDirOnce   sync.Once
-	cacheDirInit   error
-	bgImages       []BackgroundImage
-	bgImagesOnce  sync.Once
-	bgImagesInit  sync.Mutex
-	rng           = rand.New(rand.NewSource(time.Now().UnixNano()))
+	cacheDir     string
+	cacheDirOnce sync.Once
+	cacheDirInit error
+	bgImages     []BackgroundImage
+	bgImagesOnce sync.Once
+	bgImagesInit sync.Mutex
+	rng          = rand.New(rand.NewSource(time.Now().UnixNano()))
 )
 
 // BackgroundImage represents a background image
@@ -162,10 +162,10 @@ func GetBackgroundImages(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"images":      bgImages,
-		"total":       len(bgImages),
-		"cached":      countCachedImages(),
-		"max_cache":  maxImageCache,
+		"images":    bgImages,
+		"total":     len(bgImages),
+		"cached":    countCachedImages(),
+		"max_cache": maxImageCache,
 	})
 }
 
@@ -219,6 +219,7 @@ func CacheBackgroundImages(c *gin.Context) {
 
 	cached := 0
 	failed := 0
+	currentCached := countCachedImages()
 
 	// 创建支持代理的 HTTP 客户端
 	proxyURL := os.Getenv("HTTP_PROXY")
@@ -241,7 +242,7 @@ func CacheBackgroundImages(c *gin.Context) {
 		}
 
 		// 检查是否超过最大缓存数
-		if countCachedImages() >= maxImageCache {
+		if currentCached >= maxImageCache {
 			break
 		}
 
@@ -252,11 +253,11 @@ func CacheBackgroundImages(c *gin.Context) {
 			failed++
 			continue
 		}
-		defer resp.Body.Close()
 
 		// 检查状态码
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("下载图片失败 %s: status %d", imgURL, resp.StatusCode)
+			resp.Body.Close()
 			failed++
 			continue
 		}
@@ -265,18 +266,23 @@ func CacheBackgroundImages(c *gin.Context) {
 		file, err := os.Create(cachedPath)
 		if err != nil {
 			log.Printf("创建文件失败 %s: %v", cachedPath, err)
+			resp.Body.Close()
 			failed++
 			continue
 		}
-		defer file.Close()
 
 		if _, err := io.Copy(file, resp.Body); err != nil {
 			log.Printf("保存图片失败 %s: %v", cachedPath, err)
+			file.Close()
+			resp.Body.Close()
 			failed++
 			continue
 		}
+		file.Close()
+		resp.Body.Close()
 
 		cached++
+		currentCached++
 		log.Printf("已缓存图片: %s", filename)
 	}
 
@@ -286,11 +292,11 @@ func CacheBackgroundImages(c *gin.Context) {
 	bgImagesInit.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":    fmt.Sprintf("缓存完成，成功: %d, 失败: %d，当前缓存: %d/%d", cached, failed, countCachedImages(), maxImageCache),
-		"cached":     cached,
-		"failed":     failed,
-		"total":      countCachedImages(),
-		"max_cache":  maxImageCache,
+		"message":   fmt.Sprintf("缓存完成，成功: %d, 失败: %d，当前缓存: %d/%d", cached, failed, currentCached, maxImageCache),
+		"cached":    cached,
+		"failed":    failed,
+		"total":     currentCached,
+		"max_cache": maxImageCache,
 	})
 }
 
@@ -375,10 +381,10 @@ func ReplaceRandomImages(c *gin.Context) {
 	bgImagesInit.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":   fmt.Sprintf("替换完成，替换: %d, 失败: %d", replaced, failed),
-		"replaced":  replaced,
-		"failed":    failed,
-		"total":     countCachedImages(),
+		"message":  fmt.Sprintf("替换完成，替换: %d, 失败: %d", replaced, failed),
+		"replaced": replaced,
+		"failed":   failed,
+		"total":    countCachedImages(),
 	})
 }
 

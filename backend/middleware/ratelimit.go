@@ -1,77 +1,46 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
-	"sync"
 	"time"
+
+	"devtools/state"
 
 	"github.com/gin-gonic/gin"
 )
 
 type RateLimiter struct {
-	requests map[string][]time.Time
-	mu       sync.RWMutex
-	limit    int
-	window   time.Duration
+	store         state.TransientStore
+	fallbackStore state.TransientStore
+	limit         int
+	window        time.Duration
 }
 
-func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
-	rl := &RateLimiter{
-		requests: make(map[string][]time.Time),
-		limit:    limit,
-		window:   window,
+func NewRateLimiter(limit int, window time.Duration, store state.TransientStore) *RateLimiter {
+	if store == nil {
+		store = state.NewMemoryStore()
 	}
-
-	// 定期清理过期记录
-	go rl.cleanup()
-
-	return rl
-}
-
-func (rl *RateLimiter) cleanup() {
-	ticker := time.NewTicker(time.Minute)
-	for range ticker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for ip, times := range rl.requests {
-			var valid []time.Time
-			for _, t := range times {
-				if now.Sub(t) < rl.window {
-					valid = append(valid, t)
-				}
-			}
-			if len(valid) == 0 {
-				delete(rl.requests, ip)
-			} else {
-				rl.requests[ip] = valid
-			}
-		}
-		rl.mu.Unlock()
+	return &RateLimiter{
+		store:         store,
+		fallbackStore: state.NewMemoryStore(),
+		limit:         limit,
+		window:        window,
 	}
 }
 
 func (rl *RateLimiter) Allow(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	now := time.Now()
-	times := rl.requests[ip]
-
-	// 清理过期的请求记录
-	var valid []time.Time
-	for _, t := range times {
-		if now.Sub(t) < rl.window {
-			valid = append(valid, t)
+	allowed, err := rl.store.AllowRateLimit(context.Background(), ip, rl.limit, rl.window)
+	if err != nil {
+		allowed, fallbackErr := rl.fallbackStore.AllowRateLimit(context.Background(), ip, rl.limit, rl.window)
+		if fallbackErr != nil {
+			return false
 		}
+		return allowed
 	}
-
-	if len(valid) >= rl.limit {
-		rl.requests[ip] = valid
+	if !allowed {
 		return false
 	}
-
-	valid = append(valid, now)
-	rl.requests[ip] = valid
 	return true
 }
 

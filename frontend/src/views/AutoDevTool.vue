@@ -1332,10 +1332,10 @@ const { currentTheme, themeMode, toggleTheme } = useTheme()
 const isDark = computed(() => currentTheme.value === 'dark')
 
 // ---- mermaid setup ----
-import mermaid from 'mermaid'
+import { getMermaid } from '../utils/vendor-loaders'
 
 const initMermaid = () => {
-  mermaid.initialize({
+  return getMermaid({
     startOnLoad: false,
     securityLevel: 'loose',
     theme: isDark.value ? 'dark' : 'default',
@@ -1350,6 +1350,7 @@ const initMermaid = () => {
 let mermaidCounter = 0
 async function renderMermaidInElement(el, forceReRender = false) {
   if (!el) return
+  const mermaid = await initMermaid()
   const blocks = el.querySelectorAll('.mermaid-block')
   for (const block of blocks) {
     if (block.dataset.rendered && !forceReRender) continue

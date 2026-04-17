@@ -223,7 +223,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Microphone, Upload } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
+import { getECharts } from '../utils/vendor-loaders'
 
 const API_BASE = '/api'
 
@@ -369,7 +369,8 @@ async function loadProfile() {
 }
 
 function logout() {
-  localStorage.clear()
+  localStorage.removeItem('glucose_profile_id')
+  localStorage.removeItem('glucose_password')
   profileId.value = ''
   password.value = ''
   records.value = []
@@ -378,7 +379,8 @@ function logout() {
 
 async function loadData() {
   await Promise.all([loadRecords(), loadStats()])
-  nextTick(() => initChart())
+  await nextTick()
+  await initChart()
 }
 
 async function loadRecords() {
@@ -400,7 +402,6 @@ async function loadStats() {
 }
 
 async function addRecord(voiceInputText = '') {
-  console.log('addRecord called, value:', recordForm.value.value, 'voiceInputText:', voiceInputText)
   if (!recordForm.value.value) {
     ElMessage.warning('请输入血糖值')
     return
@@ -571,10 +572,8 @@ function exportData() {
 
 // 语音
 function toggleVoice() {
-  console.log('toggleVoice called')
   try {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    console.log('SpeechRecognition:', SpeechRecognition)
     if (!SpeechRecognition) {
       ElMessage.error('浏览器不支持语音识别，请使用Chrome')
       return
@@ -585,32 +584,27 @@ function toggleVoice() {
     recognition.interimResults = true
 
     recognition.onstart = () => {
-      console.log('recognition started')
       isRecording.value = true
       voiceText.value = ''
       ElMessage.success('请说话')
     }
 
     recognition.onresult = (event) => {
-      console.log('recognition result:', event)
       let transcript = ''
       for (let i = 0; i < event.results.length; i++) {
         transcript += event.results[i][0].transcript
       }
-      console.log('transcript:', transcript)
       if (transcript) {
         voiceText.value = transcript
       }
     }
 
     recognition.onerror = (event) => {
-      console.log('recognition error:', event.error)
       isRecording.value = false
       ElMessage.error('语音识别出错: ' + event.error)
     }
 
     recognition.onend = () => {
-      console.log('recognition ended, result:', voiceText.value)
       isRecording.value = false
       if (voiceText.value) {
         ElMessage.success('识别完成: ' + voiceText.value)
@@ -618,7 +612,6 @@ function toggleVoice() {
     }
 
     recognition.start()
-    console.log('recognition started')
   } catch (e) {
     console.error('语音识别异常:', e)
     ElMessage.error('语音识别失败: ' + e.message)
@@ -626,7 +619,6 @@ function toggleVoice() {
 }
 
 function stopVoice() {
-  console.log('stopVoice called')
   if (recognition) {
     recognition.stop()
   }
@@ -641,9 +633,7 @@ async function smartParseAI() {
       method: 'POST',
       body: JSON.stringify({ text: voiceText.value })
     })
-    console.log('解析结果:', res)
     const value = parseFloat(res.value)
-    console.log('value:', value, 'isValid:', value > 0)
     if (value > 0) {
       // 直接调用API添加记录
       saving.value = true
@@ -674,9 +664,10 @@ async function smartParseAI() {
 }
 
 // 图表
-function initChart() {
+async function initChart() {
   if (!chartRef.value || records.value.length === 0) return
   if (chartInstance) chartInstance.dispose()
+  const echarts = await getECharts()
 
   const data = records.value.slice(0, 30).reverse().map(r => ({
     time: new Date(r.time),

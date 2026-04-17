@@ -19,17 +19,22 @@ services:
       - autodev-claude-data:/home/autodev/.claude
       - autodev-codex-data:/home/autodev/.codex
       - ${HOME}/.codex:/tmp/host-codex:ro
-      - ./backend/config.yaml:/app/config.yaml:ro
+      - ./backend:/app/config-src:ro
     environment:
+      - CONFIG_PATH=/app/config.yaml
       - PORT=8082
       - DB_PATH=/app/data/paste.db
+      - REDIS_ENABLED=true
+      - REDIS_ADDR=redis:6379
       - TZ=Asia/Shanghai
       - OCR_SERVICE_URL=http://ocr-service:8000
-      - no_proxy=ocr-service,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
-      - NO_PROXY=ocr-service,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
+      - no_proxy=ocr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
+      - NO_PROXY=ocr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
       - AUTODEV_PATH=/app/data/clawtest/autodev/autodev
       - AUTODEV_DATA_DIR=/app/data/autodev
     depends_on:
+      redis:
+        condition: service_healthy
       ocr-service:
         condition: service_healthy
     healthcheck:
@@ -38,6 +43,20 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: devtools-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - devtools-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   ocr-service:
     build:
@@ -61,6 +80,8 @@ volumes:
     driver: local
   # 持久化 autodev 用户的 Codex 配置；启动时会优先从宿主机 ~/.codex 同步必要文件
   autodev-codex-data:
+    driver: local
+  devtools-redis-data:
     driver: local
   ocr-model-cache:
     driver: local

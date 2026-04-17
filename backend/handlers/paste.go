@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,11 +12,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"devtools/config"
 	"devtools/models"
+	"devtools/state"
 	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
@@ -24,24 +25,6 @@ import (
 const (
 	pasteUploadDir = "./data/paste_files"
 	chunkDir       = "./data/paste_chunks" // 分片临时目录
-)
-
-// ChunkUploadInfo 分片上传信息
-type ChunkUploadInfo struct {
-	FileID         string    `json:"file_id"`
-	FileName       string    `json:"file_name"`
-	TotalChunks    int       `json:"total_chunks"`
-	ChunkSize      int64     `json:"chunk_size"`
-	FileSize       int64     `json:"file_size"`
-	UploadedChunks []int     `json:"uploaded_chunks"`
-	CreatedAt      time.Time `json:"created_at"`
-	mu             sync.Mutex
-}
-
-var (
-	// 全局分片上传管理器
-	chunkUploads   = make(map[string]*ChunkUploadInfo)
-	chunkUploadsMu sync.RWMutex
 )
 
 // FileMetadata 文件元数据
@@ -55,20 +38,49 @@ type FileMetadata struct {
 
 // PasteHandler 粘贴板处理器
 type PasteHandler struct {
-	db         *models.DB
-	maxTotal   int
-	maxPerIP   int
-	ipWindow   time.Duration
+	db             *models.DB
+	store          state.TransientStore
+	chunkUploadTTL time.Duration
+	maxTotal       int
+	maxPerIP       int
+	ipWindow       time.Duration
 }
 
 // NewPasteHandler 创建粘贴板处理器
-func NewPasteHandler(db *models.DB) *PasteHandler {
-	return &PasteHandler{
-		db:       db,
-		maxTotal: 10000,        // 最多存储 10000 条
-		maxPerIP: 10,           // 每 IP 每分钟最多 10 条（与中间件限流一致）
-		ipWindow: time.Minute,
+func NewPasteHandler(db *models.DB, cfg *config.Config, store state.TransientStore) *PasteHandler {
+	chunkTTL := time.Duration(cfg.Redis.ChunkUploadTTLHours) * time.Hour
+	if chunkTTL <= 0 {
+		chunkTTL = 24 * time.Hour
 	}
+
+	return &PasteHandler{
+		db:             db,
+		store:          store,
+		chunkUploadTTL: chunkTTL,
+		maxTotal:       10000, // 最多存储 10000 条
+		maxPerIP:       10,    // 每 IP 每分钟最多 10 条（与中间件限流一致）
+		ipWindow:       time.Minute,
+	}
+}
+
+func (h *PasteHandler) saveChunkUpload(upload *state.ChunkUploadInfo) error {
+	return h.store.SaveChunkUpload(context.Background(), upload, h.chunkUploadTTL)
+}
+
+func (h *PasteHandler) getChunkUpload(fileID string) (*state.ChunkUploadInfo, bool) {
+	upload, err := h.store.GetChunkUpload(context.Background(), fileID)
+	if err != nil {
+		return nil, false
+	}
+	return upload, true
+}
+
+func (h *PasteHandler) deleteChunkUpload(fileID string) error {
+	return h.store.DeleteChunkUpload(context.Background(), fileID)
+}
+
+func (h *PasteHandler) markChunkUploaded(fileID string, chunkIndex int) (int, error) {
+	return h.store.MarkChunkUploaded(context.Background(), fileID, chunkIndex, h.chunkUploadTTL)
 }
 
 // SupportedContentTypes 支持的内容类型
@@ -156,17 +168,17 @@ const (
 )
 
 type PasteResponse struct {
-	ID           string          `json:"id"`
-	Title        string          `json:"title"`
-	Language     string          `json:"language"`
-	ContentType  string          `json:"content_type"`
-	Content      string          `json:"content,omitempty"`
-	ExpiresAt    time.Time       `json:"expires_at"`
-	MaxViews     int             `json:"max_views"`
-	Views        int             `json:"views"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ID          string          `json:"id"`
+	Title       string          `json:"title"`
+	Language    string          `json:"language"`
+	ContentType string          `json:"content_type"`
+	Content     string          `json:"content,omitempty"`
+	ExpiresAt   time.Time       `json:"expires_at"`
+	MaxViews    int             `json:"max_views"`
+	Views       int             `json:"views"`
+	CreatedAt   time.Time       `json:"created_at"`
 	HasPassword bool            `json:"has_password"`
-	Files        []*FileMetadata `json:"files,omitempty"`
+	Files       []*FileMetadata `json:"files,omitempty"`
 }
 
 // UploadFile 上传文件（图片或视频）
@@ -780,7 +792,7 @@ func (h *PasteHandler) InitChunkUpload(c *gin.Context) {
 	}
 
 	// 创建分片上传信息
-	uploadInfo := &ChunkUploadInfo{
+	uploadInfo := &state.ChunkUploadInfo{
 		FileID:         fileID,
 		FileName:       req.FileName,
 		TotalChunks:    req.TotalChunks,
@@ -790,9 +802,10 @@ func (h *PasteHandler) InitChunkUpload(c *gin.Context) {
 		CreatedAt:      time.Now(),
 	}
 
-	chunkUploadsMu.Lock()
-	chunkUploads[fileID] = uploadInfo
-	chunkUploadsMu.Unlock()
+	if err := h.saveChunkUpload(uploadInfo); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存上传会话失败", "code": 500})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"file_id": fileID,
@@ -811,17 +824,14 @@ func (h *PasteHandler) UploadChunk(c *gin.Context) {
 	}
 
 	// 获取上传信息
-	chunkUploadsMu.RLock()
-	uploadInfo, exists := chunkUploads[fileID]
-	chunkUploadsMu.RUnlock()
-
+	uploadInfo, exists := h.getChunkUpload(fileID)
 	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
 		return
 	}
 
-	// 检查是否已超时(24小时)
-	if time.Since(uploadInfo.CreatedAt) > 24*time.Hour {
+	// 检查是否已超时
+	if time.Since(uploadInfo.CreatedAt) > h.chunkUploadTTL {
 		h.CleanupChunkUpload(fileID)
 		c.JSON(http.StatusGone, gin.H{"error": "上传会话已过期", "code": 410})
 		return
@@ -850,15 +860,17 @@ func (h *PasteHandler) UploadChunk(c *gin.Context) {
 	}
 
 	// 更新已上传分片列表
-	uploadInfo.mu.Lock()
 	var chunkIdx int
 	fmt.Sscanf(chunkIndex, "%d", &chunkIdx)
-	uploadInfo.UploadedChunks = append(uploadInfo.UploadedChunks, chunkIdx)
-	uploadInfo.mu.Unlock()
+	uploadedCount, err := h.markChunkUploaded(fileID, chunkIdx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新上传状态失败", "code": 500})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":         "分片上传成功",
-		"uploaded_chunks": len(uploadInfo.UploadedChunks),
+		"uploaded_chunks": uploadedCount,
 		"total_chunks":    uploadInfo.TotalChunks,
 	})
 }
@@ -868,10 +880,7 @@ func (h *PasteHandler) MergeChunks(c *gin.Context) {
 	fileID := c.Param("file_id")
 
 	// 获取上传信息
-	chunkUploadsMu.RLock()
-	uploadInfo, exists := chunkUploads[fileID]
-	chunkUploadsMu.RUnlock()
-
+	uploadInfo, exists := h.getChunkUpload(fileID)
 	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
 		return
@@ -979,9 +988,7 @@ func (h *PasteHandler) MergeChunks(c *gin.Context) {
 func (h *PasteHandler) CheckChunkStatus(c *gin.Context) {
 	fileID := c.Param("file_id")
 
-	chunkUploadsMu.RLock()
-	uploadInfo, exists := chunkUploads[fileID]
-	chunkUploadsMu.RUnlock()
+	uploadInfo, exists := h.getChunkUpload(fileID)
 
 	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
@@ -999,9 +1006,7 @@ func (h *PasteHandler) CheckChunkStatus(c *gin.Context) {
 
 // CleanupChunkUpload 清理分片上传临时文件
 func (h *PasteHandler) CleanupChunkUpload(fileID string) {
-	chunkUploadsMu.Lock()
-	delete(chunkUploads, fileID)
-	chunkUploadsMu.Unlock()
+	_ = h.deleteChunkUpload(fileID)
 
 	// 删除临时分片目录
 	chunkPath := filepath.Join(chunkDir, fileID)
@@ -1103,7 +1108,7 @@ func (h *PasteHandler) AnalyzeFile(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"filename":      fileID,
-		"file_type":    detectedType,
+		"file_type":     detectedType,
 		"language":      result.Language,
 		"lines":         result.Lines,
 		"code_lines":    result.CodeLines,
@@ -1156,9 +1161,9 @@ func (h *PasteHandler) GetStats(c *gin.Context) {
 
 	// 简单返回统计信息
 	stats := gin.H{
-		"total_pastes":    total,
-		"today_creates":   todayCount,
-		"max_file_size":   config.Get().Paste.MaxFileSize,
+		"total_pastes":     total,
+		"today_creates":    todayCount,
+		"max_file_size":    config.Get().Paste.MaxFileSize,
 		"max_content_size": config.Get().Limits.PasteMaxContentSize,
 	}
 
@@ -1220,20 +1225,20 @@ func (h *PasteHandler) SearchPastes(c *gin.Context) {
 	var responses []gin.H
 	for _, p := range results {
 		responses = append(responses, gin.H{
-			"id":          p.ID,
-			"title":       p.Title,
-			"language":    p.Language,
-			"created_at":  p.CreatedAt,
-			"expires_at":  p.ExpiresAt,
-			"views":       p.Views,
+			"id":         p.ID,
+			"title":      p.Title,
+			"language":   p.Language,
+			"created_at": p.CreatedAt,
+			"expires_at": p.ExpiresAt,
+			"views":      p.Views,
 		})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"pastes":  responses,
-		"total":   len(results),
-		"limit":   limit,
-		"offset":  offset,
+		"pastes": responses,
+		"total":  len(results),
+		"limit":  limit,
+		"offset": offset,
 	})
 }
 
@@ -1264,12 +1269,12 @@ func (h *PasteHandler) ScanContent(c *gin.Context) {
 	contentType := utils.DetectContentType(req.Content, language)
 
 	c.JSON(http.StatusOK, gin.H{
-		"is_safe":       result.IsSafe,
-		"has_virus":     result.HasVirus,
+		"is_safe":        result.IsSafe,
+		"has_virus":      result.HasVirus,
 		"has_suspicious": result.HasSuspiciousURL,
-		"warnings":      result.Warnings,
-		"language":      language,
-		"content_type":  contentType,
+		"warnings":       result.Warnings,
+		"language":       language,
+		"content_type":   contentType,
 	})
 }
 
@@ -1326,5 +1331,3 @@ func (h *PasteHandler) ValidateFile(c *gin.Context) {
 		"category_icon": categoryInfo.Icon,
 	})
 }
-
-

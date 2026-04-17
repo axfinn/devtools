@@ -824,7 +824,6 @@ function connectWebSocket(sessionId) {
   const ws = new WebSocket(wsUrl)
 
   ws.onopen = () => {
-    console.log('WebSocket connected')
     state.connectionStatus = 'connected'
     state.wsConnection = ws
     startHeartbeat()
@@ -896,7 +895,6 @@ function connectWebSocket(sessionId) {
   }
 
   ws.onclose = () => {
-    console.log('WebSocket closed')
     const shouldNotify = !wsIntentionalClose
     const hadActiveSession = !!state.activeSession
     cleanupTerminalState()

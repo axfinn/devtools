@@ -336,7 +336,6 @@ import { useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
-import mermaid from 'mermaid'
 import texmath from 'markdown-it-texmath'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
@@ -346,16 +345,9 @@ import markdownItMark from 'markdown-it-mark'
 import markdownItSub from 'markdown-it-sub'
 import markdownItSup from 'markdown-it-sup'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getMermaid } from '../utils/vendor-loaders'
 
 const router = useRouter()
-
-// Initialize Mermaid
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'default',
-  securityLevel: 'loose',
-  flowchart: { useMaxWidth: true, htmlLabels: true }
-})
 
 // Initialize Markdown-it with all extensions
 const md = new MarkdownIt({
@@ -482,7 +474,12 @@ const renderMermaid = async () => {
   await nextTick()
   if (previewRef.value) {
     const elements = previewRef.value.querySelectorAll('.mermaid')
-    elements.forEach(async (element, index) => {
+    const mermaid = await getMermaid({
+      theme: 'default',
+      flowchart: { useMaxWidth: true, htmlLabels: true }
+    })
+
+    for (const [index, element] of Array.from(elements).entries()) {
       if (!element.getAttribute('data-processed')) {
         try {
           const graphDefinition = element.textContent
@@ -493,12 +490,12 @@ const renderMermaid = async () => {
           element.innerHTML = `<div class="mermaid-error">图表渲染错误: ${e.message}</div>`
         }
       }
-    })
+    }
   }
 }
 
-watch(renderedHtml, () => renderMermaid())
-onMounted(() => renderMermaid())
+watch(renderedHtml, () => { void renderMermaid() })
+onMounted(() => { void renderMermaid() })
 
 // Image upload
 const uploadingImage = ref(false)

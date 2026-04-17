@@ -11,6 +11,23 @@ database:
   path: "./data/paste.db"  # 数据库文件路径（也可通过环境变量 DB_PATH 设置）
   max_connections: 10       # 最大数据库连接数
 
+# Redis 瞬时状态存储
+redis:
+  # 启用后，限流、图像理解任务状态、Paste 分片上传状态将转存到 Redis
+  enabled: false
+  # Redis 地址；Docker Compose 下建议用 redis:6379
+  addr: "127.0.0.1:6379"
+  # Redis 密码；未设置密码时留空
+  password: ""
+  # Redis DB
+  db: 0
+  # Key 前缀，避免和其他业务混用时冲突
+  key_prefix: "devtools:"
+  # 图像任务状态保留时长（小时）
+  image_task_ttl_hours: 168
+  # 分片上传状态保留时长（小时）
+  chunk_upload_ttl_hours: 24
+
 # 安全配置
 security:
   # CORS 允许的来源（生产环境建议设置具体域名）

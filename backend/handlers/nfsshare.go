@@ -2192,7 +2192,7 @@ func (h *NFSShareHandler) GetTurnCredentials(c *gin.Context) {
 	if port == 0 {
 		port = 3478
 	}
-	host := fmt.Sprintf("%s:%d", turnCfg.Host, port)
+	host := net.JoinHostPort(turnCfg.Host, strconv.Itoa(port))
 
 	c.JSON(http.StatusOK, gin.H{
 		"stun": "stun:" + host,

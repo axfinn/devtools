@@ -34,27 +34,35 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // 手动分包策略
-        manualChunks: {
-          // Vue 核心
-          'vue-vendor': ['vue', 'vue-router'],
-          // Element Plus UI 库
-          'element-plus': ['element-plus'],
-          // React 核心（Excalidraw 依赖）
-          'react-vendor': ['react', 'react-dom'],
-          // Excalidraw 画图库（单独分包）
-          'excalidraw': ['@excalidraw/excalidraw'],
-          // Mermaid 图表库（按需加载）
-          'mermaid': ['mermaid'],
-          // KaTeX 数学公式
-          'katex': ['katex', 'markdown-it-texmath'],
-          // Markdown 解析
-          'markdown': ['markdown-it'],
-          // 代码高亮
-          'highlight': ['highlight.js'],
-          // 二维码
-          'qrcode': ['qrcode'],
-          // diff 库
-          'diff': ['diff']
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return
+          }
+
+          const groups = [
+            { name: 'vue-vendor', patterns: ['node_modules/vue/', 'node_modules/vue-router/'] },
+            { name: 'react-vendor', patterns: ['node_modules/react/', 'node_modules/react-dom/', 'node_modules/react-router-dom/', 'node_modules/react-i18next/', 'node_modules/i18next/', 'node_modules/zustand/'] },
+            { name: 'element-plus', patterns: ['node_modules/element-plus/', 'node_modules/@element-plus/'] },
+            { name: 'katex', patterns: ['node_modules/katex/', 'node_modules/markdown-it-texmath/'] },
+            { name: 'markdown', patterns: ['node_modules/markdown-it/', 'node_modules/markdown-it-footnote/', 'node_modules/markdown-it-mark/', 'node_modules/markdown-it-sub/', 'node_modules/markdown-it-sup/', 'node_modules/markdown-it-task-lists/'] },
+            { name: 'highlight', patterns: ['node_modules/highlight.js/'] },
+            { name: 'qrcode', patterns: ['node_modules/qrcode/', 'node_modules/html5-qrcode/'] },
+            { name: 'diff', patterns: ['node_modules/diff/'] },
+            { name: 'terminal-vendor', patterns: ['node_modules/@xterm/', 'node_modules/xterm/'] },
+            { name: 'media-vendor', patterns: ['node_modules/artplayer/', 'node_modules/hls.js/'] },
+            { name: 'ffmpeg', patterns: ['node_modules/@ffmpeg/ffmpeg/', 'node_modules/@ffmpeg/util/'] },
+            { name: 'pdf-vendor', patterns: ['node_modules/vue-pdf-embed/'] },
+            { name: 'zip-vendor', patterns: ['node_modules/jszip/'] },
+            { name: 'crypto-vendor', patterns: ['node_modules/crypto-js/'] },
+            { name: 'echarts', patterns: ['node_modules/echarts/'] },
+            { name: 'three', patterns: ['node_modules/three/'] },
+          ]
+
+          for (const group of groups) {
+            if (group.patterns.some(pattern => id.includes(pattern))) {
+              return group.name
+            }
+          }
         },
         // 文件命名
         chunkFileNames: 'assets/[name]-[hash].js',

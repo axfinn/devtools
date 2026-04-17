@@ -332,8 +332,8 @@
 <script setup>
 import { ref, onMounted, onActivated, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import mermaid from 'mermaid'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getMermaid } from '../utils/vendor-loaders'
 
 const route = useRoute()
 
@@ -609,7 +609,7 @@ let debounceTimer = null
 
 // 初始化 Mermaid
 const initMermaid = () => {
-  mermaid.initialize({
+  return getMermaid({
     startOnLoad: false,
     theme: theme.value,
     securityLevel: 'loose',
@@ -657,7 +657,7 @@ const render = async () => {
 
   try {
     // 重新初始化以应用主题
-    initMermaid()
+    const mermaid = await initMermaid()
 
     const id = `mermaid-${Date.now()}`
     const { svg } = await mermaid.render(id, code.value)

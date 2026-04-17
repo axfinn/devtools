@@ -293,7 +293,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, defineAsyncComponent } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading, Lock, Back, Picture, Download, ZoomIn, Document, Folder, Files, Headset, View, VideoPlay, Search, List } from '@element-plus/icons-vue'
@@ -304,8 +304,9 @@ import mark from 'markdown-it-mark'
 import taskLists from 'markdown-it-task-lists'
 import 'highlight.js/styles/github-dark.css'
 import { API_BASE } from '../api'
-import PdfViewer from '../components/PdfViewer.vue'
-import ZipViewer from '../components/ZipViewer.vue'
+
+const PdfViewer = defineAsyncComponent(() => import('../components/PdfViewer.vue'))
+const ZipViewer = defineAsyncComponent(() => import('../components/ZipViewer.vue'))
 
 // 初始化 markdown-it
 const md = new MarkdownIt({
@@ -540,7 +541,6 @@ const fetchCodeStats = async () => {
     }
   } catch (e) {
     // 静默失败，不影响主功能
-    console.log('获取代码统计失败', e)
   }
 }
 

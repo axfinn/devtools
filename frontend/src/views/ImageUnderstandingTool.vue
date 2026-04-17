@@ -728,8 +728,7 @@ const submitSse = async () => {
     // 处理默认消息事件 (status, ping)
     eventSource.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data)
-        console.log('SSE message:', msg)
+        JSON.parse(event.data)
       } catch (err) {
         console.error('SSE 消息解析失败:', err)
       }
