@@ -1,6 +1,6 @@
 module devtools
 
-go 1.21
+go 1.22
 
 require (
 	github.com/gin-contrib/cors v1.5.0
@@ -10,7 +10,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.19
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/redis/go-redis/v9 v9.18.0
-	github.com/yuin/goldmark v1.7.1
+	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.24.0
 	gopkg.in/yaml.v3 v3.0.1
 )
