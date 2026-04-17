@@ -51,7 +51,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "@vitejs/plugin-react": "^5.1.2",
-    "@vitejs/plugin-vue": "^6.0.1",
+    "@vitejs/plugin-vue": "^6.0.5",
     "@vue/test-utils": "^2.4.6",
     "autoprefixer": "^10.4.23",
     "jsdom": "^29.0.0",
