@@ -18,6 +18,11 @@ func passwordIndex(password string) string {
 	return hex.EncodeToString(h[:])
 }
 
+func deviceTokenIndex(token string) string {
+	h := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(h[:])
+}
+
 type PregnancyHandler struct {
 	db             *models.DB
 	defaultExpDays int
@@ -48,17 +53,31 @@ type CreatePregnancyRequest struct {
 }
 
 type CreatePregnancyResponse struct {
-	ID         string     `json:"id"`
-	CreatorKey string     `json:"creator_key"`
-	ExpiresAt  *time.Time `json:"expires_at"`
+	ID          string     `json:"id"`
+	CreatorKey  string     `json:"creator_key"`
+	DeviceToken string     `json:"device_token"`
+	ExpiresAt   *time.Time `json:"expires_at"`
 }
 
 type UpdatePregnancyRequest struct {
-	Action     string          `json:"action"` // "update_data", "update_edd", "extend"
-	CreatorKey string          `json:"creator_key"`
-	Data       json.RawMessage `json:"data"`
-	EDD        string          `json:"edd"`
-	ExpiresIn  int             `json:"expires_in"` // days
+	Action      string          `json:"action"` // "update_data", "update_edd", "extend"
+	CreatorKey  string          `json:"creator_key"`
+	DeviceToken string          `json:"device_token"`
+	Data        json.RawMessage `json:"data"`
+	EDD         string          `json:"edd"`
+	ExpiresIn   int             `json:"expires_in"` // days
+}
+
+func (h *PregnancyHandler) verifyPregnancyDeviceToken(profileID, token string) bool {
+	if token == "" {
+		return false
+	}
+	profile, err := h.db.GetPregnancyProfileByDeviceToken(deviceTokenIndex(token))
+	if err != nil || profile == nil || profile.ID != profileID {
+		return false
+	}
+	_ = h.db.TouchPregnancyDeviceToken(deviceTokenIndex(token))
+	return true
 }
 
 func (h *PregnancyHandler) Create(c *gin.Context) {
@@ -149,10 +168,18 @@ func (h *PregnancyHandler) Create(c *gin.Context) {
 		return
 	}
 
+	deviceToken := utils.GenerateHexKey(24)
+	if err := h.db.CreatePregnancyDeviceToken(profile.ID, deviceTokenIndex(deviceToken)); err != nil {
+		h.db.DeletePregnancyProfile(profile.ID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "设备凭证生成失败", "code": 500})
+		return
+	}
+
 	c.JSON(http.StatusCreated, CreatePregnancyResponse{
-		ID:         profile.ID,
-		CreatorKey: creatorKey,
-		ExpiresAt:  profile.ExpiresAt,
+		ID:          profile.ID,
+		CreatorKey:  creatorKey,
+		DeviceToken: deviceToken,
+		ExpiresAt:   profile.ExpiresAt,
 	})
 }
 
@@ -203,6 +230,44 @@ func (h *PregnancyHandler) GetByCreator(c *gin.Context) {
 		return
 	}
 
+	if profile.ExpiresAt != nil && time.Now().After(*profile.ExpiresAt) {
+		h.db.DeletePregnancyProfile(profile.ID)
+		c.JSON(http.StatusGone, gin.H{"error": "该档案已过期", "code": 410})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":         profile.ID,
+		"edd":        profile.EDD,
+		"data":       json.RawMessage(profile.Data),
+		"expires_at": profile.ExpiresAt,
+		"created_at": profile.CreatedAt,
+		"updated_at": profile.UpdatedAt,
+	})
+}
+
+func (h *PregnancyHandler) GetByDevice(c *gin.Context) {
+	id := c.Param("id")
+	deviceToken := c.Query("device_token")
+	if deviceToken == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "设备凭证无效", "code": 401})
+		return
+	}
+
+	profile, err := h.db.GetPregnancyProfileByDeviceToken(deviceTokenIndex(deviceToken))
+	if err != nil || profile == nil || profile.ID != id {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "设备凭证无效", "code": 401})
+		return
+	}
+
+	if profile.ExpiresAt != nil && time.Now().After(*profile.ExpiresAt) {
+		h.db.DeletePregnancyProfile(profile.ID)
+		c.JSON(http.StatusGone, gin.H{"error": "该档案已过期", "code": 410})
+		return
+	}
+
+	_ = h.db.TouchPregnancyDeviceToken(deviceTokenIndex(deviceToken))
+
 	c.JSON(http.StatusOK, gin.H{
 		"id":         profile.ID,
 		"edd":        profile.EDD,
@@ -229,7 +294,8 @@ func (h *PregnancyHandler) Update(c *gin.Context) {
 	}
 
 	// Auth check
-	if req.CreatorKey == "" || !utils.VerifyPassword(req.CreatorKey, profile.CreatorKey) {
+	if (req.CreatorKey == "" || !utils.VerifyPassword(req.CreatorKey, profile.CreatorKey)) &&
+		!h.verifyPregnancyDeviceToken(profile.ID, req.DeviceToken) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "无权限操作", "code": 401})
 		return
 	}
@@ -291,6 +357,7 @@ func (h *PregnancyHandler) Update(c *gin.Context) {
 func (h *PregnancyHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
 	creatorKey := c.Query("creator_key")
+	deviceToken := c.Query("device_token")
 
 	profile, err := h.db.GetPregnancyProfile(id)
 	if err != nil {
@@ -298,7 +365,8 @@ func (h *PregnancyHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if creatorKey == "" || !utils.VerifyPassword(creatorKey, profile.CreatorKey) {
+	if (creatorKey == "" || !utils.VerifyPassword(creatorKey, profile.CreatorKey)) &&
+		!h.verifyPregnancyDeviceToken(profile.ID, deviceToken) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "无权限操作", "code": 401})
 		return
 	}
@@ -346,13 +414,20 @@ func (h *PregnancyHandler) Login(c *gin.Context) {
 		return
 	}
 
+	deviceToken := utils.GenerateHexKey(24)
+	if err := h.db.CreatePregnancyDeviceToken(profile.ID, deviceTokenIndex(deviceToken)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "设备凭证生成失败", "code": 500})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"id":         profile.ID,
-		"edd":        profile.EDD,
-		"data":       json.RawMessage(profile.Data),
-		"expires_at": profile.ExpiresAt,
-		"created_at": profile.CreatedAt,
-		"updated_at": profile.UpdatedAt,
+		"id":           profile.ID,
+		"edd":          profile.EDD,
+		"data":         json.RawMessage(profile.Data),
+		"device_token": deviceToken,
+		"expires_at":   profile.ExpiresAt,
+		"created_at":   profile.CreatedAt,
+		"updated_at":   profile.UpdatedAt,
 	})
 }
 

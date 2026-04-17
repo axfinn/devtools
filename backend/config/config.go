@@ -9,43 +9,53 @@ import (
 
 // Config 应用程序配置
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Database   DatabaseConfig   `yaml:"database"`
-	Security   SecurityConfig   `yaml:"security"`
-	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
-	Limits     LimitsConfig     `yaml:"limits"`
-	ShortURL   ShortURLConfig   `yaml:"shorturl"`
-	Paste      PasteConfig      `yaml:"paste"`
-	Chat       ChatConfig       `yaml:"chat"`
-	MDShare    MDShareConfig    `yaml:"mdshare"`
-	Excalidraw ExcalidrawConfig `yaml:"excalidraw"`
-	Pregnancy  PregnancyConfig  `yaml:"pregnancy"`
-	SSH        SSHConfig        `yaml:"ssh"`
-	Expense    ExpenseConfig    `yaml:"expense"`
-	Glucose    GlucoseConfig    `yaml:"glucose"`
-	Household  HouseholdConfig  `yaml:"household"`
-	DeepSeek           DeepSeekConfig           `yaml:"deepseek"`
-	MiniMax            MiniMaxConfig            `yaml:"minimax"`
-	MiniMaxMCP         MiniMaxMCPConfig         `yaml:"minimax_mcp"`
+	Server              ServerConfig              `yaml:"server"`
+	Database            DatabaseConfig            `yaml:"database"`
+	Security            SecurityConfig            `yaml:"security"`
+	RateLimit           RateLimitConfig           `yaml:"rate_limit"`
+	Limits              LimitsConfig              `yaml:"limits"`
+	ShortURL            ShortURLConfig            `yaml:"shorturl"`
+	Paste               PasteConfig               `yaml:"paste"`
+	Chat                ChatConfig                `yaml:"chat"`
+	MDShare             MDShareConfig             `yaml:"mdshare"`
+	Excalidraw          ExcalidrawConfig          `yaml:"excalidraw"`
+	Pregnancy           PregnancyConfig           `yaml:"pregnancy"`
+	SSH                 SSHConfig                 `yaml:"ssh"`
+	Expense             ExpenseConfig             `yaml:"expense"`
+	Glucose             GlucoseConfig             `yaml:"glucose"`
+	Household           HouseholdConfig           `yaml:"household"`
+	DeepSeek            DeepSeekConfig            `yaml:"deepseek"`
+	MiniMax             MiniMaxConfig             `yaml:"minimax"`
+	MiniMaxMCP          MiniMaxMCPConfig          `yaml:"minimax_mcp"`
 	MiniMaxTTS          MiniMaxTTSConfig          `yaml:"minimax_tts"`
 	MiniMaxTokenPlan    MiniMaxTokenPlanConfig    `yaml:"minimax_token_plan"`
 	MiniMaxVoiceCloning MiniMaxVoiceCloningConfig `yaml:"minimax_voice_cloning"`
-	DashScope          DashScopeConfig          `yaml:"dashscope"`
-	Bailian            BailianConfig            `yaml:"bailian"`
-	AIGateway          AIGatewayConfig          `yaml:"ai_gateway"`
-	NFSShare           NFSShareConfig           `yaml:"nfs_share"`
-	ImageUnderstanding ImageUnderstandingConfig `yaml:"image_understanding"`
-	TURN               TURNConfig               `yaml:"turn"`
-	AutoDev            AutoDevConfig            `yaml:"autodev"`
-	Console            ConsoleConfig            `yaml:"console"`
-	Proxy              ProxyConfig              `yaml:"proxy"`
-	NPS                NPSConfig                `yaml:"nps"`
-	Mermaid            MermaidConfig            `yaml:"mermaid"`
+	DashScope           DashScopeConfig           `yaml:"dashscope"`
+	Bailian             BailianConfig             `yaml:"bailian"`
+	AIGateway           AIGatewayConfig           `yaml:"ai_gateway"`
+	NFSShare            NFSShareConfig            `yaml:"nfs_share"`
+	ImageUnderstanding  ImageUnderstandingConfig  `yaml:"image_understanding"`
+	TURN                TURNConfig                `yaml:"turn"`
+	AutoDev             AutoDevConfig             `yaml:"autodev"`
+	Console             ConsoleConfig             `yaml:"console"`
+	Proxy               ProxyConfig               `yaml:"proxy"`
+	NPS                 NPSConfig                 `yaml:"nps"`
+	Mermaid             MermaidConfig             `yaml:"mermaid"`
+	Hermes              HermesConfig              `yaml:"hermes"`
 }
 
 // MermaidConfig Mermaid 图表工具配置
 type MermaidConfig struct {
 	AdminPassword string `yaml:"admin_password"` // 访问密码，为空则不鉴权（不推荐）
+}
+
+// HermesConfig Hermes Agent 接入配置
+type HermesConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 访问密码，为空则禁用
+	DashboardURL  string `yaml:"dashboard_url"`  // Hermes Dashboard 地址
+	APIBaseURL    string `yaml:"api_base_url"`   // Hermes OpenAI 兼容 API 基础地址，建议以 /v1 结尾
+	APIKey        string `yaml:"api_key"`        // Hermes API Server Bearer Token
+	Model         string `yaml:"model"`          // 默认模型名，通常为 hermes-agent
 }
 
 // ConsoleConfig 控制台配置
@@ -94,12 +104,12 @@ type TURNConfig struct {
 
 // NFSShareConfig NFS/SMB 文件分享配置
 type NFSShareConfig struct {
-	Enabled              bool          `yaml:"enabled"`               // 是否启用
-	AdminPassword        string        `yaml:"admin_password"`        // 超管密码，为空则禁用
-	MaxFileSizeMB        int64         `yaml:"max_file_size_mb"`      // 单文件最大大小（MB），0 不限
+	Enabled              bool          `yaml:"enabled"`                // 是否启用
+	AdminPassword        string        `yaml:"admin_password"`         // 超管密码，为空则禁用
+	MaxFileSizeMB        int64         `yaml:"max_file_size_mb"`       // 单文件最大大小（MB），0 不限
 	DisableVideoDownload bool          `yaml:"disable_video_download"` // 禁止视频直接下载，只允许 HLS 播放
 	DisableDownload      bool          `yaml:"disable_download"`       // 禁止所有文件直接下载
-	Mounts               []MountConfig `yaml:"mounts"`                // 挂载点列表
+	Mounts               []MountConfig `yaml:"mounts"`                 // 挂载点列表
 }
 
 // MountConfig 单个挂载点配置
@@ -163,8 +173,8 @@ type PasteConfig struct {
 
 // ChatConfig 聊天室配置
 type ChatConfig struct {
-	AdminPassword  string `yaml:"admin_password"`   // 管理员密码，可管理所有聊天室
-	TTSServiceURL  string `yaml:"tts_service_url"`  // TTS HTTP 服务地址，默认 http://127.0.0.1:8083
+	AdminPassword string `yaml:"admin_password"`  // 管理员密码，可管理所有聊天室
+	TTSServiceURL string `yaml:"tts_service_url"` // TTS HTTP 服务地址，默认 http://127.0.0.1:8083
 }
 
 // MDShareConfig Markdown 分享配置
@@ -223,12 +233,12 @@ type MiniMaxConfig struct {
 
 // MiniMaxMCPConfig MiniMax MCP 图像理解配置
 type MiniMaxMCPConfig struct {
-	APIKey         string   `yaml:"api_key"`          // MCP API Key
-	APIHost        string   `yaml:"api_host"`         // MCP API Host
-	Command        string   `yaml:"command"`          // MCP Server 启动命令
-	Args           []string `yaml:"args"`             // MCP Server 启动参数
-	TimeoutSeconds int      `yaml:"timeout_seconds"`  // 请求超时
-	Transport      string   `yaml:"transport"`        // 传输协议: line 或 header
+	APIKey         string   `yaml:"api_key"`         // MCP API Key
+	APIHost        string   `yaml:"api_host"`        // MCP API Host
+	Command        string   `yaml:"command"`         // MCP Server 启动命令
+	Args           []string `yaml:"args"`            // MCP Server 启动参数
+	TimeoutSeconds int      `yaml:"timeout_seconds"` // 请求超时
+	Transport      string   `yaml:"transport"`       // 传输协议: line 或 header
 }
 
 func (cfg MiniMaxMCPConfig) Timeout() time.Duration {
@@ -351,7 +361,7 @@ func DefaultConfig() *Config {
 		Limits: LimitsConfig{
 			PasteMaxContentSize: 10 * 1024 * 1024, // 10MB
 			PasteMaxImages:      15,
-			PasteMaxTotalSize:   50 * 1024 * 1024, // 50MB
+			PasteMaxTotalSize:   50 * 1024 * 1024,  // 50MB
 			MaxUploadSize:       200 * 1024 * 1024, // 200MB
 		},
 		Paste: PasteConfig{
@@ -448,6 +458,11 @@ func DefaultConfig() *Config {
 			AutodevPath: "/opt/autodev/autodev",
 			DataDir:     "./data/autodev",
 		},
+		Hermes: HermesConfig{
+			DashboardURL: "http://host.docker.internal:8086",
+			APIBaseURL:   "http://host.docker.internal:8642/v1",
+			Model:        "hermes-agent",
+		},
 	}
 }
 
@@ -537,6 +552,21 @@ func Load(path string) (*Config, error) {
 	}
 	if autodevDataDir := os.Getenv("AUTODEV_DATA_DIR"); autodevDataDir != "" {
 		cfg.AutoDev.DataDir = autodevDataDir
+	}
+	if hermesPassword := os.Getenv("HERMES_ADMIN_PASSWORD"); hermesPassword != "" {
+		cfg.Hermes.AdminPassword = hermesPassword
+	}
+	if hermesDashboardURL := os.Getenv("HERMES_DASHBOARD_URL"); hermesDashboardURL != "" {
+		cfg.Hermes.DashboardURL = hermesDashboardURL
+	}
+	if hermesAPIBaseURL := os.Getenv("HERMES_API_BASE_URL"); hermesAPIBaseURL != "" {
+		cfg.Hermes.APIBaseURL = hermesAPIBaseURL
+	}
+	if hermesAPIKey := os.Getenv("HERMES_API_KEY"); hermesAPIKey != "" {
+		cfg.Hermes.APIKey = hermesAPIKey
+	}
+	if hermesModel := os.Getenv("HERMES_MODEL"); hermesModel != "" {
+		cfg.Hermes.Model = hermesModel
 	}
 	// TTS 服务地址支持环境变量覆盖
 	if ttsURL := os.Getenv("TTS_SERVICE_URL"); ttsURL != "" {

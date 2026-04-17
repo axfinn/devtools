@@ -81,6 +81,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/hermes',
+    name: 'Hermes',
+    component: () => import('../views/HermesTool.vue'),
+    meta: {
+      title: 'Hermes Agent',
+      icon: 'Connection',
+      category: 'dev',
+      description: 'Hermes Dashboard、Gateway 与 API 调试'
+    }
+  },
+  {
     path: '/proxy',
     name: 'Proxy',
     component: () => import('../views/ProxyTool.vue'),
@@ -269,6 +280,7 @@ const toolRoutes = [
       title: '孕期管理',
       icon: 'Calendar',
       category: 'life',
+      shortcut: true,
       description: '孕期记录工具'
     }
   },

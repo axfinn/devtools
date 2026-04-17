@@ -350,6 +350,7 @@ func main() {
 	mermaidHandler := handlers.NewMermaidHandler(db, cfg)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
 	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
+	hermesHandler := handlers.NewHermesHandler(cfg.Hermes)
 	handlers.InitGFWList("./data/proxy.db")
 	proxyHandler.AutoSelectOnStartup()
 	proxyHandler.StartAutoMaintenance()
@@ -532,6 +533,7 @@ func main() {
 			pregnancy.POST("/login", pregnancyHandler.Login)
 			pregnancy.GET("/:id", pregnancyHandler.Get)
 			pregnancy.GET("/:id/creator", pregnancyHandler.GetByCreator)
+			pregnancy.GET("/:id/device", pregnancyHandler.GetByDevice)
 			pregnancy.PUT("/:id", pregnancyHandler.Update)
 			pregnancy.DELETE("/:id", pregnancyHandler.Delete)
 		}
@@ -711,21 +713,21 @@ func main() {
 					nfsShareHandler.HLSSegment(c)
 				}
 			})
-			nfsshare.GET("/:id", nfsShareHandler.Access)                                // 访问/下载文件（公开，消耗次数）
-			nfsshare.GET("/:id/watch/ws", nfsShareHandler.WatchWS)                      // 一起看 WebSocket（公开）
-			nfsshare.POST("/:id/record", nfsShareHandler.UploadRecord)                  // 上传录音（公开，需分享密码）
-			nfsshare.GET("/:id/record/:filename", nfsShareHandler.ServeRecord)          // 播放录音（超管）
-			nfsshare.POST("", nfsShareHandler.Create)                                   // 创建分享（超管）
-			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)                       // 浏览目录（超管）
-			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)                      // 分享列表（超管）
-			nfsshare.GET("/admin/mounts", nfsShareHandler.MountsList)                   // 挂载点列表及状态（超管）
-			nfsshare.POST("/admin/mounts/:name/remount", nfsShareHandler.MountsRemount) // 重新挂载（超管）
-			nfsshare.POST("/admin/mounts/:name/umount", nfsShareHandler.MountsUmount)   // 卸载（超管）
-			nfsshare.GET("/admin/:id/logs", nfsShareHandler.AdminGetLogs)               // 访问日志（超管）
-			nfsshare.PUT("/admin/:id", nfsShareHandler.AdminUpdate)                     // 修改配置（超管）
-			nfsshare.DELETE("/admin/:id", nfsShareHandler.AdminDelete)                  // 删除分享（超管）
-			nfsshare.POST("/admin/upload/init", nfsShareHandler.UploadInit)             // 初始化上传（超管）
-			nfsshare.POST("/admin/upload/:token/chunk", nfsShareHandler.UploadChunk)    // 上传分片（超管）
+			nfsshare.GET("/:id", nfsShareHandler.Access)                                   // 访问/下载文件（公开，消耗次数）
+			nfsshare.GET("/:id/watch/ws", nfsShareHandler.WatchWS)                         // 一起看 WebSocket（公开）
+			nfsshare.POST("/:id/record", nfsShareHandler.UploadRecord)                     // 上传录音（公开，需分享密码）
+			nfsshare.GET("/:id/record/:filename", nfsShareHandler.ServeRecord)             // 播放录音（超管）
+			nfsshare.POST("", nfsShareHandler.Create)                                      // 创建分享（超管）
+			nfsshare.GET("/admin/browse", nfsShareHandler.Browse)                          // 浏览目录（超管）
+			nfsshare.GET("/admin/list", nfsShareHandler.AdminList)                         // 分享列表（超管）
+			nfsshare.GET("/admin/mounts", nfsShareHandler.MountsList)                      // 挂载点列表及状态（超管）
+			nfsshare.POST("/admin/mounts/:name/remount", nfsShareHandler.MountsRemount)    // 重新挂载（超管）
+			nfsshare.POST("/admin/mounts/:name/umount", nfsShareHandler.MountsUmount)      // 卸载（超管）
+			nfsshare.GET("/admin/:id/logs", nfsShareHandler.AdminGetLogs)                  // 访问日志（超管）
+			nfsshare.PUT("/admin/:id", nfsShareHandler.AdminUpdate)                        // 修改配置（超管）
+			nfsshare.DELETE("/admin/:id", nfsShareHandler.AdminDelete)                     // 删除分享（超管）
+			nfsshare.POST("/admin/upload/init", nfsShareHandler.UploadInit)                // 初始化上传（超管）
+			nfsshare.POST("/admin/upload/:token/chunk", nfsShareHandler.UploadChunk)       // 上传分片（超管）
 			nfsshare.POST("/admin/upload/:token/complete", nfsShareHandler.UploadComplete) // 合并完成（超管）
 		}
 
@@ -926,6 +928,15 @@ func main() {
 			nps.GET("/tunnels", npsHandler.ListTunnels)
 			nps.POST("/tunnels", npsHandler.AddTunnel)
 			nps.DELETE("/tunnels/:id", npsHandler.DeleteTunnel)
+		}
+
+		// Hermes Agent 接入
+		hermes := api.Group("/hermes")
+		{
+			hermes.POST("/verify", hermesHandler.VerifyPassword)
+			hermes.GET("/status", hermesHandler.Status)
+			hermes.GET("/models", hermesHandler.Models)
+			hermes.POST("/chat", hermesHandler.Chat)
 		}
 		api.POST("/bg/cache", handlers.CacheBackgroundImages) // 缓存图片
 		api.POST("/bg/replace", handlers.ReplaceRandomImages) // 随机替换图片

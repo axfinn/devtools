@@ -30,7 +30,7 @@
     <div v-if="!profileId" class="welcome-section">
       <div class="welcome-card">
         <h3>创建孕期档案</h3>
-        <p>输入预产期和密码，创建您的专属孕期管理档案。</p>
+        <p>输入预产期和密码，创建专属档案。当前浏览器后续会自动记住并直达。</p>
         <el-form :model="createForm" label-width="80px" style="max-width: 400px; margin: 20px auto;">
           <el-form-item label="预产期">
             <el-date-picker v-model="createForm.edd" type="date" placeholder="选择预产期"
@@ -48,7 +48,7 @@
 
       <div class="welcome-card" style="margin-top: 20px;">
         <h3>加载已有档案</h3>
-        <p>输入创建时设置的密码即可加载档案。</p>
+        <p>首次输入密码后，本机浏览器会保存免密凭证，下次可直接进入。</p>
         <el-form :model="loadForm" label-width="80px" style="max-width: 400px; margin: 20px auto;">
           <el-form-item label="密码">
             <el-input v-model="loadForm.password" type="password" placeholder="输入密码"
@@ -272,40 +272,99 @@
         <!-- Fetal Movement Tab -->
         <el-tab-pane label="胎动" name="fetalMovement">
           <div class="fetal-section">
-            <h3>胎动记录</h3>
-            <div class="counter-area">
-              <div class="counter-display">
-                <span class="counter-number">{{ fetalCount }}</span>
-                <span class="counter-label">次</span>
+            <div class="fetal-hero" :class="`tone-${fetalTodaySummary.tone}`">
+              <div class="fetal-hero-copy">
+                <span class="hero-eyebrow">孕晚期重点工具</span>
+                <h3>胎动记录</h3>
+                <p>{{ fetalTodaySummary.title }}</p>
+                <small>{{ fetalTodaySummary.text }}</small>
+                <div class="hero-shortcuts">
+                  <el-button type="primary" plain @click="installQuickShortcut">
+                    {{ canInstallShortcut ? '创建桌面快捷入口' : '添加到桌面 / 主屏幕' }}
+                  </el-button>
+                  <el-tag type="info" effect="plain">
+                    打开快捷入口后可直接一键加 1 次胎动
+                  </el-tag>
+                </div>
               </div>
-              <div class="counter-timer" v-if="fetalTimerRunning">
-                <span>计时: {{ fetalTimerDisplay }}</span>
-              </div>
-              <div class="counter-actions">
-                <el-button type="primary" size="large" circle class="kick-button"
-                  @click="recordKick" :disabled="!fetalTimerRunning">
-                  <el-icon :size="32"><Plus /></el-icon>
-                </el-button>
-              </div>
-              <div class="counter-controls">
-                <el-button v-if="!fetalTimerRunning" type="success" @click="startFetalTimer">
-                  开始计数
-                </el-button>
-                <el-button v-else type="danger" @click="stopFetalTimer">
-                  结束并保存
-                </el-button>
-                <el-button v-if="fetalTimerRunning" @click="resetFetalCounter">
-                  重置
-                </el-button>
+              <div class="hero-stats">
+                <div class="hero-stat">
+                  <strong>{{ todayFetalCount }}</strong>
+                  <span>今日累计</span>
+                </div>
+                <div class="hero-stat">
+                  <strong>{{ todayFetalRecords.length }}</strong>
+                  <span>记录组数</span>
+                </div>
               </div>
             </div>
 
-            <el-table v-if="profileData.fetal_movements && profileData.fetal_movements.length"
-              :data="profileData.fetal_movements" stripe size="small" style="margin-top: 20px;">
+            <div class="fetal-tip-band">
+              <span>建议固定在饭后或宝宝活跃时段记录，若明显少于平时或突然异常频繁，请及时就医。</span>
+            </div>
+
+            <div class="fetal-grid">
+              <div class="counter-area">
+                <div class="counter-display">
+                  <span class="counter-number">{{ fetalCount }}</span>
+                  <span class="counter-label">次</span>
+                </div>
+                <div class="counter-timer" v-if="fetalTimerRunning">
+                  <span>本次已记录 {{ fetalTimerDisplay }}</span>
+                </div>
+                <div class="counter-actions">
+                  <el-button type="primary" size="large" class="kick-pill" @click="recordQuickKick()">
+                    一键加 1 次胎动
+                  </el-button>
+                  <el-button type="success" size="large" circle class="kick-button"
+                    @click="recordKick" :disabled="!fetalTimerRunning">
+                    <el-icon :size="32"><Plus /></el-icon>
+                  </el-button>
+                </div>
+                <div class="counter-controls">
+                  <el-button v-if="!fetalTimerRunning" type="warning" @click="startFetalTimer">
+                    开始一轮系统计数
+                  </el-button>
+                  <el-button v-else type="danger" @click="stopFetalTimer">
+                    结束并保存本轮
+                  </el-button>
+                  <el-button v-if="fetalTimerRunning" @click="resetFetalCounter">
+                    清空本轮
+                  </el-button>
+                </div>
+              </div>
+
+              <div class="fetal-detail-card">
+                <div class="detail-card-head">
+                  <h4>今日明细</h4>
+                  <span>{{ todayFetalDetailTimes.length }} 个时间点</span>
+                </div>
+                <div v-if="todayFetalDetailTimes.length" class="detail-time-list">
+                  <div v-for="(item, idx) in todayFetalDetailTimes" :key="`${item.time}-${idx}`" class="detail-time-chip">
+                    <span>{{ formatTimeLabel(item.time) }}</span>
+                  </div>
+                </div>
+                <el-empty v-else description="今天还没有记录明细" :image-size="70" />
+              </div>
+            </div>
+
+            <el-table v-if="sortedFetalRecords.length"
+              :data="sortedFetalRecords" stripe size="small" style="margin-top: 20px;">
               <el-table-column prop="date" label="日期" width="150" />
+              <el-table-column prop="period" label="时段" width="100" />
               <el-table-column prop="start_time" label="开始时间" width="120" />
+              <el-table-column prop="end_time" label="结束时间" width="120" />
               <el-table-column prop="duration" label="时长(分钟)" width="120" />
               <el-table-column prop="count" label="次数" width="100" />
+              <el-table-column label="明细">
+                <template #default="{ row }">
+                  <div class="table-detail-times">
+                    <el-tag v-for="(time, index) in row.detail_times || []" :key="`${row.date}-${time}-${index}`" size="small" effect="plain">
+                      {{ time }}
+                    </el-tag>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="操作" width="80">
                 <template #default="{ $index }">
                   <el-button link type="danger" size="small"
@@ -404,9 +463,12 @@
     <!-- My Profiles Dialog -->
     <el-dialog v-model="showMyProfiles" title="我的档案" width="500px">
       <div v-for="(profile, id) in localProfiles" :key="id" class="profile-item">
-        <span>{{ id }}</span>
+        <div class="profile-item-text">
+          <strong>{{ id }}</strong>
+          <span>{{ normalizeLocalProfile(profile)?.device_token ? '本机免密直达' : '仅创建者凭证' }}</span>
+        </div>
         <div>
-          <el-button size="small" type="primary" @click="loadByCreatorKey(id, profile)">加载</el-button>
+          <el-button size="small" type="primary" @click="loadStoredProfile(id, profile)">加载</el-button>
           <el-button size="small" type="danger" @click="removeLocalProfile(id)">移除</el-button>
         </div>
       </div>
@@ -430,15 +492,22 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Plus, Folder, Timer } from '@element-plus/icons-vue'
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:8080' : ''
 const PREGNANCY_SKIP_AUTOLOAD_KEY = 'pregnancy_skip_autoload'
+const PREGNANCY_PROFILES_KEY = 'pregnancy_profiles'
+
+const route = useRoute()
+const router = useRouter()
 
 // State
 const profileId = ref('')
 const profileEDD = ref('')
+const creatorKey = ref('')
+const deviceToken = ref('')
 const profileData = reactive({
   hospital_bag: { mom: [], baby: [], documents: [], other: [] },
   baby_essentials: { feeding: [], diaper: [], clothing: [], bathing: [], bedding: [], outdoor: [] },
@@ -446,7 +515,6 @@ const profileData = reactive({
   weight_records: [],
   fetal_movements: []
 })
-const creatorKey = ref('')
 const saveStatus = ref('saved')
 const activeTab = ref('hospitalBag')
 const creating = ref(false)
@@ -455,6 +523,7 @@ const extending = ref(false)
 const showMyProfiles = ref(false)
 const showExtendDialog = ref(false)
 const extendDays = ref(365)
+const installPromptEvent = ref(null)
 
 const createForm = reactive({ edd: '', password: '' })
 const loadForm = reactive({ password: '' })
@@ -476,6 +545,7 @@ const fetalCount = ref(0)
 const fetalTimerRunning = ref(false)
 const fetalTimerStart = ref(null)
 const fetalTimerElapsed = ref(0)
+const handledQuickAction = ref('')
 let fetalInterval = null
 
 // Collapse states
@@ -510,22 +580,86 @@ function scheduleAutoSave() {
 // Local profile storage
 const localProfiles = ref({})
 const hasLocalProfiles = computed(() => Object.keys(localProfiles.value).length > 0)
+const canInstallShortcut = computed(() => !!installPromptEvent.value)
+
+function normalizeLocalProfile(value) {
+  if (!value) return null
+  if (typeof value === 'string') {
+    return { creator_key: value, device_token: '', updated_at: '' }
+  }
+  if (typeof value === 'object') {
+    return {
+      creator_key: value.creator_key || value.creatorKey || '',
+      device_token: value.device_token || value.deviceToken || '',
+      updated_at: value.updated_at || value.updatedAt || ''
+    }
+  }
+  return null
+}
+
+function persistLocalProfiles() {
+  localStorage.setItem(PREGNANCY_PROFILES_KEY, JSON.stringify(localProfiles.value))
+}
 
 function loadLocalProfiles() {
   try {
-    const stored = localStorage.getItem('pregnancy_profiles')
-    if (stored) localProfiles.value = JSON.parse(stored)
+    const stored = localStorage.getItem(PREGNANCY_PROFILES_KEY)
+    if (!stored) return
+    const parsed = JSON.parse(stored)
+    const normalized = {}
+    for (const [id, value] of Object.entries(parsed || {})) {
+      const profile = normalizeLocalProfile(value)
+      if (profile && (profile.creator_key || profile.device_token)) {
+        normalized[id] = profile
+      }
+    }
+    localProfiles.value = normalized
+    persistLocalProfiles()
   } catch { /* ignore */ }
 }
 
-function saveLocalProfile(id, key) {
-  localProfiles.value[id] = key
-  localStorage.setItem('pregnancy_profiles', JSON.stringify(localProfiles.value))
+function saveLocalProfile(id, payload = {}) {
+  const existing = normalizeLocalProfile(localProfiles.value[id]) || { creator_key: '', device_token: '' }
+  localProfiles.value[id] = {
+    creator_key: payload.creatorKey ?? existing.creator_key,
+    device_token: payload.deviceToken ?? existing.device_token,
+    updated_at: new Date().toISOString()
+  }
+  persistLocalProfiles()
 }
 
 function removeLocalProfile(id) {
   delete localProfiles.value[id]
-  localStorage.setItem('pregnancy_profiles', JSON.stringify(localProfiles.value))
+  persistLocalProfiles()
+}
+
+function loadStoredProfile(id, profile) {
+  const localProfile = normalizeLocalProfile(profile)
+  if (localProfile?.device_token) {
+    loadByDeviceToken(id, localProfile.device_token)
+    return
+  }
+  if (localProfile?.creator_key) {
+    loadByCreatorKey(id, localProfile.creator_key)
+  }
+}
+
+function handleBeforeInstallPrompt(event) {
+  event.preventDefault()
+  installPromptEvent.value = event
+}
+
+async function installQuickShortcut() {
+  if (!installPromptEvent.value) {
+    ElMessage.info('当前浏览器可通过菜单“添加到桌面/主屏幕”创建快捷入口')
+    return
+  }
+  installPromptEvent.value.prompt()
+  const choice = await installPromptEvent.value.userChoice
+  if (choice?.outcome === 'accepted') {
+    ElMessage.success('快捷入口已添加，安装后可直接从桌面进入')
+  }
+  installPromptEvent.value = null
 }
 
 // Pregnancy calculations
@@ -587,6 +721,93 @@ const babySize = computed(() => {
   const w = currentWeek.value
   const found = babySizeData.find(d => d.week === w)
   return found ? found.size : (w < 4 ? '太小了' : '足月宝宝')
+})
+
+const isLatePregnancy = computed(() => currentWeek.value >= 28)
+
+function getTodayDateString() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function getCurrentTimeString() {
+  return new Date().toTimeString().slice(0, 5)
+}
+
+function formatTimeLabel(value) {
+  if (!value) return ''
+  const raw = String(value).slice(0, 5)
+  const [hour = '00'] = raw.split(':')
+  const h = Number(hour)
+  if (Number.isNaN(h)) return raw
+  if (h < 6) return `凌晨 ${raw}`
+  if (h < 12) return `上午 ${raw}`
+  if (h < 18) return `下午 ${raw}`
+  return `晚上 ${raw}`
+}
+
+function getFetalPeriodLabel(timeValue) {
+  const [hour = '00'] = String(timeValue || '').split(':')
+  const h = Number(hour)
+  if (Number.isNaN(h)) return '日常记录'
+  if (h < 6) return '凌晨'
+  if (h < 11) return '上午'
+  if (h < 14) return '午间'
+  if (h < 18) return '下午'
+  return '晚上'
+}
+
+const sortedFetalRecords = computed(() => {
+  if (!profileData.fetal_movements) return []
+  return [...profileData.fetal_movements].sort((a, b) => {
+    const aKey = `${a.date || ''} ${a.start_time || ''}`
+    const bKey = `${b.date || ''} ${b.start_time || ''}`
+    return bKey.localeCompare(aKey)
+  })
+})
+
+const todayFetalRecords = computed(() =>
+  sortedFetalRecords.value.filter(record => record.date === getTodayDateString())
+)
+
+const todayFetalDetailTimes = computed(() =>
+  todayFetalRecords.value.flatMap(record =>
+    Array.isArray(record.detail_times)
+      ? record.detail_times.map(time => ({ time, record }))
+      : []
+  ).sort((a, b) => a.time.localeCompare(b.time))
+)
+
+const todayFetalCount = computed(() =>
+  todayFetalRecords.value.reduce((sum, record) => sum + Number(record.count || 0), 0)
+)
+
+const fetalTodaySummary = computed(() => {
+  if (!isLatePregnancy.value) {
+    return {
+      tone: 'calm',
+      title: '建议从孕28周开始规律记录胎动',
+      text: '当前阶段可以先熟悉页面，真正需要每天固定时段系统记录，多见于孕晚期。'
+    }
+  }
+  if (!todayFetalRecords.value.length) {
+    return {
+      tone: 'warm',
+      title: '今天还没有开始记录',
+      text: '建议在饭后或宝宝平时活跃的时段，左侧卧或安静坐下开始记录。'
+    }
+  }
+  if (todayFetalCount.value >= 10) {
+    return {
+      tone: 'good',
+      title: `今天已记录 ${todayFetalCount.value} 次胎动`,
+      text: '如果和平时习惯接近，可以继续保持；若明显减少或突然异常频繁，仍建议及时就医。'
+    }
+  }
+  return {
+    tone: 'notice',
+    title: `今天已记录 ${todayFetalCount.value} 次胎动`,
+    text: '次数还不多时，继续在宝宝活跃时段观察；若明显少于平时，尽快联系医生。'
+  }
 })
 
 // Checklist helpers
@@ -769,7 +990,31 @@ function startFetalTimer() {
   }, 1000)
 }
 
+function createFetalRecordBase(now = new Date()) {
+  const time = now.toTimeString().slice(0, 5)
+  return {
+    date: now.toISOString().slice(0, 10),
+    start_time: time,
+    end_time: time,
+    duration: 0,
+    count: 0,
+    period: getFetalPeriodLabel(time),
+    notes: '',
+    detail_times: []
+  }
+}
+
+function appendKickToRecord(record, timeValue = getCurrentTimeString()) {
+  if (!Array.isArray(record.detail_times)) record.detail_times = []
+  record.detail_times.push(timeValue)
+  record.count = record.detail_times.length
+  record.end_time = timeValue
+  if (!record.start_time) record.start_time = timeValue
+  record.period = getFetalPeriodLabel(record.start_time)
+}
+
 function recordKick() {
+  if (!fetalTimerRunning.value) return
   fetalCount.value++
 }
 
@@ -788,12 +1033,24 @@ function stopFetalTimer() {
 
   if (fetalCount.value > 0) {
     const now = new Date()
-    profileData.fetal_movements.unshift({
-      date: now.toISOString().slice(0, 10),
-      start_time: fetalTimerStart.value.toTimeString().slice(0, 5),
-      duration: Math.round(fetalTimerElapsed.value / 60),
-      count: fetalCount.value
-    })
+    const startTime = fetalTimerStart.value ? fetalTimerStart.value.toTimeString().slice(0, 5) : now.toTimeString().slice(0, 5)
+    const record = {
+      ...createFetalRecordBase(now),
+      start_time: startTime,
+      end_time: now.toTimeString().slice(0, 5),
+      duration: Math.max(1, Math.round(fetalTimerElapsed.value / 60)),
+      period: getFetalPeriodLabel(startTime),
+      detail_times: Array.from({ length: fetalCount.value }, (_, index) => {
+        if (fetalTimerStart.value) {
+          const step = Math.max(1, Math.floor(fetalTimerElapsed.value / Math.max(fetalCount.value, 1)))
+          const detailDate = new Date(fetalTimerStart.value.getTime() + Math.min(index * step, fetalTimerElapsed.value) * 1000)
+          return detailDate.toTimeString().slice(0, 5)
+        }
+        return now.toTimeString().slice(0, 5)
+      })
+    }
+    record.count = record.detail_times.length
+    profileData.fetal_movements.unshift(record)
     scheduleAutoSave()
   }
 
@@ -801,9 +1058,52 @@ function stopFetalTimer() {
   fetalTimerElapsed.value = 0
 }
 
-function removeFetalRecord(idx) {
-  profileData.fetal_movements.splice(idx, 1)
+function recordQuickKick(source = 'manual') {
+  const now = new Date()
+  const today = now.toISOString().slice(0, 10)
+  const time = now.toTimeString().slice(0, 5)
+  let record = profileData.fetal_movements.find(item =>
+    item.date === today && item.quick_entry === true && item.period === getFetalPeriodLabel(time)
+  )
+  if (!record) {
+    record = {
+      ...createFetalRecordBase(now),
+      quick_entry: true,
+      notes: source === 'shortcut' ? '来自桌面快捷入口的一键记录' : '快捷记录'
+    }
+    profileData.fetal_movements.unshift(record)
+  }
+  appendKickToRecord(record, time)
+  record.duration = 0
   scheduleAutoSave()
+  ElMessage.success(source === 'shortcut' ? '已通过快捷入口记录 1 次胎动' : '已记录 1 次胎动')
+}
+
+function removeFetalRecord(idx) {
+  const record = sortedFetalRecords.value[idx]
+  const realIdx = profileData.fetal_movements.findIndex(item =>
+    item.date === record.date &&
+    item.start_time === record.start_time &&
+    Number(item.count || 0) === Number(record.count || 0)
+  )
+  if (realIdx >= 0) profileData.fetal_movements.splice(realIdx, 1)
+  scheduleAutoSave()
+}
+
+function handleQuickRouteAction() {
+  if (!route.query.quickAction) {
+    handledQuickAction.value = ''
+    return
+  }
+  if (!profileId.value) return
+  const actionKey = `${route.fullPath}|${profileId.value}`
+  if (handledQuickAction.value === actionKey) return
+  if (route.query.quickAction === 'kick') {
+    activeTab.value = 'fetalMovement'
+    recordQuickKick('shortcut')
+    handledQuickAction.value = actionKey
+    router.replace({ path: route.path, query: {} })
+  }
 }
 
 // Knowledge category filter
@@ -1181,8 +1481,9 @@ async function createProfile() {
 
     profileId.value = data.id
     creatorKey.value = data.creator_key
+    deviceToken.value = data.device_token || ''
     profileEDD.value = createForm.edd
-    saveLocalProfile(data.id, data.creator_key)
+    saveLocalProfile(data.id, { creatorKey: data.creator_key, deviceToken: data.device_token || '' })
     sessionStorage.removeItem(PREGNANCY_SKIP_AUTOLOAD_KEY)
 
     // Load the full profile data from server
@@ -1211,8 +1512,10 @@ async function loadProfile() {
     if (!res.ok) throw new Error(data.error)
 
     profileId.value = data.id
+    deviceToken.value = data.device_token || ''
     profileEDD.value = data.edd
     applyData(data.data)
+    saveLocalProfile(data.id, { deviceToken: data.device_token || '' })
     sessionStorage.removeItem(PREGNANCY_SKIP_AUTOLOAD_KEY)
     ElMessage.success('档案加载成功')
   } catch (e) {
@@ -1230,13 +1533,43 @@ async function loadByCreatorKey(id, key) {
 
     profileId.value = id
     creatorKey.value = key
+    deviceToken.value = normalizeLocalProfile(localProfiles.value[id])?.device_token || ''
     profileEDD.value = data.edd
     applyData(data.data)
+    saveLocalProfile(id, { creatorKey: key, deviceToken: deviceToken.value })
     sessionStorage.removeItem(PREGNANCY_SKIP_AUTOLOAD_KEY)
     showMyProfiles.value = false
+    handleQuickRouteAction()
     ElMessage.success('档案加载成功')
   } catch (e) {
     ElMessage.error(e.message || '加载失败')
+  }
+}
+
+async function loadByDeviceToken(id, token, silent = false) {
+  try {
+    const res = await fetch(`${API_BASE}/api/pregnancy/${id}/device?device_token=${encodeURIComponent(token)}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+
+    profileId.value = id
+    creatorKey.value = normalizeLocalProfile(localProfiles.value[id])?.creator_key || ''
+    deviceToken.value = token
+    profileEDD.value = data.edd
+    applyData(data.data)
+    saveLocalProfile(id, { creatorKey: creatorKey.value, deviceToken: token })
+    sessionStorage.removeItem(PREGNANCY_SKIP_AUTOLOAD_KEY)
+    showMyProfiles.value = false
+    handleQuickRouteAction()
+    if (!silent) ElMessage.success('档案已自动加载')
+  } catch (e) {
+    const localProfile = normalizeLocalProfile(localProfiles.value[id])
+    if (localProfile?.creator_key) {
+      saveLocalProfile(id, { creatorKey: localProfile.creator_key, deviceToken: '' })
+    } else {
+      removeLocalProfile(id)
+    }
+    if (!silent) ElMessage.error(e.message || '自动加载失败')
   }
 }
 
@@ -1247,11 +1580,21 @@ function applyData(data) {
   if (d.baby_essentials) Object.assign(profileData.baby_essentials, d.baby_essentials)
   if (d.prenatal_checks) profileData.prenatal_checks = d.prenatal_checks
   if (d.weight_records) profileData.weight_records = d.weight_records
-  if (d.fetal_movements) profileData.fetal_movements = d.fetal_movements
+  if (d.fetal_movements) {
+    profileData.fetal_movements = d.fetal_movements.map(record => ({
+      ...record,
+      end_time: record.end_time || record.start_time || '',
+      period: record.period || getFetalPeriodLabel(record.start_time || record.end_time),
+      notes: record.notes || '',
+      detail_times: Array.isArray(record.detail_times)
+        ? record.detail_times
+        : Array.from({ length: Number(record.count || 0) }, () => record.start_time || '')
+    }))
+  }
 }
 
 async function saveData() {
-  if (!profileId.value || !creatorKey.value) return
+  if (!profileId.value || (!creatorKey.value && !deviceToken.value)) return
   try {
     const res = await fetch(`${API_BASE}/api/pregnancy/${profileId.value}`, {
       method: 'PUT',
@@ -1259,6 +1602,7 @@ async function saveData() {
       body: JSON.stringify({
         action: 'update_data',
         creator_key: creatorKey.value,
+        device_token: deviceToken.value,
         data: {
           hospital_bag: profileData.hospital_bag,
           baby_essentials: profileData.baby_essentials,
@@ -1280,7 +1624,7 @@ async function saveData() {
 }
 
 async function extendProfile() {
-  if (!profileId.value || !creatorKey.value) return
+  if (!profileId.value || (!creatorKey.value && !deviceToken.value)) return
   extending.value = true
   try {
     const res = await fetch(`${API_BASE}/api/pregnancy/${profileId.value}`, {
@@ -1289,6 +1633,7 @@ async function extendProfile() {
       body: JSON.stringify({
         action: 'extend',
         creator_key: creatorKey.value,
+        device_token: deviceToken.value,
         expires_in: extendDays.value
       })
     })
@@ -1308,10 +1653,12 @@ async function confirmDelete() {
     await ElMessageBox.confirm('确定要删除该档案吗？此操作不可恢复。', '删除确认', {
       type: 'warning'
     })
-    const res = await fetch(
-      `${API_BASE}/api/pregnancy/${profileId.value}?creator_key=${encodeURIComponent(creatorKey.value)}`,
-      { method: 'DELETE' }
-    )
+    const params = new URLSearchParams()
+    if (creatorKey.value) params.set('creator_key', creatorKey.value)
+    if (deviceToken.value) params.set('device_token', deviceToken.value)
+    const res = await fetch(`${API_BASE}/api/pregnancy/${profileId.value}?${params.toString()}`, {
+      method: 'DELETE'
+    })
     if (!res.ok) {
       const data = await res.json()
       throw new Error(data.error)
@@ -1329,6 +1676,7 @@ async function confirmDelete() {
 function resetProfileState() {
   profileId.value = ''
   creatorKey.value = ''
+  deviceToken.value = ''
   profileEDD.value = ''
   activeTab.value = 'hospitalBag'
   saveStatus.value = 'saved'
@@ -1353,11 +1701,17 @@ function logoutProfile() {
 // Lifecycle
 onMounted(() => {
   loadLocalProfiles()
+  window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
   // Auto-load first local profile
   const profiles = localProfiles.value
   const ids = Object.keys(profiles)
   if (ids.length > 0 && sessionStorage.getItem(PREGNANCY_SKIP_AUTOLOAD_KEY) !== '1') {
-    loadByCreatorKey(ids[0], profiles[ids[0]])
+    const localProfile = normalizeLocalProfile(profiles[ids[0]])
+    if (localProfile?.device_token) {
+      loadByDeviceToken(ids[0], localProfile.device_token, true)
+    } else if (localProfile?.creator_key) {
+      loadByCreatorKey(ids[0], localProfile.creator_key)
+    }
   }
 
   // Auto-expand current week knowledge
@@ -1365,9 +1719,14 @@ onMounted(() => {
   if (currentIdx >= 0) knowledgeCollapse.value = [currentIdx]
 })
 
+watch(() => route.query.quickAction, () => {
+  handleQuickRouteAction()
+})
+
 onUnmounted(() => {
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
   if (fetalInterval) clearInterval(fetalInterval)
+  window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
 })
 </script>
 
@@ -1382,10 +1741,13 @@ onUnmounted(() => {
 }
 
 .welcome-card {
-  background-color: var(--card-bg);
-  border: 1px solid var(--card-border);
+  background:
+    radial-gradient(circle at top right, rgba(255, 173, 173, 0.2), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 246, 241, 0.98));
+  border: 1px solid rgba(234, 167, 148, 0.35);
+  box-shadow: 0 16px 38px rgba(164, 102, 72, 0.08);
   padding: 30px;
-  border-radius: var(--radius-lg);
+  border-radius: 28px;
   text-align: center;
 }
 
@@ -1401,14 +1763,19 @@ onUnmounted(() => {
 
 /* Overview banner */
 .overview-banner {
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 50%, #fda085 100%);
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.22), transparent 30%),
+    linear-gradient(140deg, #ff8a7a 0%, #ff6f91 42%, #ffb26b 100%);
   padding: 25px;
-  border-radius: var(--radius-lg);
+  border-radius: 28px;
   color: #fff;
+  box-shadow: 0 18px 38px rgba(245, 111, 145, 0.22);
 }
 
 html.dark .overview-banner {
-  background: linear-gradient(135deg, #5b2a6e 0%, #8b2252 50%, #a0522d 100%);
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.06), transparent 25%),
+    linear-gradient(140deg, #8b3f4d 0%, #7e3654 42%, #a56738 100%);
 }
 
 .pregnancy-info {
@@ -1560,31 +1927,140 @@ html.dark .overview-banner {
 
 /* Fetal movement */
 .fetal-section h3 {
-  margin: 0 0 20px 0;
-  color: var(--text-primary);
+  margin: 0;
+  color: #7a2240;
 }
 
-.counter-area {
+.fetal-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
+  gap: 20px;
+  padding: 24px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.3), transparent 28%),
+    linear-gradient(140deg, #fff5f0 0%, #ffe4d9 45%, #ffd8cc 100%);
+  border: 1px solid rgba(230, 146, 117, 0.28);
+  box-shadow: 0 16px 42px rgba(210, 115, 88, 0.12);
+}
+
+.fetal-hero.tone-good {
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.32), transparent 28%),
+    linear-gradient(140deg, #fff9f1 0%, #ffe6d1 40%, #ffd0c3 100%);
+}
+
+.fetal-hero.tone-notice {
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.28), transparent 30%),
+    linear-gradient(140deg, #fffaf2 0%, #ffe7cc 45%, #ffd8bf 100%);
+}
+
+.fetal-hero-copy {
   display: flex;
   flex-direction: column;
+  gap: 10px;
+}
+
+.hero-eyebrow {
+  display: inline-flex;
+  width: fit-content;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(180, 70, 88, 0.1);
+  color: #b44658;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.fetal-hero-copy p {
+  margin: 0;
+  color: #7a2240;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.fetal-hero-copy small {
+  color: #8d5f59;
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+.hero-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   align-items: center;
-  gap: 20px;
-  padding: 30px;
-  background-color: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
+  margin-top: 4px;
+}
+
+.hero-stats {
+  display: grid;
+  gap: 12px;
+}
+
+.hero-stat {
+  border-radius: 22px;
+  padding: 18px 16px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(233, 168, 146, 0.45);
+  color: #7a2240;
+}
+
+.hero-stat strong {
+  display: block;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.hero-stat span {
+  display: block;
+  margin-top: 8px;
+  color: #8d5f59;
+  font-size: 13px;
+}
+
+.fetal-tip-band {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: rgba(255, 248, 243, 0.9);
+  border: 1px dashed rgba(222, 157, 132, 0.5);
+  color: #8a5f55;
+  line-height: 1.7;
+}
+
+.fetal-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.counter-area,
+.fetal-detail-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px;
+  background: var(--card-bg);
+  border: 1px solid rgba(226, 172, 151, 0.35);
+  border-radius: 24px;
+  box-shadow: 0 12px 28px rgba(133, 84, 57, 0.08);
 }
 
 .counter-display {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  justify-content: center;
 }
 
 .counter-number {
-  font-size: 64px;
+  font-size: 72px;
   font-weight: 700;
-  color: var(--color-primary);
+  color: #f16f7f;
   font-family: var(--font-family-mono);
 }
 
@@ -1594,19 +2070,72 @@ html.dark .overview-banner {
 }
 
 .counter-timer {
-  font-size: 20px;
-  color: var(--text-secondary);
+  font-size: 18px;
+  color: #7d5d5a;
   font-family: var(--font-family-mono);
+  text-align: center;
+}
+
+.counter-actions {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  align-items: center;
 }
 
 .kick-button {
-  width: 80px !important;
-  height: 80px !important;
+  width: 92px !important;
+  height: 92px !important;
+  box-shadow: 0 14px 32px rgba(84, 171, 125, 0.24);
+}
+
+.kick-pill {
+  min-width: 180px;
+  height: 52px;
+  border-radius: 999px;
+  font-weight: 700;
 }
 
 .counter-controls {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
+}
+
+.detail-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-card-head h4 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.detail-card-head span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.detail-time-list,
+.table-detail-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-time-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(241, 111, 127, 0.1);
+  color: #b44658;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* Knowledge section */
@@ -1679,14 +2208,35 @@ html.dark .overview-banner {
   align-items: center;
   padding: 10px 0;
   border-bottom: 1px solid var(--border-light);
+  gap: 12px;
 }
 
 .profile-item:last-child {
   border-bottom: none;
 }
 
+.profile-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.profile-item-text span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
+  .tool-container {
+    padding-bottom: 24px;
+  }
+
+  .welcome-card {
+    padding: 22px 18px;
+    border-radius: 22px;
+  }
+
   .pregnancy-info {
     flex-direction: column;
     align-items: flex-start;
@@ -1703,6 +2253,66 @@ html.dark .overview-banner {
 
   .week-number {
     font-size: 36px;
+  }
+
+  .fetal-hero,
+  .fetal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fetal-hero {
+    padding: 20px;
+    border-radius: 22px;
+  }
+
+  .fetal-hero-copy p {
+    font-size: 21px;
+  }
+
+  .counter-area,
+  .fetal-detail-card {
+    padding: 18px;
+    border-radius: 20px;
+  }
+
+  .counter-number {
+    font-size: 60px;
+  }
+
+  .counter-actions {
+    flex-direction: column;
+  }
+
+  .kick-pill {
+    width: 100%;
+  }
+
+  .detail-card-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .profile-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .profile-item > div:last-child {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+  }
+
+  .profile-item > div:last-child .el-button {
+    flex: 1;
+  }
+
+  .fetal-section :deep(.el-table) {
+    font-size: 12px;
+  }
+
+  .fetal-section :deep(.el-table__body-wrapper) {
+    overflow-x: auto;
   }
 }
 </style>

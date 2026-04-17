@@ -25,8 +25,8 @@ services:
       - DB_PATH=/app/data/paste.db
       - TZ=Asia/Shanghai
       - OCR_SERVICE_URL=http://ocr-service:8000
-      - no_proxy=ocr-service,devtools,api.minimaxi.com
-      - NO_PROXY=ocr-service,devtools,api.minimaxi.com
+      - no_proxy=ocr-service,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
+      - NO_PROXY=ocr-service,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
       - AUTODEV_PATH=/app/data/clawtest/autodev/autodev
       - AUTODEV_DATA_DIR=/app/data/autodev
     depends_on:

@@ -165,6 +165,19 @@ minimax_mcp:
   # 传输协议: line（JSON 行） 或 header（Content-Length）
   transport: "line"
 
+# Hermes Agent 接入
+hermes:
+  # 管理密码。沿用站内工具的管理员密码模式。
+  admin_password: ""
+  # Hermes Dashboard 地址
+  dashboard_url: "http://host.docker.internal:8086"
+  # Hermes OpenAI 兼容 API 地址，建议以 /v1 结尾
+  api_base_url: "http://host.docker.internal:8642/v1"
+  # Hermes API Server 的 Bearer Token
+  api_key: ""
+  # 默认模型名，一般为 hermes-agent
+  model: "hermes-agent"
+
 # MiniMax TTS 配置（语音合成）
 # 支持模型（官方模型名）: speech-01-hd, speech-01-turbo, speech-02-hd, speech-02-turbo,
 #                         speech-2.6-hd, speech-2.6-turbo, speech-2.8-hd, speech-2.8-turbo

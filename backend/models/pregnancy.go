@@ -35,6 +35,13 @@ func (db *DB) InitPregnancy() error {
 	CREATE INDEX IF NOT EXISTS idx_pregnancy_expires_at ON pregnancy_profiles(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_pregnancy_creator_ip ON pregnancy_profiles(creator_ip);
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_pregnancy_password_index ON pregnancy_profiles(password_index) WHERE password_index != '';
+	CREATE TABLE IF NOT EXISTS pregnancy_device_tokens (
+		token_index TEXT PRIMARY KEY,
+		profile_id TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_used_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_pregnancy_device_profile_id ON pregnancy_device_tokens(profile_id);
 	`
 	// Auto-migrate: add password_index column if missing
 	db.conn.Exec("ALTER TABLE pregnancy_profiles ADD COLUMN password_index TEXT NOT NULL DEFAULT ''")
@@ -123,6 +130,7 @@ func (db *DB) ExtendPregnancyProfile(id string, expiresAt *time.Time) error {
 }
 
 func (db *DB) DeletePregnancyProfile(id string) error {
+	_, _ = db.conn.Exec("DELETE FROM pregnancy_device_tokens WHERE profile_id = ?", id)
 	_, err := db.conn.Exec("DELETE FROM pregnancy_profiles WHERE id = ?", id)
 	return err
 }
@@ -178,4 +186,44 @@ func (db *DB) CountPregnancyProfilesByIP(ip string, since time.Time) (int, error
 		ip, since,
 	).Scan(&count)
 	return count, err
+}
+
+func (db *DB) CreatePregnancyDeviceToken(profileID, tokenIndex string) error {
+	_, err := db.conn.Exec(`
+		INSERT OR REPLACE INTO pregnancy_device_tokens (token_index, profile_id, created_at, last_used_at)
+		VALUES (?, ?, COALESCE((SELECT created_at FROM pregnancy_device_tokens WHERE token_index = ?), CURRENT_TIMESTAMP), ?)
+	`, tokenIndex, profileID, tokenIndex, time.Now())
+	return err
+}
+
+func (db *DB) TouchPregnancyDeviceToken(tokenIndex string) error {
+	_, err := db.conn.Exec(
+		"UPDATE pregnancy_device_tokens SET last_used_at = ? WHERE token_index = ?",
+		time.Now(), tokenIndex,
+	)
+	return err
+}
+
+func (db *DB) GetPregnancyProfileByDeviceToken(tokenIndex string) (*PregnancyProfile, error) {
+	profile := &PregnancyProfile{}
+	var expiresAt sql.NullTime
+
+	err := db.conn.QueryRow(`
+		SELECT p.id, p.edd, p.password, p.password_index, p.creator_key, p.data, p.expires_at, p.created_at, p.updated_at, p.creator_ip
+		FROM pregnancy_profiles p
+		INNER JOIN pregnancy_device_tokens t ON t.profile_id = p.id
+		WHERE t.token_index = ?
+	`, tokenIndex).Scan(
+		&profile.ID, &profile.EDD, &profile.Password, &profile.PasswordIndex, &profile.CreatorKey, &profile.Data,
+		&expiresAt, &profile.CreatedAt, &profile.UpdatedAt, &profile.CreatorIP,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if expiresAt.Valid {
+		profile.ExpiresAt = &expiresAt.Time
+	}
+
+	return profile, nil
 }
