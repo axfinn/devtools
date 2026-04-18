@@ -3,7 +3,7 @@
 [![GitHub](https://img.shields.io/github/stars/axfinn/devtools?style=social)](https://github.com/axfinn/devtools)
 [![GitHub forks](https://img.shields.io/github/forks/axfinn/devtools?style=social)](https://github.com/axfinn/devtools/fork)
 
-一个功能丰富的开发者工具网站，包含多种常用的开发辅助工具。
+一个功能丰富的开发者工具网站，包含多种常用的开发辅助工具，以及支持分类、时间线、分享和打包下载的档案照片墙。
 
 **在线体验**: [https://t.jaxiu.cn](https://t.jaxiu.cn)
 
@@ -19,7 +19,7 @@
 | **Diff 对比** | 文本对比，支持字符级、单词级、行级差异高亮显示 |
 | **Mock API** | 创建 Mock API 端点，支持自定义响应状态码、响应体、请求日志 |
 | **正则测试** | 正则表达式实时匹配测试、常用正则模板 |
-| **SSH 终端** | 远程 SSH 连接，支持密码/密钥认证、会话管理、命令历史 |
+| **SSH 终端** | 远程 SSH 连接，支持密码/密钥认证、`keep_alive`、命令历史、移动端快捷栏、自动重连/恢复 |
 | **Base64** | 文本/图片 Base64 编解码 |
 | **URL 编解码** | URL Encode/Decode、URL 解析、参数构建 |
 | **时间戳转换** | Unix 时间戳与日期时间互转、时间计算 |
@@ -35,6 +35,7 @@
 | **孕期管理** | 孕期记录工具，孕周计算、产检提醒、宝宝发育参考 |
 | **每日菜谱** | 菜谱查询记录，每日推荐、分类浏览、收藏功能 |
 | **生活记账** | 日常收支记录，分类统计、趋势分析 |
+| **档案照片墙** | 档案模式照片墙，支持分类筛选、时间线、过期控制、分享链接、单张/批量打包下载 |
 | **血糖监测** | 血糖记录追踪，达标率统计、趋势图表 |
 | **二维码** | 二维码生成器，支持自定义颜色/尺寸，图片中二维码识别 |
 | **背景图库** | 背景图片管理，本地缓存、分页浏览、API 接口 |
@@ -49,16 +50,17 @@
   - 粘贴板/Markdown：单条最大 100KB
   - 聊天室图片：最大 5MB，视频最大 50MB
   - Excalidraw：最大 10MB（gzip 压缩）
+  - 档案照片墙：单张照片默认最大 10MB
 - **访问控制**：
   - 密码保护：粘贴板、聊天室、Markdown 分享、Excalidraw 云端保存
   - 访问次数限制：粘贴板最多 1000 次，Markdown 分享 2-10 次
   - 点击次数限制：短链最多 1000 次
 - **自动清理**：
-  - 每小时清理过期数据（粘贴板、短链、Mock API、Markdown 分享、Excalidraw 画图）
+  - 每小时清理过期数据（粘贴板、短链、Mock API、Markdown 分享、Excalidraw 画图、档案照片墙）
   - 清理 7 天前的聊天室消息和上传文件
   - 清理 7 天未活跃的聊天室
 - **管理功能**：
-  - 支持管理员密码管理所有 Markdown 分享和 Excalidraw 画图
+  - 支持管理员密码管理 Markdown 分享、Excalidraw、SSH 会话和档案照片墙
   - 创建者密钥管理自己的分享内容
 
 ## 技术栈
@@ -130,6 +132,8 @@ devtools/
 │   │   │   ├── ShortUrl.vue      # 短链生成
 │   │   │   ├── MockApi.vue       # Mock API
 │   │   │   ├── ExcalidrawTool.vue # 画图工具
+│   │   │   ├── PhotoWallTool.vue  # 档案照片墙
+│   │   │   ├── PhotoWallShareView.vue # 照片墙分享页
 │   │   │   └── ...               # 其他工具
 │   │   ├── router/               # 路由配置
 │   │   └── App.vue               # 主组件（响应式布局）
@@ -144,6 +148,7 @@ devtools/
 │   │   ├── mdshare.go            # Markdown 分享
 │   │   ├── excalidraw.go         # Excalidraw 画图
 │   │   ├── terminal.go           # SSH 终端（WebSocket）
+│   │   ├── photowall.go          # 档案照片墙
 │   │   ├── dns.go                # IP/DNS 查询
 │   │   └── health.go             # 健康检查
 │   ├── middleware/               # 中间件
@@ -155,7 +160,8 @@ devtools/
 │   │   ├── mockapi.go            # Mock API 模型
 │   │   ├── mdshare.go            # Markdown 分享模型
 │   │   ├── excalidraw.go         # Excalidraw 模型
-│   │   └── terminal.go           # SSH 终端模型
+│   │   ├── terminal.go           # SSH 终端模型
+│   │   └── photowall.go          # 档案照片墙模型
 │   ├── config/                   # 配置管理
 │   │   └── config.go             # YAML 配置加载
 │   ├── state/                    # Redis/内存瞬时状态存储
@@ -220,6 +226,23 @@ excalidraw:
   default_expires_days: 30   # 默认过期天数（1-365）
   max_content_size: 10485760 # 最大内容大小（10MB）
 
+# SSH 终端配置
+ssh:
+  admin_password: ""          # 管理员密码，用于查看/删除所有 SSH 会话
+  host_key_verification: true # 是否校验主机密钥
+  max_sessions_per_user: 10   # 每个用户最多保留的会话数
+  session_idle_timeout: 5     # WebSocket 断开后的基础空闲超时（分钟）
+  history_max_age_days: 30    # 历史记录自动清理天数
+  session_max_age_days: 7     # 非 keep_alive 会话记录保留天数
+  encryption_key: ""          # SSH 密码加密密钥
+
+# 档案照片墙配置
+photowall:
+  admin_password: ""         # 超级管理员密码，可设永久档案和全局管理
+  default_expires_days: 90   # 默认过期天数
+  max_expires_days: 180      # 普通用户最长半年
+  max_photo_size_mb: 10      # 单张照片大小上限（MB）
+
 # MiniMax MCP 图像理解配置
 minimax_mcp:
   api_key: ""                 # MCP API Key（建议仅放在配置文件或环境变量）
@@ -236,6 +259,8 @@ minimax_mcp:
 - **管理员功能**：
   - Markdown 分享：管理员可查看、删除所有分享
   - Excalidraw：管理员可设置永久保存、查看和删除所有画图
+  - SSH 终端：管理员可查看和删除所有 SSH 会话
+  - 档案照片墙：管理员可查看、延期、设为永久和删除任意档案
 - **创建者密钥**：自动存储在浏览器 localStorage，用于管理自己创建的内容
 
 ## API 接口
@@ -290,7 +315,7 @@ minimax_mcp:
 
 | 方法 | 路径 | 描述 |
 |------|------|------|
-| POST | /api/terminal | 创建 SSH 会话（需 host、port、username、password 或 private_key、user_token） |
+| POST | /api/terminal | 创建 SSH 会话（需 host、port、username、password 或 private_key、user_token，可选 `keep_alive`） |
 | POST | /api/terminal/login | 用户登录获取/生成 user_token |
 | GET | /api/terminal/list?user_token=xxx | 列出用户所有会话 |
 | GET | /api/terminal/:id?user_token=xxx | 获取会话详情 |
@@ -303,6 +328,37 @@ minimax_mcp:
 | GET | /api/terminal/:id/ws?user_token=xxx | WebSocket 连接（SSH I/O） |
 | GET | /api/terminal/admin/list?admin_password=xxx | 管理员列出所有会话 |
 | DELETE | /api/terminal/admin/:id?admin_password=xxx | 管理员删除任意会话 |
+
+补充说明：
+- 前端会为 `keep_alive` 会话保存首选会话，支持页面刷新、浏览器回前台、网络恢复后的自动重连/自动恢复。
+- 移动端提供命令输入栏和 `Ctrl+C`、`Tab`、发送、回车快捷操作。
+- `keep_alive` 会话在服务端的闲置保留时间更长，非 `keep_alive` 的 idle 会话会按清理策略自动删除。
+
+### 档案照片墙
+
+| 方法 | 路径 | 描述 |
+|------|------|------|
+| POST | /api/photowall/profile | 创建照片墙档案（需 password，可选 title、expires_in、admin_password） |
+| POST | /api/photowall/profile/login | 通过管理密码登录已有档案 |
+| GET | /api/photowall/profile/:id | 获取档案内容（需 `password` 或 `creator_key`） |
+| PUT | /api/photowall/profile/:id | 管理档案（actions: rename、extend、reshare） |
+| DELETE | /api/photowall/profile/:id | 删除档案（需 `password` 或 `creator_key`） |
+| POST | /api/photowall/profile/:id/items | 上传照片（`multipart/form-data`，单次可逐张上传，前端支持多选循环上传和手机直拍） |
+| PUT | /api/photowall/profile/:id/items/:itemId | 更新照片标题、说明、分类、拍摄时间 |
+| DELETE | /api/photowall/profile/:id/items/:itemId | 删除照片 |
+| GET | /api/photowall/profile/:id/download | 下载单张或所选照片；多张时自动打包 ZIP |
+| GET | /api/photowall/share/:id | 通过分享密钥查看公开照片墙 |
+| GET | /api/photowall/files/:filename | 访问照片文件 |
+| GET | /api/photowall/admin/list?admin_password=xxx | 管理员列出档案 |
+| GET | /api/photowall/admin/:id?admin_password=xxx | 管理员查看档案详情 |
+| PUT | /api/photowall/admin/:id | 管理员管理档案（actions: extend、set_permanent） |
+| DELETE | /api/photowall/admin/:id?admin_password=xxx | 管理员删除档案 |
+| GET | /wall/:id?key=xxx | 前端分享页路由 |
+
+补充说明：
+- 普通用户档案最长 180 天，超级管理员可设置永久档案。
+- 每个档案自动生成分享链接和短链，可重新生成分享密钥。
+- 照片墙返回分类集合与时间线聚合，前端支持按分类、月份和关键词筛选。
 
 ### Markdown 分享
 

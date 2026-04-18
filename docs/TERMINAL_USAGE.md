@@ -4,7 +4,7 @@
 
 ### ✨ 核心功能
 - **Web SSH 客户端**：通过浏览器访问远程服务器
-- **会话持久化**：刷新页面后自动恢复连接
+- **会话持久化**：`keep_alive` 会话可在刷新页面、浏览器回前台、网络恢复后自动尝试恢复
 - **命令历史**：完整记录所有输入输出
 - **多会话管理**：同时管理多个 SSH 连接
 - **安全加密**：密码和私钥使用 AES-256-GCM 加密存储
@@ -19,8 +19,10 @@
 ### 🚀 用户体验
 - 打开网页即可看到历史 SSH 连接
 - 点击即可恢复会话
+- `keep_alive` 会话会被记为首选连接，断线后自动重连
 - 支持密码和私钥两种认证方式
 - 响应式设计，支持移动端
+- 移动端提供命令输入栏和 `Ctrl+C`、`Tab`、发送、回车快捷按钮
 
 ## 快速开始
 
@@ -59,6 +61,8 @@ ssh:
   max_sessions_per_user: 10
 
   # 会话空闲超时（分钟）
+  # 非 keep_alive 会话达到该闲置时间后会关闭 SSH 连接；
+  # keep_alive 会话会按更长的保活窗口保留
   session_idle_timeout: 5
 
   # 历史记录最大保存天数
@@ -103,7 +107,7 @@ docker-compose up -d
    - **认证方式**：
      - 密码：输入 SSH 密码
      - 私钥：粘贴私钥内容
-   - **保持连接**：启用后刷新页面自动重连
+   - **保持连接**：启用后会被标记为 `keep_alive`，前端会优先自动恢复，服务端也会延长闲置保留时间
    - **过期时间**：会话保留时间（0=永不过期）
 3. 点击 "创建并连接"
 
@@ -118,6 +122,7 @@ docker-compose up -d
 - 点击会话卡片即可连接
 - 如果 SSH 已断开，会自动重新建立连接
 - 历史命令会自动加载到终端
+- `keep_alive` 会话在页面刷新、切回前台或网络恢复后会自动尝试恢复
 
 #### 重命名会话
 1. 点击会话卡片的编辑按钮
@@ -144,6 +149,12 @@ docker-compose up -d
 - `Ctrl+L`：清屏
 - `Tab`：自动补全
 - `↑/↓`：命令历史
+
+#### 移动端快捷操作
+- 底部命令栏可直接输入命令并发送
+- 支持一键发送 `Ctrl+C`
+- 支持一键发送 `Tab`
+- 支持“发送”与“回车”分离，便于补全后再执行
 
 ### 命令历史
 
@@ -200,6 +211,7 @@ curl -X POST http://localhost:8082/api/terminal \
   "username": "root",
   "status": "idle",
   "creator_key": "def67890",
+  "keep_alive": true,
   "created_at": "2026-02-26T10:00:00Z",
   "expires_at": null
 }
@@ -326,13 +338,15 @@ curl -X DELETE "http://localhost:8082/api/terminal/admin/abc12345?admin_password
 ### 问题：刷新页面后无法恢复会话
 **可能原因**：
 - 用户令牌丢失
-- SSH 连接已超时
+- 当前会话未开启 `keep_alive`
+- SSH 连接已超时或服务端已完成闲置清理
 - 会话已过期
 
 **解决方法**：
 1. 确认 localStorage 中有 `ssh_user_token`
-2. 检查会话是否过期
-3. 手动重新连接
+2. 确认该会话启用了 `keep_alive`
+3. 检查会话是否过期
+4. 手动重新连接
 
 ### 问题：密码解密失败
 **可能原因**：
@@ -358,7 +372,7 @@ FROM ssh_sessions;
 ```sql
 -- 删除7天未活跃的会话
 DELETE FROM ssh_sessions
-WHERE last_active_at < datetime('now', '-7 days') AND status = 'idle';
+WHERE last_active_at < datetime('now', '-7 days') AND status = 'idle' AND keep_alive = 0;
 
 -- 删除30天以上的历史记录
 DELETE FROM ssh_history
@@ -449,7 +463,7 @@ A: 加密密钥用于保护存储在数据库中的 SSH 密码和私钥。没有
 A: 可以。只需在另一个设备登录时输入相同的用户令牌即可。
 
 **Q: 会话会永久保存吗？**
-A: 取决于创建时设置的过期时间。默认情况下，超过7天未活跃的会话会被自动清理。
+A: 取决于创建时设置的过期时间以及是否启用 `keep_alive`。默认情况下，非 `keep_alive` 的 idle 会话会按清理策略自动删除；`keep_alive` 会话会保留更久，但仍不等于永久保存。
 
 **Q: 如何备份我的 SSH 会话？**
 A: 备份用户令牌和创建者密钥即可。会话数据存储在服务器数据库中，定期备份数据库文件。

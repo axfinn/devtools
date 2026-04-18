@@ -26,6 +26,7 @@ type Config struct {
 	Expense             ExpenseConfig             `yaml:"expense"`
 	Glucose             GlucoseConfig             `yaml:"glucose"`
 	Household           HouseholdConfig           `yaml:"household"`
+	PhotoWall           PhotoWallConfig           `yaml:"photowall"`
 	DeepSeek            DeepSeekConfig            `yaml:"deepseek"`
 	MiniMax             MiniMaxConfig             `yaml:"minimax"`
 	MiniMaxMCP          MiniMaxMCPConfig          `yaml:"minimax_mcp"`
@@ -284,6 +285,14 @@ type HouseholdConfig struct {
 	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数
 }
 
+// PhotoWallConfig 档案照片墙配置
+type PhotoWallConfig struct {
+	AdminPassword      string `yaml:"admin_password"`       // 超管密码，可永久保存和管理全部档案
+	DefaultExpiresDays int    `yaml:"default_expires_days"` // 默认过期天数
+	MaxExpiresDays     int    `yaml:"max_expires_days"`     // 普通用户最长过期天数
+	MaxPhotoSizeMB     int64  `yaml:"max_photo_size_mb"`    // 单张照片最大体积
+}
+
 // DashScopeConfig 阿里云 DashScope 文本模型配置（coding 端点，支持多品牌模型）
 type DashScopeConfig struct {
 	APIKey  string `yaml:"api_key"`  // DashScope API Key（可共用百炼 APIKey）
@@ -417,6 +426,11 @@ func DefaultConfig() *Config {
 		},
 		Household: HouseholdConfig{
 			DefaultExpiresDays: 365,
+		},
+		PhotoWall: PhotoWallConfig{
+			DefaultExpiresDays: 90,
+			MaxExpiresDays:     180,
+			MaxPhotoSizeMB:     10,
 		},
 		DeepSeek: DeepSeekConfig{
 			Model: "deepseek-chat",

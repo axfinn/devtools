@@ -329,6 +329,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/photowall',
+    name: 'PhotoWall',
+    component: () => import('../views/PhotoWallTool.vue'),
+    meta: {
+      title: '档案照片墙',
+      icon: 'PictureFilled',
+      category: 'life',
+      description: '分类、时间线、分享和打包下载的照片墙档案'
+    }
+  },
+  {
     path: '/glucose',
     name: 'Glucose',
     component: () => import('../views/GlucoseTool.vue'),
@@ -462,6 +473,12 @@ const toolRoutes = [
     name: 'NFSShareView',
     component: () => import('../views/NFSShareView.vue'),
     meta: { title: '文件分享', icon: 'FolderOpened', hideSidebar: true }
+  },
+  {
+    path: '/wall/:id',
+    name: 'PhotoWallShareView',
+    component: () => import('../views/PhotoWallShareView.vue'),
+    meta: { title: '照片墙分享', icon: 'PictureFilled', hideSidebar: true }
   }
 ]
 

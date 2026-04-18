@@ -8,37 +8,37 @@ import (
 
 // SSHSession SSH 会话结构体
 type SSHSession struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Host         string     `json:"host"`
-	Port         int        `json:"port"`
-	Username     string     `json:"username"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
 
 	// 加密存储的敏感信息（不返回给前端）
-	PasswordEncrypted    string `json:"-"` // AES加密的密码
-	PrivateKeyEncrypted  string `json:"-"` // AES加密的私钥
+	PasswordEncrypted   string `json:"-"` // AES加密的密码
+	PrivateKeyEncrypted string `json:"-"` // AES加密的私钥
 
 	// 主机密钥指纹（用于验证）
-	HostKeyFingerprint   string `json:"host_key_fingerprint,omitempty"`
+	HostKeyFingerprint string `json:"host_key_fingerprint,omitempty"`
 
 	// 用户标识
-	UserToken    string `json:"-"` // 用户令牌（隔离会话）
-	CreatorKey   string `json:"-"` // 创建者密钥（管理权限）
-	CreatorIP    string `json:"-"` // 创建者IP
+	UserToken  string `json:"-"` // 用户令牌（隔离会话）
+	CreatorKey string `json:"-"` // 创建者密钥（管理权限）
+	CreatorIP  string `json:"-"` // 创建者IP
 
 	// 终端配置
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
 
 	// 会话状态
-	Status       string    `json:"status"` // active（连接中）、idle（已断开）、expired（已过期）
-	KeepAlive    bool      `json:"keep_alive"` // 是否保持会话
+	Status       string    `json:"status"`         // active（连接中）、idle（已断开）、expired（已过期）
+	KeepAlive    bool      `json:"keep_alive"`     // 是否保持会话
 	LastActiveAt time.Time `json:"last_active_at"` // 最后活跃时间
 
 	// 时间信息
-	ExpiresAt    *time.Time `json:"expires_at"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // SSHHistory SSH 历史记录
@@ -560,7 +560,7 @@ func (db *DB) CleanExpiredSSHSessions() (int64, error) {
 func (db *DB) CleanInactiveSSHSessions(inactiveDays int) (int64, error) {
 	result, err := db.conn.Exec(`
 		DELETE FROM ssh_sessions
-		WHERE last_active_at < ? AND status = 'idle'
+		WHERE last_active_at < ? AND status = 'idle' AND keep_alive = 0
 	`, time.Now().Add(-time.Duration(inactiveDays)*24*time.Hour))
 	if err != nil {
 		return 0, err

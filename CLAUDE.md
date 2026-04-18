@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms (with AI bots and TTS), URL shortening, Mock API testing, Excalidraw drawing, and SSH Terminal.
+DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms (with AI bots and TTS), URL shortening, Mock API testing, Excalidraw drawing, SSH Terminal, and PhotoWall archives.
 
 **Tech Stack:**
 - Frontend: Vue 3 + Vite + Element Plus + TailwindCSS
@@ -108,6 +108,16 @@ Docker exposes the backend on port 8082.
   - Creator key for management (stored in localStorage)
   - Content compressed with gzip (max 10MB)
   - Auto-generates short URL for sharing
+- **handlers/photowall.go**: PhotoWall archive handlers
+  - Profile-style photo wall with category filter and timeline aggregation
+  - Regular users can set expiration up to 180 days; admin can create permanent archives
+  - Share link + short URL generation, reshare rotates access key
+  - Single image upload endpoint; frontend supports batch selection and mobile camera capture
+  - Selected download returns original file, multi-select returns ZIP package
+- **handlers/terminal.go**: SSH terminal handlers
+  - Supports password/private key authentication and encrypted credential storage
+  - `keep_alive` sessions are restored preferentially by the frontend and retained longer during idle cleanup
+  - Mobile UI provides a command bar and reconnect handling for network/page lifecycle changes
 - **config/config.go**: Configuration file loader for YAML config
 - **models/paste.go**: SQLite operations for pastes
   - Generates 8-character random hex IDs
@@ -116,6 +126,8 @@ Docker exposes the backend on port 8082.
 - **models/mockapi.go**: SQLite operations for Mock APIs and request logs
 - **models/mdshare.go**: SQLite operations for Markdown shares
 - **models/excalidraw.go**: SQLite operations for Excalidraw drawings (with gzip compression)
+- **models/photowall.go**: SQLite operations for PhotoWall archives and items
+- **models/terminal.go**: SQLite operations for SSH sessions/history, `keep_alive` idle retention
 - **middleware/ratelimit.go**: IP-based rate limiting middleware
 - **utils/crypto.go**: Password hashing utilities (SHA256)
 - **utils/cleanup.go**: File cleanup utilities for expired uploads
@@ -181,9 +193,28 @@ Docker exposes the backend on port 8082.
 - `DELETE /api/excalidraw/admin/:id?admin_password=xxx`: Admin delete any drawing
 - `GET /draw/:id`: Frontend view route
 
+**PhotoWall:**
+- `POST /api/photowall/profile`: Create archive (requires `password`, optional `title`, `expires_in`, `admin_password`)
+  - Returns `id`, `creator_key`, `access_key`, `short_code`, `share_url`, `expires_at`, `is_permanent`
+- `POST /api/photowall/profile/login`: Login by archive password
+- `GET /api/photowall/profile/:id?password=xxx`: Get archive content for manager/creator
+- `PUT /api/photowall/profile/:id`: Manage archive (actions: `rename`, `extend`, `reshare`)
+- `DELETE /api/photowall/profile/:id?creator_key=xxx`: Delete archive
+- `POST /api/photowall/profile/:id/items`: Upload image item (`multipart/form-data`)
+- `PUT /api/photowall/profile/:id/items/:itemId`: Update image metadata
+- `DELETE /api/photowall/profile/:id/items/:itemId?creator_key=xxx`: Delete image item
+- `GET /api/photowall/profile/:id/download`: Download selected images; ZIP when multiple files are requested
+- `GET /api/photowall/share/:id?key=xxx`: Shared view by access key
+- `GET /api/photowall/files/:filename`: Serve uploaded photo file
+- `GET /api/photowall/admin/list?admin_password=xxx`: Admin list all archives
+- `GET /api/photowall/admin/:id?admin_password=xxx`: Admin view any archive
+- `PUT /api/photowall/admin/:id`: Admin manage archive (actions: `extend`, `set_permanent`)
+- `DELETE /api/photowall/admin/:id?admin_password=xxx`: Admin delete any archive
+- `GET /wall/:id?key=xxx`: Frontend share route
+
 **SSH Terminal:**
-- `POST /api/terminal`: Create new SSH session (requires `host`, `port`, `username`, `password` or `private_key`, `user_token`)
-  - Returns `id`, `creator_key`, `status`, `created_at`, `expires_at`
+- `POST /api/terminal`: Create new SSH session (requires `host`, `port`, `username`, `password` or `private_key`, `user_token`, optional `keep_alive`)
+  - Returns `id`, `creator_key`, `status`, `created_at`, `expires_at`, `keep_alive`
 - `POST /api/terminal/login`: User login to get/generate user token
 - `GET /api/terminal/list?user_token=xxx`: List all sessions for a user
 - `GET /api/terminal/:id?user_token=xxx`: Get session details
@@ -196,6 +227,8 @@ Docker exposes the backend on port 8082.
 - `GET /api/terminal/:id/ws?user_token=xxx`: WebSocket connection for SSH I/O
 - `GET /api/terminal/admin/list?admin_password=xxx`: Admin list all sessions
 - `DELETE /api/terminal/admin/:id?admin_password=xxx`: Admin delete any session
+  - Frontend behavior: preferred `keep_alive` session auto-restore on reload, foreground, or network recovery
+  - Mobile behavior: inline command bar with `Ctrl+C`, `Tab`, send, and enter shortcuts
 
 **Health:**
 - `GET /api/health`: Health check endpoint
@@ -251,6 +284,21 @@ excalidraw:
 chat:
   admin_password: ""         # 管理员密码
   tts_service_url: "http://127.0.0.1:8083"  # TTS 服务地址
+
+ssh:
+  admin_password: ""          # 管理员密码
+  host_key_verification: true # 是否校验主机密钥
+  max_sessions_per_user: 10   # 每个用户最大会话数
+  session_idle_timeout: 5     # WebSocket 断开后的基础空闲超时（分钟）
+  history_max_age_days: 30    # 历史记录保留天数
+  session_max_age_days: 7     # 非 keep_alive 会话最大保留天数
+  encryption_key: ""          # SSH 凭据加密密钥
+
+photowall:
+  admin_password: ""         # 超级管理员密码，可设永久档案
+  default_expires_days: 90   # 默认过期天数
+  max_expires_days: 180      # 普通用户最长半年
+  max_photo_size_mb: 10      # 单张图片大小上限（MB）
 ```
 
 **Short URL modes:**
@@ -273,6 +321,17 @@ chat:
 - 支持导出 PNG、SVG、JSON 格式
 - 内容使用 gzip 压缩存储（最大10MB）
 
+**PhotoWall:**
+- 同一管理密码对应同一个档案，适合长期维护家庭/成长相册
+- 普通用户最长 180 天，超管可设永久档案
+- 自动生成分享链接和短链，重新分享会轮换访问密钥
+- 前端支持多选上传、手机直拍、分类筛选、时间线筛选和打包下载
+
+**SSH Terminal:**
+- `keep_alive` 会话会被前端记为首选，在刷新、回前台和网络恢复后优先恢复
+- 非 `keep_alive` 的 idle 会话会按清理策略删除；`keep_alive` 会话服务端保留时间更长
+- 移动端提供命令输入栏和常用快捷键按钮
+
 ## Key Design Patterns
 
 ### Frontend
@@ -283,14 +342,14 @@ chat:
 
 ### Backend
 - **Security**: Rate limiting per IP, content size limits, password hashing (SHA256), input validation
-- **Auto-cleanup**: Background goroutine removes expired data every hour (pastes, chat rooms inactive >7 days, messages >7 days old, expired short URLs, expired Mock APIs, expired Markdown shares, expired Excalidraw drawings, uploaded files >7 days old)
+- **Auto-cleanup**: Background goroutine removes expired data every hour (pastes, chat rooms inactive >7 days, messages >7 days old, expired short URLs, expired Mock APIs, expired Markdown shares, expired Excalidraw drawings, expired PhotoWall archives, uploaded files >7 days old)
 - **Graceful Degradation**: Attempts cleanup when storage limit reached before rejecting
 - **Static-first**: SPA routing handled by serving index.html for unmatched routes
 - **Config System**: YAML-based configuration loaded from `./config.yaml` or `CONFIG_PATH` env var
 
 ## Database Schema
 
-The SQLite database contains seven main tables: `pastes`, `chat_rooms` (with `bot_config` column for AI bot persistence), `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), `markdown_shares`, and `excalidraw_shares`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
+The SQLite database contains tables for `pastes`, `chat_rooms` (with `bot_config` column for AI bot persistence), `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), `markdown_shares`, `excalidraw_shares`, `ssh_sessions`/`ssh_history`, and `photowall_profiles`/`photowall_items`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
 
 ## Common Tasks
 

@@ -119,6 +119,11 @@ func main() {
 		log.Fatalf("家庭物品数据库初始化失败: %v", err)
 	}
 
+	// 初始化照片墙数据库表
+	if err := db.InitPhotoWall(); err != nil {
+		log.Fatalf("照片墙数据库初始化失败: %v", err)
+	}
+
 	// 初始化 SSH 数据库表
 	if err := db.InitSSH(); err != nil {
 		log.Fatalf("SSH 数据库初始化失败: %v", err)
@@ -242,6 +247,11 @@ func main() {
 			if err == nil && glucoseCount > 0 {
 				log.Printf("已清理 %d 个过期血糖监测档案", glucoseCount)
 			}
+			// 清理过期照片墙档案
+			photoWallCount, err := db.CleanExpiredPhotoWallProfiles()
+			if err == nil && photoWallCount > 0 {
+				log.Printf("已清理 %d 个过期照片墙档案", photoWallCount)
+			}
 			// 清理过期菜谱
 			recipeCount, err := db.CleanExpiredRecipes()
 			if err == nil && recipeCount > 0 {
@@ -331,6 +341,7 @@ func main() {
 	glucoseHandler := handlers.NewGlucoseHandler(db, cfg)
 	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
 	householdHandler := handlers.NewHouseholdHandler(db, cfg)
+	photoWallHandler := handlers.NewPhotoWallHandler(db, cfg)
 	consoleHandler := handlers.NewConsoleHandler(db, cfg.Console.AdminPassword)
 
 	// 创建加密服务（用于 SSH 密码加密）
@@ -697,6 +708,26 @@ func main() {
 			household.POST("/profile/:id/items/:itemId/use", householdHandler.UseProfileItem)         // 使用档案物品
 			household.POST("/profile/:id/items/:itemId/restock", householdHandler.RestockProfileItem) // 补充档案物品
 			household.POST("/profile/:id/items/:itemId/open", householdHandler.OpenProfileItem)       // 重新开封
+		}
+
+		// 档案照片墙 API
+		photowall := api.Group("/photowall")
+		{
+			photowall.POST("/profile", createRateLimiter.Middleware(), photoWallHandler.CreateProfile)
+			photowall.POST("/profile/login", photoWallHandler.LoginProfile)
+			photowall.GET("/profile/:id", photoWallHandler.GetProfile)
+			photowall.PUT("/profile/:id", photoWallHandler.UpdateProfile)
+			photowall.DELETE("/profile/:id", photoWallHandler.DeleteProfile)
+			photowall.POST("/profile/:id/items", createRateLimiter.Middleware(), photoWallHandler.UploadItem)
+			photowall.PUT("/profile/:id/items/:itemId", photoWallHandler.UpdateItem)
+			photowall.DELETE("/profile/:id/items/:itemId", photoWallHandler.DeleteItem)
+			photowall.GET("/profile/:id/download", photoWallHandler.DownloadSelection)
+			photowall.GET("/share/:id", photoWallHandler.GetShare)
+			photowall.GET("/files/:filename", photoWallHandler.ServeFile)
+			photowall.GET("/admin/list", photoWallHandler.AdminList)
+			photowall.GET("/admin/:id", photoWallHandler.AdminGet)
+			photowall.PUT("/admin/:id", photoWallHandler.AdminUpdate)
+			photowall.DELETE("/admin/:id", photoWallHandler.AdminDelete)
 		}
 
 		// 终端 API

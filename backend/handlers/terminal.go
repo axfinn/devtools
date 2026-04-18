@@ -53,6 +53,7 @@ type ActiveSSHSession struct {
 	LastActive time.Time
 	Width      int
 	Height     int
+	KeepAlive  bool
 
 	// 上下文和取消
 	ctx    context.Context
@@ -190,6 +191,7 @@ func (m *SSHSessionManager) CreateSession(sessionID string, config *SSHConnectCo
 		LastActive:  time.Now(),
 		Width:       width,
 		Height:      height,
+		KeepAlive:   config.KeepAlive,
 		ctx:         ctx,
 		cancel:      cancel,
 	}
@@ -262,6 +264,7 @@ func (m *SSHSessionManager) ResumeSession(sessionID, userToken string) (*ActiveS
 		Username:   dbSession.Username,
 		Password:   password,
 		PrivateKey: privateKey,
+		KeepAlive:  dbSession.KeepAlive,
 	}
 
 	return m.CreateSession(sessionID, config, dbSession.Width, dbSession.Height)
@@ -676,6 +679,7 @@ func (h *SSHHandler) Create(c *gin.Context) {
 		"port":        dbSession.Port,
 		"username":    dbSession.Username,
 		"status":      dbSession.Status,
+		"keep_alive":  dbSession.KeepAlive,
 		"creator_key": creatorKey,
 		"created_at":  dbSession.CreatedAt,
 		"expires_at":  dbSession.ExpiresAt,
@@ -1299,10 +1303,18 @@ func (h *SSHHandler) StartCleanupRoutine() {
 			for sessionID, session := range h.manager.sessions {
 				session.mu.RLock()
 				idleTime := time.Since(session.LastActive)
+				idleLimit := h.config.SessionIdleTimeout
+				if session.KeepAlive {
+					extended := h.config.SessionIdleTimeout * 6
+					if extended < 30*time.Minute {
+						extended = 30 * time.Minute
+					}
+					idleLimit = extended
+				}
 				session.mu.RUnlock()
 
-				if idleTime > h.config.SessionIdleTimeout {
-					log.Printf("Closing idle session %s (idle for %v)", sessionID, idleTime)
+				if idleTime > idleLimit {
+					log.Printf("Closing idle session %s (idle for %v, keep_alive=%v)", sessionID, idleTime, session.KeepAlive)
 					go h.manager.CloseSession(sessionID)
 				}
 			}

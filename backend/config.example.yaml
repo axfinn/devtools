@@ -150,6 +150,17 @@ household:
   # 默认过期天数（默认365天）
   default_expires_days: 365
 
+# 档案照片墙配置
+photowall:
+  # 超级管理员密码（可永久保存、管理全部照片墙档案）
+  admin_password: ""
+  # 默认过期天数
+  default_expires_days: 90
+  # 普通用户最长过期天数（半年）
+  max_expires_days: 180
+  # 单张照片最大大小（MB）
+  max_photo_size_mb: 10
+
 # DeepSeek AI 配置（用于记账分析）
 deepseek:
   # API Key，从 https://platform.deepseek.com 获取

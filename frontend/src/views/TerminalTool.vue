@@ -70,9 +70,14 @@
                 <el-icon><Connection /></el-icon>
                 {{ session.name }}
               </div>
-              <el-tag :type="getStatusType(session.status)" size="small">
-                {{ getStatusText(session.status) }}
-              </el-tag>
+              <div class="session-tags">
+                <el-tag :type="getStatusType(session.status)" size="small">
+                  {{ getStatusText(session.status) }}
+                </el-tag>
+                <el-tag v-if="session.keep_alive" type="warning" size="small">
+                  保持连接
+                </el-tag>
+              </div>
             </div>
             <div class="session-info">
               <div class="info-line">
@@ -112,6 +117,9 @@
             <el-tag :type="state.connectionStatus === 'connected' ? 'success' : 'warning'" size="small">
               {{ state.connectionStatus === 'connected' ? '已连接' : '连接中...' }}
             </el-tag>
+            <el-tag v-if="reconnect.pending" type="warning" size="small">
+              重连中 {{ reconnect.attempts }}/{{ reconnect.maxAttempts }}
+            </el-tag>
             <el-button
               v-if="settings.showVirtualKeyboard"
               class="vk-header-toggle"
@@ -125,6 +133,22 @@
           </div>
         </div>
         <div ref="terminalRef" class="terminal-wrapper"></div>
+
+        <div v-if="isMobile && state.activeSession" class="mobile-command-bar">
+          <el-input
+            v-model="mobileCommand"
+            class="mobile-command-input"
+            placeholder="手机端命令输入区"
+            clearable
+            @keyup.enter="sendMobileCommand"
+          />
+          <div class="mobile-command-actions">
+            <el-button size="small" @click="sendKey('\x03')">Ctrl+C</el-button>
+            <el-button size="small" @click="sendKey('\t')">Tab</el-button>
+            <el-button size="small" type="primary" @click="sendMobileCommand">发送</el-button>
+            <el-button size="small" type="success" @click="sendKey('\r')">回车</el-button>
+          </div>
+        </div>
 
         <!-- 虚拟键盘工具栏 -->
         <div
@@ -437,9 +461,21 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 
+const USER_TOKEN_KEY = 'ssh_user_token'
+const SETTINGS_KEY = 'ssh_terminal_settings'
+const PREFERRED_SESSION_KEY = 'ssh_preferred_session'
+
+const savedSettings = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
+  } catch {
+    return {}
+  }
+})()
+
 // ==================== State ====================
 const state = reactive({
-  userToken: localStorage.getItem('ssh_user_token') || '',
+  userToken: localStorage.getItem(USER_TOKEN_KEY) || '',
   sessions: [],
   activeSession: null,
   wsConnection: null,
@@ -471,10 +507,10 @@ const renameForm = reactive({
 })
 
 const settings = reactive({
-  fontSize: 14,
-  theme: 'default',
-  showVirtualKeyboard: true,
-  voiceInputEnabled: true
+  fontSize: savedSettings.fontSize || 14,
+  theme: savedSettings.theme || 'default',
+  showVirtualKeyboard: savedSettings.showVirtualKeyboard ?? true,
+  voiceInputEnabled: savedSettings.voiceInputEnabled ?? true
 })
 
 const dialogs = reactive({
@@ -485,9 +521,16 @@ const dialogs = reactive({
 const showSettings = ref(false)
 const terminalRef = ref(null)
 const createFormRef = ref(null)
+const isMobile = ref(window.innerWidth <= 768)
+const mobileCommand = ref('')
+const reconnect = reactive({
+  attempts: 0,
+  maxAttempts: 6,
+  pending: false
+})
 
 // 虚拟键盘状态
-const vkExpanded = ref(true)
+const vkExpanded = ref(!isMobile.value)
 
 // 监听键盘收起/展开，自动调整终端大小
 watch(vkExpanded, () => {
@@ -497,6 +540,7 @@ watch(vkExpanded, () => {
     }
   })
 })
+watch(settings, persistSettings, { deep: true })
 const showPasteDialog = ref(false)
 const showMoreOptions = ref(false)
 const pasteText = ref('')
@@ -509,6 +553,11 @@ let fitAddon = null
 let reconnectTimer = null
 let heartbeatTimer = null
 let wsIntentionalClose = false
+let visualViewportResizeHandler = null
+let windowViewportResizeHandler = null
+let touchStartHandler = null
+let touchMoveHandler = null
+let wheelHandler = null
 
 // ==================== Validation Rules ====================
 const createRules = {
@@ -528,7 +577,7 @@ async function handleUserLogin() {
 
     // 保存令牌
     state.userToken = token
-    localStorage.setItem('ssh_user_token', token)
+    localStorage.setItem(USER_TOKEN_KEY, token)
 
     // 加载会话列表
     await loadSessions()
@@ -553,6 +602,9 @@ async function loadSessions() {
 
     if (response.ok) {
       state.sessions = data.sessions || []
+      if (!state.activeSession && state.connectionStatus === 'disconnected') {
+        maybeAutoRestoreSession()
+      }
     } else {
       throw new Error(data.error || '加载会话列表失败')
     }
@@ -641,6 +693,7 @@ async function createAndConnect() {
 
     // 保存创建者密钥
     localStorage.setItem(`ssh_creator_${data.id}`, data.creator_key)
+    data.keep_alive = createForm.keepAlive
 
     dialogs.create = false
     ElMessage.success('会话创建成功')
@@ -657,9 +710,11 @@ async function createAndConnect() {
 
 // ==================== SSH Connection ====================
 async function connectToSession(session) {
+  clearReconnectTimer()
   state.activeSession = session
   state.connectionStatus = 'connecting'
   wsIntentionalClose = false
+  reconnect.pending = false
 
   await nextTick()
 
@@ -668,12 +723,16 @@ async function connectToSession(session) {
 
   // 建立 WebSocket 连接
   connectWebSocket(session.id)
+
+  if (session.keep_alive) {
+    rememberPreferredSession(session.id)
+  } else {
+    forgetPreferredSession()
+  }
 }
 
 function initTerminal() {
-  if (terminal) {
-    terminal.dispose()
-  }
+  cleanupTerminalInstance()
 
   terminal = new Terminal({
     cursorBlink: true,
@@ -686,7 +745,8 @@ function initTerminal() {
     rows: 24,
     cols: 80,
     scrollback: 10000, // 允许滚动查看历史输出
-    allowProposedApi: true
+    allowProposedApi: true,
+    convertEol: true
   })
 
   fitAddon = new FitAddon()
@@ -695,6 +755,7 @@ function initTerminal() {
 
   terminal.open(terminalRef.value)
   fitAddon.fit()
+  terminal.focus()
 
   // 监听输入
   terminal.onData(data => {
@@ -718,7 +779,7 @@ function initTerminal() {
   })
 
   // 监听鼠标滚轮事件，实现终端历史滚动
-  terminalRef.value?.addEventListener('wheel', (e) => {
+  wheelHandler = (e) => {
     // 只有当不在终端底部时才允许滚动
     const viewport = terminalRef.value?.querySelector('.xterm-viewport')
     if (viewport) {
@@ -728,19 +789,21 @@ function initTerminal() {
         e.stopPropagation()
       }
     }
-  }, { passive: true })
+  }
+  terminalRef.value?.addEventListener('wheel', wheelHandler, { passive: true })
 
   // 触摸滑动支持 - 用于移动终端视图
   let touchStartY = 0
   let touchStartX = 0
-  terminalRef.value?.addEventListener('touchstart', (e) => {
+  touchStartHandler = (e) => {
     if (e.touches.length === 1) {
       touchStartY = e.touches[0].clientY
       touchStartX = e.touches[0].clientX
     }
-  }, { passive: true })
+  }
+  terminalRef.value?.addEventListener('touchstart', touchStartHandler, { passive: true })
 
-  terminalRef.value?.addEventListener('touchmove', (e) => {
+  touchMoveHandler = (e) => {
     if (e.touches.length === 1) {
       const deltaY = touchStartY - e.touches[0].clientY
       const deltaX = touchStartX - e.touches[0].clientX
@@ -769,7 +832,8 @@ function initTerminal() {
       touchStartY = e.touches[0].clientY
       touchStartX = e.touches[0].clientX
     }
-  }, { passive: false })
+  }
+  terminalRef.value?.addEventListener('touchmove', touchMoveHandler, { passive: false })
 
   // 窗口大小变化时调整终端大小
   window.addEventListener('resize', handleResize)
@@ -778,7 +842,7 @@ function initTerminal() {
   if (window.visualViewport) {
     let lastHeight = window.visualViewport.height
 
-    window.visualViewport.addEventListener('resize', () => {
+    visualViewportResizeHandler = () => {
       const currentHeight = window.visualViewport?.height || 0
       const heightDiff = Math.abs(currentHeight - lastHeight)
 
@@ -794,11 +858,12 @@ function initTerminal() {
           }, 50)
         })
       }
-    })
+    }
+    window.visualViewport.addEventListener('resize', visualViewportResizeHandler)
   }
 
   // 监听键盘弹出事件（移动端备选方案）
-  window.addEventListener('resize', () => {
+  windowViewportResizeHandler = () => {
     requestAnimationFrame(() => {
       setTimeout(() => {
         if (fitAddon) {
@@ -806,12 +871,14 @@ function initTerminal() {
         }
       }, 100)
     })
-  })
+  }
+  window.addEventListener('resize', windowViewportResizeHandler)
 
   state.terminal = terminal
 }
 
 function handleResize() {
+  isMobile.value = window.innerWidth <= 768
   if (fitAddon) {
     fitAddon.fit()
   }
@@ -826,6 +893,8 @@ function connectWebSocket(sessionId) {
   ws.onopen = () => {
     state.connectionStatus = 'connected'
     state.wsConnection = ws
+    reconnect.attempts = 0
+    reconnect.pending = false
     startHeartbeat()
   }
 
@@ -897,11 +966,17 @@ function connectWebSocket(sessionId) {
   ws.onclose = () => {
     const shouldNotify = !wsIntentionalClose
     const hadActiveSession = !!state.activeSession
-    cleanupTerminalState()
+    const shouldReconnect = shouldNotify && state.activeSession?.keep_alive
+    cleanupTerminalState(false)
     stopHeartbeat()
 
     if (shouldNotify && hadActiveSession) {
       ElMessage.warning('连接已断开')
+    }
+    if (shouldReconnect) {
+      scheduleReconnect()
+    } else {
+      state.activeSession = null
     }
     wsIntentionalClose = false
     loadSessions()
@@ -936,6 +1011,8 @@ async function disconnectSession() {
   }
 
   wsIntentionalClose = true
+  clearReconnectTimer()
+  forgetPreferredSession()
   if (state.wsConnection) {
     state.wsConnection.close()
   }
@@ -944,14 +1021,90 @@ async function disconnectSession() {
 }
 
 function cleanupTerminalState(clearActiveSession = true) {
-  if (terminal) {
-    terminal.dispose()
-    terminal = null
-  }
+  cleanupTerminalInstance()
   state.connectionStatus = 'disconnected'
   state.wsConnection = null
   if (clearActiveSession) {
     state.activeSession = null
+  }
+}
+
+function cleanupTerminalInstance() {
+  removeTerminalEventListeners()
+  if (terminal) {
+    terminal.dispose()
+    terminal = null
+  }
+  state.terminal = null
+  fitAddon = null
+}
+
+function removeTerminalEventListeners() {
+  window.removeEventListener('resize', handleResize)
+  if (terminalRef.value && wheelHandler) {
+    terminalRef.value.removeEventListener('wheel', wheelHandler)
+  }
+  if (terminalRef.value && touchStartHandler) {
+    terminalRef.value.removeEventListener('touchstart', touchStartHandler)
+  }
+  if (terminalRef.value && touchMoveHandler) {
+    terminalRef.value.removeEventListener('touchmove', touchMoveHandler)
+  }
+  if (visualViewportResizeHandler && window.visualViewport) {
+    window.visualViewport.removeEventListener('resize', visualViewportResizeHandler)
+  }
+  if (windowViewportResizeHandler) {
+    window.removeEventListener('resize', windowViewportResizeHandler)
+  }
+  wheelHandler = null
+  touchStartHandler = null
+  touchMoveHandler = null
+  visualViewportResizeHandler = null
+  windowViewportResizeHandler = null
+}
+
+function clearReconnectTimer() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+}
+
+function scheduleReconnect() {
+  if (!state.activeSession || reconnect.attempts >= reconnect.maxAttempts) {
+    reconnect.pending = false
+    state.activeSession = null
+    return
+  }
+
+  clearReconnectTimer()
+  reconnect.attempts += 1
+  reconnect.pending = true
+  const delay = Math.min(1000 * 2 ** (reconnect.attempts - 1), 10000)
+  reconnectTimer = setTimeout(() => {
+    if (!state.activeSession) return
+    connectToSession(state.activeSession)
+  }, delay)
+}
+
+function rememberPreferredSession(sessionId) {
+  if (!sessionId) return
+  localStorage.setItem(PREFERRED_SESSION_KEY, sessionId)
+}
+
+function forgetPreferredSession() {
+  localStorage.removeItem(PREFERRED_SESSION_KEY)
+}
+
+function maybeAutoRestoreSession() {
+  if (!state.userToken || state.connectionStatus !== 'disconnected' || state.activeSession) return
+  const preferredSessionId = localStorage.getItem(PREFERRED_SESSION_KEY)
+  if (!preferredSessionId) return
+  const session = state.sessions.find(item => item.id === preferredSessionId && item.keep_alive && item.status !== 'expired')
+  if (session) {
+    connectToSession(session)
+  } else {
+    forgetPreferredSession()
   }
 }
 
@@ -962,7 +1115,8 @@ async function logoutUser() {
     cleanupTerminalState()
   }
 
-  localStorage.removeItem('ssh_user_token')
+  localStorage.removeItem(USER_TOKEN_KEY)
+  forgetPreferredSession()
   state.userToken = ''
   state.sessions = []
   loginForm.userToken = ''
@@ -1027,6 +1181,9 @@ async function deleteSession(session) {
     }
 
     localStorage.removeItem(`ssh_creator_${session.id}`)
+    if (localStorage.getItem(PREFERRED_SESSION_KEY) === session.id) {
+      forgetPreferredSession()
+    }
     ElMessage.success('删除成功')
     await loadSessions()
   } catch (error) {
@@ -1077,6 +1234,15 @@ function copyUserToken() {
   })
 }
 
+function persistSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+    fontSize: settings.fontSize,
+    theme: settings.theme,
+    showVirtualKeyboard: settings.showVirtualKeyboard,
+    voiceInputEnabled: settings.voiceInputEnabled
+  }))
+}
+
 function updateTerminalSettings() {
   if (terminal) {
     terminal.options.fontSize = settings.fontSize
@@ -1097,6 +1263,7 @@ function sendKey(key) {
       type: 'input',
       data: key
     }))
+    terminal.focus()
   }
 }
 
@@ -1152,6 +1319,15 @@ function sendCustomCommand() {
     customCommand.value = ''
   }
   showMoreOptions.value = false
+}
+
+function sendMobileCommand() {
+  if (!mobileCommand.value.trim()) {
+    sendKey('\r')
+    return
+  }
+  sendKey(`${mobileCommand.value}\r`)
+  mobileCommand.value = ''
 }
 
 // Alt 组合键
@@ -1296,6 +1472,9 @@ async function clearAllSessions() {
             method: 'DELETE'
           })
           localStorage.removeItem(`ssh_creator_${session.id}`)
+          if (localStorage.getItem(PREFERRED_SESSION_KEY) === session.id) {
+            forgetPreferredSession()
+          }
         } catch (error) {
           console.error('Failed to delete session:', session.id, error)
         }
@@ -1312,22 +1491,43 @@ async function clearAllSessions() {
   }
 }
 
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    if (state.connectionStatus === 'disconnected') {
+      maybeAutoRestoreSession()
+    } else if (fitAddon) {
+      requestAnimationFrame(() => fitAddon?.fit())
+    }
+  }
+}
+
+function handleNetworkRestore() {
+  if (state.connectionStatus === 'disconnected') {
+    maybeAutoRestoreSession()
+  }
+}
+
 // ==================== Lifecycle ====================
 onMounted(() => {
   if (state.userToken) {
     loginForm.userToken = state.userToken
     loadSessions()
   }
+  window.addEventListener('online', handleNetworkRestore)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onBeforeUnmount(() => {
   stopVoiceInput()
   wsIntentionalClose = true
+  clearReconnectTimer()
   if (state.wsConnection) {
     state.wsConnection.close()
   }
   cleanupTerminalState()
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('online', handleNetworkRestore)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
 
@@ -1423,6 +1623,13 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 
+.session-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .session-name {
   font-size: 16px;
   font-weight: bold;
@@ -1500,6 +1707,21 @@ onBeforeUnmount(() => {
 
 .terminal-wrapper :deep(.xterm-viewport) {
   overflow-y: auto;
+}
+
+.mobile-command-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #1f1f1f;
+  border-top: 1px solid #3b3b3b;
+}
+
+.mobile-command-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* Form Tips */
@@ -1808,7 +2030,24 @@ onBeforeUnmount(() => {
 
   .header-actions {
     width: 100%;
-    justify-content: flex-end;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .terminal-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .terminal-status {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .mobile-command-actions .el-button {
+    flex: 1;
+    min-width: 70px;
   }
 }
 </style>
