@@ -19,7 +19,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Html5Qrcode } from 'html5-qrcode'
+import { Html5Qrcode } from 'html5-qrcode/cjs/index.js'
 
 const props = defineProps({
   modelValue: Boolean,

@@ -156,6 +156,76 @@ importers:
       vitest:
         specifier: ^4.1.0
         version: 4.1.0(jsdom@29.0.0)(vite@7.3.1(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.0))
+    optionalDependencies:
+      '@tailwindcss/oxide-android-arm64':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-darwin-arm64':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-darwin-x64':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-freebsd-x64':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-linux-arm-gnueabihf':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-linux-arm64-gnu':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-linux-arm64-musl':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-linux-x64-gnu':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-linux-x64-musl':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-wasm32-wasi':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-win32-arm64-msvc':
+        specifier: 4.2.1
+        version: 4.2.1
+      '@tailwindcss/oxide-win32-x64-msvc':
+        specifier: 4.2.1
+        version: 4.2.1
+      lightningcss-android-arm64:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-darwin-arm64:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-darwin-x64:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-freebsd-x64:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-linux-arm-gnueabihf:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-linux-arm64-gnu:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-linux-arm64-musl:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-linux-x64-gnu:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-linux-x64-musl:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-win32-arm64-msvc:
+        specifier: 1.31.1
+        version: 1.31.1
+      lightningcss-win32-x64-msvc:
+        specifier: 1.31.1
+        version: 1.31.1
 
 packages:
 
