@@ -1,16 +1,35 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execSync } from 'node:child_process'
-import { familySync, MUSL } from 'detect-libc'
 
 const root = path.resolve(import.meta.dirname, '..')
+
+function isMusl() {
+  if (process.platform !== 'linux') {
+    return false
+  }
+
+  if (typeof process.report?.getReport === 'function') {
+    const report = process.report.getReport()
+    if (report?.header?.glibcVersionRuntime) {
+      return false
+    }
+    return true
+  }
+
+  try {
+    const output = execSync('ldd --version 2>&1', { encoding: 'utf8' })
+    return output.toLowerCase().includes('musl')
+  } catch {
+    return fs.existsSync('/etc/alpine-release')
+  }
+}
 
 function platformParts() {
   const parts = [process.platform, process.arch]
 
   if (process.platform === 'linux') {
-    const family = familySync()
-    if (family === MUSL) {
+    if (isMusl()) {
       parts.push('musl')
     } else if (process.arch === 'arm') {
       parts.push('gnueabihf')
