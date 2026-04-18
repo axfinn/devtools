@@ -60,7 +60,7 @@
     "tailwindcss": "^4.1.18",
     "terser": "^5.44.1",
     "vite": "^7.2.4",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.4"
   },
   "optionalDependencies": {
     "lightningcss-android-arm64": "1.31.1",
