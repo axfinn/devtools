@@ -76,21 +76,26 @@
 # 克隆项目
 cd devtools
 
-# 复制配置文件（可选）
+# 复制配置文件（可选，entrypoint 会优先读取 backend/config.yaml）
 cp backend/config.example.yaml backend/config.yaml
 # 编辑 config.yaml 设置管理员密码等配置
 
 # 构建并启动
-docker-compose up -d
+docker compose up -d
 
 # 查看日志
-docker-compose logs -f devtools
+docker compose logs -f devtools
 
 # 访问
 open http://localhost:8082
 ```
 
-Docker 使用 8082 端口，可通过环境变量 `HOST_PORT` 修改。
+Docker 默认启动 `devtools`、`redis`、`ocr-service` 三个服务：
+- `redis` 用于限流、图像理解任务状态、Paste 分片上传等瞬时状态，并通过 AOF 持久化到 volume，容器重启不会丢
+- `devtools` 的 SQLite、上传文件和运行数据持久化到 `devtools-data` volume
+- `backend/config.yaml` 会在启动时复制到容器内 `/app/config.yaml`
+
+Docker 使用 `8082` 端口，可通过环境变量 `HOST_PORT` 修改。
 
 ### 本地开发
 
@@ -98,8 +103,8 @@ Docker 使用 8082 端口，可通过环境变量 `HOST_PORT` 修改。
 
 ```bash
 cd frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 #### 后端
@@ -153,6 +158,8 @@ devtools/
 │   │   └── terminal.go           # SSH 终端模型
 │   ├── config/                   # 配置管理
 │   │   └── config.go             # YAML 配置加载
+│   ├── state/                    # Redis/内存瞬时状态存储
+│   │   └── transient.go          # 限流、任务状态、分片上传状态
 │   ├── utils/                    # 工具函数
 │   │   ├── crypto.go             # 密码哈希（SHA256）
 │   │   └── cleanup.go            # 文件清理
@@ -162,6 +169,7 @@ devtools/
 │
 ├── Dockerfile                    # Docker 多阶段构建
 ├── docker-compose.yml            # Docker Compose 配置
+├── entrypoint.sh                 # 容器启动与配置初始化
 ├── CLAUDE.md                     # Claude Code 项目说明
 └── README.md                     # 项目文档
 ```
@@ -174,6 +182,9 @@ devtools/
 | HOST_PORT | 8082 | Docker 主机映射端口 |
 | DB_PATH | ./data/paste.db | SQLite 数据库路径 |
 | CONFIG_PATH | ./config.yaml | 配置文件路径 |
+| REDIS_ENABLED | false（本地）/ true（Docker） | 是否启用 Redis 瞬时状态存储 |
+| REDIS_ADDR | 127.0.0.1:6379 | Redis 地址 |
+| OCR_SERVICE_URL | http://ocr-service:8000 | OCR 服务地址 |
 | GIN_MODE | release（生产环境） | Gin 运行模式 |
 | TZ | Asia/Shanghai | 时区 |
 | TERMINAL_ENCRYPTION_KEY | 自动生成 | SSH 终端密码加密密钥（需持久化否则重启后无法解密） |
@@ -183,6 +194,16 @@ devtools/
 复制 `backend/config.example.yaml` 到 `backend/config.yaml` 并根据需要修改：
 
 ```yaml
+# Redis 瞬时状态存储
+redis:
+  enabled: false
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  key_prefix: "devtools:"
+  image_task_ttl_hours: 168
+  chunk_upload_ttl_hours: 24
+
 # 短链服务配置
 shorturl:
   password: ""  # 设置密码后可使用自定义短链 ID（如 /s/1、/s/abc），留空则只能随机 ID
@@ -209,6 +230,9 @@ minimax_mcp:
 - **短链密码模式**：
   - 无密码：随机 ID，有速率限制（10/小时/IP）
   - 有密码：可自定义 ID，无速率限制
+- **Redis 瞬时状态**：
+  - 开启后，限流、图像理解任务状态、Paste 分片上传状态会写入 Redis
+  - Docker Compose 默认启用 Redis，并持久化到 `devtools-redis-data` volume
 - **管理员功能**：
   - Markdown 分享：管理员可查看、删除所有分享
   - Excalidraw：管理员可设置永久保存、查看和删除所有画图

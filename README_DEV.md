@@ -37,8 +37,8 @@ go run main.go                       # 启动后端
 
 # 3. 前端设置（新终端）
 cd frontend
-npm install                          # 安装依赖
-npm run dev                          # 启动开发服务器
+pnpm install                         # 安装依赖
+pnpm dev                             # 启动开发服务器
 
 # 4. 访问应用
 # 前端: http://localhost:5173
@@ -77,6 +77,8 @@ DevTools
 ├── 业务逻辑层 (Services)   核心业务逻辑（规划中）
 │   └── Models
 │
+├── 瞬时状态层 (Redis/内存)  限流、任务状态、分片上传
+│
 └── 数据层 (SQLite)         数据持久化
 ```
 
@@ -90,8 +92,7 @@ backend/
 ├── config/                # 配置管理
 │   └── config.go          # 配置加载、默认值、环境变量
 ├── middleware/            # 中间件
-│   ├── ratelimit.go       # IP 限流
-│   └── error_handler.go   # 全局错误处理
+│   └── ratelimit.go       # IP 限流
 ├── handlers/              # HTTP 处理器（Controller 层）
 │   ├── paste.go           # 粘贴板 API
 │   ├── chat.go            # 聊天室 API + WebSocket
@@ -99,18 +100,21 @@ backend/
 │   ├── mockapi.go         # Mock API
 │   ├── mdshare.go         # Markdown 分享 API
 │   ├── excalidraw.go      # Excalidraw 画图 API
-│   └── dns.go             # DNS 查询 API
+│   ├── dns.go             # DNS 查询 API
+│   └── image_understanding.go # 图像理解 SSE / 任务状态
 ├── models/                # 数据模型（Model 层）
 │   ├── paste.go           # 粘贴板数据操作
 │   ├── chat.go            # 聊天室数据操作
 │   ├── shorturl.go        # 短链数据操作
 │   ├── mockapi.go         # Mock API 数据操作
 │   ├── mdshare.go         # Markdown 分享数据操作
-│   └── excalidraw.go      # Excalidraw 数据操作
+│   ├── excalidraw.go      # Excalidraw 数据操作
+│   └── terminal.go        # SSH 会话数据操作
+├── state/                 # Redis/内存瞬时状态抽象
+│   └── transient.go       # 限流、图像任务、分片上传状态
 └── utils/                 # 工具函数
-    ├── crypto.go          # 密码哈希（bcrypt）
-    ├── cleanup.go         # 文件清理
-    └── errors.go          # 错误定义和处理
+    ├── crypto.go          # 密码哈希（SHA256）
+    └── cleanup.go         # 文件清理
 ```
 
 #### 关键设计模式
@@ -121,7 +125,9 @@ backend/
 
 #### 数据库设计
 
-使用 SQLite，包含以下表：
+持久化数据使用 SQLite；限流、图像理解任务状态、Paste 分片上传状态可切换到 Redis。
+
+SQLite 包含以下表：
 
 | 表名 | 用途 | 关键字段 |
 |------|------|----------|
@@ -623,24 +629,30 @@ SSH 终端使用 AES-256-GCM 加密存储密码和私钥。配置 `encryption_ke
 
 ```bash
 # 构建镜像
-docker-compose build
+docker compose build
 
 # 启动服务
-docker-compose up -d
+docker compose up -d
 
 # 查看日志
-docker-compose logs -f devtools
+docker compose logs -f devtools
 
 # 停止服务
-docker-compose down
+docker compose down
 ```
+
+说明：
+- Compose 默认同时启动 `devtools`、`redis`、`ocr-service`
+- `./backend` 会只读挂载到容器内 `/app/config-src`，`entrypoint.sh` 启动时复制 `config.yaml` 或回退到 `config.example.yaml`
+- Redis 使用 AOF 持久化，容器重启后瞬时状态不会全部丢失
 
 ### 手动部署
 
 ```bash
 # 1. 构建前端
 cd frontend
-npm run build
+pnpm install
+pnpm build
 
 # 2. 复制前端构建产物到后端
 cp -r dist ../backend/
