@@ -136,17 +136,21 @@
 
         <div v-if="isMobile && state.activeSession" class="mobile-command-bar">
           <el-input
+            ref="mobileCommandInputRef"
             v-model="mobileCommand"
             class="mobile-command-input"
-            placeholder="手机端命令输入区"
-            clearable
-            @keyup.enter="sendMobileCommand"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 4 }"
+            resize="none"
+            placeholder="手机端命令输入区，可先发送文本再点回车执行"
+            @keydown.enter.exact.prevent="sendMobileCommand(true)"
           />
+          <div class="mobile-command-tip">发送只输入文本，回车才执行；长按可继续编辑多行命令。</div>
           <div class="mobile-command-actions">
-            <el-button size="small" @click="sendKey('\x03')">Ctrl+C</el-button>
-            <el-button size="small" @click="sendKey('\t')">Tab</el-button>
-            <el-button size="small" type="primary" @click="sendMobileCommand">发送</el-button>
-            <el-button size="small" type="success" @click="sendKey('\r')">回车</el-button>
+            <el-button size="small" @click="sendMobileBarKey('\x03')">Ctrl+C</el-button>
+            <el-button size="small" @click="sendMobileBarKey('\t')">Tab</el-button>
+            <el-button size="small" type="primary" @click="sendMobileCommand()">发送</el-button>
+            <el-button size="small" type="success" @click="sendMobileBarKey('\r')">回车</el-button>
           </div>
         </div>
 
@@ -520,6 +524,7 @@ const dialogs = reactive({
 
 const showSettings = ref(false)
 const terminalRef = ref(null)
+const mobileCommandInputRef = ref(null)
 const createFormRef = ref(null)
 const isMobile = ref(window.innerWidth <= 768)
 const mobileCommand = ref('')
@@ -1257,14 +1262,41 @@ function updateTerminalSettings() {
 }
 
 // 虚拟键盘方法
-function sendKey(key) {
-  if (terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
-    state.wsConnection.send(JSON.stringify({
-      type: 'input',
-      data: key
-    }))
+function sendTerminalInput(data, options = {}) {
+  if (!terminal || !state.wsConnection || state.wsConnection.readyState !== WebSocket.OPEN) return false
+
+  state.wsConnection.send(JSON.stringify({
+    type: 'input',
+    data
+  }))
+
+  const shouldFocusTerminal = options.focusTerminal ?? !isMobile.value
+  if (shouldFocusTerminal) {
     terminal.focus()
+  } else if (options.focusComposer) {
+    focusMobileComposer()
   }
+
+  return true
+}
+
+function sendKey(key) {
+  return sendTerminalInput(key)
+}
+
+function sendMobileBarKey(key) {
+  return sendTerminalInput(key, { focusComposer: true })
+}
+
+function focusMobileComposer() {
+  if (!isMobile.value) return
+  nextTick(() => {
+    const input =
+      mobileCommandInputRef.value?.textarea ||
+      mobileCommandInputRef.value?.input ||
+      mobileCommandInputRef.value?.$el?.querySelector('textarea, input')
+    input?.focus?.()
+  })
 }
 
 function sendShortcut(key) {
@@ -1290,44 +1322,40 @@ function showPasteInput() {
 }
 
 function sendPasteText() {
-  if (pasteText.value && terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
-    state.wsConnection.send(JSON.stringify({
-      type: 'input',
-      data: pasteText.value
-    }))
+  if (pasteText.value) {
+    sendTerminalInput(pasteText.value, { focusTerminal: false })
   }
   pasteText.value = ''
   showPasteDialog.value = false
 }
 
 function sendCommand(cmd) {
-  if (terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
-    state.wsConnection.send(JSON.stringify({
-      type: 'input',
-      data: cmd + '\r'
-    }))
-  }
+  sendTerminalInput(cmd + '\r')
   showMoreOptions.value = false
 }
 
 function sendCustomCommand() {
-  if (customCommand.value && terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
-    state.wsConnection.send(JSON.stringify({
-      type: 'input',
-      data: customCommand.value + '\r'
-    }))
+  if (customCommand.value) {
+    sendTerminalInput(customCommand.value + '\r')
     customCommand.value = ''
   }
   showMoreOptions.value = false
 }
 
-function sendMobileCommand() {
-  if (!mobileCommand.value.trim()) {
-    sendKey('\r')
+function sendMobileCommand(submit = false) {
+  if (mobileCommand.value === '') {
+    if (submit) {
+      sendMobileBarKey('\r')
+    }
     return
   }
-  sendKey(`${mobileCommand.value}\r`)
+
+  const payload = submit ? `${mobileCommand.value}\r` : mobileCommand.value
+  const sent = sendTerminalInput(payload, { focusComposer: true })
+  if (!sent) return
+
   mobileCommand.value = ''
+  focusMobileComposer()
 }
 
 // Alt 组合键
@@ -1447,12 +1475,7 @@ function stopVoiceInput() {
 
 function sendVoiceText(text) {
   // 将识别的文本发送到终端
-  if (terminal && state.wsConnection && state.wsConnection.readyState === WebSocket.OPEN) {
-    state.wsConnection.send(JSON.stringify({
-      type: 'input',
-      data: text
-    }))
-  }
+  sendTerminalInput(text, { focusTerminal: false })
 }
 
 async function clearAllSessions() {
@@ -1713,9 +1736,23 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
   background: #1f1f1f;
   border-top: 1px solid #3b3b3b;
+}
+
+.mobile-command-tip {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.68);
+  line-height: 1.4;
+}
+
+.mobile-command-input :deep(.el-textarea__inner) {
+  border-radius: 12px;
+  min-height: 44px !important;
+  padding: 10px 12px;
+  line-height: 1.45;
+  font-size: 15px;
 }
 
 .mobile-command-actions {
@@ -2048,6 +2085,11 @@ onBeforeUnmount(() => {
   .mobile-command-actions .el-button {
     flex: 1;
     min-width: 70px;
+  }
+
+  .mobile-command-bar {
+    gap: 10px;
+    padding: 10px 10px calc(12px + env(safe-area-inset-bottom));
   }
 }
 </style>
