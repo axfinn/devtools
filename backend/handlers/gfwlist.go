@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -187,7 +186,7 @@ func (g *gfwlistMatcher) load() error {
 }
 
 func fetchGFWList() ([]byte, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := newDirectHTTPClient(30 * time.Second)
 	resp, err := client.Get(gfwlistURL)
 	if err != nil {
 		return nil, err

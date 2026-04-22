@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,24 +43,62 @@ type ProxyNode struct {
 
 // proxyPersist 持久化到磁盘的数据
 type proxyPersist struct {
-	SourceURL   string      `json:"source_url,omitempty"`
-	YAMLContent string      `json:"yaml_content,omitempty"`
-	Nodes       []ProxyNode `json:"nodes"`
+	SourceURL        string      `json:"source_url,omitempty"`
+	SourceURLs       []string    `json:"source_urls,omitempty"`
+	YAMLContent      string      `json:"yaml_content,omitempty"`
+	RoutingMode      string      `json:"routing_mode,omitempty"`
+	DefaultNodeRegex string      `json:"default_node_regex,omitempty"`
+	AINodeRegex      string      `json:"ai_node_regex,omitempty"`
+	Nodes            []ProxyNode `json:"nodes"`
 }
 
 const proxyDataFile = "./data/proxy_config.json"
 
 // proxySession 当前会话（内存单例）
 type proxySession struct {
-	mu          sync.RWMutex
-	nodes       []ProxyNode
-	sourceURL   string
-	yamlContent string
-	active      *ProxyNode
-	listener    net.Listener // HTTP CONNECT 代理监听
+	mu               sync.RWMutex
+	nodes            []ProxyNode
+	sourceURL        string
+	sourceURLs       []string
+	yamlContent      string
+	routingMode      string
+	defaultNodeRegex string
+	aiNodeRegex      string
+	active           *ProxyNode
+	listener         net.Listener // HTTP CONNECT 代理监听
 }
 
 var globalSession = &proxySession{}
+
+const (
+	proxyRouteModeSmart      = "smart"
+	proxyRouteModeGlobal     = "global"
+	proxyRouteModeAIPriority = "ai_priority"
+	proxyProbeConcurrency    = 12
+)
+
+var aiDedicatedDomains = []string{
+	"openai.com",
+	"api.openai.com",
+	"chatgpt.com",
+	"chat.openai.com",
+	"oaistatic.com",
+	"oaiusercontent.com",
+	"auth.openai.com",
+	"claude.ai",
+	"anthropic.com",
+	"api.anthropic.com",
+	"console.anthropic.com",
+	"gemini.google.com",
+	"generativelanguage.googleapis.com",
+	"makersuite.google.com",
+	"copilot.microsoft.com",
+	"bing.com",
+	"grok.com",
+	"x.ai",
+	"poe.com",
+	"perplexity.ai",
+}
 
 // loadPersistedProxy 启动时从磁盘恢复节点配置
 func loadPersistedProxy() {
@@ -74,7 +113,11 @@ func loadPersistedProxy() {
 	globalSession.mu.Lock()
 	globalSession.nodes = p.Nodes
 	globalSession.sourceURL = p.SourceURL
+	globalSession.sourceURLs = normalizeSourceURLs(p.SourceURLs, p.SourceURL)
 	globalSession.yamlContent = p.YAMLContent
+	globalSession.routingMode = normalizeProxyRouteMode(p.RoutingMode)
+	globalSession.defaultNodeRegex = strings.TrimSpace(p.DefaultNodeRegex)
+	globalSession.aiNodeRegex = strings.TrimSpace(p.AINodeRegex)
 	globalSession.mu.Unlock()
 }
 
@@ -82,29 +125,185 @@ func loadPersistedProxy() {
 func savePersistedProxy() {
 	globalSession.mu.RLock()
 	p := proxyPersist{
-		SourceURL:   globalSession.sourceURL,
-		YAMLContent: globalSession.yamlContent,
-		Nodes:       globalSession.nodes,
+		SourceURL:        firstSourceURL(globalSession.sourceURLs, globalSession.sourceURL),
+		SourceURLs:       append([]string(nil), globalSession.sourceURLs...),
+		YAMLContent:      globalSession.yamlContent,
+		RoutingMode:      normalizeProxyRouteMode(globalSession.routingMode),
+		DefaultNodeRegex: globalSession.defaultNodeRegex,
+		AINodeRegex:      globalSession.aiNodeRegex,
+		Nodes:            globalSession.nodes,
 	}
 	globalSession.mu.RUnlock()
 	data, _ := json.Marshal(p)
 	os.WriteFile(proxyDataFile, data, 0644)
 }
 
+func normalizeProxyRouteMode(mode string) string {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "", proxyRouteModeAIPriority:
+		return proxyRouteModeAIPriority
+	case proxyRouteModeSmart:
+		return proxyRouteModeSmart
+	case proxyRouteModeGlobal:
+		return proxyRouteModeGlobal
+	default:
+		return proxyRouteModeAIPriority
+	}
+}
+
+func firstSourceURL(sourceURLs []string, fallback string) string {
+	if len(sourceURLs) > 0 {
+		return sourceURLs[0]
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func normalizeSourceURLs(sourceURLs []string, fallback string) []string {
+	seen := make(map[string]struct{}, len(sourceURLs)+1)
+	result := make([]string, 0, len(sourceURLs)+1)
+	appendURL := func(raw string) {
+		for _, line := range strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == '\r' }) {
+			u := strings.TrimSpace(line)
+			if u == "" {
+				continue
+			}
+			if _, ok := seen[u]; ok {
+				continue
+			}
+			seen[u] = struct{}{}
+			result = append(result, u)
+		}
+	}
+	for _, raw := range sourceURLs {
+		appendURL(raw)
+	}
+	appendURL(fallback)
+	return result
+}
+
+func newDirectHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			Proxy:               nil,
+			DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			ForceAttemptHTTP2:   true,
+			MaxIdleConns:        100,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+		Timeout: timeout,
+	}
+}
+
+func proxyNodeKey(node ProxyNode) string {
+	return strings.ToLower(strings.TrimSpace(node.Type)) + "|" +
+		strings.ToLower(strings.TrimSpace(node.Server)) + "|" +
+		strconv.Itoa(node.Port) + "|" +
+		strings.ToLower(strings.TrimSpace(node.Name))
+}
+
+func mergeProxyNodes(groups ...[]ProxyNode) []ProxyNode {
+	seen := make(map[string]struct{})
+	merged := make([]ProxyNode, 0)
+	for _, group := range groups {
+		for _, node := range group {
+			key := proxyNodeKey(node)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged = append(merged, node)
+		}
+	}
+	return merged
+}
+
+func fetchSubscriptions(sourceURLs []string) (string, []ProxyNode, error) {
+	urls := normalizeSourceURLs(sourceURLs, "")
+	if len(urls) == 0 {
+		return "", nil, fmt.Errorf("未提供订阅 URL")
+	}
+
+	type fetchResult struct {
+		index int
+		url   string
+		text  string
+		nodes []ProxyNode
+		err   error
+	}
+
+	results := make([]fetchResult, len(urls))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, minInt(proxyProbeConcurrency, len(urls)))
+
+	for i, sourceURL := range urls {
+		wg.Add(1)
+		go func(idx int, rawURL string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			text, err := fetchSubscription(rawURL)
+			if err != nil {
+				results[idx] = fetchResult{index: idx, url: rawURL, err: err}
+				return
+			}
+			nodes, err := parseClashYAML(text)
+			results[idx] = fetchResult{index: idx, url: rawURL, text: text, nodes: nodes, err: err}
+		}(i, sourceURL)
+	}
+	wg.Wait()
+
+	yamls := make([]string, 0, len(results))
+	merged := make([][]ProxyNode, 0, len(results))
+	failures := make([]string, 0)
+	successCount := 0
+	for _, item := range results {
+		if item.err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", item.url, item.err))
+			continue
+		}
+		if len(item.nodes) == 0 {
+			failures = append(failures, fmt.Sprintf("%s: 未解析到节点", item.url))
+			continue
+		}
+		successCount++
+		yamls = append(yamls, item.text)
+		merged = append(merged, item.nodes)
+	}
+	if successCount == 0 {
+		return "", nil, fmt.Errorf("所有订阅均不可用: %s", strings.Join(failures, "; "))
+	}
+
+	nodes := mergeProxyNodes(merged...)
+	joinedYAML := strings.Join(yamls, "\n\n# ---- merged subscription ----\n\n")
+	if len(failures) > 0 {
+		log.Printf("proxy: 部分订阅拉取失败，成功 %d/%d: %s", successCount, len(urls), strings.Join(failures, "; "))
+	}
+	return joinedYAML, nodes, nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // ProxyHandler 科学上网处理器
 type ProxyHandler struct {
-	adminPassword  string
-	localPort      string // 本地节点代理固定端口，空则随机
-	npcCfg         npcConfig
-	npcTunnelPort  string // NPS 上配置的外网端口，用于前端展示
-	npcCmd         *exec.Cmd
-	npcMu          sync.Mutex
-	npsHandler     *NPSHandler // 用于一键创建 NPS 端口映射
-	alertEmail     string
-	smtpHost       string
-	smtpPort       int
-	smtpUser       string
-	smtpPass       string
+	adminPassword string
+	localPort     string // 本地节点代理固定端口，空则随机
+	npcCfg        npcConfig
+	npcTunnelPort string // NPS 上配置的外网端口，用于前端展示
+	npcCmd        *exec.Cmd
+	npcMu         sync.Mutex
+	npsHandler    *NPSHandler // 用于一键创建 NPS 端口映射
+	alertEmail    string
+	smtpHost      string
+	smtpPort      int
+	smtpUser      string
+	smtpPass      string
 }
 
 type npcConfig struct {
@@ -163,33 +362,23 @@ func (h *ProxyHandler) AutoSelectOnStartup() {
 		copy(nodes, globalSession.nodes)
 		globalSession.mu.RUnlock()
 
-		var mu sync.Mutex
-		var best *ProxyNode
-		var wg sync.WaitGroup
-		for i := range nodes {
-			wg.Add(1)
-			go func(n ProxyNode) {
-				defer wg.Done()
-				n.Latency = tcpPing(n.Server, n.Port)
-				if n.Latency < 0 {
-					return
-				}
-				mu.Lock()
-				if best == nil || n.Latency < best.Latency {
-					cp := n
-					best = &cp
-				}
-				mu.Unlock()
-			}(nodes[i])
-		}
-		wg.Wait()
-
-		if best == nil {
+		reachable := collectReachableNodes(nodes, proxyProbeConcurrency, func(n ProxyNode) int64 {
+			return tcpPing(n.Server, n.Port)
+		})
+		if len(reachable) == 0 {
 			return
 		}
-		startProxyListener(best, h.adminPassword, h.localPort) //nolint
+
+		best := reachable[0]
+		for _, item := range reachable[1:] {
+			if item.latency < best.latency {
+				best = item
+			}
+		}
+		best.node.Latency = best.latency
+		startProxyListener(&best.node, h.adminPassword, h.localPort) //nolint
 		h.startNPC()
-		log.Printf("proxy: 启动自动选节点 %s (延迟 %dms)", best.Name, best.Latency)
+		log.Printf("proxy: 启动自动选节点 %s (延迟 %dms)", best.node.Name, best.latency)
 	}()
 }
 
@@ -198,6 +387,47 @@ func (h *ProxyHandler) checkAdmin(password string) bool {
 }
 
 const probeURL = "https://www.google.com"
+
+type proxyNodeReachability struct {
+	node    ProxyNode
+	latency int64
+}
+
+func collectReachableNodes(nodes []ProxyNode, limit int, checker func(ProxyNode) int64) []proxyNodeReachability {
+	if len(nodes) == 0 {
+		return nil
+	}
+	if limit <= 0 {
+		limit = proxyProbeConcurrency
+	}
+
+	results := make([]proxyNodeReachability, len(nodes))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, minInt(limit, len(nodes)))
+
+	for i, node := range nodes {
+		wg.Add(1)
+		go func(idx int, n ProxyNode) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			results[idx] = proxyNodeReachability{
+				node:    n,
+				latency: checker(n),
+			}
+		}(i, node)
+	}
+	wg.Wait()
+
+	reachable := make([]proxyNodeReachability, 0, len(results))
+	for _, item := range results {
+		if item.latency >= 0 {
+			reachable = append(reachable, item)
+		}
+	}
+	return reachable
+}
 
 // probeActive 检测当前活跃节点是否真实可用，返回 true=可用
 func probeActive() bool {
@@ -221,37 +451,21 @@ func (h *ProxyHandler) switchToBestNode() {
 		return
 	}
 
-	type candidate struct {
-		node    ProxyNode
-		latency int64
-	}
-	ch := make(chan candidate, len(nodes))
-	var wg sync.WaitGroup
-	for _, n := range nodes {
-		wg.Add(1)
-		go func(n ProxyNode) {
-			defer wg.Done()
-			lat := checkNodeReachability(&n, probeURL)
-			if lat >= 0 {
-				ch <- candidate{n, lat}
-			}
-		}(n)
-	}
-	wg.Wait()
-	close(ch)
-
-	var best *candidate
-	for c := range ch {
-		c := c
-		if best == nil || c.latency < best.latency {
-			best = &c
-		}
-	}
-	if best == nil {
+	reachable := collectReachableNodes(nodes, proxyProbeConcurrency, func(n ProxyNode) int64 {
+		return checkNodeReachability(&n, probeURL)
+	})
+	if len(reachable) == 0 {
 		log.Printf("proxy: 自动切换失败，所有节点均不可用")
 		go h.sendAlert("代理节点全部不可用", fmt.Sprintf("时间：%s\n节点总数：%d\n所有节点均无法连接，请检查订阅或节点状态。", time.Now().Format("2006-01-02 15:04:05"), len(nodes)))
 		return
 	}
+	best := reachable[0]
+	for _, item := range reachable[1:] {
+		if item.latency < best.latency {
+			best = item
+		}
+	}
+	best.node.Latency = best.latency
 	if _, err := startProxyListener(&best.node, h.adminPassword, h.localPort); err != nil {
 		log.Printf("proxy: 切换节点失败: %v", err)
 		return
@@ -263,27 +477,27 @@ func (h *ProxyHandler) switchToBestNode() {
 // refreshSubscription 重新拉取订阅 URL，更新节点列表
 func (h *ProxyHandler) refreshSubscription() {
 	globalSession.mu.RLock()
-	sourceURL := globalSession.sourceURL
+	sourceURLs := append([]string(nil), globalSession.sourceURLs...)
 	globalSession.mu.RUnlock()
 
-	if sourceURL == "" {
+	if len(sourceURLs) == 0 {
 		return
 	}
-	text, err := fetchSubscription(sourceURL)
+	text, nodes, err := fetchSubscriptions(sourceURLs)
 	if err != nil {
 		log.Printf("proxy: 订阅更新失败: %v", err)
 		return
 	}
-	nodes, err := parseClashYAML(text)
-	if err != nil || len(nodes) == 0 {
+	if len(nodes) == 0 {
 		log.Printf("proxy: 订阅解析失败或节点为空")
 		return
 	}
 	globalSession.mu.Lock()
 	globalSession.nodes = nodes
+	globalSession.yamlContent = text
 	globalSession.mu.Unlock()
 	go savePersistedProxy()
-	log.Printf("proxy: 订阅已更新，共 %d 个节点", len(nodes))
+	log.Printf("proxy: 订阅已更新，共 %d 个节点，来源 %d 个 URL", len(nodes), len(sourceURLs))
 }
 
 // StartAutoMaintenance 启动后台维护：定期更新订阅 + 定期探测切换
@@ -418,7 +632,7 @@ func parseClashYAML(data string) ([]ProxyNode, error) {
 
 // fetchSubscription 下载订阅内容（支持 Base64 和 YAML）
 func fetchSubscription(rawURL string) (string, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newDirectHTTPClient(15 * time.Second)
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return "", err
@@ -442,9 +656,13 @@ func fetchSubscription(rawURL string) (string, error) {
 // LoadConfig POST /api/proxy/config
 func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 	var req struct {
-		AdminPassword string `json:"admin_password"`
-		SourceURL     string `json:"source_url"`
-		YAMLContent   string `json:"yaml_content"`
+		AdminPassword    string   `json:"admin_password"`
+		SourceURL        string   `json:"source_url"`
+		SourceURLs       []string `json:"source_urls"`
+		YAMLContent      string   `json:"yaml_content"`
+		RoutingMode      string   `json:"routing_mode"`
+		DefaultNodeRegex string   `json:"default_node_regex"`
+		AINodeRegex      string   `json:"ai_node_regex"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "参数错误"})
@@ -455,22 +673,45 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 		return
 	}
 
-	var yamlText string
-	if req.SourceURL != "" {
-		text, err := fetchSubscription(req.SourceURL)
+	sourceURLs := normalizeSourceURLs(req.SourceURLs, req.SourceURL)
+	routingMode := normalizeProxyRouteMode(req.RoutingMode)
+	defaultNodeRegex := strings.TrimSpace(req.DefaultNodeRegex)
+	aiNodeRegex := strings.TrimSpace(req.AINodeRegex)
+
+	for _, pattern := range []struct {
+		label string
+		value string
+	}{
+		{label: "默认线路正则", value: defaultNodeRegex},
+		{label: "AI 专线正则", value: aiNodeRegex},
+	} {
+		if pattern.value == "" {
+			continue
+		}
+		if _, err := regexp.Compile(pattern.value); err != nil {
+			c.JSON(400, gin.H{"error": pattern.label + "非法: " + err.Error()})
+			return
+		}
+	}
+
+	var (
+		yamlText string
+		nodes    []ProxyNode
+		err      error
+	)
+	if len(sourceURLs) > 0 {
+		yamlText, nodes, err = fetchSubscriptions(sourceURLs)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "下载订阅失败: " + err.Error()})
 			return
 		}
-		yamlText = text
 	} else {
 		yamlText = req.YAMLContent
-	}
-
-	nodes, err := parseClashYAML(yamlText)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "解析配置失败: " + err.Error()})
-		return
+		nodes, err = parseClashYAML(yamlText)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "解析配置失败: " + err.Error()})
+			return
+		}
 	}
 	if len(nodes) == 0 {
 		c.JSON(400, gin.H{"error": "未找到任何节点"})
@@ -479,13 +720,25 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 
 	globalSession.mu.Lock()
 	globalSession.nodes = nodes
-	globalSession.sourceURL = req.SourceURL
-	globalSession.yamlContent = req.YAMLContent
+	globalSession.sourceURL = firstSourceURL(sourceURLs, req.SourceURL)
+	globalSession.sourceURLs = sourceURLs
+	globalSession.yamlContent = yamlText
+	globalSession.routingMode = routingMode
+	globalSession.defaultNodeRegex = defaultNodeRegex
+	globalSession.aiNodeRegex = aiNodeRegex
 	globalSession.mu.Unlock()
 
 	go savePersistedProxy()
 
-	c.JSON(200, gin.H{"nodes": nodes, "count": len(nodes)})
+	c.JSON(200, gin.H{
+		"nodes":              nodes,
+		"count":              len(nodes),
+		"source_url":         firstSourceURL(sourceURLs, req.SourceURL),
+		"source_urls":        sourceURLs,
+		"routing_mode":       routingMode,
+		"default_node_regex": defaultNodeRegex,
+		"ai_node_regex":      aiNodeRegex,
+	})
 }
 
 // SpeedTest POST /api/proxy/speedtest
@@ -512,17 +765,21 @@ func (h *ProxyHandler) SpeedTest(c *gin.Context) {
 		return
 	}
 
-	var wg sync.WaitGroup
 	results := make([]ProxyNode, len(nodes))
-	for i, node := range nodes {
-		wg.Add(1)
-		go func(idx int, n ProxyNode) {
-			defer wg.Done()
-			n.Latency = tcpPing(n.Server, n.Port)
-			results[idx] = n
-		}(i, node)
+	reachable := collectReachableNodes(nodes, proxyProbeConcurrency, func(n ProxyNode) int64 {
+		return tcpPing(n.Server, n.Port)
+	})
+	latencyMap := make(map[string]int64, len(reachable))
+	for _, item := range reachable {
+		latencyMap[proxyNodeKey(item.node)] = item.latency
 	}
-	wg.Wait()
+	for i, node := range nodes {
+		node.Latency = -1
+		if latency, ok := latencyMap[proxyNodeKey(node)]; ok {
+			node.Latency = latency
+		}
+		results[i] = node
+	}
 
 	globalSession.mu.Lock()
 	globalSession.nodes = results
@@ -625,20 +882,24 @@ func (h *ProxyHandler) CheckNodes(c *gin.Context) {
 	}
 
 	results := make([]result, len(targets))
-	var wg sync.WaitGroup
-	for i, node := range targets {
-		wg.Add(1)
-		go func(idx int, n ProxyNode) {
-			defer wg.Done()
-			lat := checkNodeReachability(&n, testURL)
-			results[idx] = result{
-				Name:      n.Name,
-				Reachable: lat >= 0,
-				Latency:   lat,
-			}
-		}(i, node)
+	reachable := collectReachableNodes(targets, proxyProbeConcurrency, func(n ProxyNode) int64 {
+		return checkNodeReachability(&n, testURL)
+	})
+	latencyMap := make(map[string]int64, len(reachable))
+	for _, item := range reachable {
+		latencyMap[proxyNodeKey(item.node)] = item.latency
 	}
-	wg.Wait()
+	for i, node := range targets {
+		latency := int64(-1)
+		if v, ok := latencyMap[proxyNodeKey(node)]; ok {
+			latency = v
+		}
+		results[i] = result{
+			Name:      node.Name,
+			Reachable: latency >= 0,
+			Latency:   latency,
+		}
+	}
 
 	c.JSON(200, gin.H{"results": results})
 }
@@ -722,31 +983,20 @@ func (h *ProxyHandler) triggerAutoSelect() {
 		copy(nodes, globalSession.nodes)
 		globalSession.mu.RUnlock()
 
-		var mu sync.Mutex
-		var best *ProxyNode
-		var wg sync.WaitGroup
-		for i := range nodes {
-			wg.Add(1)
-			go func(n ProxyNode) {
-				defer wg.Done()
-				n.Latency = tcpPing(n.Server, n.Port)
-				if n.Latency < 0 {
-					return
-				}
-				mu.Lock()
-				if best == nil || n.Latency < best.Latency {
-					cp := n
-					best = &cp
-				}
-				mu.Unlock()
-			}(nodes[i])
-		}
-		wg.Wait()
-
-		if best == nil {
+		reachable := collectReachableNodes(nodes, proxyProbeConcurrency, func(n ProxyNode) int64 {
+			return tcpPing(n.Server, n.Port)
+		})
+		if len(reachable) == 0 {
 			return
 		}
-		startProxyListener(best, h.adminPassword, h.localPort) //nolint
+		best := reachable[0]
+		for _, item := range reachable[1:] {
+			if item.latency < best.latency {
+				best = item
+			}
+		}
+		best.node.Latency = best.latency
+		startProxyListener(&best.node, h.adminPassword, h.localPort) //nolint
 		h.startNPC()
 	}()
 }
@@ -835,8 +1085,8 @@ func (h *ProxyHandler) CreateNPSTunnel(c *gin.Context) {
 
 	params := url.Values{}
 	params.Set("type", "tcp")
-	params.Set("port", h.npcTunnelPort)                    // 公网端口 = tunnel_port（如 18080）
-	params.Set("target", "127.0.0.1:"+h.npcTunnelPort)    // target = 本地代理端口
+	params.Set("port", h.npcTunnelPort)                // 公网端口 = tunnel_port（如 18080）
+	params.Set("target", "127.0.0.1:"+h.npcTunnelPort) // target = 本地代理端口
 	params.Set("client_id", strconv.Itoa(clientID))
 	params.Set("remark", "代理端口（防探测）")
 	result, err := h.npsHandler.npsPost("/index/add/", params)
@@ -878,19 +1128,21 @@ func (h *ProxyHandler) AutoStart(c *gin.Context) {
 		return
 	}
 
-	// 并发测速（用真实可用性检测，过滤掉 ss/vmess/trojan 等不支持的节点）
-	var wg sync.WaitGroup
 	results := make([]ProxyNode, len(nodes))
-	for i, node := range nodes {
-		wg.Add(1)
-		go func(idx int, n ProxyNode) {
-			defer wg.Done()
-			lat := checkNodeReachability(&n, probeURL)
-			n.Latency = lat
-			results[idx] = n
-		}(i, node)
+	reachable := collectReachableNodes(nodes, proxyProbeConcurrency, func(n ProxyNode) int64 {
+		return checkNodeReachability(&n, probeURL)
+	})
+	latencyMap := make(map[string]int64, len(reachable))
+	for _, item := range reachable {
+		latencyMap[proxyNodeKey(item.node)] = item.latency
 	}
-	wg.Wait()
+	for i, node := range nodes {
+		node.Latency = -1
+		if latency, ok := latencyMap[proxyNodeKey(node)]; ok {
+			node.Latency = latency
+		}
+		results[i] = node
+	}
 
 	// 保存测速结果
 	globalSession.mu.Lock()
@@ -901,10 +1153,11 @@ func (h *ProxyHandler) AutoStart(c *gin.Context) {
 	// 选延迟最低的可用节点
 	var best *ProxyNode
 	for i := range results {
-		if results[i].Latency >= 0 {
-			if best == nil || results[i].Latency < best.Latency {
-				best = &results[i]
-			}
+		if results[i].Latency < 0 {
+			continue
+		}
+		if best == nil || results[i].Latency < best.Latency {
+			best = &results[i]
 		}
 	}
 	if best == nil {
@@ -920,11 +1173,11 @@ func (h *ProxyHandler) AutoStart(c *gin.Context) {
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	c.JSON(200, gin.H{
-		"node":       best.Name,
-		"latency":    best.Latency,
-		"http_port":  port,
-		"proxy_url":  fmt.Sprintf("http://127.0.0.1:%d", port),
-		"results":    results,
+		"node":      best.Name,
+		"latency":   best.Latency,
+		"http_port": port,
+		"proxy_url": fmt.Sprintf("http://127.0.0.1:%d", port),
+		"results":   results,
 	})
 	h.startNPC()
 }
@@ -994,12 +1247,17 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 	h.npcMu.Unlock()
 
 	resp := gin.H{
-		"nodes":            globalSession.nodes,
-		"source_url":       globalSession.sourceURL,
-		"running":          false,
-		"npc_running":      npcRunning,
-		"npc_tunnel_port":  h.npcTunnelPort,
-		"npc_server_addr":  h.npcCfg.serverAddr,
+		"nodes":              globalSession.nodes,
+		"source_url":         firstSourceURL(globalSession.sourceURLs, globalSession.sourceURL),
+		"source_urls":        append([]string(nil), globalSession.sourceURLs...),
+		"yaml_content":       globalSession.yamlContent,
+		"routing_mode":       normalizeProxyRouteMode(globalSession.routingMode),
+		"default_node_regex": globalSession.defaultNodeRegex,
+		"ai_node_regex":      globalSession.aiNodeRegex,
+		"running":            false,
+		"npc_running":        npcRunning,
+		"npc_tunnel_port":    h.npcTunnelPort,
+		"npc_server_addr":    h.npcCfg.serverAddr,
 	}
 	if globalSession.active != nil && globalSession.listener != nil {
 		port := globalSession.listener.Addr().(*net.TCPAddr).Port
@@ -1412,18 +1670,148 @@ func dialUpstream(node *ProxyNode, targetHost string) (net.Conn, error) {
 	}
 }
 
-// dialWithGFW 分流：命中 gfwlist 走节点，否则直连
-// 节点连接失败时异步触发切换
-func dialWithGFW(node *ProxyNode, targetHost string) (net.Conn, error) {
-	if ShouldProxy(targetHost) {
-		conn, err := dialUpstream(node, targetHost)
-		if err != nil {
-			// 节点连接失败，异步触发切换（不阻塞当前请求）
-			go triggerFailover()
+func stripPort(targetHost string) string {
+	host := strings.TrimSpace(targetHost)
+	if strings.HasPrefix(host, "[") && strings.Contains(host, "]") {
+		trimmed := strings.TrimPrefix(host, "[")
+		if idx := strings.Index(trimmed, "]"); idx >= 0 {
+			return strings.ToLower(strings.TrimSuffix(trimmed[:idx], "."))
 		}
-		return conn, err
 	}
-	return net.DialTimeout("tcp", targetHost, 10*time.Second)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return strings.ToLower(strings.TrimSuffix(h, "."))
+	}
+	if idx := strings.LastIndex(host, ":"); idx > 0 && !strings.Contains(host[:idx], ":") {
+		host = host[:idx]
+	}
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
+
+func isLocalTargetHost(targetHost string) bool {
+	host := stripPort(targetHost)
+	if host == "" || host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+	return false
+}
+
+func matchesDomainSuffix(host, suffix string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	suffix = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(suffix), "."))
+	return host == suffix || strings.HasSuffix(host, "."+suffix)
+}
+
+func isAIDedicatedHost(targetHost string) bool {
+	host := stripPort(targetHost)
+	for _, domain := range aiDedicatedDomains {
+		if matchesDomainSuffix(host, domain) {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneNode(node *ProxyNode) *ProxyNode {
+	if node == nil {
+		return nil
+	}
+	cp := *node
+	return &cp
+}
+
+func matchNodeByRegex(nodes []ProxyNode, pattern string, preferred *ProxyNode) *ProxyNode {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return cloneNode(preferred)
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return cloneNode(preferred)
+	}
+	if preferred != nil && re.MatchString(preferred.Name) {
+		return cloneNode(preferred)
+	}
+	for i := range nodes {
+		if re.MatchString(nodes[i].Name) {
+			return cloneNode(&nodes[i])
+		}
+	}
+	return cloneNode(preferred)
+}
+
+func resolveRouteNode(defaultNode *ProxyNode, targetHost string) (*ProxyNode, bool, *ProxyNode) {
+	globalSession.mu.RLock()
+	mode := normalizeProxyRouteMode(globalSession.routingMode)
+	nodes := make([]ProxyNode, len(globalSession.nodes))
+	copy(nodes, globalSession.nodes)
+	active := cloneNode(globalSession.active)
+	defaultRegex := globalSession.defaultNodeRegex
+	aiRegex := globalSession.aiNodeRegex
+	globalSession.mu.RUnlock()
+
+	if isLocalTargetHost(targetHost) {
+		return nil, false, nil
+	}
+
+	baseNode := cloneNode(defaultNode)
+	if baseNode == nil {
+		baseNode = active
+	}
+	if baseNode == nil && strings.TrimSpace(defaultRegex) != "" {
+		baseNode = matchNodeByRegex(nodes, defaultRegex, nil)
+	}
+
+	switch mode {
+	case proxyRouteModeGlobal:
+		return baseNode, true, baseNode
+	case proxyRouteModeSmart:
+		if ShouldProxy(targetHost) {
+			return baseNode, true, baseNode
+		}
+		return nil, false, baseNode
+	default:
+		if isAIDedicatedHost(targetHost) {
+			aiNode := matchNodeByRegex(nodes, aiRegex, nil)
+			if aiNode != nil {
+				return aiNode, true, baseNode
+			}
+			return baseNode, true, baseNode
+		}
+		if ShouldProxy(targetHost) {
+			return baseNode, true, baseNode
+		}
+		return nil, false, baseNode
+	}
+}
+
+// dialWithGFW 分流：默认保持当前线路，AI 域名可按正则命中专线，仅在不可用时切换
+func dialWithGFW(node *ProxyNode, targetHost string) (net.Conn, error) {
+	selectedNode, shouldProxy, fallbackNode := resolveRouteNode(node, targetHost)
+	if !shouldProxy || selectedNode == nil {
+		return net.DialTimeout("tcp", targetHost, 10*time.Second)
+	}
+
+	conn, err := dialUpstream(selectedNode, targetHost)
+	if err == nil {
+		return conn, nil
+	}
+
+	if fallbackNode != nil && proxyNodeKey(*fallbackNode) != proxyNodeKey(*selectedNode) {
+		if fallbackConn, fallbackErr := dialUpstream(fallbackNode, targetHost); fallbackErr == nil {
+			return fallbackConn, nil
+		}
+	}
+
+	// 节点连接失败，异步触发切换（不阻塞当前请求）
+	go triggerFailover()
+	return nil, err
 }
 
 var failoverMu sync.Mutex
@@ -1874,7 +2262,7 @@ function buildPac(server, mode) {
 }
 
 function applyProxy(server, mode) {
-  const pac = buildPac(server, mode || 'smart');
+  const pac = buildPac(server, mode || 'ai_priority');
   chrome.proxy.settings.set({
     value: { mode: 'pac_script', pacScript: { data: pac } },
     scope: 'regular'
@@ -1888,7 +2276,7 @@ function disableProxy() {
 function loadAndApply() {
   chrome.storage.local.get(['proxyEnabled', 'server', 'mode'], (s) => {
     if (s.proxyEnabled !== false) {
-      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'smart');
+      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'ai_priority');
     } else {
       disableProxy();
     }
@@ -1896,10 +2284,10 @@ function loadAndApply() {
 }
 
 // 启动时立即用默认值同步设置代理，避免 storage 异步导致新标签页第一个请求走直连
-applyProxy(DEFAULT_SERVER, 'global');
+applyProxy(DEFAULT_SERVER, 'ai_priority');
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true, mode: 'global' });
+  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true, mode: 'ai_priority' });
   loadAndApply();
 });
 chrome.runtime.onStartup.addListener(loadAndApply);
@@ -1935,7 +2323,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   } else if (msg.action === 'enable') {
     chrome.storage.local.get(['server', 'mode'], (s) => {
       chrome.storage.local.set({ proxyEnabled: true });
-      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'smart');
+      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'ai_priority');
     });
   }
   sendResponse({});
@@ -1966,6 +2354,7 @@ button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:1
 <input id="pass" type="password" placeholder="管理员密码">
 <label>模式</label>
 <select id="mode" style="width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+  <option value="ai_priority">AI 优先分流（默认，GPT/Claude/Gemini 走专线）</option>
   <option value="smart">智能分流（国内直连，被墙走代理，不通自动切换）</option>
   <option value="global">全部走代理</option>
 </select>
@@ -1985,7 +2374,7 @@ var enabled = true;
 chrome.storage.local.get(['server','pass','proxyEnabled','mode'], function(s) {
   document.getElementById('server').value = s.server || '';
   document.getElementById('pass').value = s.pass || '';
-  document.getElementById('mode').value = s.mode || 'global';
+  document.getElementById('mode').value = s.mode || 'ai_priority';
   enabled = s.proxyEnabled !== false;
   var srv = s.server || '';
   if (srv) { document.getElementById('sysProxy').textContent = srv; }

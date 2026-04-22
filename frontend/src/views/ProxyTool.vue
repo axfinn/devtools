@@ -26,15 +26,41 @@
         </template>
         <el-tabs v-model="configTab">
           <el-tab-pane label="订阅 URL" name="url">
-            <el-input v-model="subscribeURL" placeholder="输入 Clash 订阅链接" clearable />
+            <el-input
+              v-model="subscribeURLsText"
+              type="textarea"
+              :rows="4"
+              placeholder="输入 Clash 订阅链接，每行一个 URL"
+            />
           </el-tab-pane>
           <el-tab-pane label="粘贴 YAML" name="yaml">
             <el-input v-model="yamlContent" type="textarea" :rows="6"
               placeholder="粘贴 Clash YAML 配置内容（proxies: 段）" />
           </el-tab-pane>
         </el-tabs>
+        <div class="route-settings">
+          <el-select v-model="routeMode" class="route-field">
+            <el-option label="AI 优先分流（默认）" value="ai_priority" />
+            <el-option label="智能分流" value="smart" />
+            <el-option label="全局代理" value="global" />
+          </el-select>
+          <el-input
+            v-model="defaultNodeRegex"
+            class="route-field"
+            placeholder="默认线路正则，可留空；例如 (?i)日本|韩国|IEPL"
+          />
+          <el-input
+            v-model="aiNodeRegex"
+            class="route-field"
+            placeholder="AI 专线正则；例如 (?i)(chatgpt|gpt|claude|anthropic|gemini|ai)"
+          />
+        </div>
+        <div class="proxy-hint">
+          默认保持当前线路不跳变；AI 优先模式只会把 GPT / Claude / Gemini 等域名导到 AI 专线，专线失效时才回退。
+        </div>
         <div class="action-row">
           <el-button type="primary" @click="loadConfig" :loading="loadingConfig">解析节点</el-button>
+          <el-button @click="copyExportConfig">复制配置</el-button>
           <el-button @click="speedTest" :loading="testingSpeed" :disabled="nodes.length === 0">全部测速</el-button>
           <el-button @click="checkNodes" :loading="checkingNodes" :disabled="nodes.length === 0">
             验证可用（curl google）
@@ -105,6 +131,10 @@
             下载后将二进制和 config.txt 放同一目录。
             Mac/Linux 需先 <code>chmod +x</code> 再双击，或终端运行。
             Windows 直接双击 .exe。
+          </div>
+          <div class="proxy-addr-row" style="margin-top:8px">
+            <el-input :value="goClientConfigText" readonly size="small" type="textarea" :rows="3" class="proxy-addr-input" />
+            <el-button @click="copy(goClientConfigText)">复制 config.txt</el-button>
           </div>
           <div class="proxy-addr-row" style="margin-top:8px">
             <el-input :value="goClientCmd" readonly size="small" class="proxy-addr-input">
@@ -355,8 +385,11 @@ const isAdmin = ref(false)
 const loginLoading = ref(false)
 
 const configTab = ref('url')
-const subscribeURL = ref('')
+const subscribeURLsText = ref('')
 const yamlContent = ref('')
+const routeMode = ref('ai_priority')
+const defaultNodeRegex = ref('')
+const aiNodeRegex = ref('(?i)(chatgpt|gpt|openai|claude|anthropic|gemini|copilot|ai)')
 const loadingConfig = ref(false)
 const testingSpeed = ref(false)
 const testedOnce = ref(false)
@@ -448,15 +481,32 @@ function adminPassword() {
   return sessionStorage.getItem(SESSION_KEY) || ''
 }
 
+function parseSourceURLs() {
+  return subscribeURLsText.value
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
 function applyStatus(data) {
   if (data.nodes && data.nodes.length > 0) {
     nodes.value = data.nodes
     testedOnce.value = data.nodes.some(n => n.latency >= 0)
   }
-  if (data.source_url) {
-    subscribeURL.value = data.source_url
+  if (Array.isArray(data.source_urls) && data.source_urls.length > 0) {
+    subscribeURLsText.value = data.source_urls.join('\n')
+    configTab.value = 'url'
+  } else if (data.source_url) {
+    subscribeURLsText.value = data.source_url
     configTab.value = 'url'
   }
+  if (typeof data.yaml_content === 'string' && data.yaml_content && !subscribeURLsText.value) {
+    yamlContent.value = data.yaml_content
+    configTab.value = 'yaml'
+  }
+  routeMode.value = data.routing_mode || 'ai_priority'
+  defaultNodeRegex.value = data.default_node_regex || ''
+  aiNodeRegex.value = data.ai_node_regex || aiNodeRegex.value
   if (data.running) {
     proxyRunning.value = true
     httpPort.value = data.http_port
@@ -548,8 +598,13 @@ function logout() {
 async function loadConfig() {
   loadingConfig.value = true
   try {
-    const body = { admin_password: adminPassword() }
-    if (configTab.value === 'url') body.source_url = subscribeURL.value
+    const body = {
+      admin_password: adminPassword(),
+      routing_mode: routeMode.value,
+      default_node_regex: defaultNodeRegex.value.trim(),
+      ai_node_regex: aiNodeRegex.value.trim()
+    }
+    if (configTab.value === 'url') body.source_urls = parseSourceURLs()
     else body.yaml_content = yamlContent.value
     const r = await fetch('/api/proxy/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -565,6 +620,17 @@ async function loadConfig() {
     }
   } catch (e) { ElMessage.error('请求失败') }
   finally { loadingConfig.value = false }
+}
+
+function copyExportConfig() {
+  const text = JSON.stringify({
+    source_urls: parseSourceURLs(),
+    yaml_content: configTab.value === 'yaml' ? yamlContent.value : '',
+    routing_mode: routeMode.value,
+    default_node_regex: defaultNodeRegex.value.trim(),
+    ai_node_regex: aiNodeRegex.value.trim()
+  }, null, 2)
+  copy(text)
 }
 
 async function speedTest() {
@@ -792,16 +858,20 @@ const goClientCmd = computed(() => {
   return `./proxy-client -server ${proto}://${host} -password ${pass}`
 })
 
+const goClientConfigText = computed(() => {
+  const host = window.location.host
+  const proto = window.location.protocol === 'https:' ? 'https' : 'http'
+  const pass = adminPassword()
+  return `server=${proto}://${host}\npassword=${pass}\nlisten=127.0.0.1:1080\n`
+})
+
 function downloadClient(os, arch) {
   const pass = adminPassword()
   // 先下载二进制
   const url = `/api/proxy/client/download?os=${os}&arch=${arch}&admin_password=${encodeURIComponent(pass)}`
   window.open(url, '_blank')
   // 再下载 config.txt，让用户双击直接用
-  const host = window.location.host
-  const proto = window.location.protocol === 'https:' ? 'https' : 'http'
-  const cfg = `server=${proto}://${host}\npassword=${pass}\nlisten=127.0.0.1:1080\n`
-  const blob = new Blob([cfg], { type: 'text/plain' })
+  const blob = new Blob([goClientConfigText.value], { type: 'text/plain' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = 'config.txt'
@@ -815,6 +885,8 @@ function downloadClient(os, arch) {
 .main-content { display: flex; flex-direction: column; gap: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .proxy-info-inline { display: flex; align-items: center; gap: 8px; }
+.route-settings { display: grid; gap: 8px; margin-top: 12px; }
+.route-field { width: 100%; }
 .action-row { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .nodes-card :deep(.selected-row) { background-color: var(--el-color-primary-light-9); }
 
