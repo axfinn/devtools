@@ -959,6 +959,7 @@ func main() {
 			proxyGroup.POST("/auto-start", proxyHandler.AutoStart)
 			proxyGroup.POST("/stop", proxyHandler.Stop)
 			proxyGroup.POST("/check", proxyHandler.CheckNodes)
+			proxyGroup.POST("/subscription-refresh", proxyHandler.TriggerSubscriptionRefresh)
 			proxyGroup.POST("/nps-tunnel", proxyHandler.CreateNPSTunnel)
 			proxyGroup.GET("/status", proxyHandler.Status)
 			proxyGroup.GET("/fetch", proxyHandler.Fetch)

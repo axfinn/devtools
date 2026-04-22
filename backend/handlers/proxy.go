@@ -503,6 +503,7 @@ type ProxyHandler struct {
 	smtpUser      string
 	smtpPass      string
 	subRefresh    proxySubscriptionRefreshRuntime
+	subRefreshMu  sync.Mutex
 	subStateMu    sync.RWMutex
 	subState      proxySubscriptionRefreshState
 }
@@ -808,6 +809,9 @@ func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, node
 }
 
 func (h *ProxyHandler) refreshManagedSubscription() {
+	h.subRefreshMu.Lock()
+	defer h.subRefreshMu.Unlock()
+
 	if !h.subRefresh.enabled {
 		return
 	}
@@ -888,6 +892,65 @@ func (h *ProxyHandler) refreshManagedSubscription() {
 			len(nodes),
 		),
 	)
+}
+
+// TriggerSubscriptionRefresh POST /api/proxy/subscription-refresh
+func (h *ProxyHandler) TriggerSubscriptionRefresh(c *gin.Context) {
+	var req struct {
+		AdminPassword string `json:"admin_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
+		return
+	}
+	if !h.checkAdmin(req.AdminPassword) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "密码错误"})
+		return
+	}
+	if !h.subRefresh.enabled {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "托管订阅自动刷新未启用"})
+		return
+	}
+
+	h.refreshManagedSubscription()
+
+	globalSession.mu.RLock()
+	activeName := ""
+	if globalSession.active != nil {
+		activeName = globalSession.active.Name
+	}
+	globalSession.mu.RUnlock()
+	defaultNode, aiNode := resolveConfiguredNodes()
+
+	subState := h.snapshotSubscriptionState()
+	statusOK := !strings.Contains(subState.LastRefreshStatus, "未执行") && !strings.Contains(subState.LastRefreshStatus, "失败")
+	resp := gin.H{
+		"ok":   statusOK,
+		"node": activeName,
+		"subscription_refresh": gin.H{
+			"enabled":                subState.Enabled,
+			"resolved_site_url":      subState.ResolvedSiteURL,
+			"last_subscribe_url":     subState.LastSubscribeURL,
+			"last_refresh_status":    subState.LastRefreshStatus,
+			"last_refresh_at":        subState.LastRefreshAt,
+			"last_refresh_changed":   subState.LastRefreshChanged,
+			"last_refresh_applied":   subState.LastRefreshApplied,
+			"last_refresh_source":    subState.LastRefreshSource,
+			"last_refresh_node_hint": subState.LastRefreshNodeHint,
+		},
+	}
+	if defaultNode != nil {
+		resp["default_node"] = defaultNode.Name
+	}
+	if aiNode != nil {
+		resp["effective_ai_node"] = aiNode.Name
+	}
+	if !statusOK {
+		resp["error"] = subState.LastRefreshStatus
+		c.JSON(http.StatusInternalServerError, resp)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // AutoSelectOnStartup 启动时若有持久化节点但无活跃节点，后台自动选最优节点

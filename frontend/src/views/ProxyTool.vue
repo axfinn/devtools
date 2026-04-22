@@ -104,6 +104,14 @@
           <el-button @click="checkNodes" :loading="checkingNodes" :disabled="nodes.length === 0">
             验证可用（curl google）
           </el-button>
+          <el-button
+            v-if="subscriptionRefresh.enabled"
+            type="info"
+            @click="triggerSubscriptionRefresh"
+            :loading="refreshingSubscription"
+          >
+            手动刷新托管订阅
+          </el-button>
           <el-button type="success" @click="startProxy" :loading="startingProxy" :disabled="!selectedNode">
             启动代理
           </el-button>
@@ -437,6 +445,7 @@ const testedOnce = ref(false)
 const checkingNodes = ref(false)
 const checkedOnce = ref(false)
 const checkResults = ref({}) // name -> true/false
+const refreshingSubscription = ref(false)
 
 const nodes = ref([])
 const selectedNode = ref(null)
@@ -815,6 +824,44 @@ async function createNPSTunnel() {
     else ElMessage.success(`端口映射已创建，公网端口 ${data.port}`)
   } catch (e) { ElMessage.error('创建失败') }
   finally { creatingTunnel.value = false }
+}
+
+async function triggerSubscriptionRefresh() {
+  refreshingSubscription.value = true
+  try {
+    const r = await fetch('/api/proxy/subscription-refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_password: adminPassword() })
+    })
+    const data = await r.json()
+    if (data.error) {
+      ElMessage.error(data.error)
+      return
+    }
+    if (data.subscription_refresh) {
+      subscriptionRefresh.value = {
+        enabled: !!data.subscription_refresh.enabled,
+        resolved_site_url: data.subscription_refresh.resolved_site_url || '',
+        last_subscribe_url: data.subscription_refresh.last_subscribe_url || '',
+        last_refresh_status: data.subscription_refresh.last_refresh_status || '',
+        last_refresh_at: data.subscription_refresh.last_refresh_at || '',
+        last_refresh_node_hint: data.subscription_refresh.last_refresh_node_hint || ''
+      }
+    }
+    if (data.node) {
+      activeNode.value = data.node
+    }
+    currentDefaultNode.value = data.default_node || currentDefaultNode.value
+    currentAINode.value = data.effective_ai_node || currentAINode.value
+    const statusResp = await fetch(`/api/proxy/status?admin_password=${encodeURIComponent(adminPassword())}`)
+    const statusData = await statusResp.json()
+    if (!statusData.error) {
+      applyStatus(statusData)
+    }
+    ElMessage.success(subscriptionRefresh.value.last_refresh_status || '托管订阅刷新完成')
+  } catch (e) { ElMessage.error('手动刷新失败') }
+  finally { refreshingSubscription.value = false }
 }
 
 function selectNode(row) { selectedNode.value = row }
