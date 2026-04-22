@@ -276,7 +276,13 @@ type managedRefreshAttempt struct {
 	Applied      bool   `json:"applied"`
 }
 
-func (h *ProxyHandler) sendManagedRefreshReport(subject, outcome string, attempts []managedRefreshAttempt, extra map[string]interface{}) {
+type mailAttachment struct {
+	Filename    string
+	ContentType string
+	Content     []byte
+}
+
+func (h *ProxyHandler) sendManagedRefreshReport(subject, outcome string, attempts []managedRefreshAttempt, extra map[string]interface{}, attachment *mailAttachment) {
 	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" {
 		return
 	}
@@ -320,7 +326,7 @@ func (h *ProxyHandler) sendManagedRefreshReport(subject, outcome string, attempt
 	}
 	lines = append(lines, "", "JSON:", string(payload))
 
-	go h.sendAlert(subject, strings.Join(lines, "\n"))
+	go h.sendAlertWithAttachment(subject, strings.Join(lines, "\n"), attachment)
 }
 
 func (h *ProxyHandler) managedRefreshClients(timeout time.Duration) []managedRefreshClientCandidate {
@@ -990,7 +996,7 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 			"enabled":          h.subRefresh.enabled,
 			"landing_url":      h.subRefresh.landingURL,
 			"configured_proxy": h.subRefresh.requestProxyURL,
-		})
+		}, nil)
 		return
 	}
 
@@ -1072,7 +1078,7 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 				"subscribe_url":     subscribeURL,
 				"refresh_source":    candidate.source,
 				"node_count":        len(nodes),
-			})
+			}, nil)
 			return
 		}
 		if !applied {
@@ -1086,7 +1092,7 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 				"subscribe_url":     subscribeURL,
 				"refresh_source":    candidate.source,
 				"node_count":        len(nodes),
-			})
+			}, nil)
 			return
 		}
 		activeName := ""
@@ -1109,7 +1115,7 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 			"refresh_source":    candidate.source,
 			"active_node":       activeName,
 			"node_count":        len(nodes),
-		})
+		}, managedSubscriptionAttachment(subscribeURL, h.subRefresh.preferredSubType, []byte(yamlText)))
 		return
 	}
 
@@ -1123,7 +1129,7 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 		"site_url":          h.subRefresh.siteURL,
 		"configured_proxy":  h.subRefresh.requestProxyURL,
 		"preferred_subtype": h.subRefresh.preferredSubType,
-	})
+	}, nil)
 }
 
 func (h *ProxyHandler) refreshManagedSubscription() {
@@ -3117,8 +3123,76 @@ func dialTrojan(nodeAddr, targetHost string, node *ProxyNode) (net.Conn, error) 
 	return conn, nil
 }
 
-// sendAlert 发送告警邮件（SMTP SSL，465 端口）
 func (h *ProxyHandler) sendAlert(subject, body string) {
+	h.sendAlertWithAttachment(subject, body, nil)
+}
+
+func buildSMTPMessage(sender string, recipients []string, subject, body string, attachment *mailAttachment) string {
+	messageIDHost := "devtools.local"
+	if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+		messageIDHost = host
+	}
+	headers := []string{
+		fmt.Sprintf("From: %s", sender),
+		fmt.Sprintf("To: %s", strings.Join(recipients, ", ")),
+		fmt.Sprintf("Subject: %s", mime.QEncoding.Encode("UTF-8", "[DevTools] "+subject)),
+		fmt.Sprintf("Date: %s", time.Now().Format(time.RFC1123Z)),
+		fmt.Sprintf("Message-ID: <%d.%s@%s>", time.Now().UnixNano(), randomHex(8), messageIDHost),
+		"MIME-Version: 1.0",
+	}
+	if attachment == nil || len(attachment.Content) == 0 {
+		headers = append(headers,
+			"Content-Type: text/plain; charset=UTF-8",
+			"Content-Transfer-Encoding: 8bit",
+		)
+		return strings.Join(headers, "\r\n") + "\r\n\r\n" + body
+	}
+
+	filename := strings.TrimSpace(attachment.Filename)
+	if filename == "" {
+		filename = "devtools-attachment.txt"
+	}
+	contentType := strings.TrimSpace(attachment.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	boundary := "devtools-boundary-" + randomHex(16)
+	headers = append(headers, fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q", boundary))
+
+	var msg strings.Builder
+	msg.WriteString(strings.Join(headers, "\r\n"))
+	msg.WriteString("\r\n\r\n")
+	msg.WriteString("--" + boundary + "\r\n")
+	msg.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	msg.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+	msg.WriteString(body)
+	msg.WriteString("\r\n")
+	msg.WriteString("--" + boundary + "\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Type: %s; name=%q\r\n", contentType, filename))
+	msg.WriteString("Content-Transfer-Encoding: base64\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=%q\r\n\r\n", filename))
+	writeBase64Lines(&msg, attachment.Content)
+	msg.WriteString("--" + boundary + "--\r\n")
+	return msg.String()
+}
+
+func writeBase64Lines(dst *strings.Builder, data []byte) {
+	if len(data) == 0 {
+		dst.WriteString("\r\n")
+		return
+	}
+	encoded := base64.StdEncoding.EncodeToString(data)
+	for len(encoded) > 76 {
+		dst.WriteString(encoded[:76])
+		dst.WriteString("\r\n")
+		encoded = encoded[76:]
+	}
+	dst.WriteString(encoded)
+	dst.WriteString("\r\n")
+}
+
+// sendAlert 发送告警邮件（SMTP SSL，465 端口）
+func (h *ProxyHandler) sendAlertWithAttachment(subject, body string, attachment *mailAttachment) {
 	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" || h.smtpPass == "" {
 		return
 	}
@@ -3132,22 +3206,7 @@ func (h *ProxyHandler) sendAlert(subject, body string) {
 	if len(recipients) == 0 {
 		return
 	}
-
-	messageIDHost := "devtools.local"
-	if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
-		messageIDHost = host
-	}
-	headers := []string{
-		fmt.Sprintf("From: %s", h.smtpUser),
-		fmt.Sprintf("To: %s", strings.Join(recipients, ", ")),
-		fmt.Sprintf("Subject: %s", mime.QEncoding.Encode("UTF-8", "[DevTools] "+subject)),
-		fmt.Sprintf("Date: %s", time.Now().Format(time.RFC1123Z)),
-		fmt.Sprintf("Message-ID: <%d.%s@%s>", time.Now().UnixNano(), randomHex(8), messageIDHost),
-		"MIME-Version: 1.0",
-		"Content-Type: text/plain; charset=UTF-8",
-		"Content-Transfer-Encoding: 8bit",
-	}
-	msg := strings.Join(headers, "\r\n") + "\r\n\r\n" + body
+	msg := buildSMTPMessage(h.smtpUser, recipients, subject, body, attachment)
 
 	var (
 		client *smtp.Client
@@ -3249,6 +3308,51 @@ func splitAlertRecipients(raw string) []string {
 		recipients = append(recipients, item)
 	}
 	return recipients
+}
+
+func managedSubscriptionAttachment(filenameHint, preferredType string, content []byte) *mailAttachment {
+	if len(content) == 0 {
+		return nil
+	}
+	filename := managedSubscriptionAttachmentFilename(filenameHint, preferredType)
+	contentType := "text/plain; charset=UTF-8"
+	if strings.HasSuffix(strings.ToLower(filename), ".yaml") || strings.HasSuffix(strings.ToLower(filename), ".yml") {
+		contentType = "application/x-yaml; charset=UTF-8"
+	}
+	return &mailAttachment{
+		Filename:    filename,
+		ContentType: contentType,
+		Content:     append([]byte(nil), content...),
+	}
+}
+
+func managedSubscriptionAttachmentFilename(subscribeURL, preferredType string) string {
+	ts := time.Now().Format("20060102-150405")
+	ext := ".txt"
+	switch strings.ToLower(strings.TrimSpace(preferredType)) {
+	case "clash":
+		ext = ".yaml"
+	case "surfboard":
+		ext = ".conf"
+	case "shadowrocket":
+		ext = ".txt"
+	case "ssr":
+		ext = ".txt"
+	}
+	if u, err := url.Parse(strings.TrimSpace(subscribeURL)); err == nil {
+		query := u.Query()
+		switch {
+		case query.Get("clash") == "1":
+			ext = ".yaml"
+		case query.Get("surfboard") == "1":
+			ext = ".conf"
+		case query.Get("list") == "shadowrocket":
+			ext = ".txt"
+		case query.Get("sub") == "1":
+			ext = ".txt"
+		}
+	}
+	return "devtools-managed-subscription-" + ts + ext
 }
 
 func randomHex(length int) string {

@@ -2,9 +2,13 @@ package handlers
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net"
+	"net/mail"
 	"strconv"
 	"strings"
 	"sync"
@@ -345,6 +349,85 @@ func TestSendAlertSMTPFlow(t *testing.T) {
 	}
 	if !strings.Contains(session.data, "当前线路: 美国-chatGPT-02") {
 		t.Fatalf("message missing body content: %q", session.data)
+	}
+}
+
+func TestManagedSubscriptionAttachmentFilename(t *testing.T) {
+	filename := managedSubscriptionAttachmentFilename("https://sub.example/link/abc?clash=1", "clash")
+	if !strings.HasPrefix(filename, "devtools-managed-subscription-") {
+		t.Fatalf("unexpected filename prefix: %q", filename)
+	}
+	if !strings.HasSuffix(filename, ".yaml") {
+		t.Fatalf("unexpected filename suffix: %q", filename)
+	}
+}
+
+func TestSendAlertSMTPFlowWithAttachment(t *testing.T) {
+	server := newFakeSMTPServer(t)
+	defer server.Close()
+
+	h := &ProxyHandler{
+		alertEmail: "alpha@example.test",
+		smtpHost:   "localhost",
+		smtpPort:   server.Port(),
+		smtpUser:   "sender@example.test",
+		smtpPass:   "test-password",
+	}
+
+	attachment := managedSubscriptionAttachment(
+		"https://sub.example/link/abc?clash=1",
+		"clash",
+		[]byte("proxies:\n  - name: test\n"),
+	)
+	h.sendAlertWithAttachment("代理订阅刷新成功", "正文内容", attachment)
+
+	session := server.WaitForSession(t)
+	msg, err := mail.ReadMessage(strings.NewReader(session.data))
+	if err != nil {
+		t.Fatalf("ReadMessage failed: %v", err)
+	}
+
+	mediaType, params, err := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+	if err != nil {
+		t.Fatalf("ParseMediaType failed: %v", err)
+	}
+	if mediaType != "multipart/mixed" {
+		t.Fatalf("Content-Type = %q, want multipart/mixed", mediaType)
+	}
+
+	mr := multipart.NewReader(msg.Body, params["boundary"])
+	textPart, err := mr.NextPart()
+	if err != nil {
+		t.Fatalf("NextPart(text) failed: %v", err)
+	}
+	textBody, err := io.ReadAll(textPart)
+	if err != nil {
+		t.Fatalf("ReadAll(text) failed: %v", err)
+	}
+	if strings.TrimSpace(string(textBody)) != "正文内容" {
+		t.Fatalf("text body = %q", string(textBody))
+	}
+
+	filePart, err := mr.NextPart()
+	if err != nil {
+		t.Fatalf("NextPart(file) failed: %v", err)
+	}
+	if got := filePart.FileName(); got == "" || !strings.HasSuffix(got, ".yaml") {
+		t.Fatalf("attachment filename = %q", got)
+	}
+	if got := filePart.Header.Get("Content-Transfer-Encoding"); got != "base64" {
+		t.Fatalf("attachment encoding = %q, want base64", got)
+	}
+	encodedBody, err := io.ReadAll(filePart)
+	if err != nil {
+		t.Fatalf("ReadAll(file) failed: %v", err)
+	}
+	decodedBody, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(encodedBody)))
+	if err != nil {
+		t.Fatalf("DecodeString failed: %v", err)
+	}
+	if string(decodedBody) != "proxies:\n  - name: test\n" {
+		t.Fatalf("attachment body = %q", string(decodedBody))
 	}
 }
 
