@@ -61,10 +61,24 @@ services:
   ocr-service:
     build:
       context: ./ocr-service
+      args:
+        - HTTP_PROXY=
+        - HTTPS_PROXY=
+        - http_proxy=
+        - https_proxy=
+        - NO_PROXY=
+        - no_proxy=
     container_name: ocr-service
     restart: unless-stopped
     volumes:
       - ocr-model-cache:/root/.cache
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - NO_PROXY=
+      - no_proxy=
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
