@@ -16,10 +16,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
 BACKEND_DIR="$SCRIPT_DIR/backend"
-LOG_FILE="/tmp/devtools.log"
-PID_FILE="/tmp/devtools.pid"
 PORT="${PORT:-8080}"
 HOST_PORT="${HOST_PORT:-8082}"
+LOG_FILE="/tmp/devtools-${PORT}.log"
+PID_FILE="/tmp/devtools-${PORT}.pid"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -43,12 +43,150 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+command_exists() {
+    command -v "$1" > /dev/null 2>&1
+}
+
 compose() {
-    if command -v docker-compose &> /dev/null; then
+    if command_exists docker-compose; then
         docker-compose "$@"
     else
         docker compose "$@"
     fi
+}
+
+pid_file_value() {
+    local key="$1"
+    if [ ! -f "$PID_FILE" ]; then
+        return 1
+    fi
+    awk -F= -v target="$key" '$1 == target { print substr($0, index($0, "=") + 1) }' "$PID_FILE" | tail -n 1
+}
+
+remove_pid_file() {
+    rm -f "$PID_FILE"
+}
+
+process_listens_on_port() {
+    local pid="$1"
+    local port="$2"
+
+    if command_exists lsof; then
+        lsof -Pan -p "$pid" -iTCP:"$port" -sTCP:LISTEN > /dev/null 2>&1
+        return $?
+    fi
+
+    return 1
+}
+
+server_pid_matches() {
+    local pid="$1"
+    local expected_cmd expected_port args
+
+    if [ -z "${pid:-}" ] || ! kill -0 "$pid" 2>/dev/null; then
+        return 1
+    fi
+
+    expected_cmd="$(pid_file_value cmd 2>/dev/null || true)"
+    expected_port="$(pid_file_value port 2>/dev/null || true)"
+
+    if command_exists ps; then
+        args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+        if [ -n "$expected_cmd" ] && [[ "$args" == *"$expected_cmd"* || "$args" == *"./server"* ]]; then
+            return 0
+        fi
+    fi
+
+    if [ -n "$expected_port" ] && process_listens_on_port "$pid" "$expected_port"; then
+        return 0
+    fi
+
+    return 1
+}
+
+wait_for_pid_exit() {
+    local pid="$1"
+    local retries="${2:-20}"
+    local delay="${3:-1}"
+    local i
+
+    for ((i=1; i<=retries; i++)); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            return 0
+        fi
+        sleep "$delay"
+    done
+
+    return 1
+}
+
+kill_pid_gracefully() {
+    local pid="$1"
+
+    kill "$pid" 2>/dev/null || true
+    if wait_for_pid_exit "$pid" 15 1; then
+        return 0
+    fi
+
+    log_warn "进程 $pid 在超时后仍未退出，发送 SIGKILL"
+    kill -9 "$pid" 2>/dev/null || true
+    wait_for_pid_exit "$pid" 5 1
+}
+
+frontend_deps_hash() {
+    if [ -f "$FRONTEND_DIR/package-lock.json" ]; then
+        if command_exists shasum; then
+            cat "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/package-lock.json" | shasum -a 256 | awk '{print $1}'
+        else
+            cat "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/package-lock.json" | sha256sum | awk '{print $1}'
+        fi
+    else
+        if command_exists shasum; then
+            shasum -a 256 "$FRONTEND_DIR/package.json" | awk '{print $1}'
+        else
+            sha256sum "$FRONTEND_DIR/package.json" | awk '{print $1}'
+        fi
+    fi
+}
+
+ensure_frontend_deps() {
+    local hash_file="$FRONTEND_DIR/node_modules/.devtools-deps.hash"
+    local current_hash saved_hash
+
+    current_hash="$(frontend_deps_hash)"
+    saved_hash=""
+    if [ -f "$hash_file" ]; then
+        saved_hash="$(cat "$hash_file")"
+    fi
+
+    if [ ! -d "$FRONTEND_DIR/node_modules" ] || [ "$current_hash" != "$saved_hash" ]; then
+        log_info "安装前端依赖..."
+        cd "$FRONTEND_DIR"
+        if [ -f "package-lock.json" ]; then
+            npm ci
+        else
+            npm install
+        fi
+        mkdir -p "$FRONTEND_DIR/node_modules"
+        echo "$current_hash" > "$hash_file"
+    else
+        log_info "前端依赖已是最新，跳过安装"
+    fi
+}
+
+docker_devtools_container_id() {
+    compose ps -q devtools 2>/dev/null | head -n 1
+}
+
+docker_devtools_health() {
+    local container_id
+    container_id="$(docker_devtools_container_id)"
+    if [ -z "$container_id" ]; then
+        echo "missing"
+        return 0
+    fi
+
+    docker inspect --format '{{if .State.Running}}{{if .State.Health}}{{.State.Health.Status}}{{else}}running{{end}}{{else}}stopped{{end}}' "$container_id" 2>/dev/null || echo "missing"
 }
 
 wait_for_health() {
@@ -71,11 +209,8 @@ build_frontend() {
     log_info "构建前端..."
     cd "$FRONTEND_DIR"
 
-    if [ ! -d "node_modules" ]; then
-        log_info "安装前端依赖..."
-        npm install
-    fi
-
+    ensure_frontend_deps
+    cd "$FRONTEND_DIR"
     npm run build
     log_success "前端构建完成"
 
@@ -102,18 +237,23 @@ stop() {
     log_info "停止服务..."
 
     if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
-            kill "$PID"
-            rm -f "$PID_FILE"
-            log_success "服务已停止 (PID: $PID)"
-            return
+        PID="$(pid_file_value pid 2>/dev/null || true)"
+        if server_pid_matches "$PID"; then
+            if kill_pid_gracefully "$PID"; then
+                remove_pid_file
+                log_success "服务已停止 (PID: $PID)"
+                return
+            fi
+            log_error "无法停止服务进程: $PID"
+            exit 1
         fi
+        log_warn "检测到陈旧 PID 文件，已清理: $PID_FILE"
+        remove_pid_file
     fi
 
-    if command -v fuser &> /dev/null; then
+    if command_exists fuser; then
         fuser -k "$PORT/tcp" 2>/dev/null && log_success "已终止端口 $PORT 上的进程" || log_warn "端口 $PORT 没有运行中的进程"
-    elif command -v lsof &> /dev/null; then
+    elif command_exists lsof; then
         PID=$(lsof -ti:$PORT 2>/dev/null)
         if [ -n "$PID" ]; then
             kill $PID
@@ -127,7 +267,16 @@ stop() {
 start() {
     log_info "启动服务 (端口: $PORT)..."
 
-    if command -v lsof &> /dev/null; then
+    if [ -f "$PID_FILE" ]; then
+        PID="$(pid_file_value pid 2>/dev/null || true)"
+        if server_pid_matches "$PID"; then
+            log_error "服务似乎已经运行 (PID: $PID)"
+            exit 1
+        fi
+        remove_pid_file
+    fi
+
+    if command_exists lsof; then
         if lsof -ti:$PORT &>/dev/null; then
             log_error "端口 $PORT 已被占用，请先停止服务或更换端口"
             exit 1
@@ -147,17 +296,22 @@ start() {
     fi
 
     PORT=$PORT nohup ./server > "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
+    PID=$!
+    cat > "$PID_FILE" <<EOF
+pid=$PID
+port=$PORT
+cmd=$BACKEND_DIR/server
+EOF
 
-    sleep 2
-
-    if curl -s "http://localhost:$PORT/api/health" > /dev/null 2>&1; then
+    if wait_for_health "http://localhost:$PORT/api/health" 20 1; then
         log_success "服务启动成功！"
         log_info "访问地址: http://localhost:$PORT"
         log_info "日志文件: $LOG_FILE"
-        log_info "PID: $(cat "$PID_FILE")"
+        log_info "PID: $PID"
     else
         log_error "服务启动失败，请检查日志: $LOG_FILE"
+        kill_pid_gracefully "$PID" || true
+        remove_pid_file
         cat "$LOG_FILE"
         exit 1
     fi
@@ -173,8 +327,8 @@ status() {
     log_info "服务状态:"
 
     if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
+        PID="$(pid_file_value pid 2>/dev/null || true)"
+        if server_pid_matches "$PID"; then
             log_success "服务运行中 (PID: $PID, 端口: $PORT)"
 
             if curl -s "http://localhost:$PORT/api/health" > /dev/null 2>&1; then
@@ -184,9 +338,11 @@ status() {
             fi
             return
         fi
+        log_warn "PID 文件已过期，已清理"
+        remove_pid_file
     fi
 
-    if command -v lsof &> /dev/null; then
+    if command_exists lsof; then
         PID=$(lsof -ti:$PORT 2>/dev/null)
         if [ -n "$PID" ]; then
             log_success "端口 $PORT 有服务运行 (PID: $PID)"
@@ -216,7 +372,7 @@ deploy() {
 docker_deploy() {
     log_info "Docker 部署..."
 
-    if ! command -v docker &> /dev/null; then
+    if ! command_exists docker; then
         log_error "Docker 未安装"
         exit 1
     fi
@@ -236,13 +392,14 @@ docker_deploy() {
         log_info "访问地址: http://localhost:${HOST_PORT}"
         compose ps
     else
-        # 健康检查失败时，额外确认容器状态
-        if compose ps | grep -q "healthy"; then
-            log_success "Docker 部署完成（容器已 healthy）！"
+        # 健康检查失败时，只接受 devtools 容器本身 healthy
+        if [ "$(docker_devtools_health)" = "healthy" ]; then
+            log_success "Docker 部署完成（devtools 容器已 healthy）！"
             log_info "访问地址: http://localhost:${HOST_PORT}"
             compose ps
         else
             log_error "服务启动失败，请检查日志"
+            log_error "devtools 容器状态: $(docker_devtools_health)"
             compose ps || true
             compose logs --tail=100 devtools || true
             exit 1
@@ -261,7 +418,12 @@ docker_restart() {
     log_info "重启 Docker 容器..."
     cd "$SCRIPT_DIR"
     compose restart
-    log_success "Docker 容器已重启"
+    if wait_for_health "http://localhost:${HOST_PORT}/api/health" 30 2; then
+        log_success "Docker 容器已重启"
+    else
+        log_warn "容器已重启，但 API 健康检查暂未通过"
+        compose ps || true
+    fi
 }
 
 docker_logs() {
@@ -277,6 +439,7 @@ docker_status() {
         log_success "健康检查通过"
     else
         log_warn "健康检查失败"
+        log_warn "devtools 容器状态: $(docker_devtools_health)"
     fi
 }
 

@@ -44,6 +44,34 @@
             <el-option label="智能分流" value="smart" />
             <el-option label="全局代理" value="global" />
           </el-select>
+          <el-select
+            v-model="defaultNodeName"
+            clearable
+            filterable
+            class="route-field"
+            placeholder="手动选择默认线路，留空则自动选择"
+          >
+            <el-option
+              v-for="node in nodeOptions"
+              :key="node.name"
+              :label="node.name"
+              :value="node.name"
+            />
+          </el-select>
+          <el-select
+            v-model="aiNodeName"
+            clearable
+            filterable
+            class="route-field"
+            placeholder="手动选择 AI 专线，优先级高于 AI 正则"
+          >
+            <el-option
+              v-for="node in nodeOptions"
+              :key="node.name"
+              :label="node.name"
+              :value="node.name"
+            />
+          </el-select>
           <el-input
             v-model="defaultNodeRegex"
             class="route-field"
@@ -55,8 +83,12 @@
             placeholder="AI 专线正则；例如 (?i)(chatgpt|gpt|claude|anthropic|gemini|ai)"
           />
         </div>
+        <div class="current-route-row">
+          <el-tag type="success" effect="dark">默认当前线路：{{ currentDefaultNode || '未确定' }}</el-tag>
+          <el-tag type="warning">AI 当前线路：{{ currentAINode || '未确定' }}</el-tag>
+        </div>
         <div class="proxy-hint">
-          默认保持当前线路不跳变；AI 优先模式只会把 GPT / Claude / Gemini 等域名导到 AI 专线，专线失效时才回退。
+          默认线路支持手动指定或按当前线路/正则自动选择；AI 线路支持手动指定或按 AI 正则自动选择。运行时会尽量保持同一条线路，仅在不可用时才切换。
         </div>
         <div class="action-row">
           <el-button type="primary" @click="loadConfig" :loading="loadingConfig">解析节点</el-button>
@@ -388,7 +420,9 @@ const configTab = ref('url')
 const subscribeURLsText = ref('')
 const yamlContent = ref('')
 const routeMode = ref('ai_priority')
+const defaultNodeName = ref('')
 const defaultNodeRegex = ref('')
+const aiNodeName = ref('')
 const aiNodeRegex = ref('(?i)(chatgpt|gpt|openai|claude|anthropic|gemini|copilot|ai)')
 const loadingConfig = ref(false)
 const testingSpeed = ref(false)
@@ -408,6 +442,8 @@ const proxyRunning = ref(false)
 const httpPort = ref(0)
 const proxyURL = ref('')
 const activeNode = ref('')
+const currentDefaultNode = ref('')
+const currentAINode = ref('')
 const npcRunning = ref(false)
 const npcTunnelPort = ref('')
 const npcServerAddr = ref('')
@@ -424,6 +460,7 @@ function makeTab() {
 const browserTabs = ref([makeTab()])
 const activeTabId = ref(browserTabs.value[0].id)
 const activeTab = computed(() => browserTabs.value.find(t => t.id === activeTabId.value))
+const nodeOptions = computed(() => nodes.value.filter(node => node && node.name))
 
 function newTab() {
   const t = makeTab()
@@ -505,8 +542,12 @@ function applyStatus(data) {
     configTab.value = 'yaml'
   }
   routeMode.value = data.routing_mode || 'ai_priority'
+  defaultNodeName.value = data.default_node_name || ''
   defaultNodeRegex.value = data.default_node_regex || ''
+  aiNodeName.value = data.ai_node_name || ''
   aiNodeRegex.value = data.ai_node_regex || aiNodeRegex.value
+  currentDefaultNode.value = data.default_node || data.node || ''
+  currentAINode.value = data.effective_ai_node || data.ai_node_name || ''
   if (data.running) {
     proxyRunning.value = true
     httpPort.value = data.http_port
@@ -601,7 +642,9 @@ async function loadConfig() {
     const body = {
       admin_password: adminPassword(),
       routing_mode: routeMode.value,
+      default_node_name: defaultNodeName.value,
       default_node_regex: defaultNodeRegex.value.trim(),
+      ai_node_name: aiNodeName.value,
       ai_node_regex: aiNodeRegex.value.trim()
     }
     if (configTab.value === 'url') body.source_urls = parseSourceURLs()
@@ -616,6 +659,8 @@ async function loadConfig() {
       nodes.value = data.nodes
       selectedNode.value = null
       testedOnce.value = false
+      currentDefaultNode.value = data.default_node || ''
+      currentAINode.value = data.effective_ai_node || data.ai_node_name || ''
       ElMessage.success(`解析成功，共 ${data.count} 个节点`)
     }
   } catch (e) { ElMessage.error('请求失败') }
@@ -627,7 +672,9 @@ function copyExportConfig() {
     source_urls: parseSourceURLs(),
     yaml_content: configTab.value === 'yaml' ? yamlContent.value : '',
     routing_mode: routeMode.value,
+    default_node_name: defaultNodeName.value,
     default_node_regex: defaultNodeRegex.value.trim(),
+    ai_node_name: aiNodeName.value,
     ai_node_regex: aiNodeRegex.value.trim()
   }, null, 2)
   copy(text)
@@ -886,6 +933,7 @@ function downloadClient(os, arch) {
 .card-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .proxy-info-inline { display: flex; align-items: center; gap: 8px; }
 .route-settings { display: grid; gap: 8px; margin-top: 12px; }
+.current-route-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .route-field { width: 100%; }
 .action-row { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
 .nodes-card :deep(.selected-row) { background-color: var(--el-color-primary-light-9); }

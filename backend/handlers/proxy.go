@@ -47,7 +47,9 @@ type proxyPersist struct {
 	SourceURLs       []string    `json:"source_urls,omitempty"`
 	YAMLContent      string      `json:"yaml_content,omitempty"`
 	RoutingMode      string      `json:"routing_mode,omitempty"`
+	DefaultNodeName  string      `json:"default_node_name,omitempty"`
 	DefaultNodeRegex string      `json:"default_node_regex,omitempty"`
+	AINodeName       string      `json:"ai_node_name,omitempty"`
 	AINodeRegex      string      `json:"ai_node_regex,omitempty"`
 	Nodes            []ProxyNode `json:"nodes"`
 }
@@ -62,7 +64,9 @@ type proxySession struct {
 	sourceURLs       []string
 	yamlContent      string
 	routingMode      string
+	defaultNodeName  string
 	defaultNodeRegex string
+	aiNodeName       string
 	aiNodeRegex      string
 	active           *ProxyNode
 	listener         net.Listener // HTTP CONNECT 代理监听
@@ -116,7 +120,9 @@ func loadPersistedProxy() {
 	globalSession.sourceURLs = normalizeSourceURLs(p.SourceURLs, p.SourceURL)
 	globalSession.yamlContent = p.YAMLContent
 	globalSession.routingMode = normalizeProxyRouteMode(p.RoutingMode)
+	globalSession.defaultNodeName = strings.TrimSpace(p.DefaultNodeName)
 	globalSession.defaultNodeRegex = strings.TrimSpace(p.DefaultNodeRegex)
+	globalSession.aiNodeName = strings.TrimSpace(p.AINodeName)
 	globalSession.aiNodeRegex = strings.TrimSpace(p.AINodeRegex)
 	globalSession.mu.Unlock()
 }
@@ -129,7 +135,9 @@ func savePersistedProxy() {
 		SourceURLs:       append([]string(nil), globalSession.sourceURLs...),
 		YAMLContent:      globalSession.yamlContent,
 		RoutingMode:      normalizeProxyRouteMode(globalSession.routingMode),
+		DefaultNodeName:  globalSession.defaultNodeName,
 		DefaultNodeRegex: globalSession.defaultNodeRegex,
+		AINodeName:       globalSession.aiNodeName,
 		AINodeRegex:      globalSession.aiNodeRegex,
 		Nodes:            globalSession.nodes,
 	}
@@ -661,7 +669,9 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 		SourceURLs       []string `json:"source_urls"`
 		YAMLContent      string   `json:"yaml_content"`
 		RoutingMode      string   `json:"routing_mode"`
+		DefaultNodeName  string   `json:"default_node_name"`
 		DefaultNodeRegex string   `json:"default_node_regex"`
+		AINodeName       string   `json:"ai_node_name"`
 		AINodeRegex      string   `json:"ai_node_regex"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -675,7 +685,9 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 
 	sourceURLs := normalizeSourceURLs(req.SourceURLs, req.SourceURL)
 	routingMode := normalizeProxyRouteMode(req.RoutingMode)
+	defaultNodeName := strings.TrimSpace(req.DefaultNodeName)
 	defaultNodeRegex := strings.TrimSpace(req.DefaultNodeRegex)
+	aiNodeName := strings.TrimSpace(req.AINodeName)
 	aiNodeRegex := strings.TrimSpace(req.AINodeRegex)
 
 	for _, pattern := range []struct {
@@ -717,6 +729,32 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "未找到任何节点"})
 		return
 	}
+	if defaultNodeName != "" {
+		found := false
+		for i := range nodes {
+			if nodes[i].Name == defaultNodeName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.JSON(400, gin.H{"error": "手动默认线路不存在"})
+			return
+		}
+	}
+	if aiNodeName != "" {
+		found := false
+		for i := range nodes {
+			if nodes[i].Name == aiNodeName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			c.JSON(400, gin.H{"error": "手动 AI 线路不存在"})
+			return
+		}
+	}
 
 	globalSession.mu.Lock()
 	globalSession.nodes = nodes
@@ -724,11 +762,14 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 	globalSession.sourceURLs = sourceURLs
 	globalSession.yamlContent = yamlText
 	globalSession.routingMode = routingMode
+	globalSession.defaultNodeName = defaultNodeName
 	globalSession.defaultNodeRegex = defaultNodeRegex
+	globalSession.aiNodeName = aiNodeName
 	globalSession.aiNodeRegex = aiNodeRegex
 	globalSession.mu.Unlock()
 
 	go savePersistedProxy()
+	configuredDefaultNode, configuredAINode := resolveConfiguredNodes()
 
 	c.JSON(200, gin.H{
 		"nodes":              nodes,
@@ -736,8 +777,22 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 		"source_url":         firstSourceURL(sourceURLs, req.SourceURL),
 		"source_urls":        sourceURLs,
 		"routing_mode":       routingMode,
+		"default_node_name":  defaultNodeName,
 		"default_node_regex": defaultNodeRegex,
+		"ai_node_name":       aiNodeName,
 		"ai_node_regex":      aiNodeRegex,
+		"default_node": func() string {
+			if configuredDefaultNode != nil {
+				return configuredDefaultNode.Name
+			}
+			return ""
+		}(),
+		"effective_ai_node": func() string {
+			if configuredAINode != nil {
+				return configuredAINode.Name
+			}
+			return ""
+		}(),
 	})
 }
 
@@ -1252,12 +1307,21 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 		"source_urls":        append([]string(nil), globalSession.sourceURLs...),
 		"yaml_content":       globalSession.yamlContent,
 		"routing_mode":       normalizeProxyRouteMode(globalSession.routingMode),
+		"default_node_name":  globalSession.defaultNodeName,
 		"default_node_regex": globalSession.defaultNodeRegex,
+		"ai_node_name":       globalSession.aiNodeName,
 		"ai_node_regex":      globalSession.aiNodeRegex,
 		"running":            false,
 		"npc_running":        npcRunning,
 		"npc_tunnel_port":    h.npcTunnelPort,
 		"npc_server_addr":    h.npcCfg.serverAddr,
+	}
+	defaultNode, aiNode := resolveConfiguredNodes()
+	if defaultNode != nil {
+		resp["default_node"] = defaultNode.Name
+	}
+	if aiNode != nil {
+		resp["effective_ai_node"] = aiNode.Name
 	}
 	if globalSession.active != nil && globalSession.listener != nil {
 		port := globalSession.listener.Addr().(*net.TCPAddr).Port
@@ -1726,6 +1790,19 @@ func cloneNode(node *ProxyNode) *ProxyNode {
 	return &cp
 }
 
+func findNodeByName(nodes []ProxyNode, name string) *ProxyNode {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	for i := range nodes {
+		if nodes[i].Name == name {
+			return cloneNode(&nodes[i])
+		}
+	}
+	return nil
+}
+
 func matchNodeByRegex(nodes []ProxyNode, pattern string, preferred *ProxyNode) *ProxyNode {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
@@ -1746,13 +1823,134 @@ func matchNodeByRegex(nodes []ProxyNode, pattern string, preferred *ProxyNode) *
 	return cloneNode(preferred)
 }
 
+func nodeMatchesRegex(node ProxyNode, pattern string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return false
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(node.Name)
+}
+
+func aiHostFamily(targetHost string) string {
+	host := stripPort(targetHost)
+	switch {
+	case matchesDomainSuffix(host, "openai.com"),
+		matchesDomainSuffix(host, "api.openai.com"),
+		matchesDomainSuffix(host, "chatgpt.com"),
+		matchesDomainSuffix(host, "chat.openai.com"),
+		matchesDomainSuffix(host, "oaistatic.com"),
+		matchesDomainSuffix(host, "oaiusercontent.com"),
+		matchesDomainSuffix(host, "auth.openai.com"):
+		return "openai"
+	case matchesDomainSuffix(host, "claude.ai"),
+		matchesDomainSuffix(host, "anthropic.com"),
+		matchesDomainSuffix(host, "api.anthropic.com"),
+		matchesDomainSuffix(host, "console.anthropic.com"):
+		return "claude"
+	case matchesDomainSuffix(host, "gemini.google.com"),
+		matchesDomainSuffix(host, "generativelanguage.googleapis.com"),
+		matchesDomainSuffix(host, "makersuite.google.com"):
+		return "gemini"
+	default:
+		return ""
+	}
+}
+
+func nodeFamilyScore(name, family string) int {
+	lowerName := strings.ToLower(name)
+	score := 0
+
+	switch family {
+	case "openai":
+		if strings.Contains(lowerName, "chatgpt") || strings.Contains(lowerName, "openai") {
+			score += 120
+		} else if strings.Contains(lowerName, "gpt") {
+			score += 90
+		}
+		if strings.Contains(lowerName, "美国") || strings.Contains(lowerName, "us") || strings.Contains(lowerName, "usa") {
+			score += 30
+		}
+	case "claude":
+		if strings.Contains(lowerName, "claude") || strings.Contains(lowerName, "anthropic") {
+			score += 120
+		}
+	case "gemini":
+		if strings.Contains(lowerName, "gemini") || strings.Contains(lowerName, "google") {
+			score += 120
+		}
+	}
+
+	if strings.Contains(lowerName, "netflix") || strings.Contains(lowerName, "流媒体") {
+		score -= 40
+	}
+
+	return score
+}
+
+func latencyScore(latency int64) int {
+	if latency < 0 {
+		return 0
+	}
+	score := 50 - int(latency/5)
+	if score < 0 {
+		return 0
+	}
+	return score
+}
+
+func selectBestMatchingNode(nodes []ProxyNode, pattern, targetHost string, preferred *ProxyNode) *ProxyNode {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return cloneNode(preferred)
+	}
+
+	family := aiHostFamily(targetHost)
+	var best *ProxyNode
+	bestScore := -1
+	bestLatency := int64(1<<62 - 1)
+
+	for i := range nodes {
+		if !nodeMatchesRegex(nodes[i], pattern) {
+			continue
+		}
+
+		score := nodeFamilyScore(nodes[i].Name, family) + latencyScore(nodes[i].Latency)
+		if preferred != nil && proxyNodeKey(nodes[i]) == proxyNodeKey(*preferred) {
+			score += 1000
+		}
+
+		latency := nodes[i].Latency
+		if latency < 0 {
+			latency = 1<<62 - 1
+		}
+
+		if best == nil || score > bestScore || (score == bestScore && latency < bestLatency) {
+			cp := nodes[i]
+			best = &cp
+			bestScore = score
+			bestLatency = latency
+		}
+	}
+
+	if best != nil {
+		return best
+	}
+	return cloneNode(preferred)
+}
+
 func resolveRouteNode(defaultNode *ProxyNode, targetHost string) (*ProxyNode, bool, *ProxyNode) {
 	globalSession.mu.RLock()
 	mode := normalizeProxyRouteMode(globalSession.routingMode)
 	nodes := make([]ProxyNode, len(globalSession.nodes))
 	copy(nodes, globalSession.nodes)
 	active := cloneNode(globalSession.active)
+	defaultNodeName := globalSession.defaultNodeName
 	defaultRegex := globalSession.defaultNodeRegex
+	aiNodeName := globalSession.aiNodeName
 	aiRegex := globalSession.aiNodeRegex
 	globalSession.mu.RUnlock()
 
@@ -1761,11 +1959,15 @@ func resolveRouteNode(defaultNode *ProxyNode, targetHost string) (*ProxyNode, bo
 	}
 
 	baseNode := cloneNode(defaultNode)
+	manualDefaultNode := findNodeByName(nodes, defaultNodeName)
+	if manualDefaultNode != nil {
+		baseNode = manualDefaultNode
+	}
 	if baseNode == nil {
 		baseNode = active
 	}
 	if baseNode == nil && strings.TrimSpace(defaultRegex) != "" {
-		baseNode = matchNodeByRegex(nodes, defaultRegex, nil)
+		baseNode = selectBestMatchingNode(nodes, defaultRegex, targetHost, nil)
 	}
 
 	switch mode {
@@ -1778,7 +1980,14 @@ func resolveRouteNode(defaultNode *ProxyNode, targetHost string) (*ProxyNode, bo
 		return nil, false, baseNode
 	default:
 		if isAIDedicatedHost(targetHost) {
-			aiNode := matchNodeByRegex(nodes, aiRegex, nil)
+			if baseNode != nil && nodeMatchesRegex(*baseNode, aiRegex) {
+				return baseNode, true, baseNode
+			}
+			manualAINode := findNodeByName(nodes, aiNodeName)
+			if manualAINode != nil {
+				return manualAINode, true, baseNode
+			}
+			aiNode := selectBestMatchingNode(nodes, aiRegex, targetHost, nil)
 			if aiNode != nil {
 				return aiNode, true, baseNode
 			}
@@ -1789,6 +1998,36 @@ func resolveRouteNode(defaultNode *ProxyNode, targetHost string) (*ProxyNode, bo
 		}
 		return nil, false, baseNode
 	}
+}
+
+func resolveConfiguredNodes() (*ProxyNode, *ProxyNode) {
+	globalSession.mu.RLock()
+	nodes := make([]ProxyNode, len(globalSession.nodes))
+	copy(nodes, globalSession.nodes)
+	active := cloneNode(globalSession.active)
+	defaultNodeName := globalSession.defaultNodeName
+	defaultRegex := globalSession.defaultNodeRegex
+	aiNodeName := globalSession.aiNodeName
+	aiRegex := globalSession.aiNodeRegex
+	globalSession.mu.RUnlock()
+
+	defaultNode := findNodeByName(nodes, defaultNodeName)
+	if defaultNode == nil {
+		defaultNode = active
+	}
+	if defaultNode == nil && strings.TrimSpace(defaultRegex) != "" {
+		defaultNode = selectBestMatchingNode(nodes, defaultRegex, "", nil)
+	}
+
+	aiNode := findNodeByName(nodes, aiNodeName)
+	if aiNode == nil && defaultNode != nil && nodeMatchesRegex(*defaultNode, aiRegex) {
+		aiNode = cloneNode(defaultNode)
+	}
+	if aiNode == nil {
+		aiNode = selectBestMatchingNode(nodes, aiRegex, "chat.openai.com:443", nil)
+	}
+
+	return defaultNode, aiNode
 }
 
 // dialWithGFW 分流：默认保持当前线路，AI 域名可按正则命中专线，仅在不可用时切换
