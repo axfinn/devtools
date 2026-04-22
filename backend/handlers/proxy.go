@@ -260,6 +260,66 @@ type managedRefreshClientCandidate struct {
 	client *http.Client
 }
 
+type managedRefreshAttempt struct {
+	Source       string `json:"source"`
+	SiteURL      string `json:"site_url,omitempty"`
+	SubscribeURL string `json:"subscribe_url,omitempty"`
+	Stage        string `json:"stage"`
+	Success      bool   `json:"success"`
+	Error        string `json:"error,omitempty"`
+	NodeCount    int    `json:"node_count,omitempty"`
+	NodeHint     string `json:"node_hint,omitempty"`
+	Changed      bool   `json:"changed"`
+	Applied      bool   `json:"applied"`
+}
+
+func (h *ProxyHandler) sendManagedRefreshReport(subject, outcome string, attempts []managedRefreshAttempt, extra map[string]interface{}) {
+	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" {
+		return
+	}
+
+	report := map[string]interface{}{
+		"time":       time.Now().Format(time.RFC3339),
+		"outcome":    outcome,
+		"attempts":   attempts,
+		"active_url": currentProxyURL(),
+	}
+	for k, v := range extra {
+		report[k] = v
+	}
+
+	payload, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		payload = []byte(fmt.Sprintf("{\"marshal_error\":%q}", err.Error()))
+	}
+
+	lines := []string{
+		fmt.Sprintf("结果：%s", outcome),
+		fmt.Sprintf("时间：%s", time.Now().Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("当前活动代理：%s", currentProxyURL()),
+		"",
+		"全链路详情：",
+	}
+	if len(attempts) == 0 {
+		lines = append(lines, "- 无尝试记录")
+	} else {
+		for idx, attempt := range attempts {
+			lines = append(lines,
+				fmt.Sprintf("%d. source=%s stage=%s success=%t changed=%t applied=%t", idx+1, attempt.Source, attempt.Stage, attempt.Success, attempt.Changed, attempt.Applied),
+				fmt.Sprintf("   site_url=%s", attempt.SiteURL),
+				fmt.Sprintf("   subscribe_url=%s", attempt.SubscribeURL),
+				fmt.Sprintf("   node_hint=%s node_count=%d", attempt.NodeHint, attempt.NodeCount),
+			)
+			if attempt.Error != "" {
+				lines = append(lines, fmt.Sprintf("   error=%s", attempt.Error))
+			}
+		}
+	}
+	lines = append(lines, "", "JSON:", string(payload))
+
+	go h.sendAlert(subject, strings.Join(lines, "\n"))
+}
+
 func (h *ProxyHandler) managedRefreshClients(timeout time.Duration) []managedRefreshClientCandidate {
 	candidates := make([]managedRefreshClientCandidate, 0, 3)
 	seen := make(map[string]struct{}, 3)
@@ -906,26 +966,54 @@ func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, node
 }
 
 func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
+	attempts := make([]managedRefreshAttempt, 0, 4)
+	recordAttempt := func(attempt managedRefreshAttempt) {
+		attempts = append(attempts, attempt)
+	}
+
 	if !h.subRefresh.enabled {
 		return
 	}
 	if strings.TrimSpace(h.subRefresh.loginEmail) == "" || strings.TrimSpace(h.subRefresh.loginPassword) == "" {
-		h.markSubscriptionState("托管订阅未执行：缺少登录账号或密码", "", "", "managed", "", false, false)
+		status := "托管订阅未执行：缺少登录账号或密码"
+		recordAttempt(managedRefreshAttempt{
+			Source:  "managed",
+			Stage:   "precheck",
+			Success: false,
+			Error:   status,
+		})
+		h.markSubscriptionState(status, "", "", "managed", "", false, false)
+		h.sendManagedRefreshReport("代理订阅刷新失败", status, attempts, map[string]interface{}{
+			"enabled":          h.subRefresh.enabled,
+			"landing_url":      h.subRefresh.landingURL,
+			"configured_proxy": h.subRefresh.requestProxyURL,
+		})
 		return
 	}
 
 	var lastErr error
 	for _, candidate := range h.managedRefreshClients(20 * time.Second) {
+		attempt := managedRefreshAttempt{
+			Source: candidate.source,
+			Stage:  "resolve_site",
+		}
+
 		siteURL, _, err := h.resolveManagedSiteURL(candidate.client)
 		if err != nil {
 			lastErr = fmt.Errorf("%s: 解析站点失败: %w", candidate.source, err)
 			log.Printf("proxy: 托管订阅解析站点失败(%s): %v", candidate.source, err)
+			attempt.Error = err.Error()
+			recordAttempt(attempt)
 			continue
 		}
+		attempt.SiteURL = siteURL
 
 		if err := h.loginManagedSubscription(candidate.client, siteURL); err != nil {
 			lastErr = fmt.Errorf("%s: 登录失败: %w", candidate.source, err)
 			log.Printf("proxy: 托管订阅登录失败(%s): %v", candidate.source, err)
+			attempt.Stage = "login"
+			attempt.Error = err.Error()
+			recordAttempt(attempt)
 			continue
 		}
 
@@ -933,34 +1021,69 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 		if err != nil {
 			lastErr = fmt.Errorf("%s: 提取订阅链接失败: %w", candidate.source, err)
 			log.Printf("proxy: 托管订阅提取订阅链接失败(%s): %v", candidate.source, err)
+			attempt.Stage = "fetch_subscription_link"
+			attempt.Error = err.Error()
+			recordAttempt(attempt)
 			continue
 		}
+		attempt.SubscribeURL = subscribeURL
 
 		yamlText, err := fetchSubscriptionWithClient(candidate.client, subscribeURL)
 		if err != nil {
 			lastErr = fmt.Errorf("%s: 下载新订阅失败: %w", candidate.source, err)
 			log.Printf("proxy: 托管订阅下载失败(%s): %v", candidate.source, err)
+			attempt.Stage = "download_subscription"
+			attempt.Error = err.Error()
+			recordAttempt(attempt)
 			continue
 		}
 		nodes, err := parseClashYAML(yamlText)
 		if err != nil {
 			lastErr = fmt.Errorf("%s: 解析新订阅失败: %w", candidate.source, err)
 			log.Printf("proxy: 托管订阅解析失败(%s): %v", candidate.source, err)
+			attempt.Stage = "parse_subscription"
+			attempt.Error = err.Error()
+			recordAttempt(attempt)
 			continue
 		}
 		if len(nodes) == 0 {
 			lastErr = fmt.Errorf("%s: 新订阅节点为空", candidate.source)
+			attempt.Stage = "parse_subscription"
+			attempt.Error = lastErr.Error()
+			recordAttempt(attempt)
 			continue
 		}
+		attempt.NodeCount = len(nodes)
 
 		applied, err := h.applyManagedSubscription(subscribeURL, yamlText, nodes)
 		if err != nil {
-			h.markSubscriptionState("托管订阅已发现更新，但新订阅测试失败", siteURL, subscribeURL, candidate.source, "", true, false)
+			status := "托管订阅已发现更新，但新订阅测试失败"
+			attempt.Stage = "apply_subscription"
+			attempt.Error = err.Error()
+			attempt.Changed = true
+			recordAttempt(attempt)
+			h.markSubscriptionState(status, siteURL, subscribeURL, candidate.source, "", true, false)
 			log.Printf("proxy: 托管订阅接管失败(%s): %v", candidate.source, err)
+			h.sendManagedRefreshReport("代理订阅刷新失败", status, attempts, map[string]interface{}{
+				"resolved_site_url": siteURL,
+				"subscribe_url":     subscribeURL,
+				"refresh_source":    candidate.source,
+				"node_count":        len(nodes),
+			})
 			return
 		}
 		if !applied {
-			h.markSubscriptionState("托管订阅检查完成：无变化，保持当前线路", siteURL, subscribeURL, candidate.source, "", false, false)
+			status := "托管订阅检查完成：无变化，保持当前线路"
+			attempt.Stage = "apply_subscription"
+			attempt.Success = true
+			recordAttempt(attempt)
+			h.markSubscriptionState(status, siteURL, subscribeURL, candidate.source, "", false, false)
+			h.sendManagedRefreshReport("代理订阅刷新成功", status, attempts, map[string]interface{}{
+				"resolved_site_url": siteURL,
+				"subscribe_url":     subscribeURL,
+				"refresh_source":    candidate.source,
+				"node_count":        len(nodes),
+			})
 			return
 		}
 		activeName := ""
@@ -969,19 +1092,21 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 			activeName = globalSession.active.Name
 		}
 		globalSession.mu.RUnlock()
-		h.markSubscriptionState("托管订阅已更新并接管", siteURL, subscribeURL, candidate.source, activeName, true, true)
-		go h.sendAlert(
-			"代理订阅已更新并切换成功",
-			fmt.Sprintf(
-				"时间：%s\n入口站点：%s\n订阅链接：%s\n刷新来源：%s\n接管线路：%s\n节点数量：%d\n结果：订阅已更新，测试成功后已自动切换。",
-				time.Now().Format("2006-01-02 15:04:05"),
-				siteURL,
-				subscribeURL,
-				candidate.source,
-				activeName,
-				len(nodes),
-			),
-		)
+		status := "托管订阅已更新并接管"
+		attempt.Stage = "apply_subscription"
+		attempt.Success = true
+		attempt.Changed = true
+		attempt.Applied = true
+		attempt.NodeHint = activeName
+		recordAttempt(attempt)
+		h.markSubscriptionState(status, siteURL, subscribeURL, candidate.source, activeName, true, true)
+		h.sendManagedRefreshReport("代理订阅刷新成功", status, attempts, map[string]interface{}{
+			"resolved_site_url": siteURL,
+			"subscribe_url":     subscribeURL,
+			"refresh_source":    candidate.source,
+			"active_node":       activeName,
+			"node_count":        len(nodes),
+		})
 		return
 	}
 
@@ -990,6 +1115,12 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 		status = "托管订阅未执行：" + lastErr.Error()
 	}
 	h.markSubscriptionState(status, "", "", "managed", "", false, false)
+	h.sendManagedRefreshReport("代理订阅刷新失败", status, attempts, map[string]interface{}{
+		"landing_url":       h.subRefresh.landingURL,
+		"site_url":          h.subRefresh.siteURL,
+		"configured_proxy":  h.subRefresh.requestProxyURL,
+		"preferred_subtype": h.subRefresh.preferredSubType,
+	})
 }
 
 func (h *ProxyHandler) refreshManagedSubscription() {

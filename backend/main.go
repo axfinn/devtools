@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -1011,19 +1012,31 @@ func main() {
 	// Mock API 执行（非 API 路径，支持所有 HTTP 方法）
 	r.Any("/mock/:id", mockAPIHandler.Execute)
 
-	// 静态文件（生产环境）
-	r.Static("/assets", "./dist/assets")
-	r.StaticFile("/", "./dist/index.html")
-	r.StaticFile("/alipay.jpeg", "./dist/alipay.jpeg")
-	r.StaticFile("/wxpay.jpeg", "./dist/wxpay.jpeg")
-	r.NoRoute(func(c *gin.Context) {
-		path := c.Request.URL.Path
-		if path == "/api" || strings.HasPrefix(path, "/api/") {
-			c.JSON(404, gin.H{"error": "接口不存在", "path": path})
-			return
-		}
-		c.File("./dist/index.html")
-	})
+		// 静态文件（生产环境）
+		distDir := "./dist"
+		r.Static("/assets", distDir+"/assets")
+		r.Static("/neon", distDir+"/neon")
+		r.StaticFile("/", distDir+"/index.html")
+		r.StaticFile("/alipay.jpeg", distDir+"/alipay.jpeg")
+		r.StaticFile("/wxpay.jpeg", distDir+"/wxpay.jpeg")
+		r.NoRoute(func(c *gin.Context) {
+			path := c.Request.URL.Path
+			if path == "/api" || strings.HasPrefix(path, "/api/") {
+				c.JSON(404, gin.H{"error": "接口不存在", "path": path})
+				return
+			}
+
+			cleanPath := filepath.Clean(strings.TrimPrefix(path, "/"))
+			if cleanPath != "." && cleanPath != "" && !strings.HasPrefix(cleanPath, "..") {
+				filePath := filepath.Join(distDir, cleanPath)
+				if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+					c.File(filePath)
+					return
+				}
+			}
+
+			c.File(distDir + "/index.html")
+		})
 
 	log.Printf("服务器启动在端口 %s", port)
 
