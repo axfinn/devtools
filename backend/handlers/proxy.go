@@ -10,15 +10,18 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -203,6 +206,37 @@ func newDirectHTTPClient(timeout time.Duration) *http.Client {
 	}
 }
 
+func newHTTPClient(timeout time.Duration, proxyURL string, withCookies bool) (*http.Client, error) {
+	transport := &http.Transport{
+		Proxy:               nil,
+		DialContext:         (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        100,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	if strings.TrimSpace(proxyURL) != "" {
+		pu, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, err
+		}
+		transport.Proxy = http.ProxyURL(pu)
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+	}
+	if withCookies {
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			return nil, err
+		}
+		client.Jar = jar
+	}
+	return client, nil
+}
+
 func proxyNodeKey(node ProxyNode) string {
 	return strings.ToLower(strings.TrimSpace(node.Type)) + "|" +
 		strings.ToLower(strings.TrimSpace(node.Server)) + "|" +
@@ -291,6 +325,162 @@ func fetchSubscriptions(sourceURLs []string) (string, []ProxyNode, error) {
 	return joinedYAML, nodes, nil
 }
 
+func joinURL(baseURL, path string) string {
+	baseURL = strings.TrimSpace(baseURL)
+	path = strings.TrimSpace(path)
+	if baseURL == "" {
+		return ""
+	}
+	if path == "" {
+		return baseURL
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	ref, err := url.Parse(path)
+	if err != nil {
+		return ""
+	}
+	return u.ResolveReference(ref).String()
+}
+
+func maskURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if len(u.Path) <= 12 {
+		return u.Scheme + "://" + u.Host + u.Path
+	}
+	return u.Scheme + "://" + u.Host + u.Path[:12] + "..."
+}
+
+func extractLatestSiteURL(baseURL, html string) string {
+	html = strings.TrimSpace(html)
+	if html != "" {
+		re := regexp.MustCompile(`https?://[^\s"'<>]+`)
+		candidates := re.FindAllString(html, -1)
+		seen := make(map[string]struct{}, len(candidates))
+		for _, candidate := range candidates {
+			u, err := url.Parse(candidate)
+			if err != nil || u.Host == "" {
+				continue
+			}
+			host := strings.ToLower(u.Hostname())
+			if strings.Contains(host, "t.me") || strings.Contains(host, "telegram.me") || strings.Contains(host, "github.io") {
+				continue
+			}
+			candidate = strings.TrimRight(candidate, "/")
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			return candidate
+		}
+	}
+	if u, err := url.Parse(strings.TrimSpace(baseURL)); err == nil && u.Scheme != "" && u.Host != "" {
+		return strings.TrimRight(u.Scheme+"://"+u.Host, "/")
+	}
+	return ""
+}
+
+func extractManagedSubscribeURLs(html string) []string {
+	re := regexp.MustCompile(`https?://[^"'\s<>]+/link/[^"'\s<>]+`)
+	matches := re.FindAllString(html, -1)
+	seen := make(map[string]struct{}, len(matches))
+	urls := make([]string, 0, len(matches))
+	for _, match := range matches {
+		match = strings.TrimSpace(strings.TrimRight(match, `"'`))
+		if match == "" {
+			continue
+		}
+		if _, ok := seen[match]; ok {
+			continue
+		}
+		seen[match] = struct{}{}
+		urls = append(urls, match)
+	}
+	return urls
+}
+
+func subscriptionURLScore(rawURL, preferredType string) int {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	query := u.Query()
+	score := 0
+	switch preferredType {
+	case "clash":
+		switch query.Get("clash") {
+		case "1":
+			score += 100
+		case "2":
+			score += 90
+		}
+	case "clashr":
+		if query.Get("clash") == "2" {
+			score += 100
+		}
+	case "ssr":
+		if query.Get("sub") == "1" {
+			score += 100
+		}
+	case "surfboard":
+		if query.Get("surfboard") == "1" {
+			score += 100
+		}
+	case "shadowrocket":
+		if query.Get("list") == "shadowrocket" {
+			score += 100
+		}
+	}
+	if query.Get("clash") == "1" {
+		score += 15
+	}
+	if query.Get("sub") == "1" {
+		score += 10
+	}
+	if query.Get("surfboard") == "1" {
+		score += 5
+	}
+	if preferredType != "" && strings.Contains(strings.ToLower(rawURL), preferredType) {
+		score += 20
+	}
+	return score
+}
+
+func selectPreferredSubscriptionURL(urls []string, preferredType string) string {
+	if len(urls) == 0 {
+		return ""
+	}
+	sorted := append([]string(nil), urls...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		leftScore := subscriptionURLScore(sorted[i], preferredType)
+		rightScore := subscriptionURLScore(sorted[j], preferredType)
+		if leftScore == rightScore {
+			return len(sorted[i]) < len(sorted[j])
+		}
+		return leftScore > rightScore
+	})
+	return sorted[0]
+}
+
+func managedSubscriptionChanged(currentURLs []string, currentYAML string, nextURL, nextYAML string) bool {
+	currentURLs = normalizeSourceURLs(currentURLs, "")
+	nextURLs := normalizeSourceURLs([]string{nextURL}, "")
+	if len(currentURLs) != len(nextURLs) {
+		return true
+	}
+	for i := range currentURLs {
+		if currentURLs[i] != nextURLs[i] {
+			return true
+		}
+	}
+	return strings.TrimSpace(currentYAML) != strings.TrimSpace(nextYAML)
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -312,6 +502,34 @@ type ProxyHandler struct {
 	smtpPort      int
 	smtpUser      string
 	smtpPass      string
+	subRefresh    proxySubscriptionRefreshRuntime
+	subStateMu    sync.RWMutex
+	subState      proxySubscriptionRefreshState
+}
+
+type proxySubscriptionRefreshRuntime struct {
+	enabled          bool
+	interval         time.Duration
+	landingURL       string
+	siteURL          string
+	requestProxyURL  string
+	loginEmail       string
+	loginPassword    string
+	loginPath        string
+	userPath         string
+	preferredSubType string
+}
+
+type proxySubscriptionRefreshState struct {
+	Enabled             bool
+	ResolvedSiteURL     string
+	LastSubscribeURL    string
+	LastRefreshStatus   string
+	LastRefreshAt       string
+	LastRefreshChanged  bool
+	LastRefreshApplied  bool
+	LastRefreshSource   string
+	LastRefreshNodeHint string
 }
 
 type npcConfig struct {
@@ -322,6 +540,23 @@ type npcConfig struct {
 
 func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 	loadPersistedProxy()
+	refreshCfg := cfg.Proxy.SubscriptionRefresh
+	refreshInterval := time.Duration(refreshCfg.IntervalHours) * time.Hour
+	if refreshInterval <= 0 {
+		refreshInterval = 24 * time.Hour
+	}
+	loginPath := strings.TrimSpace(refreshCfg.LoginPath)
+	if loginPath == "" {
+		loginPath = "/auth/login"
+	}
+	userPath := strings.TrimSpace(refreshCfg.UserPath)
+	if userPath == "" {
+		userPath = "/user"
+	}
+	preferredSubType := strings.TrimSpace(strings.ToLower(refreshCfg.PreferredSubType))
+	if preferredSubType == "" {
+		preferredSubType = "clash"
+	}
 	h := &ProxyHandler{
 		adminPassword: cfg.Proxy.AdminPassword,
 		localPort:     cfg.Proxy.LocalPort,
@@ -332,6 +567,22 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 		smtpPort:      cfg.Proxy.SMTPPort,
 		smtpUser:      cfg.Proxy.SMTPUser,
 		smtpPass:      cfg.Proxy.SMTPPass,
+		subRefresh: proxySubscriptionRefreshRuntime{
+			enabled:          refreshCfg.Enabled,
+			interval:         refreshInterval,
+			landingURL:       strings.TrimSpace(refreshCfg.LandingURL),
+			siteURL:          strings.TrimSpace(refreshCfg.SiteURL),
+			requestProxyURL:  strings.TrimSpace(refreshCfg.RequestProxyURL),
+			loginEmail:       strings.TrimSpace(refreshCfg.LoginEmail),
+			loginPassword:    strings.TrimSpace(refreshCfg.LoginPassword),
+			loginPath:        loginPath,
+			userPath:         userPath,
+			preferredSubType: preferredSubType,
+		},
+		subState: proxySubscriptionRefreshState{
+			Enabled:           refreshCfg.Enabled,
+			LastRefreshStatus: "未执行",
+		},
 	}
 	if cfg.NPS.VKey != "" {
 		bridgePort := cfg.NPS.BridgePort
@@ -351,6 +602,292 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 	}
 	globalProxyHandler = h
 	return h
+}
+
+func (h *ProxyHandler) updateSubscriptionState(update func(*proxySubscriptionRefreshState)) {
+	h.subStateMu.Lock()
+	defer h.subStateMu.Unlock()
+	update(&h.subState)
+}
+
+func (h *ProxyHandler) snapshotSubscriptionState() proxySubscriptionRefreshState {
+	h.subStateMu.RLock()
+	defer h.subStateMu.RUnlock()
+	return h.subState
+}
+
+func (h *ProxyHandler) markSubscriptionState(status, siteURL, subscribeURL, source, nodeHint string, changed, applied bool) {
+	h.updateSubscriptionState(func(state *proxySubscriptionRefreshState) {
+		state.Enabled = h.subRefresh.enabled
+		if siteURL != "" {
+			state.ResolvedSiteURL = siteURL
+		}
+		if subscribeURL != "" {
+			state.LastSubscribeURL = subscribeURL
+		}
+		state.LastRefreshStatus = status
+		state.LastRefreshAt = time.Now().Format(time.RFC3339)
+		state.LastRefreshChanged = changed
+		state.LastRefreshApplied = applied
+		state.LastRefreshSource = source
+		state.LastRefreshNodeHint = nodeHint
+	})
+}
+
+func (h *ProxyHandler) resolveManagedSiteURL(client *http.Client) (string, string, error) {
+	if strings.TrimSpace(h.subRefresh.siteURL) != "" {
+		siteURL := strings.TrimRight(strings.TrimSpace(h.subRefresh.siteURL), "/")
+		return siteURL, siteURL, nil
+	}
+	if strings.TrimSpace(h.subRefresh.landingURL) == "" {
+		return "", "", errors.New("未配置 landing_url 或 site_url")
+	}
+	resp, err := client.Get(h.subRefresh.landingURL)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return "", "", err
+	}
+	siteURL := extractLatestSiteURL(resp.Request.URL.String(), string(body))
+	if siteURL == "" {
+		return "", "", errors.New("未解析到最新面板域名")
+	}
+	return siteURL, string(body), nil
+}
+
+func (h *ProxyHandler) loginManagedSubscription(client *http.Client, siteURL string) error {
+	loginURL := joinURL(siteURL, h.subRefresh.loginPath)
+	if loginURL == "" {
+		return errors.New("登录地址无效")
+	}
+	if _, err := client.Get(loginURL); err != nil {
+		return err
+	}
+
+	form := url.Values{}
+	form.Set("email", h.subRefresh.loginEmail)
+	form.Set("passwd", h.subRefresh.loginPassword)
+	form.Set("remember_me", "1")
+	form.Set("code", "")
+
+	req, err := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Referer", loginURL)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return err
+	}
+	var payload struct {
+		Ret    int    `json:"ret"`
+		Status int    `json:"status"`
+		Msg    string `json:"msg"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("登录响应解析失败: %w", err)
+	}
+	if payload.Ret == 1 || payload.Status == 1 {
+		return nil
+	}
+	msg := strings.TrimSpace(payload.Msg)
+	if msg == "" {
+		msg = "登录失败"
+	}
+	return errors.New(msg)
+}
+
+func (h *ProxyHandler) fetchManagedSubscriptionLink(client *http.Client, siteURL string) (string, string, error) {
+	userURL := joinURL(siteURL, h.subRefresh.userPath)
+	if userURL == "" {
+		return "", "", errors.New("用户中心地址无效")
+	}
+	resp, err := client.Get(userURL)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return "", "", err
+	}
+	html := string(body)
+	urls := extractManagedSubscribeURLs(html)
+	subscribeURL := selectPreferredSubscriptionURL(urls, h.subRefresh.preferredSubType)
+	if subscribeURL == "" {
+		return "", html, errors.New("未在用户中心解析到订阅链接")
+	}
+	if strings.HasPrefix(subscribeURL, "http://") {
+		if httpsURL := "https://" + strings.TrimPrefix(subscribeURL, "http://"); strings.Contains(httpsURL, "/link/") {
+			subscribeURL = httpsURL
+		}
+	}
+	return subscribeURL, html, nil
+}
+
+func chooseReachableNode(nodes []ProxyNode) (*ProxyNode, int64) {
+	reachable := collectReachableNodes(nodes, proxyProbeConcurrency, func(n ProxyNode) int64 {
+		return checkNodeReachability(&n, probeURL)
+	})
+	if len(reachable) == 0 {
+		return nil, -1
+	}
+	best := reachable[0]
+	for _, item := range reachable[1:] {
+		if item.latency < best.latency {
+			best = item
+		}
+	}
+	best.node.Latency = best.latency
+	return &best.node, best.latency
+}
+
+func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, nodes []ProxyNode) (bool, error) {
+	globalSession.mu.RLock()
+	currentURLs := append([]string(nil), globalSession.sourceURLs...)
+	currentYAML := globalSession.yamlContent
+	active := cloneNode(globalSession.active)
+	globalSession.mu.RUnlock()
+
+	if !managedSubscriptionChanged(currentURLs, currentYAML, sourceURL, yamlText) {
+		return false, nil
+	}
+
+	nextNode := func() *ProxyNode {
+		if active == nil {
+			return nil
+		}
+		candidate := findNodeByName(nodes, active.Name)
+		if candidate == nil {
+			return nil
+		}
+		if latency := checkNodeReachability(candidate, probeURL); latency >= 0 {
+			candidate.Latency = latency
+			return candidate
+		}
+		return nil
+	}()
+
+	nodeHint := ""
+	if nextNode == nil {
+		bestNode, _ := chooseReachableNode(nodes)
+		if bestNode == nil {
+			return false, errors.New("新订阅测试失败：没有可用节点")
+		}
+		nextNode = bestNode
+	}
+	nodeHint = nextNode.Name
+
+	globalSession.mu.Lock()
+	globalSession.nodes = nodes
+	globalSession.sourceURL = sourceURL
+	globalSession.sourceURLs = normalizeSourceURLs([]string{sourceURL}, "")
+	globalSession.yamlContent = yamlText
+	globalSession.mu.Unlock()
+	go savePersistedProxy()
+
+	if _, err := startProxyListener(nextNode, h.adminPassword, h.localPort); err != nil {
+		return false, err
+	}
+	h.startNPC()
+	log.Printf("proxy: 托管订阅已接管，订阅 %s，线路 %s", maskURL(sourceURL), nodeHint)
+	return true, nil
+}
+
+func (h *ProxyHandler) refreshManagedSubscription() {
+	if !h.subRefresh.enabled {
+		return
+	}
+	if strings.TrimSpace(h.subRefresh.loginEmail) == "" || strings.TrimSpace(h.subRefresh.loginPassword) == "" {
+		h.markSubscriptionState("托管订阅未执行：缺少登录账号或密码", "", "", "managed", "", false, false)
+		return
+	}
+
+	client, err := newHTTPClient(45*time.Second, h.subRefresh.requestProxyURL, true)
+	if err != nil {
+		h.markSubscriptionState("托管订阅未执行：代理配置非法", "", "", "managed", "", false, false)
+		log.Printf("proxy: 托管订阅代理配置错误: %v", err)
+		return
+	}
+
+	siteURL, _, err := h.resolveManagedSiteURL(client)
+	if err != nil {
+		h.markSubscriptionState("托管订阅未执行：解析站点失败", "", "", "managed", "", false, false)
+		log.Printf("proxy: 托管订阅解析站点失败: %v", err)
+		return
+	}
+
+	if err := h.loginManagedSubscription(client, siteURL); err != nil {
+		h.markSubscriptionState("托管订阅未执行：登录失败", siteURL, "", "managed", "", false, false)
+		log.Printf("proxy: 托管订阅登录失败: %v", err)
+		return
+	}
+
+	subscribeURL, _, err := h.fetchManagedSubscriptionLink(client, siteURL)
+	if err != nil {
+		h.markSubscriptionState("托管订阅未执行：提取订阅链接失败", siteURL, "", "managed", "", false, false)
+		log.Printf("proxy: 托管订阅提取订阅链接失败: %v", err)
+		return
+	}
+
+	yamlText, err := fetchSubscriptionWithClient(client, subscribeURL)
+	if err != nil {
+		h.markSubscriptionState("托管订阅未执行：下载新订阅失败", siteURL, subscribeURL, "managed", "", false, false)
+		log.Printf("proxy: 托管订阅下载失败: %v", err)
+		return
+	}
+	nodes, err := parseClashYAML(yamlText)
+	if err != nil {
+		h.markSubscriptionState("托管订阅未执行：解析新订阅失败", siteURL, subscribeURL, "managed", "", false, false)
+		log.Printf("proxy: 托管订阅解析失败: %v", err)
+		return
+	}
+	if len(nodes) == 0 {
+		h.markSubscriptionState("托管订阅未执行：新订阅节点为空", siteURL, subscribeURL, "managed", "", false, false)
+		return
+	}
+
+	applied, err := h.applyManagedSubscription(subscribeURL, yamlText, nodes)
+	if err != nil {
+		h.markSubscriptionState("托管订阅已发现更新，但新订阅测试失败", siteURL, subscribeURL, "managed", "", true, false)
+		log.Printf("proxy: 托管订阅接管失败: %v", err)
+		return
+	}
+	if !applied {
+		h.markSubscriptionState("托管订阅检查完成：无变化，保持当前线路", siteURL, subscribeURL, "managed", "", false, false)
+		return
+	}
+	activeName := ""
+	globalSession.mu.RLock()
+	if globalSession.active != nil {
+		activeName = globalSession.active.Name
+	}
+	globalSession.mu.RUnlock()
+	h.markSubscriptionState("托管订阅已更新并接管", siteURL, subscribeURL, "managed", activeName, true, true)
+	go h.sendAlert(
+		"代理订阅已更新并切换成功",
+		fmt.Sprintf(
+			"时间：%s\n入口站点：%s\n订阅链接：%s\n接管线路：%s\n节点数量：%d\n结果：订阅已更新，测试成功后已自动切换。",
+			time.Now().Format("2006-01-02 15:04:05"),
+			siteURL,
+			subscribeURL,
+			activeName,
+			len(nodes),
+		),
+	)
 }
 
 // AutoSelectOnStartup 启动时若有持久化节点但无活跃节点，后台自动选最优节点
@@ -511,17 +1048,28 @@ func (h *ProxyHandler) refreshSubscription() {
 // StartAutoMaintenance 启动后台维护：定期更新订阅 + 定期探测切换
 func (h *ProxyHandler) StartAutoMaintenance() {
 	go func() {
-		// 订阅更新：每 6 小时
-		subTicker := time.NewTicker(6 * time.Hour)
+		subInterval := 6 * time.Hour
+		if h.subRefresh.enabled {
+			subInterval = h.subRefresh.interval
+		}
+		subTicker := time.NewTicker(subInterval)
 		// 节点探测：每 10 分钟
 		probeTicker := time.NewTicker(10 * time.Minute)
 		defer subTicker.Stop()
 		defer probeTicker.Stop()
 
+		if h.subRefresh.enabled {
+			h.refreshManagedSubscription()
+		}
+
 		for {
 			select {
 			case <-subTicker.C:
-				h.refreshSubscription()
+				if h.subRefresh.enabled {
+					h.refreshManagedSubscription()
+				} else {
+					h.refreshSubscription()
+				}
 				// 更新订阅后立即探测，若当前节点不可用则切换
 				if !probeActive() {
 					log.Printf("proxy: 订阅更新后探测失败，触发切换")
@@ -640,7 +1188,10 @@ func parseClashYAML(data string) ([]ProxyNode, error) {
 
 // fetchSubscription 下载订阅内容（支持 Base64 和 YAML）
 func fetchSubscription(rawURL string) (string, error) {
-	client := newDirectHTTPClient(15 * time.Second)
+	return fetchSubscriptionWithClient(newDirectHTTPClient(15*time.Second), rawURL)
+}
+
+func fetchSubscriptionWithClient(client *http.Client, rawURL string) (string, error) {
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return "", err
@@ -1300,6 +1851,7 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 	h.npcMu.Lock()
 	npcRunning := h.npcCmd != nil && h.npcCmd.Process != nil
 	h.npcMu.Unlock()
+	subState := h.snapshotSubscriptionState()
 
 	resp := gin.H{
 		"nodes":              globalSession.nodes,
@@ -1315,6 +1867,17 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 		"npc_running":        npcRunning,
 		"npc_tunnel_port":    h.npcTunnelPort,
 		"npc_server_addr":    h.npcCfg.serverAddr,
+		"subscription_refresh": gin.H{
+			"enabled":                subState.Enabled,
+			"resolved_site_url":      subState.ResolvedSiteURL,
+			"last_subscribe_url":     subState.LastSubscribeURL,
+			"last_refresh_status":    subState.LastRefreshStatus,
+			"last_refresh_at":        subState.LastRefreshAt,
+			"last_refresh_changed":   subState.LastRefreshChanged,
+			"last_refresh_applied":   subState.LastRefreshApplied,
+			"last_refresh_source":    subState.LastRefreshSource,
+			"last_refresh_node_hint": subState.LastRefreshNodeHint,
+		},
 	}
 	defaultNode, aiNode := resolveConfiguredNodes()
 	if defaultNode != nil {

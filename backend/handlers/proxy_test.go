@@ -206,3 +206,46 @@ func TestResolveRouteNodeUsesManualDefaultAndManualAINode(t *testing.T) {
 		t.Fatalf("fallback node = %#v, want manual default node", fallbackNode)
 	}
 }
+
+func TestExtractLatestSiteURL(t *testing.T) {
+	html := `
+<html>
+<script>
+window.location = "https://gdmn2.top";
+</script>
+<a href="https://t.me/muacloud_admina">tg</a>
+</html>`
+
+	got := extractLatestSiteURL("https://muacloud.github.io/", html)
+	if got != "https://gdmn2.top" {
+		t.Fatalf("extractLatestSiteURL() = %q", got)
+	}
+}
+
+func TestSelectPreferredSubscriptionURL(t *testing.T) {
+	urls := []string{
+		"http://gdmn4.top/link/abc?sub=1",
+		"http://gdmn4.top/link/abc?clash=2",
+		"http://gdmn4.top/link/abc?clash=1",
+	}
+
+	got := selectPreferredSubscriptionURL(urls, "clash")
+	if got != "http://gdmn4.top/link/abc?clash=1" {
+		t.Fatalf("selectPreferredSubscriptionURL() = %q", got)
+	}
+}
+
+func TestExtractManagedSubscribeURLs(t *testing.T) {
+	html := `
+<button data-clipboard-text="http://gdmn4.top/link/W1vPgE31CVSG8qt5?sub=1"></button>
+<button data-clipboard-text="http://gdmn4.top/link/W1vPgE31CVSG8qt5?clash=1"></button>
+<button data-clipboard-text="http://gdmn4.top/link/W1vPgE31CVSG8qt5?clash=1"></button>`
+
+	got := extractManagedSubscribeURLs(html)
+	if len(got) != 2 {
+		t.Fatalf("len(extractManagedSubscribeURLs) = %d, want 2", len(got))
+	}
+	if got[1] != "http://gdmn4.top/link/W1vPgE31CVSG8qt5?clash=1" {
+		t.Fatalf("extractManagedSubscribeURLs[1] = %q", got[1])
+	}
+}

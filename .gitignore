@@ -50,6 +50,7 @@ Thumbs.db
 data/
 
 # Config
+config.yaml
 backend/config.yaml
 
 # Build artifacts

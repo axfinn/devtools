@@ -645,7 +645,7 @@ proxy:
   tunnel_port: "18080"
   # 本地节点代理固定端口，留空则随机分配
   local_port: "18081"
-  # 所有节点不可用时的告警邮件收件人，留空则不发送
+  # 代理告警/订阅更新通知收件人，留空则不发送
   alert_email: "your@email.com"
   # SMTP 服务器地址，如 smtp.exmail.qq.com / smtp.qq.com / smtp.gmail.com
   smtp_host: "smtp.exmail.qq.com"
@@ -655,6 +655,30 @@ proxy:
   smtp_user: "devtools@your-domain.com"
   # SMTP 授权码/密码（QQ 邮箱需在「设置→账户」生成授权码，不是登录密码）
   smtp_pass: ""
+  # 托管订阅自动刷新
+  # 用于像 muacloud 这种“主页给最新域名，登录后再拿真实订阅链接”的场景
+  subscription_refresh:
+    # 是否启用
+    enabled: false
+    # 刷新间隔（小时）
+    interval_hours: 24
+    # 落地页，用于每天解析最新入口域名
+    landing_url: "https://muacloud.github.io/"
+    # 直接面板地址；如果已知固定面板域名，也可以直接填这里，留空则优先解析 landing_url
+    site_url: ""
+    # 访问站点与订阅时使用的上游 HTTP 代理
+    # 示例: http://proxy:123456@host:18080
+    request_proxy_url: ""
+    # 面板登录邮箱
+    login_email: ""
+    # 面板登录密码
+    login_password: ""
+    # 登录接口路径，通常不用改
+    login_path: "/auth/login"
+    # 用户中心页面路径，通常不用改
+    user_path: "/user"
+    # 优先提取的订阅类型：clash / clashr / surfboard / shadowrocket / ssr
+    preferred_sub_type: "clash"
 
 # NPS 端口映射管理
 # 在 NPS 后台创建好客户端后，填入 vkey 即可通过 devtools 快速管理端口映射

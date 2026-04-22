@@ -80,14 +80,28 @@ type NPSConfig struct {
 
 // ProxyConfig 科学上网代理配置
 type ProxyConfig struct {
-	AdminPassword string `yaml:"admin_password"` // 管理员密码，为空则禁用
-	TunnelPort    string `yaml:"tunnel_port"`    // 独立 CONNECT 代理端口，留空则不启动（用于绕过 nginx）
-	LocalPort     string `yaml:"local_port"`     // 本地节点代理端口，固定监听 127.0.0.1:port，留空则随机
-	AlertEmail    string `yaml:"alert_email"`    // 所有节点不可用时的告警邮件收件人
-	SMTPHost      string `yaml:"smtp_host"`      // SMTP 服务器，如 smtp.qq.com
-	SMTPPort      int    `yaml:"smtp_port"`      // SMTP 端口，如 465（SSL）或 587（STARTTLS）
-	SMTPUser      string `yaml:"smtp_user"`      // SMTP 登录用户名（发件人邮箱）
-	SMTPPass      string `yaml:"smtp_pass"`      // SMTP 授权码/密码
+	AdminPassword       string                         `yaml:"admin_password"`       // 管理员密码，为空则禁用
+	TunnelPort          string                         `yaml:"tunnel_port"`          // 独立 CONNECT 代理端口，留空则不启动（用于绕过 nginx）
+	LocalPort           string                         `yaml:"local_port"`           // 本地节点代理端口，固定监听 127.0.0.1:port，留空则随机
+	AlertEmail          string                         `yaml:"alert_email"`          // 代理告警/订阅更新通知收件人
+	SMTPHost            string                         `yaml:"smtp_host"`            // SMTP 服务器，如 smtp.qq.com
+	SMTPPort            int                            `yaml:"smtp_port"`            // SMTP 端口，如 465（SSL）或 587（STARTTLS）
+	SMTPUser            string                         `yaml:"smtp_user"`            // SMTP 登录用户名（发件人邮箱）
+	SMTPPass            string                         `yaml:"smtp_pass"`            // SMTP 授权码/密码
+	SubscriptionRefresh ProxySubscriptionRefreshConfig `yaml:"subscription_refresh"` // 托管订阅自动刷新
+}
+
+type ProxySubscriptionRefreshConfig struct {
+	Enabled          bool   `yaml:"enabled"`            // 是否启用站点登录抓取订阅
+	IntervalHours    int    `yaml:"interval_hours"`     // 自动刷新间隔（小时）
+	LandingURL       string `yaml:"landing_url"`        // 用于解析最新入口域名的落地页，如 https://muacloud.github.io/
+	SiteURL          string `yaml:"site_url"`           // 直接面板地址；留空则优先从 landing_url 解析
+	RequestProxyURL  string `yaml:"request_proxy_url"`  // 访问站点和订阅时使用的上游 HTTP 代理，如 http://user:pass@host:port
+	LoginEmail       string `yaml:"login_email"`        // 面板登录邮箱
+	LoginPassword    string `yaml:"login_password"`     // 面板登录密码
+	LoginPath        string `yaml:"login_path"`         // 登录接口路径，默认 /auth/login
+	UserPath         string `yaml:"user_path"`          // 用户中心路径，默认 /user
+	PreferredSubType string `yaml:"preferred_sub_type"` // 订阅优先类型，默认 clash
 }
 
 // AutoDevConfig AutoDev AI 任务配置
@@ -497,6 +511,14 @@ func DefaultConfig() *Config {
 			DashboardURL: "http://host.docker.internal:8086",
 			APIBaseURL:   "http://host.docker.internal:8642/v1",
 			Model:        "hermes-agent",
+		},
+		Proxy: ProxyConfig{
+			SubscriptionRefresh: ProxySubscriptionRefreshConfig{
+				IntervalHours:    24,
+				LoginPath:        "/auth/login",
+				UserPath:         "/user",
+				PreferredSubType: "clash",
+			},
 		},
 	}
 }

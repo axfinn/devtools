@@ -87,6 +87,13 @@
           <el-tag type="success" effect="dark">默认当前线路：{{ currentDefaultNode || '未确定' }}</el-tag>
           <el-tag type="warning">AI 当前线路：{{ currentAINode || '未确定' }}</el-tag>
         </div>
+        <div v-if="subscriptionRefresh.enabled" class="proxy-hint">
+          托管订阅：{{ subscriptionRefresh.last_refresh_status || '未执行' }}
+          <span v-if="subscriptionRefresh.resolved_site_url"> · 入口站点：{{ subscriptionRefresh.resolved_site_url }}</span>
+          <span v-if="subscriptionRefresh.last_subscribe_url"> · 当前订阅：{{ subscriptionRefresh.last_subscribe_url }}</span>
+          <span v-if="subscriptionRefresh.last_refresh_node_hint"> · 接管线路：{{ subscriptionRefresh.last_refresh_node_hint }}</span>
+          <span v-if="subscriptionRefresh.last_refresh_at"> · 上次执行：{{ subscriptionRefresh.last_refresh_at }}</span>
+        </div>
         <div class="proxy-hint">
           默认线路支持手动指定或按当前线路/正则自动选择；AI 线路支持手动指定或按 AI 正则自动选择。运行时会尽量保持同一条线路，仅在不可用时才切换。
         </div>
@@ -447,6 +454,14 @@ const currentAINode = ref('')
 const npcRunning = ref(false)
 const npcTunnelPort = ref('')
 const npcServerAddr = ref('')
+const subscriptionRefresh = ref({
+  enabled: false,
+  resolved_site_url: '',
+  last_subscribe_url: '',
+  last_refresh_status: '',
+  last_refresh_at: '',
+  last_refresh_node_hint: ''
+})
 
 const customDomains = ref([])
 const newCustomDomain = ref('')
@@ -548,6 +563,14 @@ function applyStatus(data) {
   aiNodeRegex.value = data.ai_node_regex || aiNodeRegex.value
   currentDefaultNode.value = data.default_node || data.node || ''
   currentAINode.value = data.effective_ai_node || data.ai_node_name || ''
+  subscriptionRefresh.value = {
+    enabled: !!data.subscription_refresh?.enabled,
+    resolved_site_url: data.subscription_refresh?.resolved_site_url || '',
+    last_subscribe_url: data.subscription_refresh?.last_subscribe_url || '',
+    last_refresh_status: data.subscription_refresh?.last_refresh_status || '',
+    last_refresh_at: data.subscription_refresh?.last_refresh_at || '',
+    last_refresh_node_hint: data.subscription_refresh?.last_refresh_node_hint || ''
+  }
   if (data.running) {
     proxyRunning.value = true
     httpPort.value = data.http_port
