@@ -1,8 +1,13 @@
 package handlers
 
 import (
+	"bufio"
+	"fmt"
+	"io"
 	"net"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -280,4 +285,234 @@ func TestCurrentProxyURLUsesActiveListener(t *testing.T) {
 	if !strings.HasPrefix(got, "http://proxy:secret@127.0.0.1:") {
 		t.Fatalf("currentProxyURL() = %q", got)
 	}
+}
+
+func TestSplitAlertRecipients(t *testing.T) {
+	got := splitAlertRecipients(" alpha@example.test;beta@example.test,\nalpha@example.test \t gamma@example.test ")
+	want := []string{
+		"alpha@example.test",
+		"beta@example.test",
+		"gamma@example.test",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("len(splitAlertRecipients) = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("splitAlertRecipients[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSendAlertSMTPFlow(t *testing.T) {
+	server := newFakeSMTPServer(t)
+	defer server.Close()
+
+	h := &ProxyHandler{
+		alertEmail: "alpha@example.test; beta@example.test",
+		smtpHost:   "localhost",
+		smtpPort:   server.Port(),
+		smtpUser:   "sender@example.test",
+		smtpPass:   "test-password",
+	}
+
+	h.sendAlert("线路切换成功", "当前线路: 美国-chatGPT-02")
+
+	session := server.WaitForSession(t)
+	if session.mailFrom != "sender@example.test" {
+		t.Fatalf("MAIL FROM = %q, want %q", session.mailFrom, "sender@example.test")
+	}
+
+	wantRecipients := []string{"alpha@example.test", "beta@example.test"}
+	if len(session.recipients) != len(wantRecipients) {
+		t.Fatalf("len(recipients) = %d, want %d", len(session.recipients), len(wantRecipients))
+	}
+	for i := range wantRecipients {
+		if session.recipients[i] != wantRecipients[i] {
+			t.Fatalf("recipients[%d] = %q, want %q", i, session.recipients[i], wantRecipients[i])
+		}
+	}
+
+	if !strings.Contains(session.data, "Subject: =?UTF-8?") {
+		t.Fatalf("message subject is not MIME-encoded: %q", session.data)
+	}
+	if !strings.Contains(session.data, "[DevTools]") {
+		t.Fatalf("message missing subject prefix: %q", session.data)
+	}
+	if !strings.Contains(session.data, "To: alpha@example.test, beta@example.test") {
+		t.Fatalf("message missing To header: %q", session.data)
+	}
+	if !strings.Contains(session.data, "当前线路: 美国-chatGPT-02") {
+		t.Fatalf("message missing body content: %q", session.data)
+	}
+}
+
+type fakeSMTPSession struct {
+	mailFrom   string
+	recipients []string
+	data       string
+}
+
+type fakeSMTPServer struct {
+	t        *testing.T
+	listener net.Listener
+	done     chan fakeSMTPSession
+	errc     chan error
+	once     sync.Once
+}
+
+func newFakeSMTPServer(t *testing.T) *fakeSMTPServer {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("fake smtp listen failed: %v", err)
+	}
+
+	s := &fakeSMTPServer{
+		t:        t,
+		listener: ln,
+		done:     make(chan fakeSMTPSession, 1),
+		errc:     make(chan error, 1),
+	}
+	go s.serve()
+	return s
+}
+
+func (s *fakeSMTPServer) Port() int {
+	s.t.Helper()
+	_, portStr, err := net.SplitHostPort(s.listener.Addr().String())
+	if err != nil {
+		s.t.Fatalf("split host port failed: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		s.t.Fatalf("parse port failed: %v", err)
+	}
+	return port
+}
+
+func (s *fakeSMTPServer) Close() {
+	s.once.Do(func() {
+		_ = s.listener.Close()
+	})
+}
+
+func (s *fakeSMTPServer) WaitForSession(t *testing.T) fakeSMTPSession {
+	t.Helper()
+
+	select {
+	case err := <-s.errc:
+		t.Fatalf("fake smtp server failed: %v", err)
+	case session := <-s.done:
+		return session
+	}
+	return fakeSMTPSession{}
+}
+
+func (s *fakeSMTPServer) serve() {
+	conn, err := s.listener.Accept()
+	if err != nil {
+		s.errc <- err
+		return
+	}
+	defer conn.Close()
+
+	session, err := handleFakeSMTPConn(conn)
+	if err != nil {
+		s.errc <- err
+		return
+	}
+	s.done <- session
+}
+
+func handleFakeSMTPConn(conn net.Conn) (fakeSMTPSession, error) {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	session := fakeSMTPSession{}
+
+	writeLine := func(line string) error {
+		if _, err := writer.WriteString(line + "\r\n"); err != nil {
+			return err
+		}
+		return writer.Flush()
+	}
+
+	if err := writeLine("220 localhost ESMTP test"); err != nil {
+		return session, err
+	}
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				return session, nil
+			}
+			return session, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		upper := strings.ToUpper(line)
+
+		switch {
+		case strings.HasPrefix(upper, "EHLO "), strings.HasPrefix(upper, "HELO "):
+			if _, err := writer.WriteString("250-localhost\r\n250 AUTH PLAIN\r\n"); err != nil {
+				return session, err
+			}
+			if err := writer.Flush(); err != nil {
+				return session, err
+			}
+		case strings.HasPrefix(upper, "AUTH PLAIN"):
+			if err := writeLine("235 2.7.0 Authentication successful"); err != nil {
+				return session, err
+			}
+		case strings.HasPrefix(upper, "MAIL FROM:"):
+			session.mailFrom = normalizeSMTPPath(line[len("MAIL FROM:"):])
+			if err := writeLine("250 2.1.0 Ok"); err != nil {
+				return session, err
+			}
+		case strings.HasPrefix(upper, "RCPT TO:"):
+			session.recipients = append(session.recipients, normalizeSMTPPath(line[len("RCPT TO:"):]))
+			if err := writeLine("250 2.1.5 Ok"); err != nil {
+				return session, err
+			}
+		case upper == "DATA":
+			if err := writeLine("354 End data with <CR><LF>.<CR><LF>"); err != nil {
+				return session, err
+			}
+			var data strings.Builder
+			for {
+				dataLine, err := reader.ReadString('\n')
+				if err != nil {
+					return session, err
+				}
+				if dataLine == ".\r\n" {
+					break
+				}
+				data.WriteString(dataLine)
+			}
+			session.data = data.String()
+			if err := writeLine("250 2.0.0 queued"); err != nil {
+				return session, err
+			}
+		case upper == "QUIT":
+			if err := writeLine("221 2.0.0 Bye"); err != nil {
+				return session, err
+			}
+			return session, nil
+		default:
+			return session, fmt.Errorf("unexpected smtp command: %s", line)
+		}
+	}
+}
+
+func normalizeSMTPPath(raw string) string {
+	value := strings.TrimSpace(raw)
+	if strings.HasPrefix(value, "<") && strings.Contains(value, ">") {
+		value = value[1:strings.Index(value, ">")]
+	}
+	if idx := strings.Index(value, " "); idx >= 0 {
+		value = value[:idx]
+	}
+	return value
 }

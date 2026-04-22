@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
@@ -14,9 +15,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/smtp"
 	"net/url"
 	"os"
 	"os/exec"
@@ -3116,47 +3119,155 @@ func dialTrojan(nodeAddr, targetHost string, node *ProxyNode) (net.Conn, error) 
 
 // sendAlert 发送告警邮件（SMTP SSL，465 端口）
 func (h *ProxyHandler) sendAlert(subject, body string) {
-	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" {
+	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" || h.smtpPass == "" {
 		return
 	}
+
 	port := h.smtpPort
 	if port == 0 {
 		port = 465
 	}
 	addr := net.JoinHostPort(h.smtpHost, strconv.Itoa(port))
-	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: [DevTools] %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",
-		h.smtpUser, h.alertEmail, subject, body)
-
-	tlsCfg := &tls.Config{ServerName: h.smtpHost}
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", addr, tlsCfg)
-	if err != nil {
-		log.Printf("proxy alert: SMTP 连接失败: %v", err)
+	recipients := splitAlertRecipients(h.alertEmail)
+	if len(recipients) == 0 {
 		return
 	}
-	defer conn.Close()
 
-	fmt.Fprintf(conn, "EHLO localhost\r\n")
-	buf := make([]byte, 1024)
-	conn.Read(buf)
-	conn.Read(buf)
+	messageIDHost := "devtools.local"
+	if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+		messageIDHost = host
+	}
+	headers := []string{
+		fmt.Sprintf("From: %s", h.smtpUser),
+		fmt.Sprintf("To: %s", strings.Join(recipients, ", ")),
+		fmt.Sprintf("Subject: %s", mime.QEncoding.Encode("UTF-8", "[DevTools] "+subject)),
+		fmt.Sprintf("Date: %s", time.Now().Format(time.RFC1123Z)),
+		fmt.Sprintf("Message-ID: <%d.%s@%s>", time.Now().UnixNano(), randomHex(8), messageIDHost),
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=UTF-8",
+		"Content-Transfer-Encoding: 8bit",
+	}
+	msg := strings.Join(headers, "\r\n") + "\r\n\r\n" + body
 
-	fmt.Fprintf(conn, "AUTH LOGIN\r\n")
-	conn.Read(buf)
-	fmt.Fprintf(conn, "%s\r\n", base64.StdEncoding.EncodeToString([]byte(h.smtpUser)))
-	conn.Read(buf)
-	fmt.Fprintf(conn, "%s\r\n", base64.StdEncoding.EncodeToString([]byte(h.smtpPass)))
-	conn.Read(buf)
+	var (
+		client *smtp.Client
+		conn   net.Conn
+		err    error
+	)
 
-	fmt.Fprintf(conn, "MAIL FROM:<%s>\r\n", h.smtpUser)
-	conn.Read(buf)
-	fmt.Fprintf(conn, "RCPT TO:<%s>\r\n", h.alertEmail)
-	conn.Read(buf)
-	fmt.Fprintf(conn, "DATA\r\n")
-	conn.Read(buf)
-	fmt.Fprintf(conn, "%s\r\n.\r\n", msg)
-	conn.Read(buf)
-	fmt.Fprintf(conn, "QUIT\r\n")
-	log.Printf("proxy alert: 告警邮件已发送至 %s", h.alertEmail)
+	dialer := &net.Dialer{Timeout: 15 * time.Second}
+	tlsCfg := &tls.Config{ServerName: h.smtpHost}
+	if port == 465 {
+		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsCfg)
+		if err != nil {
+			log.Printf("proxy alert: SMTP SSL 连接失败: %v", err)
+			return
+		}
+		client, err = smtp.NewClient(conn, h.smtpHost)
+	} else {
+		conn, err = dialer.Dial("tcp", addr)
+		if err != nil {
+			log.Printf("proxy alert: SMTP 连接失败: %v", err)
+			return
+		}
+		client, err = smtp.NewClient(conn, h.smtpHost)
+		if err == nil {
+			if ok, _ := client.Extension("STARTTLS"); ok {
+				if err = client.StartTLS(tlsCfg); err != nil {
+					log.Printf("proxy alert: SMTP STARTTLS 失败: %v", err)
+					client.Close()
+					return
+				}
+			}
+		}
+	}
+	if err != nil {
+		if conn != nil {
+			conn.Close()
+		}
+		log.Printf("proxy alert: SMTP client 初始化失败: %v", err)
+		return
+	}
+	defer client.Close()
+
+	if ok, _ := client.Extension("AUTH"); ok {
+		auth := smtp.PlainAuth("", h.smtpUser, h.smtpPass, h.smtpHost)
+		if err = client.Auth(auth); err != nil {
+			log.Printf("proxy alert: SMTP 认证失败: %v", err)
+			return
+		}
+	}
+
+	if err = client.Mail(h.smtpUser); err != nil {
+		log.Printf("proxy alert: SMTP MAIL FROM 失败: %v", err)
+		return
+	}
+	for _, recipient := range recipients {
+		if err = client.Rcpt(recipient); err != nil {
+			log.Printf("proxy alert: SMTP RCPT TO 失败 (%s): %v", recipient, err)
+			return
+		}
+	}
+
+	wc, err := client.Data()
+	if err != nil {
+		log.Printf("proxy alert: SMTP DATA 失败: %v", err)
+		return
+	}
+	if _, err = io.WriteString(wc, msg); err != nil {
+		wc.Close()
+		log.Printf("proxy alert: SMTP 写入邮件正文失败: %v", err)
+		return
+	}
+	if err = wc.Close(); err != nil {
+		log.Printf("proxy alert: SMTP 提交邮件失败: %v", err)
+		return
+	}
+	if err = client.Quit(); err != nil {
+		log.Printf("proxy alert: SMTP QUIT 失败: %v", err)
+		return
+	}
+
+	log.Printf("proxy alert: 告警邮件已发送至 %s，主题=%s", strings.Join(recipients, ","), subject)
+}
+
+func splitAlertRecipients(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
+	recipients := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		recipients = append(recipients, item)
+	}
+	return recipients
+}
+
+func randomHex(length int) string {
+	if length <= 0 {
+		return ""
+	}
+	buf := make([]byte, (length+1)/2)
+	if _, err := rand.Read(buf); err != nil {
+		fallback := strconv.FormatInt(time.Now().UnixNano(), 16)
+		if len(fallback) > length {
+			return fallback[:length]
+		}
+		return fallback
+	}
+	value := hex.EncodeToString(buf)
+	if len(value) > length {
+		return value[:length]
+	}
+	return value
 }
 
 // Tunnel 处理 HTTP CONNECT 方法，让 DevTools 自身端口充当 HTTP 代理
