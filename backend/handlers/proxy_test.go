@@ -1,6 +1,10 @@
 package handlers
 
-import "testing"
+import (
+	"net"
+	"strings"
+	"testing"
+)
 
 func setProxySessionForTest(t *testing.T, nodes []ProxyNode, active *ProxyNode, routeMode, defaultNodeName, defaultNodeRegex, aiNodeName, aiNodeRegex string) {
 	t.Helper()
@@ -247,5 +251,33 @@ func TestExtractManagedSubscribeURLs(t *testing.T) {
 	}
 	if got[1] != "http://gdmn4.top/link/W1vPgE31CVSG8qt5?clash=1" {
 		t.Fatalf("extractManagedSubscribeURLs[1] = %q", got[1])
+	}
+}
+
+func TestCurrentProxyURLUsesActiveListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	globalSession.mu.Lock()
+	backupListener := globalSession.listener
+	globalSession.listener = ln
+	globalSession.mu.Unlock()
+
+	backupHandler := globalProxyHandler
+	globalProxyHandler = &ProxyHandler{adminPassword: "secret"}
+
+	t.Cleanup(func() {
+		globalSession.mu.Lock()
+		globalSession.listener = backupListener
+		globalSession.mu.Unlock()
+		globalProxyHandler = backupHandler
+	})
+
+	got := currentProxyURL()
+	if !strings.HasPrefix(got, "http://proxy:secret@127.0.0.1:") {
+		t.Fatalf("currentProxyURL() = %q", got)
 	}
 }

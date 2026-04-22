@@ -89,6 +89,7 @@
         </div>
         <div v-if="subscriptionRefresh.enabled" class="proxy-hint">
           托管订阅：{{ subscriptionRefresh.last_refresh_status || '未执行' }}
+          <span v-if="subscriptionRefresh.last_refresh_source"> · 刷新通道：{{ subscriptionRefresh.last_refresh_source }}</span>
           <span v-if="subscriptionRefresh.resolved_site_url"> · 入口站点：{{ subscriptionRefresh.resolved_site_url }}</span>
           <span v-if="subscriptionRefresh.last_subscribe_url"> · 当前订阅：{{ subscriptionRefresh.last_subscribe_url }}</span>
           <span v-if="subscriptionRefresh.last_refresh_node_hint"> · 接管线路：{{ subscriptionRefresh.last_refresh_node_hint }}</span>
@@ -469,6 +470,7 @@ const subscriptionRefresh = ref({
   last_subscribe_url: '',
   last_refresh_status: '',
   last_refresh_at: '',
+  last_refresh_source: '',
   last_refresh_node_hint: ''
 })
 
@@ -578,6 +580,7 @@ function applyStatus(data) {
     last_subscribe_url: data.subscription_refresh?.last_subscribe_url || '',
     last_refresh_status: data.subscription_refresh?.last_refresh_status || '',
     last_refresh_at: data.subscription_refresh?.last_refresh_at || '',
+    last_refresh_source: data.subscription_refresh?.last_refresh_source || '',
     last_refresh_node_hint: data.subscription_refresh?.last_refresh_node_hint || ''
   }
   if (data.running) {
@@ -846,6 +849,7 @@ async function triggerSubscriptionRefresh() {
         last_subscribe_url: data.subscription_refresh.last_subscribe_url || '',
         last_refresh_status: data.subscription_refresh.last_refresh_status || '',
         last_refresh_at: data.subscription_refresh.last_refresh_at || '',
+        last_refresh_source: data.subscription_refresh.last_refresh_source || '',
         last_refresh_node_hint: data.subscription_refresh.last_refresh_node_hint || ''
       }
     }
@@ -854,10 +858,28 @@ async function triggerSubscriptionRefresh() {
     }
     currentDefaultNode.value = data.default_node || currentDefaultNode.value
     currentAINode.value = data.effective_ai_node || currentAINode.value
-    const statusResp = await fetch(`/api/proxy/status?admin_password=${encodeURIComponent(adminPassword())}`)
-    const statusData = await statusResp.json()
-    if (!statusData.error) {
-      applyStatus(statusData)
+    if (data.started) {
+      ElMessage.success('托管订阅刷新已启动，正在后台执行')
+      for (let i = 0; i < 30; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        const statusResp = await fetch(`/api/proxy/status?admin_password=${encodeURIComponent(adminPassword())}`)
+        const statusData = await statusResp.json()
+        if (statusData.error) {
+          continue
+        }
+        applyStatus(statusData)
+        const status = statusData.subscription_refresh?.last_refresh_status || ''
+        if (!status.includes('正在后台执行')) {
+          if (status.includes('未执行') || status.includes('失败')) {
+            ElMessage.error(status)
+          } else {
+            ElMessage.success(status || '托管订阅刷新完成')
+          }
+          return
+        }
+      }
+      ElMessage.warning('后台刷新仍在执行，请稍后查看状态')
+      return
     }
     ElMessage.success(subscriptionRefresh.value.last_refresh_status || '托管订阅刷新完成')
   } catch (e) { ElMessage.error('手动刷新失败') }

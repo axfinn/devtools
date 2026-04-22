@@ -237,6 +237,59 @@ func newHTTPClient(timeout time.Duration, proxyURL string, withCookies bool) (*h
 	return client, nil
 }
 
+func currentProxyURL() string {
+	globalSession.mu.RLock()
+	ln := globalSession.listener
+	globalSession.mu.RUnlock()
+	if ln == nil {
+		return ""
+	}
+
+	pu, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", ln.Addr().(*net.TCPAddr).Port))
+	if err != nil {
+		return ""
+	}
+	if globalProxyHandler != nil && globalProxyHandler.adminPassword != "" {
+		pu.User = url.UserPassword("proxy", globalProxyHandler.adminPassword)
+	}
+	return pu.String()
+}
+
+type managedRefreshClientCandidate struct {
+	source string
+	client *http.Client
+}
+
+func (h *ProxyHandler) managedRefreshClients(timeout time.Duration) []managedRefreshClientCandidate {
+	candidates := make([]managedRefreshClientCandidate, 0, 3)
+	seen := make(map[string]struct{}, 3)
+	appendClient := func(source, proxyURL string) {
+		key := source + "|" + strings.TrimSpace(proxyURL)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		client, err := newHTTPClient(timeout, proxyURL, true)
+		if err != nil {
+			log.Printf("proxy: 构建托管订阅 %s client 失败: %v", source, err)
+			return
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, managedRefreshClientCandidate{
+			source: source,
+			client: client,
+		})
+	}
+
+	if proxyURL := currentProxyURL(); proxyURL != "" {
+		appendClient("active_proxy", proxyURL)
+	}
+	if proxyURL := strings.TrimSpace(h.subRefresh.requestProxyURL); proxyURL != "" {
+		appendClient("configured_proxy", proxyURL)
+	}
+	appendClient("direct", "")
+	return candidates
+}
+
 func proxyNodeKey(node ProxyNode) string {
 	return strings.ToLower(strings.TrimSpace(node.Type)) + "|" +
 		strings.ToLower(strings.TrimSpace(node.Server)) + "|" +
@@ -808,10 +861,7 @@ func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, node
 	return true, nil
 }
 
-func (h *ProxyHandler) refreshManagedSubscription() {
-	h.subRefreshMu.Lock()
-	defer h.subRefreshMu.Unlock()
-
+func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 	if !h.subRefresh.enabled {
 		return
 	}
@@ -820,78 +870,88 @@ func (h *ProxyHandler) refreshManagedSubscription() {
 		return
 	}
 
-	client, err := newHTTPClient(45*time.Second, h.subRefresh.requestProxyURL, true)
-	if err != nil {
-		h.markSubscriptionState("托管订阅未执行：代理配置非法", "", "", "managed", "", false, false)
-		log.Printf("proxy: 托管订阅代理配置错误: %v", err)
+	var lastErr error
+	for _, candidate := range h.managedRefreshClients(20 * time.Second) {
+		siteURL, _, err := h.resolveManagedSiteURL(candidate.client)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: 解析站点失败: %w", candidate.source, err)
+			log.Printf("proxy: 托管订阅解析站点失败(%s): %v", candidate.source, err)
+			continue
+		}
+
+		if err := h.loginManagedSubscription(candidate.client, siteURL); err != nil {
+			lastErr = fmt.Errorf("%s: 登录失败: %w", candidate.source, err)
+			log.Printf("proxy: 托管订阅登录失败(%s): %v", candidate.source, err)
+			continue
+		}
+
+		subscribeURL, _, err := h.fetchManagedSubscriptionLink(candidate.client, siteURL)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: 提取订阅链接失败: %w", candidate.source, err)
+			log.Printf("proxy: 托管订阅提取订阅链接失败(%s): %v", candidate.source, err)
+			continue
+		}
+
+		yamlText, err := fetchSubscriptionWithClient(candidate.client, subscribeURL)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: 下载新订阅失败: %w", candidate.source, err)
+			log.Printf("proxy: 托管订阅下载失败(%s): %v", candidate.source, err)
+			continue
+		}
+		nodes, err := parseClashYAML(yamlText)
+		if err != nil {
+			lastErr = fmt.Errorf("%s: 解析新订阅失败: %w", candidate.source, err)
+			log.Printf("proxy: 托管订阅解析失败(%s): %v", candidate.source, err)
+			continue
+		}
+		if len(nodes) == 0 {
+			lastErr = fmt.Errorf("%s: 新订阅节点为空", candidate.source)
+			continue
+		}
+
+		applied, err := h.applyManagedSubscription(subscribeURL, yamlText, nodes)
+		if err != nil {
+			h.markSubscriptionState("托管订阅已发现更新，但新订阅测试失败", siteURL, subscribeURL, candidate.source, "", true, false)
+			log.Printf("proxy: 托管订阅接管失败(%s): %v", candidate.source, err)
+			return
+		}
+		if !applied {
+			h.markSubscriptionState("托管订阅检查完成：无变化，保持当前线路", siteURL, subscribeURL, candidate.source, "", false, false)
+			return
+		}
+		activeName := ""
+		globalSession.mu.RLock()
+		if globalSession.active != nil {
+			activeName = globalSession.active.Name
+		}
+		globalSession.mu.RUnlock()
+		h.markSubscriptionState("托管订阅已更新并接管", siteURL, subscribeURL, candidate.source, activeName, true, true)
+		go h.sendAlert(
+			"代理订阅已更新并切换成功",
+			fmt.Sprintf(
+				"时间：%s\n入口站点：%s\n订阅链接：%s\n刷新来源：%s\n接管线路：%s\n节点数量：%d\n结果：订阅已更新，测试成功后已自动切换。",
+				time.Now().Format("2006-01-02 15:04:05"),
+				siteURL,
+				subscribeURL,
+				candidate.source,
+				activeName,
+				len(nodes),
+			),
+		)
 		return
 	}
 
-	siteURL, _, err := h.resolveManagedSiteURL(client)
-	if err != nil {
-		h.markSubscriptionState("托管订阅未执行：解析站点失败", "", "", "managed", "", false, false)
-		log.Printf("proxy: 托管订阅解析站点失败: %v", err)
-		return
+	status := "托管订阅未执行：全部刷新链路失败"
+	if lastErr != nil {
+		status = "托管订阅未执行：" + lastErr.Error()
 	}
+	h.markSubscriptionState(status, "", "", "managed", "", false, false)
+}
 
-	if err := h.loginManagedSubscription(client, siteURL); err != nil {
-		h.markSubscriptionState("托管订阅未执行：登录失败", siteURL, "", "managed", "", false, false)
-		log.Printf("proxy: 托管订阅登录失败: %v", err)
-		return
-	}
-
-	subscribeURL, _, err := h.fetchManagedSubscriptionLink(client, siteURL)
-	if err != nil {
-		h.markSubscriptionState("托管订阅未执行：提取订阅链接失败", siteURL, "", "managed", "", false, false)
-		log.Printf("proxy: 托管订阅提取订阅链接失败: %v", err)
-		return
-	}
-
-	yamlText, err := fetchSubscriptionWithClient(client, subscribeURL)
-	if err != nil {
-		h.markSubscriptionState("托管订阅未执行：下载新订阅失败", siteURL, subscribeURL, "managed", "", false, false)
-		log.Printf("proxy: 托管订阅下载失败: %v", err)
-		return
-	}
-	nodes, err := parseClashYAML(yamlText)
-	if err != nil {
-		h.markSubscriptionState("托管订阅未执行：解析新订阅失败", siteURL, subscribeURL, "managed", "", false, false)
-		log.Printf("proxy: 托管订阅解析失败: %v", err)
-		return
-	}
-	if len(nodes) == 0 {
-		h.markSubscriptionState("托管订阅未执行：新订阅节点为空", siteURL, subscribeURL, "managed", "", false, false)
-		return
-	}
-
-	applied, err := h.applyManagedSubscription(subscribeURL, yamlText, nodes)
-	if err != nil {
-		h.markSubscriptionState("托管订阅已发现更新，但新订阅测试失败", siteURL, subscribeURL, "managed", "", true, false)
-		log.Printf("proxy: 托管订阅接管失败: %v", err)
-		return
-	}
-	if !applied {
-		h.markSubscriptionState("托管订阅检查完成：无变化，保持当前线路", siteURL, subscribeURL, "managed", "", false, false)
-		return
-	}
-	activeName := ""
-	globalSession.mu.RLock()
-	if globalSession.active != nil {
-		activeName = globalSession.active.Name
-	}
-	globalSession.mu.RUnlock()
-	h.markSubscriptionState("托管订阅已更新并接管", siteURL, subscribeURL, "managed", activeName, true, true)
-	go h.sendAlert(
-		"代理订阅已更新并切换成功",
-		fmt.Sprintf(
-			"时间：%s\n入口站点：%s\n订阅链接：%s\n接管线路：%s\n节点数量：%d\n结果：订阅已更新，测试成功后已自动切换。",
-			time.Now().Format("2006-01-02 15:04:05"),
-			siteURL,
-			subscribeURL,
-			activeName,
-			len(nodes),
-		),
-	)
+func (h *ProxyHandler) refreshManagedSubscription() {
+	h.subRefreshMu.Lock()
+	defer h.subRefreshMu.Unlock()
+	h.refreshManagedSubscriptionLocked()
 }
 
 // TriggerSubscriptionRefresh POST /api/proxy/subscription-refresh
@@ -912,7 +972,29 @@ func (h *ProxyHandler) TriggerSubscriptionRefresh(c *gin.Context) {
 		return
 	}
 
-	h.refreshManagedSubscription()
+	if !h.subRefreshMu.TryLock() {
+		subState := h.snapshotSubscriptionState()
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "托管订阅刷新正在执行中",
+			"subscription_refresh": gin.H{
+				"enabled":                subState.Enabled,
+				"resolved_site_url":      subState.ResolvedSiteURL,
+				"last_subscribe_url":     subState.LastSubscribeURL,
+				"last_refresh_status":    subState.LastRefreshStatus,
+				"last_refresh_at":        subState.LastRefreshAt,
+				"last_refresh_changed":   subState.LastRefreshChanged,
+				"last_refresh_applied":   subState.LastRefreshApplied,
+				"last_refresh_source":    subState.LastRefreshSource,
+				"last_refresh_node_hint": subState.LastRefreshNodeHint,
+			},
+		})
+		return
+	}
+	h.markSubscriptionState("手动刷新已启动，正在后台执行", "", "", "manual", "", false, false)
+	go func() {
+		defer h.subRefreshMu.Unlock()
+		h.refreshManagedSubscriptionLocked()
+	}()
 
 	globalSession.mu.RLock()
 	activeName := ""
@@ -923,10 +1005,10 @@ func (h *ProxyHandler) TriggerSubscriptionRefresh(c *gin.Context) {
 	defaultNode, aiNode := resolveConfiguredNodes()
 
 	subState := h.snapshotSubscriptionState()
-	statusOK := !strings.Contains(subState.LastRefreshStatus, "未执行") && !strings.Contains(subState.LastRefreshStatus, "失败")
 	resp := gin.H{
-		"ok":   statusOK,
-		"node": activeName,
+		"ok":      true,
+		"started": true,
+		"node":    activeName,
 		"subscription_refresh": gin.H{
 			"enabled":                subState.Enabled,
 			"resolved_site_url":      subState.ResolvedSiteURL,
@@ -945,12 +1027,7 @@ func (h *ProxyHandler) TriggerSubscriptionRefresh(c *gin.Context) {
 	if aiNode != nil {
 		resp["effective_ai_node"] = aiNode.Name
 	}
-	if !statusOK {
-		resp["error"] = subState.LastRefreshStatus
-		c.JSON(http.StatusInternalServerError, resp)
-		return
-	}
-	c.JSON(http.StatusOK, resp)
+	c.JSON(http.StatusAccepted, resp)
 }
 
 // AutoSelectOnStartup 启动时若有持久化节点但无活跃节点，后台自动选最优节点
