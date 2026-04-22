@@ -98,6 +98,10 @@
         <div class="proxy-hint">
           默认线路支持手动指定或按当前线路/正则自动选择；AI 线路支持手动指定或按 AI 正则自动选择。运行时会尽量保持同一条线路，仅在不可用时才切换。
         </div>
+        <div v-if="reachabilityCheck.last_check_status" class="proxy-hint">
+          节点验证：{{ reachabilityCheck.last_check_status }}
+          <span v-if="reachabilityCheck.last_check_at"> · 上次执行：{{ reachabilityCheck.last_check_at }}</span>
+        </div>
         <div class="action-row">
           <el-button type="primary" @click="loadConfig" :loading="loadingConfig">解析节点</el-button>
           <el-button @click="copyExportConfig">复制配置</el-button>
@@ -473,6 +477,12 @@ const subscriptionRefresh = ref({
   last_refresh_source: '',
   last_refresh_node_hint: ''
 })
+const reachabilityCheck = ref({
+  running: false,
+  last_check_status: '',
+  last_check_at: '',
+  results: []
+})
 
 const customDomains = ref([])
 const newCustomDomain = ref('')
@@ -582,6 +592,20 @@ function applyStatus(data) {
     last_refresh_at: data.subscription_refresh?.last_refresh_at || '',
     last_refresh_source: data.subscription_refresh?.last_refresh_source || '',
     last_refresh_node_hint: data.subscription_refresh?.last_refresh_node_hint || ''
+  }
+  reachabilityCheck.value = {
+    running: !!data.check_reachability?.running,
+    last_check_status: data.check_reachability?.last_check_status || '',
+    last_check_at: data.check_reachability?.last_check_at || '',
+    results: Array.isArray(data.check_reachability?.results) ? data.check_reachability.results : []
+  }
+  if (reachabilityCheck.value.results.length > 0) {
+    const map = {}
+    for (const item of reachabilityCheck.value.results) {
+      map[item.name] = item.reachable
+    }
+    checkResults.value = map
+    checkedOnce.value = true
   }
   if (data.running) {
     proxyRunning.value = true
@@ -782,15 +806,34 @@ async function checkNodes() {
     })
     const data = await r.json()
     if (data.error) { ElMessage.error(data.error); return }
-    const map = {}
-    let ok = 0
-    for (const item of data.results) {
-      map[item.name] = item.reachable
-      if (item.reachable) ok++
+    if (data.check_reachability) {
+      reachabilityCheck.value = {
+        running: !!data.check_reachability.running,
+        last_check_status: data.check_reachability.last_check_status || '',
+        last_check_at: data.check_reachability.last_check_at || '',
+        results: Array.isArray(data.check_reachability.results) ? data.check_reachability.results : []
+      }
     }
-    checkResults.value = map
-    checkedOnce.value = true
-    ElMessage.success(`验证完成，${ok}/${data.results.length} 个节点真实可用（curl google）`)
+    if (data.started) {
+      ElMessage.success('节点验证已启动，正在后台执行')
+      for (let i = 0; i < 30; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        const statusResp = await fetch(`/api/proxy/status?admin_password=${encodeURIComponent(adminPassword())}`)
+        const statusData = await statusResp.json()
+        if (statusData.error) {
+          continue
+        }
+        applyStatus(statusData)
+        if (!statusData.check_reachability?.running) {
+          const results = Array.isArray(statusData.check_reachability?.results) ? statusData.check_reachability.results : []
+          const ok = results.filter(item => item.reachable).length
+          ElMessage.success(statusData.check_reachability?.last_check_status || `验证完成，${ok}/${results.length} 个节点真实可用（curl google）`)
+          return
+        }
+      }
+      ElMessage.warning('节点验证仍在执行，请稍后查看状态')
+      return
+    }
   } catch (e) { ElMessage.error('验证失败') }
   finally { checkingNodes.value = false }
 }

@@ -559,6 +559,9 @@ type ProxyHandler struct {
 	subRefreshMu  sync.Mutex
 	subStateMu    sync.RWMutex
 	subState      proxySubscriptionRefreshState
+	checkMu       sync.Mutex
+	checkStateMu  sync.RWMutex
+	checkState    proxyReachabilityCheckState
 }
 
 type proxySubscriptionRefreshRuntime struct {
@@ -584,6 +587,19 @@ type proxySubscriptionRefreshState struct {
 	LastRefreshApplied  bool
 	LastRefreshSource   string
 	LastRefreshNodeHint string
+}
+
+type proxyReachabilityResult struct {
+	Name      string `json:"name"`
+	Reachable bool   `json:"reachable"`
+	Latency   int64  `json:"latency"`
+}
+
+type proxyReachabilityCheckState struct {
+	Running         bool
+	LastCheckStatus string
+	LastCheckAt     string
+	Results         []proxyReachabilityResult
 }
 
 type npcConfig struct {
@@ -637,6 +653,9 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 			Enabled:           refreshCfg.Enabled,
 			LastRefreshStatus: "未执行",
 		},
+		checkState: proxyReachabilityCheckState{
+			LastCheckStatus: "未执行",
+		},
 	}
 	if cfg.NPS.VKey != "" {
 		bridgePort := cfg.NPS.BridgePort
@@ -685,6 +704,31 @@ func (h *ProxyHandler) markSubscriptionState(status, siteURL, subscribeURL, sour
 		state.LastRefreshApplied = applied
 		state.LastRefreshSource = source
 		state.LastRefreshNodeHint = nodeHint
+	})
+}
+
+func (h *ProxyHandler) updateCheckState(update func(*proxyReachabilityCheckState)) {
+	h.checkStateMu.Lock()
+	defer h.checkStateMu.Unlock()
+	update(&h.checkState)
+}
+
+func (h *ProxyHandler) snapshotCheckState() proxyReachabilityCheckState {
+	h.checkStateMu.RLock()
+	defer h.checkStateMu.RUnlock()
+	state := h.checkState
+	state.Results = append([]proxyReachabilityResult(nil), h.checkState.Results...)
+	return state
+}
+
+func (h *ProxyHandler) markCheckState(status string, running bool, results []proxyReachabilityResult) {
+	h.updateCheckState(func(state *proxyReachabilityCheckState) {
+		state.Running = running
+		state.LastCheckStatus = status
+		state.LastCheckAt = time.Now().Format(time.RFC3339)
+		if results != nil {
+			state.Results = append([]proxyReachabilityResult(nil), results...)
+		}
 	})
 }
 
@@ -1605,7 +1649,6 @@ func (h *ProxyHandler) CheckNodes(c *gin.Context) {
 		return
 	}
 
-	// 过滤要检测的节点
 	nameSet := make(map[string]bool, len(req.NodeNames))
 	for _, n := range req.NodeNames {
 		nameSet[n] = true
@@ -1619,15 +1662,52 @@ func (h *ProxyHandler) CheckNodes(c *gin.Context) {
 			}
 		}
 	}
-
-	const testURL = "https://www.google.com"
-	type result struct {
-		Name      string `json:"name"`
-		Reachable bool   `json:"reachable"`
-		Latency   int64  `json:"latency"` // ms，-1=失败
+	if len(targets) == 0 {
+		c.JSON(400, gin.H{"error": "未匹配到待检测节点"})
+		return
 	}
 
-	results := make([]result, len(targets))
+	if !h.checkMu.TryLock() {
+		state := h.snapshotCheckState()
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "节点可用性检测正在执行中",
+			"check_reachability": gin.H{
+				"running":           state.Running,
+				"last_check_status": state.LastCheckStatus,
+				"last_check_at":     state.LastCheckAt,
+				"results":           state.Results,
+			},
+		})
+		return
+	}
+
+	h.markCheckState(fmt.Sprintf("节点可用性检测已启动，目标 %d 个", len(targets)), true, nil)
+	go func(targets []ProxyNode) {
+		defer h.checkMu.Unlock()
+		h.runCheckNodesLocked(targets)
+	}(append([]ProxyNode(nil), targets...))
+
+	state := h.snapshotCheckState()
+	c.JSON(http.StatusAccepted, gin.H{
+		"ok":      true,
+		"started": true,
+		"check_reachability": gin.H{
+			"running":           state.Running,
+			"last_check_status": state.LastCheckStatus,
+			"last_check_at":     state.LastCheckAt,
+			"results":           state.Results,
+		},
+	})
+}
+
+func (h *ProxyHandler) runCheckNodesLocked(targets []ProxyNode) {
+	if len(targets) == 0 {
+		h.markCheckState("节点可用性检测未执行：没有待检测节点", false, []proxyReachabilityResult{})
+		return
+	}
+
+	const testURL = "https://www.google.com"
+	results := make([]proxyReachabilityResult, len(targets))
 	reachable := collectReachableNodes(targets, proxyProbeConcurrency, func(n ProxyNode) int64 {
 		return checkNodeReachability(&n, testURL)
 	})
@@ -1635,19 +1715,22 @@ func (h *ProxyHandler) CheckNodes(c *gin.Context) {
 	for _, item := range reachable {
 		latencyMap[proxyNodeKey(item.node)] = item.latency
 	}
+	okCount := 0
 	for i, node := range targets {
 		latency := int64(-1)
 		if v, ok := latencyMap[proxyNodeKey(node)]; ok {
 			latency = v
 		}
-		results[i] = result{
+		results[i] = proxyReachabilityResult{
 			Name:      node.Name,
 			Reachable: latency >= 0,
 			Latency:   latency,
 		}
+		if latency >= 0 {
+			okCount++
+		}
 	}
-
-	c.JSON(200, gin.H{"results": results})
+	h.markCheckState(fmt.Sprintf("节点可用性检测完成：%d/%d 可用", okCount, len(targets)), false, results)
 }
 
 // Start POST /api/proxy/start
@@ -1992,6 +2075,7 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 	npcRunning := h.npcCmd != nil && h.npcCmd.Process != nil
 	h.npcMu.Unlock()
 	subState := h.snapshotSubscriptionState()
+	checkState := h.snapshotCheckState()
 
 	resp := gin.H{
 		"nodes":              globalSession.nodes,
@@ -2017,6 +2101,12 @@ func (h *ProxyHandler) Status(c *gin.Context) {
 			"last_refresh_applied":   subState.LastRefreshApplied,
 			"last_refresh_source":    subState.LastRefreshSource,
 			"last_refresh_node_hint": subState.LastRefreshNodeHint,
+		},
+		"check_reachability": gin.H{
+			"running":           checkState.Running,
+			"last_check_status": checkState.LastCheckStatus,
+			"last_check_at":     checkState.LastCheckAt,
+			"results":           checkState.Results,
 		},
 	}
 	defaultNode, aiNode := resolveConfiguredNodes()
