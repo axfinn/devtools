@@ -160,6 +160,51 @@
         </div>
       </section>
 
+      <section class="focus-grid">
+        <article class="hero-card focus-card">
+          <div class="panel-heading">
+            <div>
+              <p class="hero-label">今天最重要的事</p>
+              <h3>{{ primaryFocusTask ? primaryFocusTask.title : '今天先给自己留一个主焦点' }}</h3>
+              <p>{{ primaryFocusTask?.detail || '把今天真正想推进的一件事放到最前面。' }}</p>
+            </div>
+            <el-button v-if="primaryFocusTask" type="primary" @click="openTask(primaryFocusTask)">打开</el-button>
+          </div>
+          <div v-if="primaryFocusTask" class="focus-meta">
+            <span>{{ priorityLabel(primaryFocusTask.priority) }}</span>
+            <span>{{ statusLabel(primaryFocusTask.status) }}</span>
+            <span>{{ primaryFocusTask.time_hint || primaryFocusTask.display_label }}</span>
+          </div>
+          <div v-if="secondaryFocusTasks.length > 0" class="focus-secondary">
+            <button v-for="task in secondaryFocusTasks" :key="task.id" class="focus-secondary-item" @click="openTask(task)">
+              <strong>{{ task.title }}</strong>
+              <span>{{ task.time_hint || task.display_label }}</span>
+            </button>
+          </div>
+        </article>
+
+        <article class="hero-card focus-card event-card-hero">
+          <div class="panel-heading">
+            <div>
+              <p class="hero-label">下一场事件</p>
+              <h3>{{ nextEventTask ? nextEventTask.title : '最近没有需要特别盯住的事件' }}</h3>
+              <p>{{ nextEventTask?.detail || '会议、预约、出发这类事情，应该带着时间感被看见。' }}</p>
+            </div>
+            <el-button v-if="nextEventTask" plain @click="openTask(nextEventTask)">查看</el-button>
+          </div>
+          <div v-if="nextEventTask" class="focus-meta">
+            <span>{{ eventPhaseLabel(nextEventTask.event_phase) }}</span>
+            <span>{{ nextEventTask.time_hint || '已安排' }}</span>
+            <span>{{ nextEventTask.remind_at ? formatDateTime(nextEventTask.remind_at) : nextEventTask.planned_for }}</span>
+          </div>
+          <div v-if="nextEventTask" class="task-actions compact-actions">
+            <el-button size="small" plain @click="setTaskStatus(nextEventTask, 'in_progress')">开始准备</el-button>
+            <el-button size="small" type="primary" plain @click="setTaskStatus(nextEventTask, 'done')">已完成</el-button>
+            <el-button size="small" plain @click="cancelTask(nextEventTask)">取消</el-button>
+          </div>
+        </article>
+      </section>
+
       <section class="quick-panel">
         <div class="panel-heading">
           <div>
@@ -174,6 +219,10 @@
             <el-button plain @click="openAdviceDialog">
               <el-icon><MagicStick /></el-icon>
               AI 助手
+            </el-button>
+            <el-button plain @click="reviewDialogVisible = true">
+              <el-icon><Calendar /></el-icon>
+              周/月/年回顾
             </el-button>
             <el-button type="primary" plain @click="aiDialogVisible = true">
               <el-icon><EditPen /></el-icon>
@@ -368,6 +417,9 @@
                     <div class="task-meta">
                       <span>日期 {{ task.planned_for }}</span>
                       <span v-if="task.remind_at">提醒 {{ formatDateTime(task.remind_at) }}</span>
+                      <span v-if="task.time_hint">{{ task.time_hint }}</span>
+                      <span v-if="task.event_phase">{{ eventPhaseLabel(task.event_phase) }}</span>
+                      <span v-if="task.needs_closure" class="rolled-tag">待收尾</span>
                       <span v-if="task.notes">备注：{{ task.notes }}</span>
                     </div>
                     <div v-if="task.comment_count || task.last_comment_preview" class="task-context" @click="openCommentDrawer(task)">
@@ -379,6 +431,7 @@
                       <el-button size="small" type="primary" plain @click="setTaskStatus(task, task.status === 'done' ? 'open' : 'done')">
                         {{ task.status === 'done' ? '重新打开' : '完成' }}
                       </el-button>
+                      <el-button size="small" plain @click="setTaskStatus(task, 'in_progress')">开始准备</el-button>
                       <el-button size="small" plain @click="openCommentDrawer(task)">评论</el-button>
                       <el-button size="small" plain @click="importCalendar(task)">日历</el-button>
                       <el-button size="small" plain @click="openTask(task)">编辑</el-button>
@@ -734,6 +787,71 @@
       </div>
     </el-dialog>
 
+    <el-dialog v-model="reviewDialogVisible" title="阶段回顾" :width="dialogWidth" :fullscreen="isMobile" @open="loadReview">
+      <div class="drawer-stack">
+        <div class="quick-row">
+          <el-select v-model="reviewPeriod" @change="loadReview">
+            <el-option label="周回顾" value="week" />
+            <el-option label="月回顾" value="month" />
+            <el-option label="年回顾" value="year" />
+          </el-select>
+          <el-button plain :loading="reviewLoading" @click="loadReview">刷新回顾</el-button>
+        </div>
+        <div v-if="review.summary" class="advice-card">
+          <div class="advice-header">
+            <strong>{{ review.label }}</strong>
+            <el-tag size="small">{{ activeKind === 'work' ? '工作' : '生活' }}</el-tag>
+          </div>
+          <p class="advice-summary">{{ review.summary }}</p>
+          <div class="summary-strip review-strip">
+            <div class="summary-chip">
+              <span>新增</span>
+              <strong>{{ review.stats.created || 0 }}</strong>
+            </div>
+            <div class="summary-chip">
+              <span>完成</span>
+              <strong>{{ review.stats.done || 0 }}</strong>
+            </div>
+            <div class="summary-chip">
+              <span>未收尾</span>
+              <strong>{{ review.stats.open || 0 }}</strong>
+            </div>
+            <div class="summary-chip">
+              <span>事件</span>
+              <strong>{{ review.stats.events || 0 }}</strong>
+            </div>
+          </div>
+          <div class="advice-section">
+            <h4>做得好的地方</h4>
+            <ul>
+              <li v-for="(item, index) in review.wins" :key="`win-${index}`">{{ item }}</li>
+            </ul>
+          </div>
+          <div class="advice-section" v-if="review.drifts.length > 0">
+            <h4>容易漂掉的地方</h4>
+            <ul>
+              <li v-for="(item, index) in review.drifts" :key="`drift-${index}`">{{ item }}</li>
+            </ul>
+          </div>
+          <div class="advice-section">
+            <h4>下一阶段建议</h4>
+            <ul>
+              <li v-for="(item, index) in review.suggestions" :key="`review-suggest-${index}`">{{ item }}</li>
+            </ul>
+          </div>
+          <div class="advice-section" v-if="review.highlights.length > 0">
+            <h4>值得记住的记录</h4>
+            <div class="focus-secondary">
+              <button v-for="item in review.highlights" :key="item.id" class="focus-secondary-item" @click="openTask(item)">
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.completed_at ? formatDateTime(item.completed_at) : item.display_date }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
     <el-dialog v-model="adminDialogVisible" title="超级管理员" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="quick-row">
@@ -816,7 +934,10 @@ function createEmptyBoard() {
       today_primary_limit: 3,
       today_primary_count: 0,
       needs_trim: false,
-      message: '还没有今天的聚焦建议。'
+      message: '还没有今天的聚焦建议。',
+      primary: null,
+      secondary: [],
+      next_event: null
     },
     recovery: {
       done_today: 0,
@@ -906,6 +1027,17 @@ const adviceResult = reactive({
   suggestions: []
 })
 
+const review = reactive({
+  period: 'week',
+  label: '',
+  summary: '',
+  stats: {},
+  wins: [],
+  drifts: [],
+  suggestions: [],
+  highlights: []
+})
+
 const creating = ref(false)
 const loggingIn = ref(false)
 const timelineLoading = ref(false)
@@ -926,6 +1058,8 @@ const adminDialogVisible = ref(false)
 const adminDetailVisible = ref(false)
 const parsingAI = ref(false)
 const adviceLoading = ref(false)
+const reviewLoading = ref(false)
+const reviewDialogVisible = ref(false)
 
 const comments = ref([])
 const taskCommentsPreview = ref([])
@@ -940,6 +1074,7 @@ const currentCommentTask = ref(null)
 const adviceMode = ref('plan')
 const adviceText = ref('')
 const adviceProvider = ref('fallback')
+const reviewPeriod = ref('week')
 const adminDetail = reactive({
   profile: {
     id: '',
@@ -971,6 +1106,9 @@ const currentTip = computed(() => {
 const openCount = computed(() => (board.value.counts.open || 0) + (board.value.counts.in_progress || 0))
 const hasCreatorPrivileges = computed(() => Boolean(creatorKey.value))
 const showInstallEntry = computed(() => !isStandaloneMode.value)
+const primaryFocusTask = computed(() => board.value.focus?.primary || null)
+const secondaryFocusTasks = computed(() => board.value.focus?.secondary || [])
+const nextEventTask = computed(() => board.value.focus?.next_event || null)
 
 const viewOptions = computed(() => [
   { key: 'timeline', label: '时间线', count: board.value.groups.reduce((sum, group) => sum + group.items.length, 0) },
@@ -1586,6 +1724,13 @@ function logout() {
   taskActivities.value = []
   taskActivitiesPreview.value = []
   aiSuggestions.value = []
+  review.label = ''
+  review.summary = ''
+  review.stats = {}
+  review.wins = []
+  review.drifts = []
+  review.suggestions = []
+  review.highlights = []
   profile.name = ''
   profile.notify_email = ''
   profile.expires_at = ''
@@ -1700,6 +1845,27 @@ async function requestAdvice() {
     ElMessage.error(error.message)
   } finally {
     adviceLoading.value = false
+  }
+}
+
+async function loadReview() {
+  if (!profileId.value) return
+  reviewLoading.value = true
+  try {
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/review?kind=${activeKind.value}&period=${reviewPeriod.value}`)
+    const data = await response.json()
+    review.period = data.review?.period || reviewPeriod.value
+    review.label = data.review?.label || ''
+    review.summary = data.review?.summary || ''
+    review.stats = data.review?.stats || {}
+    review.wins = data.review?.wins || []
+    review.drifts = data.review?.drifts || []
+    review.suggestions = data.review?.suggestions || []
+    review.highlights = data.review?.highlights || []
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    reviewLoading.value = false
   }
 }
 
@@ -1866,6 +2032,16 @@ function entryTypeLabel(entryType) {
   return entryType === 'event' ? '事件' : '任务'
 }
 
+function eventPhaseLabel(phase) {
+  return {
+    soon: '即将开始',
+    today: '今日安排',
+    in_window: '进行中',
+    awaiting_closure: '待收尾',
+    planned: '已安排'
+  }[phase] || '已安排'
+}
+
 function bucketLabel(bucket) {
   return {
     inbox: '收件箱',
@@ -1891,6 +2067,9 @@ function formatDateTime(value) {
 watch(activeKind, () => {
   if (profileId.value) {
     refreshBoard()
+    if (reviewDialogVisible.value) {
+      loadReview()
+    }
   }
 })
 
@@ -2339,6 +2518,63 @@ onBeforeUnmount(() => {
   color: #1c2f49;
 }
 
+.focus-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.focus-card {
+  display: grid;
+  gap: 14px;
+}
+
+.focus-meta,
+.focus-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.focus-meta span {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #5f6f84;
+  font-size: 12px;
+}
+
+.focus-secondary-item {
+  border: none;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  flex: 1 1 180px;
+}
+
+.focus-secondary-item strong {
+  color: #21324c;
+}
+
+.focus-secondary-item span {
+  color: #6c7d91;
+  font-size: 12px;
+}
+
+.compact-actions {
+  margin-top: 0;
+}
+
+.review-strip {
+  margin-top: 12px;
+}
+
 .quick-panel,
 .board-panel {
   margin-top: 16px;
@@ -2561,6 +2797,10 @@ onBeforeUnmount(() => {
 
 @media (max-width: 900px) {
   .hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .focus-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -72,6 +72,9 @@ type plannerTimelineItem struct {
 	CommentCount       int        `json:"comment_count"`
 	LastCommentPreview string     `json:"last_comment_preview"`
 	LastCommentAt      *time.Time `json:"last_comment_at,omitempty"`
+	TimeHint           string     `json:"time_hint"`
+	EventPhase         string     `json:"event_phase"`
+	NeedsClosure       bool       `json:"needs_closure"`
 }
 
 type plannerTimelineGroup struct {
@@ -81,10 +84,13 @@ type plannerTimelineGroup struct {
 }
 
 type plannerFocusSummary struct {
-	TodayPrimaryLimit int    `json:"today_primary_limit"`
-	TodayPrimaryCount int    `json:"today_primary_count"`
-	NeedsTrim         bool   `json:"needs_trim"`
-	Message           string `json:"message"`
+	TodayPrimaryLimit int                    `json:"today_primary_limit"`
+	TodayPrimaryCount int                    `json:"today_primary_count"`
+	NeedsTrim         bool                   `json:"needs_trim"`
+	Message           string                 `json:"message"`
+	Primary           *plannerTimelineItem   `json:"primary,omitempty"`
+	Secondary         []*plannerTimelineItem `json:"secondary,omitempty"`
+	NextEvent         *plannerTimelineItem   `json:"next_event,omitempty"`
 }
 
 type plannerRecoverySummary struct {
@@ -107,6 +113,17 @@ type plannerBoardResponse struct {
 	Recovery     plannerRecoverySummary  `json:"recovery"`
 	ModeDefault  string                  `json:"mode_default"`
 	ModeHint     string                  `json:"mode_hint"`
+}
+
+type plannerReviewResponse struct {
+	Period      string                 `json:"period"`
+	Label       string                 `json:"label"`
+	Summary     string                 `json:"summary"`
+	Stats       map[string]int         `json:"stats"`
+	Wins        []string               `json:"wins"`
+	Drifts      []string               `json:"drifts"`
+	Suggestions []string               `json:"suggestions"`
+	Highlights  []*plannerTimelineItem `json:"highlights"`
 }
 
 type createPlannerProfileRequest struct {
@@ -606,6 +623,8 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 	todayPrimaryCount := 0
 	doneToday := 0
 	cancelledToday := 0
+	focusCandidates := make([]*plannerTimelineItem, 0)
+	upcomingEvents := make([]*plannerTimelineItem, 0)
 
 	for _, task := range tasks {
 		status := normalizePlannerStatus(task.Status)
@@ -622,6 +641,7 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 			CalendarAvailable: true,
 			OverdueDays:       0,
 		}
+		applyPlannerTimeContext(item, now)
 		if task.OriginalPlannedFor == "" {
 			task.OriginalPlannedFor = task.PlannedFor
 		}
@@ -659,6 +679,7 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 				todayPrimaryCount++
 			}
 			group.Items = append(group.Items, item)
+			upcomingEvents = append(upcomingEvents, item)
 			continue
 		}
 
@@ -683,6 +704,7 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 		group.Items = append(group.Items, item)
 		if item.DisplayDate == today {
 			todayPrimaryCount++
+			focusCandidates = append(focusCandidates, item)
 		}
 	}
 
@@ -706,9 +728,24 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 		TodayPrimaryLimit: limit,
 		TodayPrimaryCount: todayPrimaryCount,
 		NeedsTrim:         todayPrimaryCount > limit,
+		Secondary:         make([]*plannerTimelineItem, 0),
+	}
+	sortPlannerItems(focusCandidates)
+	if len(focusCandidates) > 0 {
+		board.Focus.Primary = focusCandidates[0]
+		if len(focusCandidates) > 1 {
+			maxSecondary := minPlannerInt(2, len(focusCandidates)-1)
+			board.Focus.Secondary = append(board.Focus.Secondary, focusCandidates[1:1+maxSecondary]...)
+		}
+	}
+	sortPlannerEventItems(upcomingEvents, now)
+	if len(upcomingEvents) > 0 {
+		board.Focus.NextEvent = upcomingEvents[0]
 	}
 	if board.Focus.NeedsTrim {
 		board.Focus.Message = fmt.Sprintf("今天挂在时间线上的%s事项有 %d 件，建议先收敛到 %d 件以内。", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind], todayPrimaryCount, limit)
+	} else if board.Focus.Primary != nil {
+		board.Focus.Message = fmt.Sprintf("今天最该先推进的是「%s」。", board.Focus.Primary.Title)
 	} else {
 		board.Focus.Message = fmt.Sprintf("今天主推进 %d 件，节奏还比较舒服。", todayPrimaryCount)
 	}
@@ -728,6 +765,86 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 	}
 
 	return board
+}
+
+func applyPlannerTimeContext(item *plannerTimelineItem, now time.Time) {
+	if item == nil {
+		return
+	}
+	if item.EntryType == models.PlannerEntryEvent {
+		eventTime := plannerEventBaseTime(item)
+		if eventTime != nil {
+			diff := eventTime.Sub(now)
+			switch {
+			case diff < -2*time.Hour:
+				item.EventPhase = "awaiting_closure"
+				item.NeedsClosure = normalizePlannerStatus(item.Status) != plannerStatusDone && normalizePlannerStatus(item.Status) != plannerStatusCancelled
+				item.TimeHint = "事件时间已过，建议收尾"
+			case diff < 0:
+				item.EventPhase = "in_window"
+				item.TimeHint = "事件进行中"
+			case diff <= 2*time.Hour:
+				item.EventPhase = "soon"
+				item.TimeHint = fmt.Sprintf("%d 分钟后开始", int(diff.Minutes()))
+			case diff <= 24*time.Hour:
+				item.EventPhase = "today"
+				item.TimeHint = fmt.Sprintf("%d 小时后开始", int(diff.Hours()+0.5))
+			default:
+				item.EventPhase = "planned"
+				item.TimeHint = plannerDateLabel(item.DisplayDate, now.Format("2006-01-02"))
+			}
+			return
+		}
+	}
+	if item.IsRolledOver && item.OverdueDays > 0 {
+		item.TimeHint = fmt.Sprintf("已晚 %d 天", item.OverdueDays)
+		return
+	}
+	if item.IsToday {
+		item.TimeHint = "今天"
+		return
+	}
+	if item.DisplayLabel != "" {
+		item.TimeHint = item.DisplayLabel
+	}
+}
+
+func plannerEventBaseTime(item *plannerTimelineItem) *time.Time {
+	if item.RemindAt != nil {
+		return item.RemindAt
+	}
+	if strings.TrimSpace(item.PlannedFor) == "" {
+		return nil
+	}
+	if t, err := time.ParseInLocation("2006-01-02", item.PlannedFor, time.Local); err == nil {
+		return &t
+	}
+	return nil
+}
+
+func sortPlannerEventItems(items []*plannerTimelineItem, now time.Time) {
+	sort.SliceStable(items, func(i, j int) bool {
+		a := plannerEventBaseTime(items[i])
+		b := plannerEventBaseTime(items[j])
+		if a == nil && b == nil {
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		}
+		if a == nil {
+			return false
+		}
+		if b == nil {
+			return true
+		}
+		da := a.Sub(now)
+		db := b.Sub(now)
+		if da < 0 && db >= 0 {
+			return false
+		}
+		if da >= 0 && db < 0 {
+			return true
+		}
+		return a.Before(*b)
+	})
 }
 
 func plannerCommentPreview(value string) string {
@@ -883,6 +1000,146 @@ func (h *PlannerHandler) ListTimeline(c *gin.Context) {
 	board.ModeDefault = plannerModeDefault(now)
 	board.ModeHint = plannerModeHint(now)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "board": board})
+}
+
+func (h *PlannerHandler) Review(c *gin.Context) {
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	kind := normalizePlannerKind(c.DefaultQuery("kind", plannerModeDefault(time.Now())))
+	period := strings.TrimSpace(strings.ToLower(c.DefaultQuery("period", "week")))
+	tasks, err := h.db.ListPlannerTasksByProfile(profile.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取事项失败", "code": 500})
+		return
+	}
+	review := buildPlannerReview(profile, tasks, kind, period, time.Now())
+	c.JSON(http.StatusOK, gin.H{"code": 0, "review": review})
+}
+
+func buildPlannerReview(profile *models.PlannerProfile, tasks []*models.PlannerTask, kind, period string, now time.Time) plannerReviewResponse {
+	days := 7
+	label := "周回顾"
+	switch period {
+	case "month":
+		days = 30
+		label = "月回顾"
+	case "year":
+		days = 365
+		label = "年回顾"
+	default:
+		period = "week"
+	}
+	start := now.AddDate(0, 0, -(days - 1))
+	stats := map[string]int{
+		"created":       0,
+		"done":          0,
+		"cancelled":     0,
+		"open":          0,
+		"events":        0,
+		"rollovers":     0,
+		"commented":     0,
+		"needs_closure": 0,
+	}
+	wins := make([]string, 0, 4)
+	drifts := make([]string, 0, 4)
+	suggestions := make([]string, 0, 4)
+	highlights := make([]*plannerTimelineItem, 0, 5)
+	highlightSeen := map[string]bool{}
+
+	for _, task := range tasks {
+		if task.Kind != kind {
+			continue
+		}
+		if task.CreatedAt.After(start) {
+			stats["created"]++
+		}
+		if task.EntryType == models.PlannerEntryEvent {
+			stats["events"]++
+		}
+		if task.RolloverCount > 0 && task.UpdatedAt.After(start) {
+			stats["rollovers"]++
+		}
+		if task.CompletedAt != nil && task.CompletedAt.After(start) {
+			switch normalizePlannerStatus(task.Status) {
+			case plannerStatusDone:
+				stats["done"]++
+			case plannerStatusCancelled:
+				stats["cancelled"]++
+			}
+			if len(highlights) < 5 && !highlightSeen[task.ID] {
+				item := &plannerTimelineItem{
+					PlannerTask:  task,
+					DisplayDate:  itemCompletionDate(task, now.Format("2006-01-02")),
+					DisplayLabel: plannerDateLabel(itemCompletionDate(task, now.Format("2006-01-02")), now.Format("2006-01-02")),
+				}
+				applyPlannerTimeContext(item, now)
+				highlights = append(highlights, item)
+				highlightSeen[task.ID] = true
+			}
+		}
+		if normalizePlannerStatus(task.Status) == plannerStatusOpen || normalizePlannerStatus(task.Status) == plannerStatusInProgress {
+			stats["open"]++
+			if task.EntryType == models.PlannerEntryEvent {
+				item := &plannerTimelineItem{PlannerTask: task, DisplayDate: task.PlannedFor}
+				applyPlannerTimeContext(item, now)
+				if item.NeedsClosure {
+					stats["needs_closure"]++
+				}
+			}
+		}
+		if strings.TrimSpace(task.LastPostponeReason) != "" && task.LastPostponedAt != nil && task.LastPostponedAt.After(start) {
+			stats["commented"]++
+		}
+	}
+
+	switch {
+	case stats["done"] > 0:
+		wins = append(wins, fmt.Sprintf("这段时间完成了 %d 件%s事项。", stats["done"], map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind]))
+	case stats["created"] > 0:
+		wins = append(wins, fmt.Sprintf("至少把 %d 个念头接住了，没有让它们继续悬在脑子里。", stats["created"]))
+	default:
+		wins = append(wins, "这段时间记录不多，说明节奏相对稳定。")
+	}
+	if stats["events"] > 0 {
+		wins = append(wins, fmt.Sprintf("管理了 %d 个事件型安排。", stats["events"]))
+	}
+
+	if stats["rollovers"] > 0 {
+		drifts = append(drifts, fmt.Sprintf("有 %d 次顺延，说明计划密度偏高。", stats["rollovers"]))
+	}
+	if stats["needs_closure"] > 0 {
+		drifts = append(drifts, fmt.Sprintf("还有 %d 个事件过时未收尾，档案感会被削弱。", stats["needs_closure"]))
+	}
+	if stats["open"] > stats["done"]+2 {
+		drifts = append(drifts, "未完成量高于收尾量，下一阶段要收而不是继续铺。")
+	}
+
+	if stats["needs_closure"] > 0 {
+		suggestions = append(suggestions, "先把已发生但未收尾的事件逐个完成或取消，保持事件档案干净。")
+	}
+	if stats["rollovers"] > 0 {
+		suggestions = append(suggestions, "下一阶段给今天只留一个主事项，其余转收件箱或明确改期。")
+	}
+	if stats["open"] > 0 {
+		suggestions = append(suggestions, "从未完成事项里只挑一件最有杠杆的，作为新的阶段起点。")
+	}
+	if len(suggestions) == 0 {
+		suggestions = append(suggestions, "这段时间节奏还算稳，可以补一两个真正重要的下一步，而不是继续堆列表。")
+	}
+
+	summary := fmt.Sprintf("%s里新增 %d 条记录，完成 %d 条，仍有 %d 条未收尾。", label, stats["created"], stats["done"], stats["open"])
+	return plannerReviewResponse{
+		Period:      period,
+		Label:       label,
+		Summary:     fmt.Sprintf("%s「%s」%s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind], profile.Name, summary),
+		Stats:       stats,
+		Wins:        wins,
+		Drifts:      drifts,
+		Suggestions: suggestions,
+		Highlights:  highlights,
+	}
 }
 
 func (h *PlannerHandler) buildPlannerTask(profile *models.PlannerProfile, req createPlannerTaskRequest) (*models.PlannerTask, error) {

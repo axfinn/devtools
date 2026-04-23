@@ -649,6 +649,7 @@ func main() {
 			planner.PUT("/profile/:id", plannerHandler.UpdateProfile)
 			planner.DELETE("/profile/:id", plannerHandler.DeleteProfile)
 			planner.GET("/profile/:id/timeline", plannerHandler.ListTimeline)
+			planner.GET("/profile/:id/review", plannerHandler.Review)
 			planner.POST("/profile/:id/tasks", plannerHandler.CreateTask)
 			planner.POST("/profile/:id/tasks/batch", plannerHandler.CreateTaskBatch)
 			planner.PUT("/profile/:id/tasks/:taskId", plannerHandler.UpdateTask)

@@ -76,6 +76,9 @@ func TestBuildPlannerBoardRollover(t *testing.T) {
 	if board.Counts["in_progress"] != 1 {
 		t.Fatalf("expected work in_progress count 1, got %d", board.Counts["in_progress"])
 	}
+	if board.Focus.Primary == nil || board.Focus.Primary.ID != "a1" {
+		t.Fatalf("expected primary focus a1, got %#v", board.Focus.Primary)
+	}
 }
 
 func TestBuildPlannerICSTimedEvent(t *testing.T) {
@@ -101,6 +104,46 @@ func TestBuildPlannerICSTimedEvent(t *testing.T) {
 	}
 	if !strings.Contains(content, "BEGIN:VALARM") {
 		t.Fatalf("expected alarm block in calendar content")
+	}
+}
+
+func TestBuildPlannerBoardSelectsNextEvent(t *testing.T) {
+	now := time.Date(2026, 4, 23, 10, 0, 0, 0, time.Local)
+	eventSoon := now.Add(90 * time.Minute)
+	eventTomorrow := now.Add(26 * time.Hour)
+	tasks := []*models.PlannerTask{
+		{
+			ID:         "e2",
+			Kind:       plannerKindWork,
+			EntryType:  models.PlannerEntryEvent,
+			Bucket:     models.PlannerBucketPlanned,
+			Title:      "明天会议",
+			Status:     plannerStatusOpen,
+			Priority:   "medium",
+			PlannedFor: now.Add(24 * time.Hour).Format("2006-01-02"),
+			RemindAt:   &eventTomorrow,
+			CreatedAt:  now.Add(-2 * time.Hour),
+		},
+		{
+			ID:         "e1",
+			Kind:       plannerKindWork,
+			EntryType:  models.PlannerEntryEvent,
+			Bucket:     models.PlannerBucketPlanned,
+			Title:      "即将开始的会议",
+			Status:     plannerStatusOpen,
+			Priority:   "high",
+			PlannedFor: now.Format("2006-01-02"),
+			RemindAt:   &eventSoon,
+			CreatedAt:  now.Add(-1 * time.Hour),
+		},
+	}
+
+	board := buildPlannerBoard(tasks, plannerKindWork, now)
+	if board.Focus.NextEvent == nil || board.Focus.NextEvent.ID != "e1" {
+		t.Fatalf("expected next event e1, got %#v", board.Focus.NextEvent)
+	}
+	if board.Focus.NextEvent.EventPhase == "" {
+		t.Fatalf("expected next event phase")
 	}
 }
 
@@ -317,6 +360,44 @@ func TestPlannerAdviseFallsBackWhenMiniMaxFails(t *testing.T) {
 	}
 	if strings.TrimSpace(advice.Summary) == "" {
 		t.Fatalf("expected fallback advice summary")
+	}
+}
+
+func TestBuildPlannerReview(t *testing.T) {
+	now := time.Date(2026, 4, 23, 10, 0, 0, 0, time.Local)
+	doneAt := now.Add(-24 * time.Hour)
+	tasks := []*models.PlannerTask{
+		{
+			ID:          "done1",
+			Kind:        plannerKindWork,
+			EntryType:   models.PlannerEntryTask,
+			Bucket:      models.PlannerBucketPlanned,
+			Title:       "完成事项",
+			Status:      plannerStatusDone,
+			CreatedAt:   now.Add(-48 * time.Hour),
+			CompletedAt: &doneAt,
+		},
+		{
+			ID:         "event1",
+			Kind:       plannerKindWork,
+			EntryType:  models.PlannerEntryEvent,
+			Bucket:     models.PlannerBucketPlanned,
+			Title:      "待收尾事件",
+			Status:     plannerStatusOpen,
+			PlannedFor: now.Add(-24 * time.Hour).Format("2006-01-02"),
+			CreatedAt:  now.Add(-36 * time.Hour),
+		},
+	}
+
+	review := buildPlannerReview(&models.PlannerProfile{Name: "档案"}, tasks, plannerKindWork, "week", now)
+	if review.Stats["done"] != 1 {
+		t.Fatalf("expected done 1, got %d", review.Stats["done"])
+	}
+	if review.Stats["events"] != 1 {
+		t.Fatalf("expected events 1, got %d", review.Stats["events"])
+	}
+	if len(review.Suggestions) == 0 {
+		t.Fatalf("expected review suggestions")
 	}
 }
 
