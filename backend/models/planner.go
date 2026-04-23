@@ -6,6 +6,15 @@ import (
 	"time"
 )
 
+const (
+	PlannerEntryTask  = "task"
+	PlannerEntryEvent = "event"
+
+	PlannerBucketInbox   = "inbox"
+	PlannerBucketPlanned = "planned"
+	PlannerBucketSomeday = "someday"
+)
+
 type PlannerProfile struct {
 	ID            string     `json:"id"`
 	PasswordIndex string     `json:"-"`
@@ -18,21 +27,28 @@ type PlannerProfile struct {
 }
 
 type PlannerTask struct {
-	ID             string     `json:"id"`
-	ProfileID      string     `json:"profile_id"`
-	Kind           string     `json:"kind"`
-	Title          string     `json:"title"`
-	Detail         string     `json:"detail"`
-	Notes          string     `json:"notes"`
-	Status         string     `json:"status"`
-	Priority       string     `json:"priority"`
-	PlannedFor     string     `json:"planned_for"`
-	RemindAt       *time.Time `json:"remind_at"`
-	NotifyEmail    string     `json:"notify_email"`
-	LastNotifiedAt *time.Time `json:"last_notified_at"`
-	CompletedAt    *time.Time `json:"completed_at"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID                 string     `json:"id"`
+	ProfileID          string     `json:"profile_id"`
+	Kind               string     `json:"kind"`
+	EntryType          string     `json:"entry_type"`
+	Bucket             string     `json:"bucket"`
+	Title              string     `json:"title"`
+	Detail             string     `json:"detail"`
+	Notes              string     `json:"notes"`
+	Status             string     `json:"status"`
+	Priority           string     `json:"priority"`
+	PlannedFor         string     `json:"planned_for"`
+	OriginalPlannedFor string     `json:"original_planned_for"`
+	RolloverCount      int        `json:"rollover_count"`
+	LastPostponeReason string     `json:"last_postpone_reason"`
+	LastPostponedAt    *time.Time `json:"last_postponed_at"`
+	RemindAt           *time.Time `json:"remind_at"`
+	NotifyEmail        string     `json:"notify_email"`
+	LastNotifiedAt     *time.Time `json:"last_notified_at"`
+	CancelReason       string     `json:"cancel_reason"`
+	CompletedAt        *time.Time `json:"completed_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type PlannerTaskComment struct {
@@ -72,15 +88,22 @@ func (db *DB) InitPlanner() error {
 			id TEXT PRIMARY KEY,
 			profile_id TEXT NOT NULL,
 			kind TEXT NOT NULL,
+			entry_type TEXT NOT NULL DEFAULT 'task',
+			bucket TEXT NOT NULL DEFAULT 'planned',
 			title TEXT NOT NULL,
 			detail TEXT DEFAULT '',
 			notes TEXT DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'open',
 			priority TEXT NOT NULL DEFAULT 'medium',
 			planned_for TEXT NOT NULL,
+			original_planned_for TEXT DEFAULT '',
+			rollover_count INTEGER DEFAULT 0,
+			last_postpone_reason TEXT DEFAULT '',
+			last_postponed_at DATETIME,
 			remind_at DATETIME,
 			notify_email TEXT DEFAULT '',
 			last_notified_at DATETIME,
+			cancel_reason TEXT DEFAULT '',
 			completed_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -100,6 +123,7 @@ func (db *DB) InitPlanner() error {
 
 		CREATE INDEX IF NOT EXISTS idx_planner_profiles_expires_at ON planner_profiles(expires_at);
 		CREATE INDEX IF NOT EXISTS idx_planner_tasks_profile_kind_status ON planner_tasks(profile_id, kind, status, planned_for);
+		CREATE INDEX IF NOT EXISTS idx_planner_tasks_bucket_entry_type ON planner_tasks(profile_id, bucket, entry_type, status);
 		CREATE INDEX IF NOT EXISTS idx_planner_tasks_remind_at ON planner_tasks(status, remind_at, last_notified_at);
 		CREATE INDEX IF NOT EXISTS idx_planner_comments_task_created_at ON planner_task_comments(task_id, created_at);
 	`)
@@ -108,10 +132,17 @@ func (db *DB) InitPlanner() error {
 	}
 
 	db.conn.Exec("ALTER TABLE planner_profiles ADD COLUMN notify_email TEXT DEFAULT ''")
+	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'task'")
+	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN bucket TEXT NOT NULL DEFAULT 'planned'")
 	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN notes TEXT DEFAULT ''")
 	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN notify_email TEXT DEFAULT ''")
 	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN last_notified_at DATETIME")
 	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN completed_at DATETIME")
+	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN original_planned_for TEXT DEFAULT ''")
+	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN rollover_count INTEGER DEFAULT 0")
+	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN last_postpone_reason TEXT DEFAULT ''")
+	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN last_postponed_at DATETIME")
+	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN cancel_reason TEXT DEFAULT ''")
 
 	return nil
 }
@@ -208,7 +239,7 @@ func (db *DB) PlannerProfileExists(id string) (bool, error) {
 }
 
 func (db *DB) ListPlannerTasksByProfile(profileID string) ([]*PlannerTask, error) {
-	return db.ListPlannerTasks(profileID, "", "")
+	return db.ListPlannerTasksAdvanced(profileID, "", "", "", "")
 }
 
 func (db *DB) DeletePlannerTask(id string) error {
@@ -243,7 +274,7 @@ func (db *DB) ListPlannerProfiles(limit, offset int) ([]*PlannerProfileSummary, 
 			p.created_at,
 			p.updated_at,
 			COUNT(t.id) AS task_count,
-			SUM(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END) AS open_count
+			SUM(CASE WHEN t.status IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS open_count
 		FROM planner_profiles p
 		LEFT JOIN planner_tasks t ON t.profile_id = p.id
 		GROUP BY p.id
@@ -291,49 +322,68 @@ func (db *DB) CreatePlannerTask(task *PlannerTask) error {
 
 	_, err := db.conn.Exec(`
 		INSERT INTO planner_tasks (
-			id, profile_id, kind, title, detail, notes, status, priority, planned_for,
-			remind_at, notify_email, last_notified_at, completed_at, created_at, updated_at
+			id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
+			planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
+			remind_at, notify_email, last_notified_at, cancel_reason, completed_at, created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, task.ID, task.ProfileID, task.Kind, task.Title, task.Detail, task.Notes, task.Status,
-		task.Priority, task.PlannedFor, task.RemindAt, task.NotifyEmail, task.LastNotifiedAt,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, task.ID, task.ProfileID, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status,
+		task.Priority, task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason,
+		task.LastPostponedAt, task.RemindAt, task.NotifyEmail, task.LastNotifiedAt, task.CancelReason,
 		task.CompletedAt, task.CreatedAt, task.UpdatedAt)
 	return err
 }
 
 func (db *DB) GetPlannerTask(id string) (*PlannerTask, error) {
-	row := db.conn.QueryRow(`
-		SELECT id, profile_id, kind, title, detail, notes, status, priority, planned_for,
-		       remind_at, notify_email, last_notified_at, completed_at, created_at, updated_at
-		FROM planner_tasks
-		WHERE id = ?
-	`, id)
+	row := db.conn.QueryRow(plannerTaskSelectSQL+` WHERE id = ?`, id)
 	return scanPlannerTask(row)
 }
 
-func scanPlannerTask(row *sql.Row) (*PlannerTask, error) {
+const plannerTaskSelectSQL = `
+	SELECT id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
+	       planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
+	       remind_at, notify_email, last_notified_at, cancel_reason, completed_at, created_at, updated_at
+	FROM planner_tasks
+`
+
+type plannerTaskScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanPlannerTask(scanner plannerTaskScanner) (*PlannerTask, error) {
 	task := &PlannerTask{}
+	var lastPostponedAt sql.NullTime
 	var remindAt sql.NullTime
 	var lastNotifiedAt sql.NullTime
 	var completedAt sql.NullTime
-	if err := row.Scan(
+	if err := scanner.Scan(
 		&task.ID,
 		&task.ProfileID,
 		&task.Kind,
+		&task.EntryType,
+		&task.Bucket,
 		&task.Title,
 		&task.Detail,
 		&task.Notes,
 		&task.Status,
 		&task.Priority,
 		&task.PlannedFor,
+		&task.OriginalPlannedFor,
+		&task.RolloverCount,
+		&task.LastPostponeReason,
+		&lastPostponedAt,
 		&remindAt,
 		&task.NotifyEmail,
 		&lastNotifiedAt,
+		&task.CancelReason,
 		&completedAt,
 		&task.CreatedAt,
 		&task.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if lastPostponedAt.Valid {
+		task.LastPostponedAt = &lastPostponedAt.Time
 	}
 	if remindAt.Valid {
 		task.RemindAt = &remindAt.Time
@@ -344,26 +394,42 @@ func scanPlannerTask(row *sql.Row) (*PlannerTask, error) {
 	if completedAt.Valid {
 		task.CompletedAt = &completedAt.Time
 	}
+	if strings.TrimSpace(task.EntryType) == "" {
+		task.EntryType = PlannerEntryTask
+	}
+	if strings.TrimSpace(task.Bucket) == "" {
+		task.Bucket = PlannerBucketPlanned
+	}
+	if strings.TrimSpace(task.OriginalPlannedFor) == "" {
+		task.OriginalPlannedFor = task.PlannedFor
+	}
 	return task, nil
 }
 
 func (db *DB) ListPlannerTasks(profileID, kind, status string) ([]*PlannerTask, error) {
-	query := `
-		SELECT id, profile_id, kind, title, detail, notes, status, priority, planned_for,
-		       remind_at, notify_email, last_notified_at, completed_at, created_at, updated_at
-		FROM planner_tasks
-		WHERE profile_id = ?
-	`
+	return db.ListPlannerTasksAdvanced(profileID, kind, status, "", "")
+}
+
+func (db *DB) ListPlannerTasksAdvanced(profileID, kind, status, bucket, entryType string) ([]*PlannerTask, error) {
+	query := plannerTaskSelectSQL + ` WHERE profile_id = ?`
 	args := []interface{}{profileID}
 	if kind != "" {
-		query += " AND kind = ?"
+		query += ` AND kind = ?`
 		args = append(args, kind)
 	}
 	if status != "" {
-		query += " AND status = ?"
+		query += ` AND status = ?`
 		args = append(args, status)
 	}
-	query += " ORDER BY planned_for ASC, created_at ASC"
+	if bucket != "" {
+		query += ` AND bucket = ?`
+		args = append(args, bucket)
+	}
+	if entryType != "" {
+		query += ` AND entry_type = ?`
+		args = append(args, entryType)
+	}
+	query += ` ORDER BY planned_for ASC, created_at ASC`
 
 	rows, err := db.conn.Query(query, args...)
 	if err != nil {
@@ -373,37 +439,9 @@ func (db *DB) ListPlannerTasks(profileID, kind, status string) ([]*PlannerTask, 
 
 	result := make([]*PlannerTask, 0)
 	for rows.Next() {
-		task := &PlannerTask{}
-		var remindAt sql.NullTime
-		var lastNotifiedAt sql.NullTime
-		var completedAt sql.NullTime
-		if err := rows.Scan(
-			&task.ID,
-			&task.ProfileID,
-			&task.Kind,
-			&task.Title,
-			&task.Detail,
-			&task.Notes,
-			&task.Status,
-			&task.Priority,
-			&task.PlannedFor,
-			&remindAt,
-			&task.NotifyEmail,
-			&lastNotifiedAt,
-			&completedAt,
-			&task.CreatedAt,
-			&task.UpdatedAt,
-		); err != nil {
+		task, err := scanPlannerTask(rows)
+		if err != nil {
 			return nil, err
-		}
-		if remindAt.Valid {
-			task.RemindAt = &remindAt.Time
-		}
-		if lastNotifiedAt.Valid {
-			task.LastNotifiedAt = &lastNotifiedAt.Time
-		}
-		if completedAt.Valid {
-			task.CompletedAt = &completedAt.Time
 		}
 		result = append(result, task)
 	}
@@ -414,13 +452,14 @@ func (db *DB) UpdatePlannerTask(task *PlannerTask) error {
 	task.UpdatedAt = time.Now()
 	_, err := db.conn.Exec(`
 		UPDATE planner_tasks
-		SET kind = ?, title = ?, detail = ?, notes = ?, status = ?, priority = ?,
-		    planned_for = ?, remind_at = ?, notify_email = ?, last_notified_at = ?,
-		    completed_at = ?, updated_at = ?
+		SET kind = ?, entry_type = ?, bucket = ?, title = ?, detail = ?, notes = ?, status = ?, priority = ?,
+		    planned_for = ?, original_planned_for = ?, rollover_count = ?, last_postpone_reason = ?, last_postponed_at = ?,
+		    remind_at = ?, notify_email = ?, last_notified_at = ?, cancel_reason = ?, completed_at = ?, updated_at = ?
 		WHERE id = ?
-	`, task.Kind, task.Title, task.Detail, task.Notes, task.Status, task.Priority,
-		task.PlannedFor, task.RemindAt, task.NotifyEmail, task.LastNotifiedAt, task.CompletedAt,
-		task.UpdatedAt, task.ID)
+	`, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status, task.Priority,
+		task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason, task.LastPostponedAt,
+		task.RemindAt, task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.UpdatedAt,
+		task.ID)
 	return err
 }
 
@@ -459,10 +498,10 @@ func (db *DB) ListPlannerTaskComments(taskID string) ([]*PlannerTaskComment, err
 
 func (db *DB) CountPlannerTasks(profileID string) (map[string]int, error) {
 	rows, err := db.conn.Query(`
-		SELECT kind || ':' || status AS bucket, COUNT(*)
+		SELECT kind || ':' || entry_type || ':' || bucket || ':' || status AS bucket_key, COUNT(*)
 		FROM planner_tasks
 		WHERE profile_id = ?
-		GROUP BY kind, status
+		GROUP BY kind, entry_type, bucket, status
 	`, profileID)
 	if err != nil {
 		return nil, err
@@ -485,11 +524,9 @@ func (db *DB) ListPlannerTasksDueForReminder(now time.Time, limit int) ([]*Plann
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := db.conn.Query(`
-		SELECT id, profile_id, kind, title, detail, notes, status, priority, planned_for,
-		       remind_at, notify_email, last_notified_at, completed_at, created_at, updated_at
-		FROM planner_tasks
+	rows, err := db.conn.Query(plannerTaskSelectSQL+`
 		WHERE status IN ('open', 'in_progress')
+		  AND bucket != 'inbox'
 		  AND remind_at IS NOT NULL
 		  AND remind_at <= ?
 		  AND (last_notified_at IS NULL OR last_notified_at < remind_at)
@@ -503,37 +540,9 @@ func (db *DB) ListPlannerTasksDueForReminder(now time.Time, limit int) ([]*Plann
 
 	result := make([]*PlannerTask, 0)
 	for rows.Next() {
-		task := &PlannerTask{}
-		var remindAt sql.NullTime
-		var lastNotifiedAt sql.NullTime
-		var completedAt sql.NullTime
-		if err := rows.Scan(
-			&task.ID,
-			&task.ProfileID,
-			&task.Kind,
-			&task.Title,
-			&task.Detail,
-			&task.Notes,
-			&task.Status,
-			&task.Priority,
-			&task.PlannedFor,
-			&remindAt,
-			&task.NotifyEmail,
-			&lastNotifiedAt,
-			&completedAt,
-			&task.CreatedAt,
-			&task.UpdatedAt,
-		); err != nil {
+		task, err := scanPlannerTask(rows)
+		if err != nil {
 			return nil, err
-		}
-		if remindAt.Valid {
-			task.RemindAt = &remindAt.Time
-		}
-		if lastNotifiedAt.Valid {
-			task.LastNotifiedAt = &lastNotifiedAt.Time
-		}
-		if completedAt.Valid {
-			task.CompletedAt = &completedAt.Time
 		}
 		result = append(result, task)
 	}
@@ -596,7 +605,7 @@ func (db *DB) SearchPlannerProfiles(keyword string, limit int) ([]*PlannerProfil
 			p.created_at,
 			p.updated_at,
 			COUNT(t.id) AS task_count,
-			SUM(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END) AS open_count
+			SUM(CASE WHEN t.status IN ('open', 'in_progress') THEN 1 ELSE 0 END) AS open_count
 		FROM planner_profiles p
 		LEFT JOIN planner_tasks t ON t.profile_id = p.id
 		WHERE p.id LIKE ? OR p.name LIKE ? OR p.notify_email LIKE ?

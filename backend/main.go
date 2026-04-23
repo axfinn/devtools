@@ -656,6 +656,7 @@ func main() {
 			planner.POST("/profile/:id/tasks/:taskId/comments", plannerHandler.CreateTaskComment)
 			planner.GET("/profile/:id/tasks/:taskId/calendar", plannerHandler.DownloadCalendar)
 			planner.POST("/profile/:id/ai/parse", plannerHandler.AIParse)
+			planner.POST("/profile/:id/ai/advise", plannerHandler.AIAdvise)
 			planner.GET("/admin/list", plannerHandler.AdminList)
 			planner.GET("/admin/:id", plannerHandler.AdminGet)
 			planner.PUT("/admin/:id", plannerHandler.AdminUpdate)

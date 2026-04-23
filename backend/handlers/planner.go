@@ -65,6 +65,7 @@ type plannerTimelineItem struct {
 	DisplayLabel      string `json:"display_label"`
 	IsRolledOver      bool   `json:"is_rolled_over"`
 	IsToday           bool   `json:"is_today"`
+	OverdueDays       int    `json:"overdue_days"`
 	CalendarAvailable bool   `json:"calendar_available"`
 }
 
@@ -72,6 +73,120 @@ type plannerTimelineGroup struct {
 	Date  string                 `json:"date"`
 	Label string                 `json:"label"`
 	Items []*plannerTimelineItem `json:"items"`
+}
+
+type plannerFocusSummary struct {
+	TodayPrimaryLimit int    `json:"today_primary_limit"`
+	TodayPrimaryCount int    `json:"today_primary_count"`
+	NeedsTrim         bool   `json:"needs_trim"`
+	Message           string `json:"message"`
+}
+
+type plannerRecoverySummary struct {
+	DoneToday      int    `json:"done_today"`
+	CancelledToday int    `json:"cancelled_today"`
+	InboxOpen      int    `json:"inbox_open"`
+	Message        string `json:"message"`
+}
+
+type plannerBoardResponse struct {
+	Kind         string                  `json:"kind"`
+	ProfileName  string                  `json:"profile_name"`
+	Groups       []*plannerTimelineGroup `json:"groups"`
+	EventGroups  []*plannerTimelineGroup `json:"event_groups"`
+	InboxItems   []*plannerTimelineItem  `json:"inbox_items"`
+	SomedayItems []*plannerTimelineItem  `json:"someday_items"`
+	RecentItems  []*plannerTimelineItem  `json:"recent_items"`
+	Counts       map[string]int          `json:"counts"`
+	Focus        plannerFocusSummary     `json:"focus"`
+	Recovery     plannerRecoverySummary  `json:"recovery"`
+	ModeDefault  string                  `json:"mode_default"`
+	ModeHint     string                  `json:"mode_hint"`
+}
+
+type createPlannerProfileRequest struct {
+	Password    string `json:"password" binding:"required,min=4"`
+	Name        string `json:"name"`
+	NotifyEmail string `json:"notify_email"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+type loginPlannerProfileRequest struct {
+	Password string `json:"password" binding:"required,min=4"`
+}
+
+type updatePlannerProfileRequest struct {
+	Name        string `json:"name"`
+	NotifyEmail string `json:"notify_email"`
+	ExpiresIn   int    `json:"expires_in"`
+}
+
+type createPlannerTaskRequest struct {
+	Kind           string `json:"kind"`
+	EntryType      string `json:"entry_type"`
+	Bucket         string `json:"bucket"`
+	Title          string `json:"title" binding:"required"`
+	Detail         string `json:"detail"`
+	Notes          string `json:"notes"`
+	Status         string `json:"status"`
+	Priority       string `json:"priority"`
+	PlannedFor     string `json:"planned_for"`
+	RemindAt       string `json:"remind_at"`
+	NotifyEmail    string `json:"notify_email"`
+	CancelReason   string `json:"cancel_reason"`
+	PostponeReason string `json:"postpone_reason"`
+}
+
+type updatePlannerTaskRequest struct {
+	Kind           *string `json:"kind"`
+	EntryType      *string `json:"entry_type"`
+	Bucket         *string `json:"bucket"`
+	Title          *string `json:"title"`
+	Detail         *string `json:"detail"`
+	Notes          *string `json:"notes"`
+	Status         *string `json:"status"`
+	Priority       *string `json:"priority"`
+	PlannedFor     *string `json:"planned_for"`
+	RemindAt       *string `json:"remind_at"`
+	NotifyEmail    *string `json:"notify_email"`
+	CancelReason   *string `json:"cancel_reason"`
+	PostponeReason *string `json:"postpone_reason"`
+}
+
+type plannerCommentRequest struct {
+	Author  string `json:"author"`
+	Content string `json:"content" binding:"required"`
+}
+
+type plannerAIParseRequest struct {
+	Text        string `json:"text" binding:"required"`
+	DefaultKind string `json:"default_kind"`
+}
+
+type plannerAICoachRequest struct {
+	Kind string `json:"kind"`
+	Mode string `json:"mode"`
+	Text string `json:"text"`
+}
+
+type plannerAITask struct {
+	Kind         string `json:"kind"`
+	EntryType    string `json:"entry_type"`
+	Bucket       string `json:"bucket"`
+	Title        string `json:"title"`
+	Detail       string `json:"detail"`
+	Notes        string `json:"notes"`
+	Priority     string `json:"priority"`
+	Status       string `json:"status"`
+	PlannedFor   string `json:"planned_for"`
+	RemindAt     string `json:"remind_at"`
+	CancelReason string `json:"cancel_reason"`
+}
+
+type plannerAICoachResponse struct {
+	Summary     string   `json:"summary"`
+	Insights    []string `json:"insights"`
+	Suggestions []string `json:"suggestions"`
 }
 
 func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
@@ -96,69 +211,6 @@ func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
 		smtpUser:          plannerCfg.SMTPUser,
 		smtpPass:          plannerCfg.SMTPPass,
 	}
-}
-
-type createPlannerProfileRequest struct {
-	Password    string `json:"password" binding:"required,min=4"`
-	Name        string `json:"name"`
-	NotifyEmail string `json:"notify_email"`
-	ExpiresIn   int    `json:"expires_in"`
-}
-
-type loginPlannerProfileRequest struct {
-	Password string `json:"password" binding:"required,min=4"`
-}
-
-type updatePlannerProfileRequest struct {
-	Name        string `json:"name"`
-	NotifyEmail string `json:"notify_email"`
-	ExpiresIn   int    `json:"expires_in"`
-	CreatorKey  string `json:"creator_key"`
-}
-
-type createPlannerTaskRequest struct {
-	Kind        string `json:"kind"`
-	Title       string `json:"title" binding:"required"`
-	Detail      string `json:"detail"`
-	Notes       string `json:"notes"`
-	Status      string `json:"status"`
-	Priority    string `json:"priority"`
-	PlannedFor  string `json:"planned_for"`
-	RemindAt    string `json:"remind_at"`
-	NotifyEmail string `json:"notify_email"`
-}
-
-type updatePlannerTaskRequest struct {
-	Kind        string `json:"kind"`
-	Title       string `json:"title"`
-	Detail      string `json:"detail"`
-	Notes       string `json:"notes"`
-	Status      string `json:"status"`
-	Priority    string `json:"priority"`
-	PlannedFor  string `json:"planned_for"`
-	RemindAt    string `json:"remind_at"`
-	NotifyEmail string `json:"notify_email"`
-}
-
-type plannerCommentRequest struct {
-	Author  string `json:"author"`
-	Content string `json:"content" binding:"required"`
-}
-
-type plannerAIParseRequest struct {
-	Text        string `json:"text" binding:"required"`
-	DefaultKind string `json:"default_kind"`
-}
-
-type plannerAITask struct {
-	Kind       string `json:"kind"`
-	Title      string `json:"title"`
-	Detail     string `json:"detail"`
-	Notes      string `json:"notes"`
-	Priority   string `json:"priority"`
-	Status     string `json:"status"`
-	PlannedFor string `json:"planned_for"`
-	RemindAt   string `json:"remind_at"`
 }
 
 func plannerPasswordIndex(password string) string {
@@ -207,6 +259,30 @@ func normalizePlannerPriority(priority string) string {
 	}
 }
 
+func normalizePlannerEntryType(entryType string) string {
+	switch strings.TrimSpace(strings.ToLower(entryType)) {
+	case models.PlannerEntryEvent:
+		return models.PlannerEntryEvent
+	default:
+		return models.PlannerEntryTask
+	}
+}
+
+func normalizePlannerBucket(bucket, entryType string) string {
+	switch strings.TrimSpace(strings.ToLower(bucket)) {
+	case models.PlannerBucketInbox:
+		return models.PlannerBucketInbox
+	case models.PlannerBucketSomeday:
+		return models.PlannerBucketSomeday
+	case models.PlannerBucketPlanned:
+		return models.PlannerBucketPlanned
+	}
+	if normalizePlannerEntryType(entryType) == models.PlannerEntryEvent {
+		return models.PlannerBucketPlanned
+	}
+	return models.PlannerBucketPlanned
+}
+
 func plannerToday() string {
 	return time.Now().Format("2006-01-02")
 }
@@ -216,8 +292,11 @@ func parsePlannerDate(value string) string {
 	if value == "" {
 		return plannerToday()
 	}
-	if t, err := time.Parse("2006-01-02", value); err == nil {
-		return t.Format("2006-01-02")
+	layouts := []string{"2006-01-02", "2006/01/02", "2006.01.02"}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, value, time.Local); err == nil {
+			return t.Format("2006-01-02")
+		}
 	}
 	return plannerToday()
 }
@@ -282,12 +361,10 @@ func (h *PlannerHandler) loadProfileByAccess(c *gin.Context, profileID string) (
 		c.JSON(http.StatusForbidden, gin.H{"error": "档案已过期", "code": 403})
 		return nil, false
 	}
-	key := plannerCreatorKey(c)
-	if key != "" && utils.VerifyPassword(key, profile.CreatorKey) {
+	if key := plannerCreatorKey(c); key != "" && utils.VerifyPassword(key, profile.CreatorKey) {
 		return profile, true
 	}
-	password := strings.TrimSpace(getPassword(c))
-	if password != "" && plannerPasswordIndex(password) == profile.PasswordIndex {
+	if pwd := strings.TrimSpace(getPassword(c)); pwd != "" && plannerPasswordIndex(pwd) == profile.PasswordIndex {
 		return profile, true
 	}
 	c.JSON(http.StatusForbidden, gin.H{"error": "无权限", "code": 403})
@@ -295,31 +372,16 @@ func (h *PlannerHandler) loadProfileByAccess(c *gin.Context, profileID string) (
 }
 
 func (h *PlannerHandler) loadProfileByCreator(c *gin.Context, profileID string) (*models.PlannerProfile, bool) {
-	profile, err := h.db.GetPlannerProfile(profileID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "档案不存在", "code": 404})
-		return nil, false
-	}
-	key := plannerCreatorKey(c)
-	password := strings.TrimSpace(getPassword(c))
-	if key != "" && utils.VerifyPassword(key, profile.CreatorKey) {
-		return profile, true
-	}
-	if password != "" && plannerPasswordIndex(password) == profile.PasswordIndex {
-		return profile, true
-	}
-	c.JSON(http.StatusForbidden, gin.H{"error": "无权限", "code": 403})
-	return nil, false
+	return h.loadProfileByAccess(c, profileID)
 }
 
 func (h *PlannerHandler) loadTask(c *gin.Context) (*models.PlannerProfile, *models.PlannerTask, bool) {
-	profileID := c.Param("id")
-	profile, ok := h.loadProfileByAccess(c, profileID)
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
 	if !ok {
 		return nil, nil, false
 	}
 	task, err := h.db.GetPlannerTask(c.Param("taskId"))
-	if err != nil || task.ProfileID != profileID {
+	if err != nil || task.ProfileID != profile.ID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "事项不存在", "code": 404})
 		return nil, nil, false
 	}
@@ -445,9 +507,7 @@ func (h *PlannerHandler) UpdateProfile(c *gin.Context) {
 	if name := strings.TrimSpace(req.Name); name != "" {
 		profile.Name = name
 	}
-	if req.NotifyEmail != "" || strings.TrimSpace(req.NotifyEmail) == "" {
-		profile.NotifyEmail = strings.TrimSpace(req.NotifyEmail)
-	}
+	profile.NotifyEmail = strings.TrimSpace(req.NotifyEmail)
 	if req.ExpiresIn > 0 {
 		days := req.ExpiresIn
 		if days > h.maxExpiresDay {
@@ -486,95 +546,198 @@ func (h *PlannerHandler) DeleteProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "删除成功"})
 }
 
-func (h *PlannerHandler) ListTimeline(c *gin.Context) {
-	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
-	if !ok {
-		return
-	}
-	kind := normalizePlannerKind(c.DefaultQuery("kind", plannerModeDefault(time.Now())))
-	tasks, err := h.db.ListPlannerTasks(profile.ID, kind, "")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取时间线失败", "code": 500})
-		return
-	}
-	groups, counts := buildPlannerTimeline(tasks, time.Now())
-	c.JSON(http.StatusOK, gin.H{
-		"code":         0,
-		"kind":         kind,
-		"profile_name": profile.Name,
-		"groups":       groups,
-		"counts":       counts,
-		"mode_default": plannerModeDefault(time.Now()),
-	})
-}
-
-func buildPlannerTimeline(tasks []*models.PlannerTask, now time.Time) ([]*plannerTimelineGroup, map[string]int) {
+func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) plannerBoardResponse {
 	today := now.Format("2006-01-02")
-	groupMap := make(map[string]*plannerTimelineGroup)
-	order := make([]string, 0)
-	counts := map[string]int{
-		plannerStatusOpen:       0,
-		plannerStatusInProgress: 0,
-		plannerStatusDone:       0,
-		plannerStatusCancelled:  0,
-		"rolled_over":           0,
+	board := plannerBoardResponse{
+		Kind:         kind,
+		Groups:       make([]*plannerTimelineGroup, 0),
+		EventGroups:  make([]*plannerTimelineGroup, 0),
+		InboxItems:   make([]*plannerTimelineItem, 0),
+		SomedayItems: make([]*plannerTimelineItem, 0),
+		RecentItems:  make([]*plannerTimelineItem, 0),
+		Counts: map[string]int{
+			plannerStatusOpen:       0,
+			plannerStatusInProgress: 0,
+			plannerStatusDone:       0,
+			plannerStatusCancelled:  0,
+			"rolled_over":           0,
+			"inbox_open":            0,
+			"event_open":            0,
+			"someday_open":          0,
+		},
 	}
+
+	timelineGroups := map[string]*plannerTimelineGroup{}
+	eventGroups := map[string]*plannerTimelineGroup{}
+	timelineOrder := make([]string, 0)
+	eventOrder := make([]string, 0)
+	todayPrimaryCount := 0
+	doneToday := 0
+	cancelledToday := 0
 
 	for _, task := range tasks {
 		status := normalizePlannerStatus(task.Status)
-		counts[status]++
+		if task.Kind != kind {
+			continue
+		}
+		board.Counts[status]++
+
+		item := &plannerTimelineItem{
+			PlannerTask:       task,
+			DisplayDate:       task.PlannedFor,
+			DisplayLabel:      plannerDateLabel(task.PlannedFor, today),
+			IsToday:           task.PlannedFor == today,
+			CalendarAvailable: true,
+			OverdueDays:       0,
+		}
+		if task.OriginalPlannedFor == "" {
+			task.OriginalPlannedFor = task.PlannedFor
+		}
+
+		if status == plannerStatusDone && task.CompletedAt != nil && task.CompletedAt.Format("2006-01-02") == today {
+			doneToday++
+		}
+		if status == plannerStatusCancelled && task.CompletedAt != nil && task.CompletedAt.Format("2006-01-02") == today {
+			cancelledToday++
+		}
+
+		if status == plannerStatusDone || status == plannerStatusCancelled {
+			item.DisplayDate = itemCompletionDate(task, today)
+			item.DisplayLabel = plannerDateLabel(item.DisplayDate, today)
+			board.RecentItems = append(board.RecentItems, item)
+			continue
+		}
+
+		switch task.Bucket {
+		case models.PlannerBucketInbox:
+			board.Counts["inbox_open"]++
+			board.InboxItems = append(board.InboxItems, item)
+			continue
+		case models.PlannerBucketSomeday:
+			board.Counts["someday_open"]++
+			board.SomedayItems = append(board.SomedayItems, item)
+			continue
+		}
+
+		if task.EntryType == models.PlannerEntryEvent {
+			board.Counts["event_open"]++
+			group := ensurePlannerGroup(eventGroups, &eventOrder, task.PlannedFor, today)
+			item.IsToday = item.DisplayDate == today
+			if item.IsToday {
+				todayPrimaryCount++
+			}
+			group.Items = append(group.Items, item)
+			continue
+		}
+
 		displayDate := task.PlannedFor
-		rolledOver := false
 		if displayDate == "" {
 			displayDate = today
 		}
-		if status == plannerStatusOpen || status == plannerStatusInProgress {
-			if displayDate < today {
-				displayDate = today
-				rolledOver = true
-				counts["rolled_over"]++
+		if displayDate < today {
+			item.IsRolledOver = true
+			item.DisplayDate = today
+			item.DisplayLabel = "今天"
+			item.IsToday = true
+			board.Counts["rolled_over"]++
+			if plannedTime, err := time.Parse("2006-01-02", displayDate); err == nil {
+				item.OverdueDays = int(now.Sub(plannedTime).Hours() / 24)
+				if item.OverdueDays < 0 {
+					item.OverdueDays = 0
+				}
 			}
-		} else if task.CompletedAt != nil {
-			displayDate = task.CompletedAt.Format("2006-01-02")
 		}
-		group, ok := groupMap[displayDate]
-		if !ok {
-			group = &plannerTimelineGroup{
-				Date:  displayDate,
-				Label: plannerDateLabel(displayDate, today),
-				Items: make([]*plannerTimelineItem, 0),
-			}
-			groupMap[displayDate] = group
-			order = append(order, displayDate)
+		group := ensurePlannerGroup(timelineGroups, &timelineOrder, item.DisplayDate, today)
+		group.Items = append(group.Items, item)
+		if item.DisplayDate == today {
+			todayPrimaryCount++
 		}
-		group.Items = append(group.Items, &plannerTimelineItem{
-			PlannerTask:       task,
-			DisplayDate:       displayDate,
-			DisplayLabel:      group.Label,
-			IsRolledOver:      rolledOver,
-			IsToday:           displayDate == today,
-			CalendarAvailable: true,
-		})
 	}
 
+	board.Groups = finalizePlannerGroups(timelineGroups, timelineOrder)
+	board.EventGroups = finalizePlannerGroups(eventGroups, eventOrder)
+
+	sortPlannerItems(board.InboxItems)
+	sortPlannerItems(board.SomedayItems)
+	sort.SliceStable(board.RecentItems, func(i, j int) bool {
+		return board.RecentItems[i].UpdatedAt.After(board.RecentItems[j].UpdatedAt)
+	})
+	if len(board.RecentItems) > 8 {
+		board.RecentItems = board.RecentItems[:8]
+	}
+
+	limit := 3
+	if kind == plannerKindLife {
+		limit = 2
+	}
+	board.Focus = plannerFocusSummary{
+		TodayPrimaryLimit: limit,
+		TodayPrimaryCount: todayPrimaryCount,
+		NeedsTrim:         todayPrimaryCount > limit,
+	}
+	if board.Focus.NeedsTrim {
+		board.Focus.Message = fmt.Sprintf("今天挂在时间线上的%s事项有 %d 件，建议先收敛到 %d 件以内。", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind], todayPrimaryCount, limit)
+	} else {
+		board.Focus.Message = fmt.Sprintf("今天主推进 %d 件，节奏还比较舒服。", todayPrimaryCount)
+	}
+
+	board.Recovery = plannerRecoverySummary{
+		DoneToday:      doneToday,
+		CancelledToday: cancelledToday,
+		InboxOpen:      len(board.InboxItems),
+	}
+	switch {
+	case doneToday > 0:
+		board.Recovery.Message = fmt.Sprintf("今天已经完成 %d 件事，别只盯着没做完的部分。", doneToday)
+	case len(board.InboxItems) > 0:
+		board.Recovery.Message = fmt.Sprintf("收件箱里还有 %d 条想法，先分类，不急着都立刻做。", len(board.InboxItems))
+	default:
+		board.Recovery.Message = "今天的记录已经比较清爽，可以给自己留一点空。"
+	}
+
+	return board
+}
+
+func ensurePlannerGroup(groups map[string]*plannerTimelineGroup, order *[]string, date, today string) *plannerTimelineGroup {
+	group, ok := groups[date]
+	if !ok {
+		group = &plannerTimelineGroup{
+			Date:  date,
+			Label: plannerDateLabel(date, today),
+			Items: make([]*plannerTimelineItem, 0),
+		}
+		groups[date] = group
+		*order = append(*order, date)
+	}
+	return group
+}
+
+func finalizePlannerGroups(groups map[string]*plannerTimelineGroup, order []string) []*plannerTimelineGroup {
 	sort.Strings(order)
 	result := make([]*plannerTimelineGroup, 0, len(order))
-	for _, key := range order {
-		group := groupMap[key]
-		sort.SliceStable(group.Items, func(i, j int) bool {
-			a := group.Items[i]
-			b := group.Items[j]
-			if a.Status != b.Status {
-				return plannerStatusRank(a.Status) < plannerStatusRank(b.Status)
-			}
-			if a.Priority != b.Priority {
-				return plannerPriorityRank(a.Priority) < plannerPriorityRank(b.Priority)
-			}
-			return a.CreatedAt.Before(b.CreatedAt)
-		})
+	for _, date := range order {
+		group := groups[date]
+		sortPlannerItems(group.Items)
 		result = append(result, group)
 	}
-	return result, counts
+	return result
+}
+
+func sortPlannerItems(items []*plannerTimelineItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		a := items[i]
+		b := items[j]
+		if a.Status != b.Status {
+			return plannerStatusRank(a.Status) < plannerStatusRank(b.Status)
+		}
+		if a.Priority != b.Priority {
+			return plannerPriorityRank(a.Priority) < plannerPriorityRank(b.Priority)
+		}
+		if a.EntryType != b.EntryType {
+			return a.EntryType < b.EntryType
+		}
+		return a.CreatedAt.Before(b.CreatedAt)
+	})
 }
 
 func plannerStatusRank(status string) int {
@@ -616,6 +779,35 @@ func plannerDateLabel(date, today string) string {
 	return date
 }
 
+func itemCompletionDate(task *models.PlannerTask, fallback string) string {
+	if task.CompletedAt != nil {
+		return task.CompletedAt.Format("2006-01-02")
+	}
+	if task.UpdatedAt.IsZero() {
+		return fallback
+	}
+	return task.UpdatedAt.Format("2006-01-02")
+}
+
+func (h *PlannerHandler) ListTimeline(c *gin.Context) {
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	kind := normalizePlannerKind(c.DefaultQuery("kind", plannerModeDefault(time.Now())))
+	tasks, err := h.db.ListPlannerTasksByProfile(profile.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取事项失败", "code": 500})
+		return
+	}
+	now := time.Now()
+	board := buildPlannerBoard(tasks, kind, now)
+	board.ProfileName = profile.Name
+	board.ModeDefault = plannerModeDefault(now)
+	board.ModeHint = plannerModeHint(now)
+	c.JSON(http.StatusOK, gin.H{"code": 0, "board": board})
+}
+
 func (h *PlannerHandler) CreateTask(c *gin.Context) {
 	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
 	if !ok {
@@ -627,16 +819,20 @@ func (h *PlannerHandler) CreateTask(c *gin.Context) {
 		return
 	}
 	task := &models.PlannerTask{
-		ProfileID:   profile.ID,
-		Kind:        normalizePlannerKind(req.Kind),
-		Title:       strings.TrimSpace(req.Title),
-		Detail:      strings.TrimSpace(req.Detail),
-		Notes:       strings.TrimSpace(req.Notes),
-		Status:      normalizePlannerStatus(req.Status),
-		Priority:    normalizePlannerPriority(req.Priority),
-		PlannedFor:  parsePlannerDate(req.PlannedFor),
-		RemindAt:    parsePlannerDateTime(req.RemindAt),
-		NotifyEmail: strings.TrimSpace(req.NotifyEmail),
+		ProfileID:          profile.ID,
+		Kind:               normalizePlannerKind(req.Kind),
+		EntryType:          normalizePlannerEntryType(req.EntryType),
+		Bucket:             normalizePlannerBucket(req.Bucket, req.EntryType),
+		Title:              strings.TrimSpace(req.Title),
+		Detail:             strings.TrimSpace(req.Detail),
+		Notes:              strings.TrimSpace(req.Notes),
+		Status:             normalizePlannerStatus(req.Status),
+		Priority:           normalizePlannerPriority(req.Priority),
+		PlannedFor:         parsePlannerDate(req.PlannedFor),
+		OriginalPlannedFor: parsePlannerDate(req.PlannedFor),
+		RemindAt:           parsePlannerDateTime(req.RemindAt),
+		NotifyEmail:        strings.TrimSpace(req.NotifyEmail),
+		CancelReason:       strings.TrimSpace(req.CancelReason),
 	}
 	if task.Title == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "标题不能为空", "code": 400})
@@ -645,9 +841,19 @@ func (h *PlannerHandler) CreateTask(c *gin.Context) {
 	if task.NotifyEmail == "" {
 		task.NotifyEmail = profile.NotifyEmail
 	}
-	if task.Status == plannerStatusDone {
+	if task.EntryType == models.PlannerEntryEvent {
+		task.Bucket = models.PlannerBucketPlanned
+	}
+	if task.Bucket == models.PlannerBucketInbox && strings.TrimSpace(req.PlannedFor) == "" {
+		task.PlannedFor = plannerToday()
+		task.OriginalPlannedFor = task.PlannedFor
+	}
+	if task.Status == plannerStatusDone || task.Status == plannerStatusCancelled {
 		now := time.Now()
 		task.CompletedAt = &now
+	}
+	if task.Status == plannerStatusCancelled && task.CancelReason == "" {
+		task.CancelReason = "用户取消"
 	}
 	if err := h.db.CreatePlannerTask(task); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败", "code": 500})
@@ -661,43 +867,87 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 	if !ok {
 		return
 	}
+	originalPlanned := task.PlannedFor
 	var req updatePlannerTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误", "code": 400})
 		return
 	}
-	if strings.TrimSpace(req.Kind) != "" {
-		task.Kind = normalizePlannerKind(req.Kind)
+	if req.Kind != nil {
+		task.Kind = normalizePlannerKind(*req.Kind)
 	}
-	if strings.TrimSpace(req.Title) != "" {
-		task.Title = strings.TrimSpace(req.Title)
+	if req.EntryType != nil {
+		task.EntryType = normalizePlannerEntryType(*req.EntryType)
 	}
-	if req.Detail != "" || strings.TrimSpace(req.Detail) == "" {
-		task.Detail = strings.TrimSpace(req.Detail)
+	if req.Bucket != nil {
+		task.Bucket = normalizePlannerBucket(*req.Bucket, task.EntryType)
 	}
-	if req.Notes != "" || strings.TrimSpace(req.Notes) == "" {
-		task.Notes = strings.TrimSpace(req.Notes)
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "标题不能为空", "code": 400})
+			return
+		}
+		task.Title = title
 	}
-	if strings.TrimSpace(req.Status) != "" {
-		task.Status = normalizePlannerStatus(req.Status)
-		if task.Status == plannerStatusDone {
+	if req.Detail != nil {
+		task.Detail = strings.TrimSpace(*req.Detail)
+	}
+	if req.Notes != nil {
+		task.Notes = strings.TrimSpace(*req.Notes)
+	}
+	if req.Status != nil {
+		task.Status = normalizePlannerStatus(*req.Status)
+	}
+	if req.Priority != nil {
+		task.Priority = normalizePlannerPriority(*req.Priority)
+	}
+	if req.NotifyEmail != nil {
+		task.NotifyEmail = strings.TrimSpace(*req.NotifyEmail)
+	}
+	if req.RemindAt != nil {
+		task.RemindAt = parsePlannerDateTime(*req.RemindAt)
+	}
+	if req.PlannedFor != nil {
+		task.PlannedFor = parsePlannerDate(*req.PlannedFor)
+	}
+	if task.EntryType == models.PlannerEntryEvent {
+		task.Bucket = models.PlannerBucketPlanned
+	}
+	if task.OriginalPlannedFor == "" {
+		task.OriginalPlannedFor = originalPlanned
+	}
+	if task.OriginalPlannedFor == "" {
+		task.OriginalPlannedFor = task.PlannedFor
+	}
+	postponeReason := ""
+	if req.PostponeReason != nil {
+		postponeReason = strings.TrimSpace(*req.PostponeReason)
+	}
+	if task.PlannedFor != "" && task.PlannedFor != originalPlanned {
+		if task.PlannedFor > originalPlanned && originalPlanned != "" {
+			task.RolloverCount++
+			task.LastPostponeReason = plannerFirstNonEmpty(postponeReason, task.LastPostponeReason, "手动顺延")
 			now := time.Now()
-			task.CompletedAt = &now
-		} else {
-			task.CompletedAt = nil
+			task.LastPostponedAt = &now
 		}
 	}
-	if strings.TrimSpace(req.Priority) != "" {
-		task.Priority = normalizePlannerPriority(req.Priority)
-	}
-	if strings.TrimSpace(req.PlannedFor) != "" {
-		task.PlannedFor = parsePlannerDate(req.PlannedFor)
-	}
-	if req.RemindAt != "" || strings.TrimSpace(req.RemindAt) == "" {
-		task.RemindAt = parsePlannerDateTime(req.RemindAt)
-	}
-	if req.NotifyEmail != "" || strings.TrimSpace(req.NotifyEmail) == "" {
-		task.NotifyEmail = strings.TrimSpace(req.NotifyEmail)
+	switch task.Status {
+	case plannerStatusDone:
+		now := time.Now()
+		task.CompletedAt = &now
+		task.CancelReason = ""
+	case plannerStatusCancelled:
+		now := time.Now()
+		task.CompletedAt = &now
+		if req.CancelReason != nil {
+			task.CancelReason = plannerFirstNonEmpty(strings.TrimSpace(*req.CancelReason), task.CancelReason, "用户取消")
+		} else {
+			task.CancelReason = plannerFirstNonEmpty(task.CancelReason, "用户取消")
+		}
+	default:
+		task.CompletedAt = nil
+		task.CancelReason = ""
 	}
 	if err := h.db.UpdatePlannerTask(task); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败", "code": 500})
@@ -743,11 +993,8 @@ func (h *PlannerHandler) CreateTaskComment(c *gin.Context) {
 	comment := &models.PlannerTaskComment{
 		TaskID:    task.ID,
 		ProfileID: profile.ID,
-		Author:    strings.TrimSpace(req.Author),
+		Author:    plannerFirstNonEmpty(strings.TrimSpace(req.Author), "我"),
 		Content:   strings.TrimSpace(req.Content),
-	}
-	if comment.Author == "" {
-		comment.Author = "我"
 	}
 	if comment.Content == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "评论内容不能为空", "code": 400})
@@ -776,6 +1023,12 @@ func buildPlannerICS(task *models.PlannerTask) []byte {
 			description += "\\n\\n"
 		}
 		description += "备注: " + strings.TrimSpace(task.Notes)
+	}
+	if strings.TrimSpace(task.CancelReason) != "" {
+		if description != "" {
+			description += "\\n\\n"
+		}
+		description += "取消原因: " + strings.TrimSpace(task.CancelReason)
 	}
 	if description != "" {
 		sb.WriteString(fmt.Sprintf("DESCRIPTION:%s\r\n", escapeICSLine(description)))
@@ -811,7 +1064,7 @@ func plannerCalendarFilename(task *models.PlannerTask) string {
 	title := regexp.MustCompile(`[^a-zA-Z0-9\p{Han}_-]+`).ReplaceAllString(task.Title, "-")
 	title = strings.Trim(title, "-")
 	if title == "" {
-		title = "task"
+		title = "planner"
 	}
 	return fmt.Sprintf("%s-%s.ics", task.Kind, title)
 }
@@ -828,8 +1081,7 @@ func (h *PlannerHandler) DownloadCalendar(c *gin.Context) {
 }
 
 func (h *PlannerHandler) AIParse(c *gin.Context) {
-	_, ok := h.loadProfileByAccess(c, c.Param("id"))
-	if !ok {
+	if _, ok := h.loadProfileByAccess(c, c.Param("id")); !ok {
 		return
 	}
 	var req plannerAIParseRequest
@@ -851,32 +1103,57 @@ func (h *PlannerHandler) AIParse(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "provider": provider, "tasks": tasks})
 }
 
+func (h *PlannerHandler) AIAdvise(c *gin.Context) {
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	var req plannerAICoachRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误", "code": 400})
+		return
+	}
+	kind := normalizePlannerKind(plannerFirstNonEmpty(req.Kind, plannerModeDefault(time.Now())))
+	tasks, err := h.db.ListPlannerTasksByProfile(profile.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取事项失败", "code": 500})
+		return
+	}
+	board := buildPlannerBoard(tasks, kind, time.Now())
+	advice, provider, err := h.advisePlanner(profile, board, strings.TrimSpace(req.Mode), strings.TrimSpace(req.Text))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "code": 500})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "provider": provider, "advice": advice})
+}
+
 func (h *PlannerHandler) parsePlannerText(text, defaultKind string) ([]plannerAITask, string, error) {
 	if strings.TrimSpace(h.cfg.MiniMax.APIKey) == "" {
 		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
-	prompt := fmt.Sprintf(`请把下面的中文事项整理成 JSON 数组，每个元素包含字段：
-kind(work/life)、title、detail、notes、priority(low/medium/high)、status(open/in_progress/done/cancelled)、planned_for(YYYY-MM-DD)、remind_at(YYYY-MM-DDTHH:MM，可为空)。
-要求：
-1. 仅返回 JSON 数组，不要解释。
+	prompt := fmt.Sprintf(`请把下面的中文内容整理成 JSON 数组，每个元素包含字段：
+kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title、detail、notes、priority(low/medium/high)、status(open/in_progress/done/cancelled)、planned_for(YYYY-MM-DD)、remind_at(YYYY-MM-DDTHH:MM，可为空)、cancel_reason(可为空)。
+
+规则：
+1. 只返回 JSON 数组，不要解释。
 2. 默认 kind 为 %s。
-3. 如果没有明确日期，planned_for 用今天。
-4. 标题要短，detail 保留上下文。
-5. 不要杜撰不存在的信息。
+3. 如果是明确时间发生的安排，如会议、复诊、预约、航班、出发，请优先标为 event。
+4. 如果只是先记下来、回头处理、尚未排期，请放到 inbox。
+5. 如果是以后再说、周末、有空再做，请优先放到 someday。
+6. 如果没有明确日期，planned_for 可以用今天。
+7. 不要编造不存在的信息。
 
 原始内容：
 %s`, defaultKind, text)
 
 	reqBody := map[string]interface{}{
-		"model": h.cfg.MiniMax.Model,
+		"model": plannerFirstNonEmpty(h.cfg.MiniMax.Model, "abab6.5s-chat"),
 		"messages": []map[string]string{
-			{"role": "system", "content": "你是一个只负责管理工作事项和生活事项的智能助手。"},
+			{"role": "system", "content": "你是一个只负责管理工作事项、生活事项、收件箱和事件的智能整理助手。"},
 			{"role": "user", "content": prompt},
 		},
 		"temperature": 0.2,
-	}
-	if h.cfg.MiniMax.Model == "" {
-		reqBody["model"] = "abab6.5s-chat"
 	}
 	body, _ := json.Marshal(reqBody)
 	req, err := http.NewRequest("POST", "https://api.minimax.chat/v1/text/chatcompletion_v2", bytes.NewReader(body))
@@ -915,15 +1192,201 @@ kind(work/life)、title、detail、notes、priority(low/medium/high)、status(op
 		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	for i := range tasks {
-		tasks[i].Kind = normalizePlannerKind(plannerFirstNonEmpty(tasks[i].Kind, defaultKind))
-		tasks[i].Priority = normalizePlannerPriority(tasks[i].Priority)
-		tasks[i].Status = normalizePlannerStatus(tasks[i].Status)
-		tasks[i].PlannedFor = parsePlannerDate(tasks[i].PlannedFor)
-		if strings.TrimSpace(tasks[i].Title) == "" {
-			tasks[i].Title = "待整理事项"
-		}
+		tasks[i] = normalizePlannerAITask(tasks[i], defaultKind)
 	}
 	return tasks, "minimax", nil
+}
+
+func (h *PlannerHandler) advisePlanner(profile *models.PlannerProfile, board plannerBoardResponse, mode, text string) (plannerAICoachResponse, string, error) {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode != "summary" {
+		mode = "plan"
+	}
+	if strings.TrimSpace(h.cfg.MiniMax.APIKey) == "" {
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
+	}
+
+	prompt := fmt.Sprintf(`你是一个只做建议、不做操作的事项管理顾问。请基于下面的信息输出一个 JSON 对象，字段固定为：
+summary(string)
+insights(string[])
+suggestions(string[])
+
+约束：
+1. 只返回 JSON，不要附带解释。
+2. 不要替用户执行操作，不要假装已完成。
+3. 总结模式更强调复盘和观察；规划模式更强调下一步建议。
+4. suggestions 最多 5 条，每条要具体可执行。
+5. 不要重复同义句。
+
+当前模式: %s
+档案名: %s
+事项分区: %s
+用户补充: %s
+
+当前看板摘要：
+%s
+`, mode, profile.Name, map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[board.Kind], plannerFirstNonEmpty(text, "无"), plannerBoardSnapshot(board))
+
+	reqBody := map[string]interface{}{
+		"model": plannerFirstNonEmpty(h.cfg.MiniMax.Model, "abab6.5s-chat"),
+		"messages": []map[string]string{
+			{"role": "system", "content": "你是一个事项管理顾问，只提供总结、取舍建议和规划建议。"},
+			{"role": "user", "content": prompt},
+		},
+		"temperature": 0.3,
+	}
+	body, _ := json.Marshal(reqBody)
+	req, err := http.NewRequest("POST", "https://api.minimax.chat/v1/text/chatcompletion_v2", bytes.NewReader(body))
+	if err != nil {
+		return plannerAICoachResponse{}, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return plannerAICoachResponse{}, "", fmt.Errorf("MiniMax 请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return plannerAICoachResponse{}, "", fmt.Errorf("MiniMax 返回异常(%d): %s", resp.StatusCode, string(respBody))
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return plannerAICoachResponse{}, "", fmt.Errorf("解析 AI 响应失败: %v", err)
+	}
+	choices, _ := raw["choices"].([]interface{})
+	if len(choices) == 0 {
+		return plannerAICoachResponse{}, "", fmt.Errorf("AI 未返回结果")
+	}
+	first, _ := choices[0].(map[string]interface{})
+	msg, _ := first["message"].(map[string]interface{})
+	content, _ := msg["content"].(string)
+	payload, ok := extractJSONPayload(content)
+	if !ok {
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
+	}
+	var advice plannerAICoachResponse
+	if err := json.Unmarshal([]byte(payload), &advice); err != nil {
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
+	}
+	if strings.TrimSpace(advice.Summary) == "" {
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
+	}
+	if advice.Insights == nil {
+		advice.Insights = []string{}
+	}
+	if advice.Suggestions == nil {
+		advice.Suggestions = []string{}
+	}
+	return advice, "minimax", nil
+}
+
+func fallbackPlannerAdvice(profile *models.PlannerProfile, board plannerBoardResponse, mode, text string) plannerAICoachResponse {
+	label := map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[board.Kind]
+	openCount := board.Counts[plannerStatusOpen] + board.Counts[plannerStatusInProgress]
+	summary := fmt.Sprintf("%s档案「%s」当前还有 %d 件未完成事项，今天主线 %d 件。", label, profile.Name, openCount, board.Focus.TodayPrimaryCount)
+	if mode == "summary" {
+		summary = fmt.Sprintf("%s档案「%s」的记录显示：未完成 %d 件，收件箱 %d 条，已完成 %d 件。", label, profile.Name, openCount, board.Recovery.InboxOpen, board.Recovery.DoneToday)
+	}
+	insights := []string{
+		board.Focus.Message,
+		board.Recovery.Message,
+	}
+	if board.Counts["event_open"] > 0 {
+		insights = append(insights, fmt.Sprintf("还有 %d 个待发生事件，建议先检查是否都带了明确时间。", board.Counts["event_open"]))
+	}
+	if board.Counts["rolled_over"] > 0 {
+		insights = append(insights, fmt.Sprintf("有 %d 件事项已经顺延到今天，说明计划密度偏高。", board.Counts["rolled_over"]))
+	}
+	suggestions := make([]string, 0, 5)
+	if board.Focus.NeedsTrim {
+		suggestions = append(suggestions, fmt.Sprintf("先把今天时间线压到 %d 件主事项以内，其余移到收件箱或改到明天。", board.Focus.TodayPrimaryLimit))
+	}
+	if len(board.InboxItems) > 0 {
+		suggestions = append(suggestions, fmt.Sprintf("先处理收件箱里的前 %d 条，把它们分成计划中或放一放。", minPlannerInt(len(board.InboxItems), 3)))
+	}
+	if len(board.EventGroups) > 0 {
+		suggestions = append(suggestions, "检查最近事件是否都带提醒时间，避免事件存在但没有触发点。")
+	}
+	if len(board.Groups) > 0 {
+		suggestions = append(suggestions, "从今天时间线里只选一件最高优先级事项推进到完成，先建立正反馈。")
+	}
+	if strings.TrimSpace(text) != "" {
+		suggestions = append(suggestions, fmt.Sprintf("结合你的补充“%s”，优先把它归到今天唯一最重要的下一步里。", text))
+	}
+	if len(suggestions) == 0 {
+		suggestions = append(suggestions, "当前事项不多，可以先补充未来两天最重要的安排，让节奏更稳定。")
+	}
+	if len(suggestions) > 5 {
+		suggestions = suggestions[:5]
+	}
+	return plannerAICoachResponse{
+		Summary:     summary,
+		Insights:    insights,
+		Suggestions: suggestions,
+	}
+}
+
+func plannerBoardSnapshot(board plannerBoardResponse) string {
+	lines := []string{
+		fmt.Sprintf("未完成: %d", board.Counts[plannerStatusOpen]+board.Counts[plannerStatusInProgress]),
+		fmt.Sprintf("已完成: %d", board.Counts[plannerStatusDone]),
+		fmt.Sprintf("已取消: %d", board.Counts[plannerStatusCancelled]),
+		fmt.Sprintf("收件箱: %d", len(board.InboxItems)),
+		fmt.Sprintf("放一放: %d", len(board.SomedayItems)),
+		fmt.Sprintf("事件: %d", board.Counts["event_open"]),
+		fmt.Sprintf("顺延到今天: %d", board.Counts["rolled_over"]),
+		fmt.Sprintf("聚焦提示: %s", board.Focus.Message),
+		fmt.Sprintf("恢复提示: %s", board.Recovery.Message),
+	}
+	appendItems := func(title string, items []*plannerTimelineItem) {
+		if len(items) == 0 {
+			return
+		}
+		limit := minPlannerInt(len(items), 4)
+		parts := make([]string, 0, limit)
+		for i := 0; i < limit; i++ {
+			parts = append(parts, items[i].Title)
+		}
+		lines = append(lines, fmt.Sprintf("%s: %s", title, strings.Join(parts, " / ")))
+	}
+	for _, group := range board.Groups {
+		appendItems("时间线-"+group.Label, group.Items)
+		if len(lines) > 14 {
+			break
+		}
+	}
+	for _, group := range board.EventGroups {
+		appendItems("事件-"+group.Label, group.Items)
+		if len(lines) > 18 {
+			break
+		}
+	}
+	appendItems("收件箱样本", board.InboxItems)
+	appendItems("最近完成", board.RecentItems)
+	return strings.Join(lines, "\n")
+}
+
+func minPlannerInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func normalizePlannerAITask(task plannerAITask, defaultKind string) plannerAITask {
+	task.Kind = normalizePlannerKind(plannerFirstNonEmpty(task.Kind, defaultKind))
+	task.EntryType = normalizePlannerEntryType(task.EntryType)
+	task.Bucket = normalizePlannerBucket(task.Bucket, task.EntryType)
+	task.Priority = normalizePlannerPriority(task.Priority)
+	task.Status = normalizePlannerStatus(task.Status)
+	task.PlannedFor = parsePlannerDate(task.PlannedFor)
+	if strings.TrimSpace(task.Title) == "" {
+		task.Title = "待整理事项"
+	}
+	return task
 }
 
 func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
@@ -936,20 +1399,34 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 		if item == "" {
 			continue
 		}
-		kind := defaultKind
 		lower := strings.ToLower(item)
+		kind := defaultKind
 		if strings.Contains(lower, "生活") || strings.Contains(item, "买菜") || strings.Contains(item, "买水果") || strings.Contains(item, "家里") || strings.Contains(item, "散步") {
 			kind = plannerKindLife
 		}
-		if strings.Contains(lower, "工作") || strings.Contains(item, "开会") || strings.Contains(item, "需求") || strings.Contains(item, "上线") {
+		if strings.Contains(lower, "工作") || strings.Contains(item, "开会") || strings.Contains(item, "需求") || strings.Contains(item, "上线") || strings.Contains(item, "联调") {
 			kind = plannerKindWork
 		}
+
+		entryType := models.PlannerEntryTask
+		bucket := models.PlannerBucketPlanned
+		if looksLikeEvent(item) {
+			entryType = models.PlannerEntryEvent
+			bucket = models.PlannerBucketPlanned
+		} else if strings.Contains(item, "回头") || strings.Contains(item, "记一下") || strings.Contains(item, "先记") {
+			bucket = models.PlannerBucketInbox
+		} else if strings.Contains(item, "以后") || strings.Contains(item, "有空") || strings.Contains(item, "周末") {
+			bucket = models.PlannerBucketSomeday
+		}
+
 		priority := "medium"
 		if strings.Contains(item, "尽快") || strings.Contains(item, "今天") || strings.Contains(item, "马上") {
 			priority = "high"
 		}
 		result = append(result, plannerAITask{
 			Kind:       normalizePlannerKind(kind),
+			EntryType:  entryType,
+			Bucket:     bucket,
 			Title:      item,
 			Detail:     item,
 			Priority:   priority,
@@ -960,6 +1437,8 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 	if len(result) == 0 {
 		result = append(result, plannerAITask{
 			Kind:       normalizePlannerKind(defaultKind),
+			EntryType:  models.PlannerEntryTask,
+			Bucket:     models.PlannerBucketInbox,
 			Title:      strings.TrimSpace(text),
 			Detail:     strings.TrimSpace(text),
 			Priority:   "medium",
@@ -968,6 +1447,22 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 		})
 	}
 	return result
+}
+
+func looksLikeEvent(text string) bool {
+	eventKeywords := []string{"会议", "开会", "复诊", "预约", "出发", "航班", "车票", "电影", "聚餐", "面试", "回诊", "课程", "直播", "电话"}
+	timePatterns := []string{`\d{1,2}:\d{2}`, `\d{1,2}点`, `周[一二三四五六日天]`, `\d{1,2}月\d{1,2}日`, `\d{1,2}号`}
+	for _, keyword := range eventKeywords {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	for _, pattern := range timePatterns {
+		if regexp.MustCompile(pattern).MatchString(text) {
+			return true
+		}
+	}
+	return false
 }
 
 func plannerFirstNonEmpty(values ...string) string {
@@ -1044,9 +1539,7 @@ func (h *PlannerHandler) AdminUpdate(c *gin.Context) {
 	if name := strings.TrimSpace(req.Name); name != "" {
 		profile.Name = name
 	}
-	if req.NotifyEmail != "" || strings.TrimSpace(req.NotifyEmail) == "" {
-		profile.NotifyEmail = strings.TrimSpace(req.NotifyEmail)
-	}
+	profile.NotifyEmail = strings.TrimSpace(req.NotifyEmail)
 	if req.ExpiresIn > 0 {
 		expiresAt := time.Now().AddDate(0, 0, req.ExpiresIn)
 		profile.ExpiresAt = &expiresAt
@@ -1079,17 +1572,16 @@ func (h *PlannerHandler) ProcessDueReminders() {
 		if err != nil {
 			continue
 		}
-		recipients := strings.TrimSpace(task.NotifyEmail)
-		if recipients == "" {
-			recipients = strings.TrimSpace(profile.NotifyEmail)
-		}
+		recipients := plannerFirstNonEmpty(strings.TrimSpace(task.NotifyEmail), strings.TrimSpace(profile.NotifyEmail))
 		if recipients == "" {
 			continue
 		}
-		subject := fmt.Sprintf("事项提醒 [%s] %s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[task.Kind], task.Title)
+		subject := fmt.Sprintf("%s提醒 [%s] %s", map[string]string{models.PlannerEntryTask: "事项", models.PlannerEntryEvent: "事件"}[task.EntryType], map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[task.Kind], task.Title)
 		bodyLines := []string{
 			fmt.Sprintf("档案: %s", profile.Name),
-			fmt.Sprintf("类型: %s", map[string]string{plannerKindWork: "工作事项", plannerKindLife: "生活事项"}[task.Kind]),
+			fmt.Sprintf("类型: %s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[task.Kind]),
+			fmt.Sprintf("条目: %s", map[string]string{models.PlannerEntryTask: "任务", models.PlannerEntryEvent: "事件"}[task.EntryType]),
+			fmt.Sprintf("阶段: %s", map[string]string{models.PlannerBucketInbox: "收件箱", models.PlannerBucketPlanned: "计划中", models.PlannerBucketSomeday: "放一放"}[task.Bucket]),
 			fmt.Sprintf("标题: %s", task.Title),
 			fmt.Sprintf("状态: %s", task.Status),
 			fmt.Sprintf("优先级: %s", task.Priority),
@@ -1101,8 +1593,11 @@ func (h *PlannerHandler) ProcessDueReminders() {
 		if strings.TrimSpace(task.Detail) != "" {
 			bodyLines = append(bodyLines, "", "详情:", task.Detail)
 		}
-		if strings.TrimSpace(task.Notes) != "" {
-			bodyLines = append(bodyLines, "", "备注:", task.Notes)
+		if strings.TrimSpace(task.LastPostponeReason) != "" {
+			bodyLines = append(bodyLines, "", "最近一次顺延原因:", task.LastPostponeReason)
+		}
+		if strings.TrimSpace(task.CancelReason) != "" {
+			bodyLines = append(bodyLines, "", "取消原因:", task.CancelReason)
 		}
 		attachment := &mailAttachment{
 			Filename:    plannerCalendarFilename(task),

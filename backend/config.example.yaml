@@ -158,6 +158,8 @@ planner:
   smtp_port: 465
   smtp_user: ""
   smtp_pass: ""
+  # AI 整理 / AI 总结 / AI 规划复用全局 minimax 配置
+  # 如未配置 minimax.api_key，将自动退回本地规则建议
 
 # 家庭物品整理模块配置
 household:
@@ -183,7 +185,7 @@ deepseek:
   # 模型名称，默认 deepseek-chat
   model: "deepseek-chat"
 
-# MiniMax AI 配置（用于血糖智能解析）
+# MiniMax AI 配置（用于事项 AI 整理/总结/规划、血糖智能解析等）
 minimax:
   # API Key，从 https://platform.minimax.io 获取
   # 也可通过环境变量 MINIMAX_API_KEY 设置
