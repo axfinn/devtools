@@ -178,6 +178,26 @@ docker_devtools_container_id() {
     compose ps -q devtools 2>/dev/null | head -n 1
 }
 
+compose_other_services() {
+    compose config --services 2>/dev/null | awk 'NF > 0 && $0 != "devtools"'
+}
+
+docker_container_image_id() {
+    local container_id="$1"
+    if [ -z "$container_id" ]; then
+        return 1
+    fi
+    docker inspect --format '{{.Image}}' "$container_id" 2>/dev/null || true
+}
+
+docker_container_image_ref() {
+    local container_id="$1"
+    if [ -z "$container_id" ]; then
+        return 1
+    fi
+    docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true
+}
+
 docker_devtools_health() {
     local container_id
     container_id="$(docker_devtools_container_id)"
@@ -203,6 +223,42 @@ wait_for_health() {
     done
 
     return 1
+}
+
+wait_for_container_health() {
+    local service="$1"
+    local retries="${2:-40}"
+    local delay="${3:-3}"
+    local i container_id status
+
+    for ((i=1; i<=retries; i++)); do
+        container_id="$(compose ps -q "$service" 2>/dev/null | head -n 1)"
+        if [ -n "$container_id" ]; then
+            status="$(docker inspect --format '{{if .State.Running}}{{if .State.Health}}{{.State.Health.Status}}{{else}}running{{end}}{{else}}stopped{{end}}' "$container_id" 2>/dev/null || echo "missing")"
+            case "$status" in
+                healthy|running)
+                    return 0
+                    ;;
+            esac
+        fi
+        sleep "$delay"
+    done
+
+    return 1
+}
+
+rollback_devtools() {
+    local old_image_id="$1"
+    local service_image="$2"
+
+    if [ -z "$old_image_id" ] || [ -z "$service_image" ]; then
+        log_warn "缺少旧镜像信息，无法自动回滚"
+        return 1
+    fi
+
+    log_warn "尝试回滚到旧镜像..."
+    docker tag "$old_image_id" "$service_image"
+    compose up -d --no-deps --force-recreate devtools
 }
 
 build_frontend() {
@@ -379,32 +435,68 @@ docker_deploy() {
 
     cd "$SCRIPT_DIR"
 
-    log_info "构建并重建 Docker 容器..."
+    local current_container_id old_image_id service_image
+    current_container_id="$(docker_devtools_container_id)"
+    old_image_id="$(docker_container_image_id "$current_container_id")"
+    service_image="$(docker_container_image_ref "$current_container_id")"
+
+    log_info "先构建镜像，避免构建阶段影响线上服务..."
     if [ "${NO_CACHE:-0}" = "1" ]; then
         compose build --no-cache
-        compose up -d --force-recreate --remove-orphans
     else
-        compose up -d --build --force-recreate --remove-orphans
+        compose build
     fi
 
-    if wait_for_health "http://localhost:${HOST_PORT}/api/health" 60 3; then
+    log_info "确保其他服务已就绪..."
+    local -a other_services=()
+    local service
+    while IFS= read -r service; do
+        other_services+=("$service")
+    done < <(compose_other_services)
+    if [ "${#other_services[@]}" -gt 0 ]; then
+        compose up -d "${other_services[@]}"
+        for service in "${other_services[@]}"; do
+            if ! wait_for_container_health "$service" 90 3; then
+                log_error "$service 未就绪，停止替换 devtools"
+                compose ps || true
+                exit 1
+            fi
+        done
+    fi
+
+    log_info "快速替换 devtools 容器..."
+    compose up -d --no-deps --force-recreate devtools
+
+    if wait_for_health "http://localhost:${HOST_PORT}/api/health" 40 2; then
         log_success "Docker 部署完成！"
         log_info "访问地址: http://localhost:${HOST_PORT}"
         compose ps
-    else
-        # 健康检查失败时，只接受 devtools 容器本身 healthy
-        if [ "$(docker_devtools_health)" = "healthy" ]; then
-            log_success "Docker 部署完成（devtools 容器已 healthy）！"
-            log_info "访问地址: http://localhost:${HOST_PORT}"
-            compose ps
-        else
-            log_error "服务启动失败，请检查日志"
-            log_error "devtools 容器状态: $(docker_devtools_health)"
+        return
+    fi
+
+    # 健康检查失败时，只接受 devtools 容器本身 healthy
+    if [ "$(docker_devtools_health)" = "healthy" ]; then
+        log_success "Docker 部署完成（devtools 容器已 healthy）！"
+        log_info "访问地址: http://localhost:${HOST_PORT}"
+        compose ps
+        return
+    fi
+
+    log_error "新版本启动失败，准备回滚"
+    log_error "devtools 容器状态: $(docker_devtools_health)"
+    compose ps || true
+    compose logs --tail=100 devtools || true
+
+    if rollback_devtools "$old_image_id" "$service_image"; then
+        if wait_for_health "http://localhost:${HOST_PORT}/api/health" 30 2 || [ "$(docker_devtools_health)" = "healthy" ]; then
+            log_warn "已回滚到旧版本"
             compose ps || true
-            compose logs --tail=100 devtools || true
             exit 1
         fi
     fi
+
+    log_error "回滚失败，请手动处理"
+    exit 1
 }
 
 docker_stop() {
@@ -458,7 +550,7 @@ help() {
     echo "  deploy      完整部署 (构建 + 启动)"
     echo ""
     echo "Docker 命令:"
-    echo "  docker            Docker 构建并部署"
+    echo "  docker            Docker 先构建、再替换 devtools，失败时尝试回滚"
     echo "  docker-stop       停止 Docker 容器"
     echo "  docker-restart    重启 Docker 容器"
     echo "  docker-logs       查看 Docker 日志"
