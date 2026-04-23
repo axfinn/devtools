@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,10 @@ const (
 	maxAudioSize = 10 * 1024 * 1024 // 10MB
 	maxFileSize  = 20 * 1024 * 1024 // 20MB 通用文件
 	uploadDir    = "./data/uploads"
+
+	botConversationTimeout     = 5 * time.Minute
+	botConversationMaxTurns    = 6
+	botConversationTurnsPerBot = 2
 )
 
 // 允许的文件扩展名白名单
@@ -96,10 +101,28 @@ var botRoleTemplates = []BotRoleTemplate{
 	{Key: "kid", Name: "小屁孩", Nickname: "👦 小屁孩", SystemPrompt: "你是一个七八岁的小孩，说话天真烂漫，喜欢问为什么，喜欢玩，会用儿童视角看世界，偶尔冒出令人捧腹的童言童语。"},
 }
 
+var botTerminationCommands = map[string]struct{}{
+	"停":     {},
+	"停止":    {},
+	"停止对话":  {},
+	"结束":    {},
+	"结束对话":  {},
+	"终止":    {},
+	"终止对话":  {},
+	"stop":  {},
+	"/stop": {},
+}
+
 // botMessage MiniMax 对话历史条目
 type botMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type botConversationTopic struct {
+	userNickname string
+	userMsg      string
+	botNicknames []string
 }
 
 type ChatHandler struct {
@@ -109,15 +132,21 @@ type ChatHandler struct {
 	adminPassword string
 	minimax       config.MiniMaxConfig
 	ttsServiceURL string
+	botReplyFunc  func(ctx context.Context, systemPrompt string, history []botMessage) (string, error)
+	botDelayFunc  func(turnIndex int, totalTurns int) time.Duration
 }
 
 type Room struct {
-	ID          string
-	clients     map[*Client]bool
-	mu          sync.RWMutex
-	bots        map[string]*BotConfig          // key = nickname
-	histories   map[string][]botMessage        // key = nickname
-	botCancels  map[string]context.CancelFunc  // key = nickname
+	ID               string
+	clients          map[*Client]bool
+	mu               sync.RWMutex
+	bots             map[string]*BotConfig         // key = nickname
+	histories        map[string][]botMessage       // key = nickname
+	botCancels       map[string]context.CancelFunc // key = nickname
+	botSessionCancel context.CancelFunc
+	botSessionID     uint64
+	pendingBotTopic  *botConversationTopic
+	stopAfterTurn    bool
 }
 
 type Client struct {
@@ -147,6 +176,329 @@ func NewChatHandler(db *models.DB, adminPassword string, minimax config.MiniMaxC
 		adminPassword: adminPassword,
 		minimax:       minimax,
 		ttsServiceURL: ttsServiceURL,
+	}
+}
+
+func isBotTerminationCommand(content string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(content))
+	_, ok := botTerminationCommands[normalized]
+	return ok
+}
+
+func plannedBotTurns(botCount int) int {
+	if botCount <= 0 {
+		return 0
+	}
+	turns := botCount * botConversationTurnsPerBot
+	if botCount == 1 {
+		turns = 1
+	}
+	if turns > botConversationMaxTurns {
+		turns = botConversationMaxTurns
+	}
+	return turns
+}
+
+func estimateBotSpeechDelay(text string) time.Duration {
+	runes := len([]rune(strings.TrimSpace(text)))
+	if runes == 0 {
+		return 4 * time.Second
+	}
+	delay := time.Duration(runes) * 180 * time.Millisecond
+	if delay < 4*time.Second {
+		delay = 4 * time.Second
+	}
+	if delay > 12*time.Second {
+		delay = 12 * time.Second
+	}
+	return delay - 400*time.Millisecond
+}
+
+func (h *ChatHandler) botTurnDelay(turnIndex int, totalTurns int, previousReply string) time.Duration {
+	if h.botDelayFunc != nil {
+		return h.botDelayFunc(turnIndex, totalTurns)
+	}
+	if turnIndex == 0 {
+		return time.Duration(900+rand.Intn(700)) * time.Millisecond
+	}
+	return estimateBotSpeechDelay(previousReply)
+}
+
+func collectTriggeredBots(room *Room, senderNickname, content string) []*BotConfig {
+	if room == nil {
+		return nil
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+
+	triggered := make([]*BotConfig, 0, len(room.bots))
+	for _, bot := range room.bots {
+		if !bot.Enabled || senderNickname == bot.Nickname {
+			continue
+		}
+		mentioned := strings.Contains(content, "@"+bot.Nickname)
+		if bot.MentionOnly && !mentioned {
+			continue
+		}
+		triggered = append(triggered, bot)
+	}
+	sort.Slice(triggered, func(i, j int) bool {
+		return triggered[i].Nickname < triggered[j].Nickname
+	})
+	return triggered
+}
+
+func newBotConversationTopic(userNickname, userMsg string, bots []*BotConfig) *botConversationTopic {
+	if len(bots) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(bots))
+	for _, bot := range bots {
+		if bot == nil || bot.Nickname == "" {
+			continue
+		}
+		names = append(names, bot.Nickname)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return &botConversationTopic{
+		userNickname: userNickname,
+		userMsg:      userMsg,
+		botNicknames: names,
+	}
+}
+
+func resolveConversationTopicBotsLocked(room *Room, topic *botConversationTopic) []*BotConfig {
+	if room == nil || topic == nil {
+		return nil
+	}
+	bots := make([]*BotConfig, 0, len(topic.botNicknames))
+	for _, nickname := range topic.botNicknames {
+		bot := room.bots[nickname]
+		if bot == nil || !bot.Enabled {
+			continue
+		}
+		bots = append(bots, bot)
+	}
+	return bots
+}
+
+func consumePendingTopicLocked(room *Room) (*botConversationTopic, []*BotConfig) {
+	if room == nil || room.pendingBotTopic == nil {
+		return nil, nil
+	}
+	topic := room.pendingBotTopic
+	room.pendingBotTopic = nil
+	return topic, resolveConversationTopicBotsLocked(room, topic)
+}
+
+func cancelRoomBotSessionLocked(room *Room) bool {
+	if room == nil {
+		return false
+	}
+	stopped := room.botSessionCancel != nil || len(room.botCancels) > 0
+	if room.botSessionCancel != nil {
+		room.botSessionCancel()
+		room.botSessionCancel = nil
+	}
+	for nickname, cancel := range room.botCancels {
+		cancel()
+		delete(room.botCancels, nickname)
+	}
+	room.pendingBotTopic = nil
+	room.stopAfterTurn = false
+	return stopped
+}
+
+func requestRoomBotSessionStopLocked(room *Room) bool {
+	if room == nil {
+		return false
+	}
+	stopped := room.botSessionCancel != nil || len(room.botCancels) > 0 || room.pendingBotTopic != nil
+	room.pendingBotTopic = nil
+	room.stopAfterTurn = true
+	return stopped
+}
+
+func (h *ChatHandler) startBotConversation(room *Room, roomID, userNickname, userMsg string, bots []*BotConfig) bool {
+	if room == nil || len(bots) == 0 {
+		return false
+	}
+
+	topic := newBotConversationTopic(userNickname, userMsg, bots)
+	if topic == nil {
+		return false
+	}
+
+	room.mu.Lock()
+	if room.botSessionCancel != nil {
+		room.pendingBotTopic = topic
+		room.stopAfterTurn = false
+		room.mu.Unlock()
+		return true
+	}
+	room.botSessionID++
+	sessionID := room.botSessionID
+	ctx, cancel := context.WithTimeout(context.Background(), botConversationTimeout)
+	room.botSessionCancel = cancel
+	room.pendingBotTopic = nil
+	room.stopAfterTurn = false
+	room.mu.Unlock()
+
+	go func() {
+		defer cancel()
+		defer func() {
+			room.mu.Lock()
+			if room.botSessionID == sessionID && room.botSessionCancel != nil {
+				room.botSessionCancel = nil
+				for nickname, botCancel := range room.botCancels {
+					botCancel()
+					delete(room.botCancels, nickname)
+				}
+				room.pendingBotTopic = nil
+				room.stopAfterTurn = false
+			}
+			room.mu.Unlock()
+		}()
+		h.runBotConversation(ctx, room, roomID, topic, sessionID)
+	}()
+	return true
+}
+
+func (h *ChatHandler) runBotConversation(ctx context.Context, room *Room, roomID string, topic *botConversationTopic, sessionID uint64) {
+	if topic == nil {
+		return
+	}
+
+	room.mu.RLock()
+	bots := resolveConversationTopicBotsLocked(room, topic)
+	room.mu.RUnlock()
+	if len(bots) == 0 {
+		return
+	}
+
+	totalTurns := plannedBotTurns(len(bots))
+	if totalTurns == 0 {
+		return
+	}
+
+	currentTopic := topic
+	lastSpeaker := currentTopic.userNickname
+	lastReply := ""
+	for turn := 0; turn < totalTurns; turn++ {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+
+		room.mu.Lock()
+		if room.botSessionCancel == nil || room.botSessionID != sessionID {
+			room.mu.Unlock()
+			return
+		}
+		if nextTopic, nextBots := consumePendingTopicLocked(room); nextTopic != nil {
+			room.stopAfterTurn = false
+			room.mu.Unlock()
+			if len(nextBots) == 0 {
+				return
+			}
+			currentTopic = nextTopic
+			bots = nextBots
+			totalTurns = plannedBotTurns(len(bots))
+			lastSpeaker = currentTopic.userNickname
+			lastReply = ""
+			turn = -1
+			continue
+		}
+		room.mu.Unlock()
+
+		var speaker, content string
+		if turn < len(bots) || lastReply == "" {
+			speaker = currentTopic.userNickname
+			content = currentTopic.userMsg
+		} else {
+			speaker = lastSpeaker
+			content = lastReply
+		}
+
+		delay := h.botTurnDelay(turn, totalTurns, lastReply)
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		room.mu.Lock()
+		if room.botSessionCancel == nil || room.botSessionID != sessionID {
+			room.mu.Unlock()
+			return
+		}
+		if nextTopic, nextBots := consumePendingTopicLocked(room); nextTopic != nil {
+			room.stopAfterTurn = false
+			room.mu.Unlock()
+			if len(nextBots) == 0 {
+				return
+			}
+			currentTopic = nextTopic
+			bots = nextBots
+			totalTurns = plannedBotTurns(len(bots))
+			lastSpeaker = currentTopic.userNickname
+			lastReply = ""
+			turn = -1
+			continue
+		}
+
+		bot := bots[turn%len(bots)]
+		if existingCancel, ok := room.botCancels[bot.Nickname]; ok {
+			existingCancel()
+		}
+		turnCtx, turnCancel := context.WithCancel(ctx)
+		room.botCancels[bot.Nickname] = turnCancel
+		room.mu.Unlock()
+
+		reply, err := h.triggerBotReply(turnCtx, room, roomID, speaker, content, bot.Nickname)
+
+		room.mu.Lock()
+		if room.botSessionID == sessionID {
+			delete(room.botCancels, bot.Nickname)
+		}
+		room.mu.Unlock()
+		turnCancel()
+
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Printf("Bot conversation stopped (room=%s, bot=%s): %v", roomID, bot.Nickname, err)
+			}
+			return
+		}
+
+		lastSpeaker = bot.Nickname
+		lastReply = reply
+
+		room.mu.Lock()
+		if room.botSessionID == sessionID && room.botSessionCancel != nil {
+			if nextTopic, nextBots := consumePendingTopicLocked(room); nextTopic != nil {
+				room.stopAfterTurn = false
+				room.mu.Unlock()
+				if len(nextBots) == 0 {
+					return
+				}
+				currentTopic = nextTopic
+				bots = nextBots
+				totalTurns = plannedBotTurns(len(bots))
+				lastSpeaker = currentTopic.userNickname
+				lastReply = ""
+				turn = -1
+				continue
+			}
+		}
+		shouldStop := room.botSessionID != sessionID || room.botSessionCancel == nil || room.stopAfterTurn
+		room.mu.Unlock()
+		if shouldStop {
+			return
+		}
 	}
 }
 
@@ -449,42 +801,18 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 			// 异步触发机器人回复（仅文本消息，且发送者不是机器人本身）
 			if chatMsg.MsgType == "text" || chatMsg.MsgType == "" {
 				r := client.room
-				r.mu.RLock()
-				var triggeredBots []*BotConfig
-				for _, bot := range r.bots {
-					if !bot.Enabled || client.nickname == bot.Nickname {
-						continue
-					}
-					mentioned := strings.Contains(msg.Content, "@"+bot.Nickname)
-					if bot.MentionOnly && !mentioned {
-						continue
-					}
-					triggeredBots = append(triggeredBots, bot)
-				}
-				r.mu.RUnlock()
-
-				for i, bot := range triggeredBots {
-					bot := bot
-					delay := time.Duration(i) * (2*time.Second + time.Duration(rand.Intn(3000))*time.Millisecond)
+				if isBotTerminationCommand(msg.Content) {
 					r.mu.Lock()
-					if cancel, ok := r.botCancels[bot.Nickname]; ok {
-						cancel()
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-					r.botCancels[bot.Nickname] = cancel
+					stopped := requestRoomBotSessionStopLocked(r)
 					r.mu.Unlock()
-
-					go func() {
-						defer cancel()
-						if delay > 0 {
-							select {
-							case <-time.After(delay):
-							case <-ctx.Done():
-								return
-							}
-						}
-						h.triggerBotReply(ctx, r, roomID, client.nickname, msg.Content, bot.Nickname)
-					}()
+					if stopped {
+						h.broadcast(r, WSMessage{Type: "system", Content: client.nickname + " 请求结束当前机器人话题"}, nil)
+					}
+				} else {
+					triggeredBots := collectTriggeredBots(r, client.nickname, msg.Content)
+					if len(triggeredBots) > 0 {
+						h.startBotConversation(r, roomID, client.nickname, msg.Content, triggeredBots)
+					}
 				}
 			}
 		}
@@ -767,13 +1095,13 @@ func (h *ChatHandler) GetBotConfig(c *gin.Context) {
 }
 
 type AddBotRequest struct {
-	Role        string `json:"role" binding:"required"`
-	Nickname    string `json:"nickname"`
+	Role         string `json:"role" binding:"required"`
+	Nickname     string `json:"nickname"`
 	SystemPrompt string `json:"system_prompt"`
-	EnableTTS   bool   `json:"enable_tts"`
-	TTSVoice    string `json:"tts_voice"`
-	TTSEngine   string `json:"tts_engine"`
-	MentionOnly bool   `json:"mention_only"`
+	EnableTTS    bool   `json:"enable_tts"`
+	TTSVoice     string `json:"tts_voice"`
+	TTSEngine    string `json:"tts_engine"`
+	MentionOnly  bool   `json:"mention_only"`
 }
 
 // AddBot 添加/更新房间机器人（同 nickname 覆盖）
@@ -864,6 +1192,7 @@ func (h *ChatHandler) RemoveBot(c *gin.Context) {
 	if room != nil {
 		room.mu.Lock()
 		if nickname != "" {
+			cancelRoomBotSessionLocked(room)
 			if cancel, ok := room.botCancels[nickname]; ok {
 				cancel()
 				delete(room.botCancels, nickname)
@@ -872,9 +1201,7 @@ func (h *ChatHandler) RemoveBot(c *gin.Context) {
 			delete(room.histories, nickname)
 		} else {
 			// 兼容旧接口：移除全部
-			for _, cancel := range room.botCancels {
-				cancel()
-			}
+			cancelRoomBotSessionLocked(room)
 			room.bots = make(map[string]*BotConfig)
 			room.histories = make(map[string][]botMessage)
 			room.botCancels = make(map[string]context.CancelFunc)
@@ -906,18 +1233,20 @@ func (h *ChatHandler) StopBot(c *gin.Context) {
 
 	room.mu.Lock()
 	if nickname != "" {
-		if cancel, ok := room.botCancels[nickname]; ok {
-			cancel()
-			delete(room.botCancels, nickname)
+		stopped := requestRoomBotSessionStopLocked(room)
+		room.mu.Unlock()
+		if stopped {
+			c.JSON(http.StatusOK, gin.H{"message": "已请求在当前回复结束后停止"})
+			return
 		}
 	} else {
-		for _, cancel := range room.botCancels {
-			cancel()
+		stopped := requestRoomBotSessionStopLocked(room)
+		room.mu.Unlock()
+		if stopped {
+			c.JSON(http.StatusOK, gin.H{"message": "已请求在当前回复结束后停止"})
+			return
 		}
-		room.botCancels = make(map[string]context.CancelFunc)
 	}
-	room.mu.Unlock()
-
 	c.JSON(http.StatusOK, gin.H{"message": "已中断机器人回复"})
 }
 
@@ -938,18 +1267,18 @@ func (h *ChatHandler) saveBots(roomID string, room *Room) {
 	}
 }
 
-// triggerBotReply 异步生成指定 bot 的回复并广播，支持通过 ctx 取消
-func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, userNickname, userMsg, botNickname string) {
+// triggerBotReply 生成指定 bot 的回复并广播，支持通过 ctx 取消
+func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, userNickname, userMsg, botNickname string) (string, error) {
 	room.mu.RLock()
 	bot := room.bots[botNickname]
 	room.mu.RUnlock()
 	if bot == nil || !bot.Enabled {
-		return
+		return "", fmt.Errorf("bot %s 不存在或未启用", botNickname)
 	}
 
 	select {
 	case <-ctx.Done():
-		return
+		return "", ctx.Err()
 	default:
 	}
 
@@ -966,7 +1295,7 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 	replyCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		reply, err := h.callMiniMax(bot.SystemPrompt, historyCopy)
+		reply, err := h.requestBotReply(ctx, bot.SystemPrompt, historyCopy)
 		if err != nil {
 			errCh <- err
 		} else {
@@ -977,10 +1306,10 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 	var reply string
 	select {
 	case <-ctx.Done():
-		return
+		return "", ctx.Err()
 	case err := <-errCh:
 		log.Printf("Bot MiniMax error (room=%s): %v", roomID, err)
-		return
+		return "", err
 	case reply = <-replyCh:
 	}
 
@@ -991,7 +1320,10 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 		Content:  reply,
 		MsgType:  "text",
 	}
-	h.db.CreateMessage(botMsg)
+	if err := h.db.CreateMessage(botMsg); err != nil {
+		return "", err
+	}
+	h.db.UpdateRoomActivity(roomID)
 
 	// 把机器人回复追加到历史
 	room.mu.Lock()
@@ -1010,11 +1342,18 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 		MsgType:   "text",
 		CreatedAt: botMsg.CreatedAt.Format(time.RFC3339),
 	}, nil)
+	return reply, nil
+}
 
+func (h *ChatHandler) requestBotReply(ctx context.Context, systemPrompt string, history []botMessage) (string, error) {
+	if h.botReplyFunc != nil {
+		return h.botReplyFunc(ctx, systemPrompt, history)
+	}
+	return h.callMiniMax(ctx, systemPrompt, history)
 }
 
 // callMiniMax 调用 MiniMax API（兼容 Anthropic 格式）
-func (h *ChatHandler) callMiniMax(systemPrompt string, history []botMessage) (string, error) {
+func (h *ChatHandler) callMiniMax(ctx context.Context, systemPrompt string, history []botMessage) (string, error) {
 	type message struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -1037,7 +1376,7 @@ func (h *ChatHandler) callMiniMax(systemPrompt string, history []botMessage) (st
 	bodyBytes, _ := json.Marshal(reqBody)
 
 	apiURL := "https://api.minimaxi.com/anthropic/v1/messages"
-	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", err
 	}
