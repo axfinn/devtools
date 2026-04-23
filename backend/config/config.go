@@ -25,6 +25,7 @@ type Config struct {
 	SSH                 SSHConfig                 `yaml:"ssh"`
 	Expense             ExpenseConfig             `yaml:"expense"`
 	Glucose             GlucoseConfig             `yaml:"glucose"`
+	Planner             PlannerConfig             `yaml:"planner"`
 	Household           HouseholdConfig           `yaml:"household"`
 	PhotoWall           PhotoWallConfig           `yaml:"photowall"`
 	DeepSeek            DeepSeekConfig            `yaml:"deepseek"`
@@ -247,6 +248,17 @@ type GlucoseConfig struct {
 	DefaultExpiresDays int `yaml:"default_expires_days"` // 默认过期天数，默认365
 }
 
+// PlannerConfig 工作/生活事项管理配置
+type PlannerConfig struct {
+	AdminPassword      string `yaml:"admin_password"`       // 超管密码
+	DefaultExpiresDays int    `yaml:"default_expires_days"` // 默认过期天数
+	MaxExpiresDays     int    `yaml:"max_expires_days"`     // 普通用户最长过期天数
+	SMTPHost           string `yaml:"smtp_host"`            // SMTP 服务器
+	SMTPPort           int    `yaml:"smtp_port"`            // SMTP 端口
+	SMTPUser           string `yaml:"smtp_user"`            // SMTP 用户
+	SMTPPass           string `yaml:"smtp_pass"`            // SMTP 密码/授权码
+}
+
 // DeepSeekConfig DeepSeek AI 配置
 type DeepSeekConfig struct {
 	APIKey string `yaml:"api_key"` // API Key，从 https://platform.deepseek.com 获取
@@ -437,6 +449,11 @@ func DefaultConfig() *Config {
 		},
 		Glucose: GlucoseConfig{
 			DefaultExpiresDays: 365,
+		},
+		Planner: PlannerConfig{
+			DefaultExpiresDays: 365,
+			MaxExpiresDays:     3650,
+			SMTPPort:           465,
 		},
 		Household: HouseholdConfig{
 			DefaultExpiresDays: 365,

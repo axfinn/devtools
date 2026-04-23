@@ -307,6 +307,18 @@ const toolRoutes = [
     }
   },
   {
+    path: '/planner',
+    name: 'Planner',
+    component: () => import('../views/PlannerTool.vue'),
+    meta: {
+      title: '事项管理',
+      icon: 'Calendar',
+      category: 'life',
+      shortcut: true,
+      description: '工作事项与生活事项分区管理，支持语音、提醒和日历导入'
+    }
+  },
+  {
     path: '/household',
     name: 'Household',
     component: () => import('../views/HouseholdTool.vue'),

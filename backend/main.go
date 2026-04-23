@@ -110,6 +110,11 @@ func main() {
 		log.Fatalf("血糖监测数据库初始化失败: %v", err)
 	}
 
+	// 初始化事项管理数据库表
+	if err := db.InitPlanner(); err != nil {
+		log.Fatalf("事项管理数据库初始化失败: %v", err)
+	}
+
 	// 初始化菜谱数据库表
 	if err := db.InitRecipe(); err != nil {
 		log.Fatalf("菜谱数据库初始化失败: %v", err)
@@ -194,6 +199,8 @@ func main() {
 		log.Println("背景图预加载完成")
 	}()
 
+	var plannerHandler *handlers.PlannerHandler
+
 	// 定期清理过期数据
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -248,6 +255,11 @@ func main() {
 			if err == nil && glucoseCount > 0 {
 				log.Printf("已清理 %d 个过期血糖监测档案", glucoseCount)
 			}
+			// 清理过期事项档案
+			plannerCount, err := db.CleanExpiredPlannerProfiles()
+			if err == nil && plannerCount > 0 {
+				log.Printf("已清理 %d 个过期事项档案", plannerCount)
+			}
 			// 清理过期照片墙档案
 			photoWallCount, err := db.CleanExpiredPhotoWallProfiles()
 			if err == nil && photoWallCount > 0 {
@@ -289,6 +301,8 @@ func main() {
 			if err == nil && aiLogCount > 0 {
 				log.Printf("已清理 %d 条旧 AI Gateway 请求明细", aiLogCount)
 			}
+			// 扫描事项提醒
+			plannerHandler.ProcessDueReminders()
 			// 清理过期/耗尽的 NFS 分享
 			nfsCount, err := db.CleanExpiredNFSShares()
 			if err == nil && nfsCount > 0 {
@@ -340,6 +354,7 @@ func main() {
 	pregnancyHandler := handlers.NewPregnancyHandler(db, cfg.Pregnancy.DefaultExpiresDays, cfg.Pregnancy.MaxDataSize)
 	expenseHandler := handlers.NewExpenseHandler(db, cfg)
 	glucoseHandler := handlers.NewGlucoseHandler(db, cfg)
+	plannerHandler = handlers.NewPlannerHandler(db, cfg)
 	recipeHandler := handlers.NewRecipeHandler(db, 365, 1024*1024)
 	householdHandler := handlers.NewHouseholdHandler(db, cfg)
 	photoWallHandler := handlers.NewPhotoWallHandler(db, cfg)
@@ -385,6 +400,7 @@ func main() {
 	handlers.InitGFWList("./data/proxy.db")
 	proxyHandler.AutoSelectOnStartup()
 	proxyHandler.StartAutoMaintenance()
+	plannerHandler.ProcessDueReminders()
 
 	// Edge TTS 处理器
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
@@ -622,6 +638,28 @@ func main() {
 			glucose.GET("/:id/stats", glucoseHandler.GetStats)
 			// AI Voice Parse
 			glucose.POST("/:id/voice-parse", glucoseHandler.VoiceParse)
+		}
+
+		// 事项管理 API
+		planner := api.Group("/planner")
+		{
+			planner.POST("/profile", createRateLimiter.Middleware(), plannerHandler.CreateProfile)
+			planner.POST("/profile/login", plannerHandler.LoginProfile)
+			planner.GET("/profile/:id", plannerHandler.GetProfile)
+			planner.PUT("/profile/:id", plannerHandler.UpdateProfile)
+			planner.DELETE("/profile/:id", plannerHandler.DeleteProfile)
+			planner.GET("/profile/:id/timeline", plannerHandler.ListTimeline)
+			planner.POST("/profile/:id/tasks", plannerHandler.CreateTask)
+			planner.PUT("/profile/:id/tasks/:taskId", plannerHandler.UpdateTask)
+			planner.DELETE("/profile/:id/tasks/:taskId", plannerHandler.DeleteTask)
+			planner.GET("/profile/:id/tasks/:taskId/comments", plannerHandler.ListTaskComments)
+			planner.POST("/profile/:id/tasks/:taskId/comments", plannerHandler.CreateTaskComment)
+			planner.GET("/profile/:id/tasks/:taskId/calendar", plannerHandler.DownloadCalendar)
+			planner.POST("/profile/:id/ai/parse", plannerHandler.AIParse)
+			planner.GET("/admin/list", plannerHandler.AdminList)
+			planner.GET("/admin/:id", plannerHandler.AdminGet)
+			planner.PUT("/admin/:id", plannerHandler.AdminUpdate)
+			planner.DELETE("/admin/:id", plannerHandler.AdminDelete)
 		}
 
 		// 菜谱 API
@@ -1012,31 +1050,31 @@ func main() {
 	// Mock API 执行（非 API 路径，支持所有 HTTP 方法）
 	r.Any("/mock/:id", mockAPIHandler.Execute)
 
-		// 静态文件（生产环境）
-		distDir := "./dist"
-		r.Static("/assets", distDir+"/assets")
-		r.Static("/neon", distDir+"/neon")
-		r.StaticFile("/", distDir+"/index.html")
-		r.StaticFile("/alipay.jpeg", distDir+"/alipay.jpeg")
-		r.StaticFile("/wxpay.jpeg", distDir+"/wxpay.jpeg")
-		r.NoRoute(func(c *gin.Context) {
-			path := c.Request.URL.Path
-			if path == "/api" || strings.HasPrefix(path, "/api/") {
-				c.JSON(404, gin.H{"error": "接口不存在", "path": path})
+	// 静态文件（生产环境）
+	distDir := "./dist"
+	r.Static("/assets", distDir+"/assets")
+	r.Static("/neon", distDir+"/neon")
+	r.StaticFile("/", distDir+"/index.html")
+	r.StaticFile("/alipay.jpeg", distDir+"/alipay.jpeg")
+	r.StaticFile("/wxpay.jpeg", distDir+"/wxpay.jpeg")
+	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		if path == "/api" || strings.HasPrefix(path, "/api/") {
+			c.JSON(404, gin.H{"error": "接口不存在", "path": path})
+			return
+		}
+
+		cleanPath := filepath.Clean(strings.TrimPrefix(path, "/"))
+		if cleanPath != "." && cleanPath != "" && !strings.HasPrefix(cleanPath, "..") {
+			filePath := filepath.Join(distDir, cleanPath)
+			if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+				c.File(filePath)
 				return
 			}
+		}
 
-			cleanPath := filepath.Clean(strings.TrimPrefix(path, "/"))
-			if cleanPath != "." && cleanPath != "" && !strings.HasPrefix(cleanPath, "..") {
-				filePath := filepath.Join(distDir, cleanPath)
-				if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
-					c.File(filePath)
-					return
-				}
-			}
-
-			c.File(distDir + "/index.html")
-		})
+		c.File(distDir + "/index.html")
+	})
 
 	log.Printf("服务器启动在端口 %s", port)
 

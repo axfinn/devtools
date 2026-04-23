@@ -79,9 +79,9 @@ type LoginExpenseRequest struct {
 }
 
 type ExpenseProfileResponse struct {
-	ID         string     `json:"id"`
-	ExpiresAt  *time.Time `json:"expires_at"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID        string     `json:"id"`
+	ExpiresAt *time.Time `json:"expires_at"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 type CreateAccountRequest struct {
@@ -710,8 +710,8 @@ func (h *ExpenseHandler) GetTransactions(c *gin.Context) {
 	// Enrich with account and category names
 	type EnrichTx struct {
 		*models.ExpenseTransaction
-		AccountName  string `json:"account_name"`
-		CategoryName string `json:"category_name"`
+		AccountName   string `json:"account_name"`
+		CategoryName  string `json:"category_name"`
 		CategoryColor string `json:"category_color"`
 	}
 
@@ -998,7 +998,7 @@ func (h *ExpenseHandler) Analyze(c *gin.Context) {
 	if h.cfg.DeepSeek.APIKey == "" {
 		// Return basic analysis without AI
 		c.JSON(http.StatusOK, gin.H{
-			"analysis": getBasicAnalysis(stats, period),
+			"analysis":   getBasicAnalysis(stats, period),
 			"ai_enabled": false,
 		})
 		return
@@ -1007,7 +1007,7 @@ func (h *ExpenseHandler) Analyze(c *gin.Context) {
 	// Check if there's any data to analyze
 	if stats.TransactionCount == 0 {
 		c.JSON(http.StatusOK, gin.H{
-			"analysis": "暂无消费记录，无法进行分析。建议先添加一些记账记录后再使用AI分析功能。",
+			"analysis":   "暂无消费记录，无法进行分析。建议先添加一些记账记录后再使用AI分析功能。",
 			"ai_enabled": true,
 		})
 		return
@@ -1021,14 +1021,14 @@ func (h *ExpenseHandler) Analyze(c *gin.Context) {
 	if err != nil {
 		// API调用失败时返回基础分析
 		c.JSON(http.StatusOK, gin.H{
-			"analysis": getBasicAnalysis(stats, period) + "\n\n⚠️ AI分析暂时不可用: " + err.Error(),
+			"analysis":   getBasicAnalysis(stats, period) + "\n\n⚠️ AI分析暂时不可用: " + err.Error(),
 			"ai_enabled": false,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"analysis": result,
+		"analysis":   result,
 		"ai_enabled": true,
 	})
 }
@@ -1486,28 +1486,29 @@ func basicVoiceParse(text string, categories []*models.ExpenseCategory) *VoicePa
 		}
 	}
 
-	// Parse category - 增强关键词匹配
-	categoryKeywords := map[string][]string{
-		// 支出分类
-		"餐饮": {"吃饭", "餐饮", "午餐", "晚餐", "早餐", "外卖", "奶茶", "咖啡", "水果", "零食", "面", "饺子", "包子", "快餐", "火锅", "烧烤", "炸鸡", "披萨", "麻辣烫", "沙拉", "便利店", "超市", "买菜", "零食", "餐馆", "餐厅", "小卖部", "商店", "买水", "喝奶茶", "喝咖啡", "买水果", "零食"},
-		"交通": {"打车", "地铁", "公交", "巴士", "加油", "停车", "出租车", "滴滴", "打车", "油费", "过路费", "高速", "网约车", "共享单车", "骑车", "坐车", "乘车", "打车费", "公交车", "轻轨", "高铁", "火车", "飞机", "票"},
-		"购物": {"购物", "买", "淘宝", "京东", "快递", "网购", "拼多多", "天猫", "唯品会", "衣服", "鞋子", "包包", "背包", "裙子", "裤子", "帽子", "手套", "围巾", "化妆品", "护肤品", "口红", "面膜", "洗面奶", "洗衣液", "洗洁精", "纸巾", "毛巾", "牙刷", "牙膏", "沐浴露", "洗发水", "护发素"},
-		"居住": {"房租", "水电费", "物业费", "住房", "房租", "燃气费", "宽带费", "话费", "日用品", "家具", "床", "桌子", "椅子", "柜子", "被子", "枕头", "蚊帐", "电费", "水费", "燃气", "房租", "租金"},
-		"医疗": {"医疗", "药", "医院", "看病", "药店", "体检", "医保", "挂号", "门诊", "住院", "手术", "检查", "化验", "CT", "B超", "买药", "诊所", "疫苗", "核酸"},
-		"教育": {"教育", "培训", "学费", "书", "课程", "考试", "文具", "培训费", "辅导班", "家教", "补习", "资料", "教材", "笔记本", "笔", "橡皮", "尺子", "书包", "报名费"},
-		"娱乐": {"电影", "游戏", "旅游", "KTV", "唱歌", "上网", "视频会员", "会员", "爱奇艺", "腾讯视频", "优酷", "芒果TV", "B站", "羽毛球", "健身", "健身房", "游泳", "话剧", "演出", "演唱会", "音乐会", "展览", "博物馆", "动物园", "游乐园", "门票", "充值", "点卡", "皮肤", "英雄", "会员", "VIP", "外卖会员"},
-		"其他支出": {"其他", "杂费", "花费", "支出"},
-		// 收入分类
-		"工资": {"工资", "发工资", "薪资", "月薪", "底薪", "月工资", "工资到账", "发薪", "薪酬"},
-		"奖金": {"奖金", "年终奖", "分红", "提成", "佣金", "外快", "绩效", "奖励", "补贴"},
-		"投资收益": {"理财", "利息", "投资收益", "分红", "股票", "基金", "利息", "赚钱", "投资"},
-		"其他收入": {"收入", "收款", "收到", "到账", "转账", "红包"},
+	// Parse category - 使用有序匹配，避免 map 迭代顺序导致结果不稳定
+	categoryKeywordList := []struct {
+		category string
+		keywords []string
+	}{
+		{"餐饮", []string{"吃饭", "餐饮", "午餐", "晚餐", "早餐", "外卖", "奶茶", "咖啡", "水果", "零食", "面", "饺子", "包子", "快餐", "火锅", "烧烤", "炸鸡", "披萨", "麻辣烫", "沙拉", "便利店", "超市", "买菜", "零食", "餐馆", "餐厅", "小卖部", "商店", "买水", "喝奶茶", "喝咖啡", "买水果", "零食"}},
+		{"交通", []string{"打车", "地铁", "公交", "巴士", "加油", "停车", "出租车", "滴滴", "打车", "油费", "过路费", "高速", "网约车", "共享单车", "骑车", "坐车", "乘车", "打车费", "公交车", "轻轨", "高铁", "火车", "飞机", "票"}},
+		{"购物", []string{"购物", "买", "淘宝", "京东", "快递", "网购", "拼多多", "天猫", "唯品会", "衣服", "鞋子", "包包", "背包", "裙子", "裤子", "帽子", "手套", "围巾", "化妆品", "护肤品", "口红", "面膜", "洗面奶", "洗衣液", "洗洁精", "纸巾", "毛巾", "牙刷", "牙膏", "沐浴露", "洗发水", "护发素"}},
+		{"居住", []string{"房租", "水电费", "物业费", "住房", "房租", "燃气费", "宽带费", "话费", "日用品", "家具", "床", "桌子", "椅子", "柜子", "被子", "枕头", "蚊帐", "电费", "水费", "燃气", "房租", "租金"}},
+		{"医疗", []string{"医疗", "药", "医院", "看病", "药店", "体检", "医保", "挂号", "门诊", "住院", "手术", "检查", "化验", "CT", "B超", "买药", "诊所", "疫苗", "核酸"}},
+		{"教育", []string{"教育", "培训", "学费", "书", "课程", "考试", "文具", "培训费", "辅导班", "家教", "补习", "资料", "教材", "笔记本", "笔", "橡皮", "尺子", "书包", "报名费"}},
+		{"娱乐", []string{"电影", "游戏", "旅游", "KTV", "唱歌", "上网", "视频会员", "会员", "爱奇艺", "腾讯视频", "优酷", "芒果TV", "B站", "羽毛球", "健身", "健身房", "游泳", "话剧", "演出", "演唱会", "音乐会", "展览", "博物馆", "动物园", "游乐园", "门票", "充值", "点卡", "皮肤", "英雄", "会员", "VIP", "外卖会员"}},
+		{"其他支出", []string{"其他", "杂费", "花费", "支出"}},
+		{"工资", []string{"工资", "发工资", "薪资", "月薪", "底薪", "月工资", "工资到账", "发薪", "薪酬"}},
+		{"奖金", []string{"奖金", "年终奖", "分红", "提成", "佣金", "外快", "绩效", "奖励", "补贴"}},
+		{"投资收益", []string{"理财", "利息", "投资收益", "分红", "股票", "基金", "利息", "赚钱", "投资"}},
+		{"其他收入", []string{"收入", "收款", "收到", "到账", "转账", "红包"}},
 	}
 
-	for cat, keywords := range categoryKeywords {
-		for _, keyword := range keywords {
+	for _, item := range categoryKeywordList {
+		for _, keyword := range item.keywords {
 			if strings.Contains(lowerText, keyword) {
-				result.Category = cat
+				result.Category = item.category
 				break
 			}
 		}
