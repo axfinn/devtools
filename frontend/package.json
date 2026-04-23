@@ -44,7 +44,7 @@
     "react-i18next": "^16.5.4",
     "react-router-dom": "^7.12.0",
     "three": "^0.169.0",
-    "vue": "^3.5.24",
+    "vue": "^3.5.32",
     "vue-pdf-embed": "^2.1.4",
     "vue-router": "^4.6.4",
     "zustand": "^5.0.1"
