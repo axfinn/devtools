@@ -60,6 +60,23 @@ type PlannerTaskComment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type PlannerTaskActivity struct {
+	ID           string    `json:"id"`
+	TaskID       string    `json:"task_id"`
+	ProfileID    string    `json:"profile_id"`
+	ActivityType string    `json:"activity_type"`
+	Title        string    `json:"title"`
+	Content      string    `json:"content"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type PlannerTaskCommentSummary struct {
+	TaskID        string
+	CommentCount  int
+	LastContent   string
+	LastCreatedAt *time.Time
+}
+
 type PlannerProfileSummary struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`
@@ -119,6 +136,18 @@ func (db *DB) InitPlanner() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (task_id) REFERENCES planner_tasks(id) ON DELETE CASCADE,
 			FOREIGN KEY (profile_id) REFERENCES planner_profiles(id) ON DELETE CASCADE
+		);
+
+		CREATE TABLE IF NOT EXISTS planner_task_activities (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			profile_id TEXT NOT NULL,
+			activity_type TEXT NOT NULL,
+			title TEXT NOT NULL,
+			content TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (task_id) REFERENCES planner_tasks(id) ON DELETE CASCADE,
+			FOREIGN KEY (profile_id) REFERENCES planner_profiles(id) ON DELETE CASCADE
 		)
 	`)
 	if err != nil {
@@ -151,6 +180,7 @@ func (db *DB) InitPlanner() error {
 		"CREATE INDEX IF NOT EXISTS idx_planner_tasks_bucket_entry_type ON planner_tasks(profile_id, bucket, entry_type, status)",
 		"CREATE INDEX IF NOT EXISTS idx_planner_tasks_remind_at ON planner_tasks(status, remind_at, last_notified_at)",
 		"CREATE INDEX IF NOT EXISTS idx_planner_comments_task_created_at ON planner_task_comments(task_id, created_at)",
+		"CREATE INDEX IF NOT EXISTS idx_planner_activities_task_created_at ON planner_task_activities(task_id, created_at)",
 	}
 	for _, stmt := range indexes {
 		if _, err := db.conn.Exec(stmt); err != nil {
@@ -233,6 +263,10 @@ func (db *DB) DeletePlannerProfile(id string) error {
 		tx.Rollback()
 		return err
 	}
+	if _, err = tx.Exec(`DELETE FROM planner_task_activities WHERE profile_id = ?`, id); err != nil {
+		tx.Rollback()
+		return err
+	}
 	if _, err = tx.Exec(`DELETE FROM planner_tasks WHERE profile_id = ?`, id); err != nil {
 		tx.Rollback()
 		return err
@@ -262,6 +296,10 @@ func (db *DB) DeletePlannerTask(id string) error {
 		return err
 	}
 	if _, err = tx.Exec(`DELETE FROM planner_task_comments WHERE task_id = ?`, id); err != nil {
+		tx.Rollback()
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM planner_task_activities WHERE task_id = ?`, id); err != nil {
 		tx.Rollback()
 		return err
 	}
@@ -346,6 +384,46 @@ func (db *DB) CreatePlannerTask(task *PlannerTask) error {
 		task.LastPostponedAt, task.RemindAt, task.NotifyEmail, task.LastNotifiedAt, task.CancelReason,
 		task.CompletedAt, task.CreatedAt, task.UpdatedAt)
 	return err
+}
+
+func (db *DB) CreatePlannerTasks(tasks []*PlannerTask) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`
+		INSERT INTO planner_tasks (
+			id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
+			planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
+			remind_at, notify_email, last_notified_at, cancel_reason, completed_at, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+
+	now := time.Now()
+	for _, task := range tasks {
+		task.ID = generateID(8)
+		task.CreatedAt = now
+		task.UpdatedAt = now
+		if _, err := stmt.Exec(
+			task.ID, task.ProfileID, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status,
+			task.Priority, task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason,
+			task.LastPostponedAt, task.RemindAt, task.NotifyEmail, task.LastNotifiedAt, task.CancelReason,
+			task.CompletedAt, task.CreatedAt, task.UpdatedAt,
+		); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (db *DB) GetPlannerTask(id string) (*PlannerTask, error) {
@@ -487,6 +565,16 @@ func (db *DB) CreatePlannerTaskComment(comment *PlannerTaskComment) error {
 	return err
 }
 
+func (db *DB) CreatePlannerTaskActivity(activity *PlannerTaskActivity) error {
+	activity.ID = generateID(8)
+	activity.CreatedAt = time.Now()
+	_, err := db.conn.Exec(`
+		INSERT INTO planner_task_activities (id, task_id, profile_id, activity_type, title, content, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, activity.ID, activity.TaskID, activity.ProfileID, activity.ActivityType, activity.Title, activity.Content, activity.CreatedAt)
+	return err
+}
+
 func (db *DB) ListPlannerTaskComments(taskID string) ([]*PlannerTaskComment, error) {
 	rows, err := db.conn.Query(`
 		SELECT id, task_id, profile_id, author, content, created_at
@@ -506,6 +594,71 @@ func (db *DB) ListPlannerTaskComments(taskID string) ([]*PlannerTaskComment, err
 			return nil, err
 		}
 		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (db *DB) ListPlannerTaskActivities(taskID string) ([]*PlannerTaskActivity, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, task_id, profile_id, activity_type, title, content, created_at
+		FROM planner_task_activities
+		WHERE task_id = ?
+		ORDER BY created_at ASC, id ASC
+	`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]*PlannerTaskActivity, 0)
+	for rows.Next() {
+		item := &PlannerTaskActivity{}
+		if err := rows.Scan(&item.ID, &item.TaskID, &item.ProfileID, &item.ActivityType, &item.Title, &item.Content, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (db *DB) ListPlannerTaskCommentSummaries(profileID string) (map[string]*PlannerTaskCommentSummary, error) {
+	rows, err := db.conn.Query(`
+		SELECT
+			t.id,
+			(SELECT COUNT(*) FROM planner_task_comments c WHERE c.task_id = t.id) AS comment_count,
+			COALESCE((
+				SELECT c.content
+				FROM planner_task_comments c
+				WHERE c.task_id = t.id
+				ORDER BY c.created_at DESC, c.id DESC
+				LIMIT 1
+			), '') AS last_content,
+			(
+				SELECT c.created_at
+				FROM planner_task_comments c
+				WHERE c.task_id = t.id
+				ORDER BY c.created_at DESC, c.id DESC
+				LIMIT 1
+			) AS last_created_at
+		FROM planner_tasks t
+		WHERE t.profile_id = ?
+	`, profileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]*PlannerTaskCommentSummary)
+	for rows.Next() {
+		item := &PlannerTaskCommentSummary{}
+		var lastCreatedAt sql.NullTime
+		if err := rows.Scan(&item.TaskID, &item.CommentCount, &item.LastContent, &lastCreatedAt); err != nil {
+			return nil, err
+		}
+		if lastCreatedAt.Valid {
+			item.LastCreatedAt = &lastCreatedAt.Time
+		}
+		result[item.TaskID] = item
 	}
 	return result, rows.Err()
 }

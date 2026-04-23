@@ -1,11 +1,12 @@
 {
-  "name": "DevTools 孕期管理",
-  "short_name": "孕期管理",
-  "description": "孕晚期胎动记录、待产清单与孕期管理工具",
-  "start_url": "/yun",
+  "name": "DevTools 工具箱",
+  "short_name": "DevTools",
+  "description": "开发工具、事项管理与日常协作工具集合",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#fff7f2",
-  "theme_color": "#ff7c7c",
+  "background_color": "#f6f8fb",
+  "theme_color": "#2563eb",
   "icons": [
     {
       "src": "/pregnancy-shortcut-192.png",
@@ -22,10 +23,10 @@
   ],
   "shortcuts": [
     {
-      "name": "进入孕期管理",
-      "short_name": "孕期管理",
-      "description": "直接打开孕期管理页",
-      "url": "/yun",
+      "name": "事项管理",
+      "short_name": "事项",
+      "description": "直接进入工作与生活事项页",
+      "url": "/planner?source=shortcut",
       "icons": [
         {
           "src": "/pregnancy-shortcut-192.png",
@@ -35,10 +36,10 @@
       ]
     },
     {
-      "name": "快捷记 1 次胎动",
-      "short_name": "胎动 +1",
-      "description": "打开后直接记录 1 次胎动",
-      "url": "/yun?quickAction=kick",
+      "name": "孕期管理",
+      "short_name": "孕期",
+      "description": "直接进入孕期管理页",
+      "url": "/yun?source=shortcut",
       "icons": [
         {
           "src": "/pregnancy-shortcut-192.png",

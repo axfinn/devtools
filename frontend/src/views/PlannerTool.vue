@@ -85,6 +85,18 @@
         </div>
       </header>
 
+      <section v-if="showInstallEntry" class="install-strip">
+        <div>
+          <strong>支持加入手机桌面</strong>
+          <p>加入桌面后可像 App 一样快速进入事项页，更适合手机随手记录。</p>
+        </div>
+        <div class="install-actions">
+          <el-button type="primary" plain @click="triggerInstallPrompt">
+            {{ installPromptAvailable ? '添加到桌面' : '查看添加方式' }}
+          </el-button>
+        </div>
+      </section>
+
       <section class="mode-switcher">
         <button class="mode-tab" :class="{ active: activeKind === 'work' }" @click="switchKind('work')">
           <span class="mode-tab-title">工作模式</span>
@@ -161,7 +173,7 @@
             </el-button>
             <el-button plain @click="openAdviceDialog">
               <el-icon><MagicStick /></el-icon>
-              AI 总结/规划
+              AI 助手
             </el-button>
             <el-button type="primary" plain @click="aiDialogVisible = true">
               <el-icon><EditPen /></el-icon>
@@ -176,7 +188,7 @@
           <button class="preset-btn" @click="applyQuickPreset('event')">事件安排</button>
         </div>
 
-        <div class="quick-grid">
+        <div class="quick-grid quick-grid-core">
           <el-input
             v-model="quickForm.title"
             placeholder="比如：确认联调结果 / 买水果 / 预约复诊"
@@ -184,6 +196,20 @@
             show-word-limit
           />
           <el-input v-model="quickForm.detail" type="textarea" :rows="3" placeholder="补充上下文、边界条件、备注" />
+          <div class="quick-row">
+            <div class="quick-actions quick-actions-primary">
+              <el-button :loading="savingQuick" type="primary" @click="createQuickTask">
+                保存
+              </el-button>
+              <el-button @click="fillTodayDefaults">恢复默认</el-button>
+              <el-button v-if="isMobile" plain @click="quickAdvancedVisible = !quickAdvancedVisible">
+                {{ quickAdvancedVisible ? '收起更多设置' : '更多设置' }}
+              </el-button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="!isMobile || quickAdvancedVisible" class="quick-grid quick-grid-advanced">
           <div class="quick-row">
             <el-select v-model="quickForm.entryType" placeholder="条目类型">
               <el-option label="任务" value="task" />
@@ -209,15 +235,7 @@
               placeholder="提醒时间"
             />
           </div>
-          <div class="quick-row">
-            <el-input v-model="quickForm.notifyEmail" placeholder="提醒邮箱，默认用档案邮箱" />
-            <div class="quick-actions">
-              <el-button :loading="savingQuick" type="primary" @click="createQuickTask">
-                保存
-              </el-button>
-              <el-button @click="fillTodayDefaults">恢复默认</el-button>
-            </div>
-          </div>
+          <el-input v-model="quickForm.notifyEmail" placeholder="提醒邮箱，默认用档案邮箱" />
         </div>
       </section>
 
@@ -288,6 +306,11 @@
                       <span v-if="task.is_rolled_over" class="rolled-tag">已顺延到今天</span>
                       <span v-if="task.last_postpone_reason">顺延原因：{{ task.last_postpone_reason }}</span>
                     </div>
+                    <div v-if="task.comment_count || task.last_comment_preview" class="task-context" @click="openCommentDrawer(task)">
+                      <span class="task-context-count">进展 {{ task.comment_count || 0 }}</span>
+                      <span class="task-context-text">{{ task.last_comment_preview || '已存在评论' }}</span>
+                      <span v-if="task.last_comment_at">{{ formatDateTime(task.last_comment_at) }}</span>
+                    </div>
                     <div class="task-actions">
                       <el-button size="small" type="primary" plain @click="setTaskStatus(task, task.status === 'done' ? 'open' : 'done')">
                         {{ task.status === 'done' ? '重新打开' : '完成' }}
@@ -347,6 +370,11 @@
                       <span v-if="task.remind_at">提醒 {{ formatDateTime(task.remind_at) }}</span>
                       <span v-if="task.notes">备注：{{ task.notes }}</span>
                     </div>
+                    <div v-if="task.comment_count || task.last_comment_preview" class="task-context" @click="openCommentDrawer(task)">
+                      <span class="task-context-count">进展 {{ task.comment_count || 0 }}</span>
+                      <span class="task-context-text">{{ task.last_comment_preview || '已存在评论' }}</span>
+                      <span v-if="task.last_comment_at">{{ formatDateTime(task.last_comment_at) }}</span>
+                    </div>
                     <div class="task-actions">
                       <el-button size="small" type="primary" plain @click="setTaskStatus(task, task.status === 'done' ? 'open' : 'done')">
                         {{ task.status === 'done' ? '重新打开' : '完成' }}
@@ -386,6 +414,11 @@
                 <div class="task-meta">
                   <span>创建于 {{ formatDateTime(task.created_at) }}</span>
                 </div>
+                <div v-if="task.comment_count || task.last_comment_preview" class="task-context" @click="openCommentDrawer(task)">
+                  <span class="task-context-count">进展 {{ task.comment_count || 0 }}</span>
+                  <span class="task-context-text">{{ task.last_comment_preview || '已存在评论' }}</span>
+                  <span v-if="task.last_comment_at">{{ formatDateTime(task.last_comment_at) }}</span>
+                </div>
                 <div class="task-actions">
                   <el-button size="small" type="primary" plain @click="scheduleInboxTask(task)">安排到今天</el-button>
                   <el-button size="small" plain @click="moveTaskBucket(task, 'someday')">放一放</el-button>
@@ -420,6 +453,11 @@
                 </div>
                 <div class="task-meta">
                   <span>计划日期 {{ task.planned_for }}</span>
+                </div>
+                <div v-if="task.comment_count || task.last_comment_preview" class="task-context" @click="openCommentDrawer(task)">
+                  <span class="task-context-count">进展 {{ task.comment_count || 0 }}</span>
+                  <span class="task-context-text">{{ task.last_comment_preview || '已存在评论' }}</span>
+                  <span v-if="task.last_comment_at">{{ formatDateTime(task.last_comment_at) }}</span>
                 </div>
                 <div class="task-actions">
                   <el-button size="small" type="primary" plain @click="moveTaskBucket(task, 'planned')">排入计划</el-button>
@@ -456,6 +494,11 @@
                   <span>完成/关闭于 {{ formatDateTime(task.completed_at || task.updated_at) }}</span>
                   <span v-if="task.cancel_reason">原因：{{ task.cancel_reason }}</span>
                 </div>
+                <div v-if="task.comment_count || task.last_comment_preview" class="task-context" @click="openCommentDrawer(task)">
+                  <span class="task-context-count">进展 {{ task.comment_count || 0 }}</span>
+                  <span class="task-context-text">{{ task.last_comment_preview || '已存在评论' }}</span>
+                  <span v-if="task.last_comment_at">{{ formatDateTime(task.last_comment_at) }}</span>
+                </div>
                 <div class="task-actions">
                   <el-button size="small" type="primary" plain @click="setTaskStatus(task, 'open')">重新打开</el-button>
                   <el-button size="small" plain @click="openCommentDrawer(task)">评论</el-button>
@@ -473,9 +516,12 @@
         <el-input v-model="profileForm.name" placeholder="档案名称" />
         <el-input v-model="profileForm.notifyEmail" placeholder="默认提醒邮箱" />
         <el-input-number v-model="profileForm.extendDays" :min="1" :max="3650" placeholder="需要延期时再填写" />
+        <div class="soft-note">
+          {{ hasCreatorPrivileges ? '当前设备持有创建者密钥，可修改档案设置和删除档案。' : '当前仅为访问模式，可管理事项，但档案设置和删除需要创建者密钥。' }}
+        </div>
         <div class="drawer-actions">
-          <el-button type="primary" :loading="savingProfile" @click="saveProfile">保存档案</el-button>
-          <el-button type="danger" plain @click="deleteProfile">删除档案</el-button>
+          <el-button type="primary" :loading="savingProfile" :disabled="!hasCreatorPrivileges" @click="saveProfile">保存档案</el-button>
+          <el-button type="danger" plain :disabled="!hasCreatorPrivileges" @click="deleteProfile">删除档案</el-button>
           <el-button @click="logout">退出</el-button>
         </div>
         <div class="soft-note">
@@ -539,6 +585,42 @@
           :rows="2"
           placeholder="如果取消，请写原因"
         />
+        <div v-if="taskForm.id" class="detail-comments">
+          <div class="detail-comments-head">
+            <strong>进展 / 备注流</strong>
+            <el-button plain size="small" @click="openCommentDrawer({ id: taskForm.id, title: taskForm.title })">
+              查看全部 / 添加
+            </el-button>
+          </div>
+        <div v-if="taskCommentsPreview.length > 0" class="comment-timeline">
+            <div v-for="comment in taskCommentsPreview" :key="comment.id" class="comment-item">
+              <div class="comment-item-top">
+                <strong>{{ comment.author }}</strong>
+                <span>{{ formatDateTime(comment.created_at) }}</span>
+              </div>
+              <p>{{ comment.content }}</p>
+            </div>
+        </div>
+        <div v-else class="timeline-empty">还没有进展记录，可以补一句上下文。</div>
+        </div>
+        <div v-if="taskForm.id" class="detail-comments">
+          <div class="detail-comments-head">
+            <strong>生命周期流水</strong>
+            <el-button plain size="small" @click="openActivityDrawer({ id: taskForm.id, title: taskForm.title })">
+              查看完整流水
+            </el-button>
+          </div>
+          <div v-if="taskActivitiesPreview.length > 0" class="activity-timeline">
+            <div v-for="item in taskActivitiesPreview" :key="item.id" class="activity-item">
+              <div class="comment-item-top">
+                <strong>{{ item.title }}</strong>
+                <span>{{ formatDateTime(item.created_at) }}</span>
+              </div>
+              <p>{{ item.content || '系统记录' }}</p>
+            </div>
+          </div>
+          <div v-else class="timeline-empty">还没有生命周期流水。</div>
+        </div>
         <div class="drawer-actions">
           <el-button type="primary" :loading="savingTask" @click="saveTask">保存</el-button>
           <el-button plain @click="taskDrawerVisible = false">关闭</el-button>
@@ -569,6 +651,23 @@
       </div>
     </el-drawer>
 
+    <el-drawer v-model="activityDrawerVisible" title="事项生命周期" :size="drawerSize">
+      <div class="drawer-stack">
+        <div class="activity-timeline">
+          <div v-for="item in taskActivities" :key="item.id" class="activity-item">
+            <div class="comment-item-top">
+              <strong>{{ item.title }}</strong>
+              <span>{{ formatDateTime(item.created_at) }}</span>
+            </div>
+            <p>{{ item.content || '系统记录' }}</p>
+          </div>
+          <div v-if="taskActivities.length === 0" class="timeline-empty">
+            还没有生命周期流水。
+          </div>
+        </div>
+      </div>
+    </el-drawer>
+
     <el-dialog v-model="aiDialogVisible" title="AI 整理事项" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="panel-heading-actions">
@@ -581,7 +680,7 @@
         <el-input v-model="aiText" type="textarea" :rows="7" placeholder="把脑子里的事项直接写下来，AI 负责拆成结构化事项。" />
         <div class="drawer-actions">
           <el-button type="primary" :loading="parsingAI" @click="parseAI">开始整理</el-button>
-          <el-button :disabled="aiSuggestions.length === 0" @click="applyAISuggestions">全部写入</el-button>
+          <el-button :disabled="aiSuggestions.length === 0" :loading="applyingAI" @click="applyAISuggestions">全部写入</el-button>
         </div>
         <div v-if="aiSuggestions.length > 0" class="ai-suggestions">
           <article v-for="(item, index) in aiSuggestions" :key="`${item.title}-${index}`" class="ai-card">
@@ -730,6 +829,8 @@ function createEmptyBoard() {
   }
 }
 
+const CREATOR_KEY_STORAGE_KEY = 'planner_creator_keys'
+
 const profileId = ref('')
 const password = ref('')
 const creatorKey = ref('')
@@ -747,6 +848,9 @@ const activeKind = ref('life')
 const activeView = ref(localStorage.getItem('planner_active_view') || 'timeline')
 const modeHint = ref('当前是下班或休息时段，默认进入生活模式')
 const isMobile = ref(false)
+const quickAdvancedVisible = ref(false)
+const installPromptAvailable = ref(false)
+const isStandaloneMode = ref(false)
 
 const createForm = reactive({
   name: '',
@@ -811,9 +915,11 @@ const savingProfile = ref(false)
 const savingComment = ref(false)
 const loadingAdmin = ref(false)
 const savingAdminProfile = ref(false)
+const applyingAI = ref(false)
 const settingsVisible = ref(false)
 const taskDrawerVisible = ref(false)
 const commentDrawerVisible = ref(false)
+const activityDrawerVisible = ref(false)
 const aiDialogVisible = ref(false)
 const adviceDialogVisible = ref(false)
 const adminDialogVisible = ref(false)
@@ -822,6 +928,9 @@ const parsingAI = ref(false)
 const adviceLoading = ref(false)
 
 const comments = ref([])
+const taskCommentsPreview = ref([])
+const taskActivities = ref([])
+const taskActivitiesPreview = ref([])
 const aiText = ref('')
 const aiSuggestions = ref([])
 const adminItems = ref([])
@@ -860,6 +969,8 @@ const currentTip = computed(() => {
 })
 
 const openCount = computed(() => (board.value.counts.open || 0) + (board.value.counts.in_progress || 0))
+const hasCreatorPrivileges = computed(() => Boolean(creatorKey.value))
+const showInstallEntry = computed(() => !isStandaloneMode.value)
 
 const viewOptions = computed(() => [
   { key: 'timeline', label: '时间线', count: board.value.groups.reduce((sum, group) => sum + group.items.length, 0) },
@@ -898,6 +1009,8 @@ const drawerSize = computed(() => (isMobile.value ? '100%' : '420px'))
 const detailDrawerSize = computed(() => (isMobile.value ? '100%' : '480px'))
 const dialogWidth = computed(() => (isMobile.value ? '100%' : '720px'))
 
+let deferredInstallPrompt = null
+
 function defaultModeByTime() {
   const now = new Date()
   const day = now.getDay()
@@ -912,8 +1025,30 @@ function plannerModeCopy() {
   return activeKind.value === 'work' ? '当前聚焦工作事项。' : '当前聚焦生活事项。'
 }
 
+function loadCreatorKeyMap() {
+  try {
+    return JSON.parse(localStorage.getItem(CREATOR_KEY_STORAGE_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function getCreatorKeyForProfile(id) {
+  if (!id) return ''
+  const map = loadCreatorKeyMap()
+  return map[id] || ''
+}
+
+function setCreatorKeyForProfile(id, key) {
+  if (!id || !key) return
+  const map = loadCreatorKeyMap()
+  map[id] = key
+  localStorage.setItem(CREATOR_KEY_STORAGE_KEY, JSON.stringify(map))
+}
+
 function syncViewportFlags() {
   isMobile.value = window.innerWidth <= 768
+  isStandaloneMode.value = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
 }
 
 function fillTodayDefaults() {
@@ -925,6 +1060,9 @@ function fillTodayDefaults() {
   quickForm.remindAt = ''
   quickForm.priority = 'medium'
   quickForm.notifyEmail = profile.notify_email || ''
+  if (isMobile.value) {
+    quickAdvancedVisible.value = false
+  }
 }
 
 function applyQuickPreset(type) {
@@ -951,6 +1089,9 @@ function resetTaskForm() {
   taskForm.notifyEmail = profile.notify_email || ''
   taskForm.cancelReason = ''
   taskForm.postponeReason = ''
+  taskCommentsPreview.value = []
+  taskActivities.value = []
+  taskActivitiesPreview.value = []
 }
 
 async function plannerFetch(url, options = {}) {
@@ -978,9 +1119,11 @@ async function plannerFetch(url, options = {}) {
 function persistSession() {
   localStorage.setItem('planner_profile_id', profileId.value)
   localStorage.setItem('planner_password', password.value)
-  localStorage.setItem('planner_creator_key', creatorKey.value)
   localStorage.setItem('planner_active_kind', activeKind.value)
   localStorage.setItem('planner_active_view', activeView.value)
+  if (profileId.value && creatorKey.value) {
+    setCreatorKeyForProfile(profileId.value, creatorKey.value)
+  }
 }
 
 function restoreSession() {
@@ -992,7 +1135,11 @@ function restoreSession() {
   }
   profileId.value = savedProfileId
   password.value = savedPassword
-  creatorKey.value = localStorage.getItem('planner_creator_key') || ''
+  const legacyCreatorKey = localStorage.getItem('planner_creator_key') || ''
+  if (legacyCreatorKey && !getCreatorKeyForProfile(savedProfileId)) {
+    setCreatorKeyForProfile(savedProfileId, legacyCreatorKey)
+  }
+  creatorKey.value = getCreatorKeyForProfile(savedProfileId)
   activeKind.value = localStorage.getItem('planner_active_kind') || defaultModeByTime()
 }
 
@@ -1028,6 +1175,7 @@ async function createProfile() {
     profileId.value = data.id
     password.value = createForm.password
     creatorKey.value = data.creator_key || ''
+    setCreatorKeyForProfile(data.id, creatorKey.value)
     persistSession()
     await loadProfile()
     fillTodayDefaults()
@@ -1059,7 +1207,7 @@ async function loginProfile() {
     }
     profileId.value = data.id
     password.value = loginForm.password
-    creatorKey.value = localStorage.getItem('planner_creator_key') || ''
+    creatorKey.value = getCreatorKeyForProfile(data.id)
     profile.id = data.id
     profile.name = data.name
     profile.notify_email = data.notify_email || ''
@@ -1177,7 +1325,42 @@ function openTask(task) {
   taskForm.notifyEmail = task.notify_email || ''
   taskForm.cancelReason = task.cancel_reason || ''
   taskForm.postponeReason = task.last_postpone_reason || ''
+  loadTaskCommentsPreview(task.id)
+  loadTaskActivities(task.id)
   taskDrawerVisible.value = true
+}
+
+async function loadTaskCommentsPreview(taskId) {
+  if (!taskId) {
+    taskCommentsPreview.value = []
+    return
+  }
+  try {
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/${taskId}/comments`)
+    const data = await response.json()
+    const list = data.comments || []
+    taskCommentsPreview.value = list.slice(-3).reverse()
+  } catch {
+    taskCommentsPreview.value = []
+  }
+}
+
+async function loadTaskActivities(taskId) {
+  if (!taskId) {
+    taskActivities.value = []
+    taskActivitiesPreview.value = []
+    return
+  }
+  try {
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/${taskId}/activities`)
+    const data = await response.json()
+    const list = data.activities || []
+    taskActivities.value = list.slice().reverse()
+    taskActivitiesPreview.value = taskActivities.value.slice(0, 5)
+  } catch {
+    taskActivities.value = []
+    taskActivitiesPreview.value = []
+  }
 }
 
 async function saveTask() {
@@ -1309,10 +1492,19 @@ async function openCommentDrawer(task) {
   await loadComments(task.id)
 }
 
+async function openActivityDrawer(task) {
+  if (!task?.id) return
+  await loadTaskActivities(task.id)
+  activityDrawerVisible.value = true
+}
+
 async function loadComments(taskId) {
   const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/${taskId}/comments`)
   const data = await response.json()
   comments.value = data.comments || []
+  if (taskForm.id === taskId) {
+    taskCommentsPreview.value = [...comments.value].slice(-3).reverse()
+  }
 }
 
 async function submitComment() {
@@ -1328,6 +1520,8 @@ async function submitComment() {
     })
     commentForm.content = ''
     await loadComments(currentCommentTask.value.id)
+    await loadTaskActivities(currentCommentTask.value.id)
+    await refreshBoard()
     ElMessage.success('评论已保存')
   } catch (error) {
     ElMessage.error(error.message)
@@ -1388,6 +1582,9 @@ function logout() {
   clearSession()
   board.value = createEmptyBoard()
   comments.value = []
+  taskCommentsPreview.value = []
+  taskActivities.value = []
+  taskActivitiesPreview.value = []
   aiSuggestions.value = []
   profile.name = ''
   profile.notify_email = ''
@@ -1423,11 +1620,12 @@ async function parseAI() {
 
 async function applyAISuggestions() {
   if (aiSuggestions.value.length === 0) return
+  applyingAI.value = true
   try {
-    for (const item of aiSuggestions.value) {
-      await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks`, {
-        method: 'POST',
-        body: JSON.stringify({
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/batch`, {
+      method: 'POST',
+      body: JSON.stringify({
+        tasks: aiSuggestions.value.map(item => ({
           kind: item.kind,
           entry_type: item.entry_type,
           bucket: item.bucket,
@@ -1439,21 +1637,46 @@ async function applyAISuggestions() {
           planned_for: item.planned_for,
           remind_at: item.remind_at,
           cancel_reason: item.cancel_reason
-        })
+        }))
       })
-    }
+    })
+    const data = await response.json()
     aiDialogVisible.value = false
     aiSuggestions.value = []
     aiText.value = ''
     await refreshBoard()
-    ElMessage.success('AI 整理出的事项已写入')
+    ElMessage.success(`AI 整理出的 ${data.created_count || 0} 条事项已写入`)
   } catch (error) {
     ElMessage.error(error.message)
+  } finally {
+    applyingAI.value = false
   }
 }
 
 function openAdviceDialog() {
   adviceDialogVisible.value = true
+}
+
+async function triggerInstallPrompt() {
+  if (deferredInstallPrompt) {
+    deferredInstallPrompt.prompt()
+    try {
+      await deferredInstallPrompt.userChoice
+    } catch {
+      // ignore
+    }
+    deferredInstallPrompt = null
+    installPromptAvailable.value = false
+    return
+  }
+  await ElMessageBox.alert(
+    '安卓 Chrome：打开浏览器菜单，选择“添加到主屏幕”。<br>iPhone Safari：点击底部“分享”，再选择“添加到主屏幕”。',
+    '加入手机桌面',
+    {
+      confirmButtonText: '知道了',
+      dangerouslyUseHTMLString: true
+    }
+  )
 }
 
 async function requestAdvice() {
@@ -1584,6 +1807,8 @@ async function deleteAdminProfile(item) {
 }
 
 let recognition = null
+let beforeInstallPromptHandler = null
+let appInstalledHandler = null
 
 function openVoice(target) {
   const API = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -1687,9 +1912,33 @@ watch(
   }
 )
 
+watch(
+  () => profile.notify_email,
+  (value, oldValue) => {
+    if (!quickForm.notifyEmail || quickForm.notifyEmail === oldValue) {
+      quickForm.notifyEmail = value || ''
+    }
+    if (!taskForm.notifyEmail || taskForm.notifyEmail === oldValue) {
+      taskForm.notifyEmail = value || ''
+    }
+  }
+)
+
 onMounted(async () => {
+  beforeInstallPromptHandler = (event) => {
+    event.preventDefault()
+    deferredInstallPrompt = event
+    installPromptAvailable.value = true
+  }
+  appInstalledHandler = () => {
+    deferredInstallPrompt = null
+    installPromptAvailable.value = false
+    syncViewportFlags()
+  }
   syncViewportFlags()
   window.addEventListener('resize', syncViewportFlags, { passive: true })
+  window.addEventListener('beforeinstallprompt', beforeInstallPromptHandler)
+  window.addEventListener('appinstalled', appInstalledHandler)
   restoreSession()
   fillTodayDefaults()
   resetTaskForm()
@@ -1705,6 +1954,12 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncViewportFlags)
+  if (beforeInstallPromptHandler) {
+    window.removeEventListener('beforeinstallprompt', beforeInstallPromptHandler)
+  }
+  if (appInstalledHandler) {
+    window.removeEventListener('appinstalled', appInstalledHandler)
+  }
 })
 </script>
 
@@ -1780,6 +2035,7 @@ onBeforeUnmount(() => {
 .entry-hero,
 .entry-card,
 .planner-topbar,
+.install-strip,
 .mode-switcher,
 .hero-card,
 .summary-strip,
@@ -1788,6 +2044,7 @@ onBeforeUnmount(() => {
 .board-panel,
 .admin-card,
 .comment-item,
+.activity-item,
 .ai-card,
 .advice-card {
   border: 1px solid rgba(255, 255, 255, 0.62);
@@ -1798,6 +2055,7 @@ onBeforeUnmount(() => {
 
 .entry-hero,
 .planner-topbar,
+.install-strip,
 .hero-card,
 .quick-panel,
 .board-panel {
@@ -1811,6 +2069,7 @@ onBeforeUnmount(() => {
 .advice-card,
 .admin-card,
 .comment-item,
+.activity-item,
 .ai-card {
   border-radius: 22px;
 }
@@ -1822,6 +2081,7 @@ onBeforeUnmount(() => {
 .timeline-groups,
 .timeline-group,
 .comment-timeline,
+.activity-timeline,
 .admin-list,
 .ai-suggestions {
   display: grid;
@@ -1832,6 +2092,7 @@ onBeforeUnmount(() => {
 .panel-heading,
 .timeline-header,
 .planner-topbar,
+.install-strip,
 .comment-item-top,
 .timeline-group-head,
 .task-card-top,
@@ -1850,6 +2111,7 @@ onBeforeUnmount(() => {
 .panel-heading > *,
 .timeline-header > *,
 .planner-topbar > *,
+.install-strip > *,
 .comment-item-top > *,
 .timeline-group-head > *,
 .task-card-top > *,
@@ -1934,6 +2196,24 @@ onBeforeUnmount(() => {
 .planner-topbar {
   display: flex;
   justify-content: space-between;
+}
+
+.install-strip {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-radius: 22px;
+}
+
+.install-strip p {
+  margin: 6px 0 0;
+}
+
+.install-actions {
+  display: flex;
+  align-items: center;
 }
 
 .topbar-copy {
@@ -2152,6 +2432,7 @@ onBeforeUnmount(() => {
 .task-copy p,
 .admin-card p,
 .comment-item p,
+.activity-item p,
 .ai-card p {
   margin: 8px 0 0;
 }
@@ -2186,6 +2467,46 @@ onBeforeUnmount(() => {
 
 .task-actions {
   margin-top: 12px;
+}
+
+.task-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  color: #597089;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.task-context-count {
+  color: var(--planner-accent);
+  font-weight: 700;
+}
+
+.task-context-text {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.detail-comments {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-comments-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.activity-item {
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .task-actions .el-button,
@@ -2250,6 +2571,7 @@ onBeforeUnmount(() => {
   }
 
   .planner-topbar,
+  .install-strip,
   .panel-heading,
   .timeline-header,
   .quick-row,
@@ -2260,6 +2582,7 @@ onBeforeUnmount(() => {
 
   .entry-hero,
   .planner-topbar,
+  .install-strip,
   .hero-card,
   .quick-panel,
   .board-panel {
@@ -2342,7 +2665,8 @@ onBeforeUnmount(() => {
   }
 
   .panel-heading-actions,
-  .topbar-actions {
+  .topbar-actions,
+  .install-actions {
     display: grid;
     grid-template-columns: 1fr;
     justify-content: stretch;

@@ -35,6 +35,8 @@ const (
 	plannerStatusCancelled  = "cancelled"
 )
 
+var plannerMiniMaxAPIURL = "https://api.minimax.chat/v1/text/chatcompletion_v2"
+
 type PlannerHandler struct {
 	db                *models.DB
 	cfg               *config.Config
@@ -61,12 +63,15 @@ type plannerProfileResponse struct {
 
 type plannerTimelineItem struct {
 	*models.PlannerTask
-	DisplayDate       string `json:"display_date"`
-	DisplayLabel      string `json:"display_label"`
-	IsRolledOver      bool   `json:"is_rolled_over"`
-	IsToday           bool   `json:"is_today"`
-	OverdueDays       int    `json:"overdue_days"`
-	CalendarAvailable bool   `json:"calendar_available"`
+	DisplayDate        string     `json:"display_date"`
+	DisplayLabel       string     `json:"display_label"`
+	IsRolledOver       bool       `json:"is_rolled_over"`
+	IsToday            bool       `json:"is_today"`
+	OverdueDays        int        `json:"overdue_days"`
+	CalendarAvailable  bool       `json:"calendar_available"`
+	CommentCount       int        `json:"comment_count"`
+	LastCommentPreview string     `json:"last_comment_preview"`
+	LastCommentAt      *time.Time `json:"last_comment_at,omitempty"`
 }
 
 type plannerTimelineGroup struct {
@@ -137,6 +142,10 @@ type createPlannerTaskRequest struct {
 	PostponeReason string `json:"postpone_reason"`
 }
 
+type createPlannerTaskBatchRequest struct {
+	Tasks []createPlannerTaskRequest `json:"tasks"`
+}
+
 type updatePlannerTaskRequest struct {
 	Kind           *string `json:"kind"`
 	EntryType      *string `json:"entry_type"`
@@ -156,6 +165,15 @@ type updatePlannerTaskRequest struct {
 type plannerCommentRequest struct {
 	Author  string `json:"author"`
 	Content string `json:"content" binding:"required"`
+}
+
+type plannerTaskActivityItem struct {
+	ID           string    `json:"id"`
+	Source       string    `json:"source"`
+	ActivityType string    `json:"activity_type"`
+	Title        string    `json:"title"`
+	Content      string    `json:"content"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type plannerAIParseRequest struct {
@@ -372,7 +390,21 @@ func (h *PlannerHandler) loadProfileByAccess(c *gin.Context, profileID string) (
 }
 
 func (h *PlannerHandler) loadProfileByCreator(c *gin.Context, profileID string) (*models.PlannerProfile, bool) {
-	return h.loadProfileByAccess(c, profileID)
+	profile, err := h.db.GetPlannerProfile(profileID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "档案不存在", "code": 404})
+		return nil, false
+	}
+	if profile.ExpiresAt != nil && time.Now().After(*profile.ExpiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "档案已过期", "code": 403})
+		return nil, false
+	}
+	key := plannerCreatorKey(c)
+	if key == "" || !utils.VerifyPassword(key, profile.CreatorKey) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要创建者密钥", "code": 403, "requires_creator_key": true})
+		return nil, false
+	}
+	return profile, true
 }
 
 func (h *PlannerHandler) loadTask(c *gin.Context) (*models.PlannerProfile, *models.PlannerTask, bool) {
@@ -698,6 +730,27 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 	return board
 }
 
+func plannerCommentPreview(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\n", " "))
+	if len(value) <= 48 {
+		return value
+	}
+	return value[:48] + "..."
+}
+
+func applyPlannerCommentSummary(item *plannerTimelineItem, summaries map[string]*models.PlannerTaskCommentSummary) {
+	if item == nil || summaries == nil {
+		return
+	}
+	summary, ok := summaries[item.ID]
+	if !ok || summary == nil {
+		return
+	}
+	item.CommentCount = summary.CommentCount
+	item.LastCommentPreview = plannerCommentPreview(summary.LastContent)
+	item.LastCommentAt = summary.LastCreatedAt
+}
+
 func ensurePlannerGroup(groups map[string]*plannerTimelineGroup, order *[]string, date, today string) *plannerTimelineGroup {
 	group, ok := groups[date]
 	if !ok {
@@ -800,24 +853,39 @@ func (h *PlannerHandler) ListTimeline(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取事项失败", "code": 500})
 		return
 	}
+	commentSummaries, err := h.db.ListPlannerTaskCommentSummaries(profile.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取评论摘要失败", "code": 500})
+		return
+	}
 	now := time.Now()
 	board := buildPlannerBoard(tasks, kind, now)
+	for _, group := range board.Groups {
+		for _, item := range group.Items {
+			applyPlannerCommentSummary(item, commentSummaries)
+		}
+	}
+	for _, group := range board.EventGroups {
+		for _, item := range group.Items {
+			applyPlannerCommentSummary(item, commentSummaries)
+		}
+	}
+	for _, item := range board.InboxItems {
+		applyPlannerCommentSummary(item, commentSummaries)
+	}
+	for _, item := range board.SomedayItems {
+		applyPlannerCommentSummary(item, commentSummaries)
+	}
+	for _, item := range board.RecentItems {
+		applyPlannerCommentSummary(item, commentSummaries)
+	}
 	board.ProfileName = profile.Name
 	board.ModeDefault = plannerModeDefault(now)
 	board.ModeHint = plannerModeHint(now)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "board": board})
 }
 
-func (h *PlannerHandler) CreateTask(c *gin.Context) {
-	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
-	if !ok {
-		return
-	}
-	var req createPlannerTaskRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "标题不能为空", "code": 400})
-		return
-	}
+func (h *PlannerHandler) buildPlannerTask(profile *models.PlannerProfile, req createPlannerTaskRequest) (*models.PlannerTask, error) {
 	task := &models.PlannerTask{
 		ProfileID:          profile.ID,
 		Kind:               normalizePlannerKind(req.Kind),
@@ -835,8 +903,7 @@ func (h *PlannerHandler) CreateTask(c *gin.Context) {
 		CancelReason:       strings.TrimSpace(req.CancelReason),
 	}
 	if task.Title == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "标题不能为空", "code": 400})
-		return
+		return nil, fmt.Errorf("标题不能为空")
 	}
 	if task.NotifyEmail == "" {
 		task.NotifyEmail = profile.NotifyEmail
@@ -855,11 +922,79 @@ func (h *PlannerHandler) CreateTask(c *gin.Context) {
 	if task.Status == plannerStatusCancelled && task.CancelReason == "" {
 		task.CancelReason = "用户取消"
 	}
+	return task, nil
+}
+
+func (h *PlannerHandler) CreateTask(c *gin.Context) {
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	var req createPlannerTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "标题不能为空", "code": 400})
+		return
+	}
+	task, err := h.buildPlannerTask(profile, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": 400})
+		return
+	}
 	if err := h.db.CreatePlannerTask(task); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败", "code": 500})
 		return
 	}
+	_ = h.db.CreatePlannerTaskActivity(&models.PlannerTaskActivity{
+		TaskID:       task.ID,
+		ProfileID:    task.ProfileID,
+		ActivityType: "created",
+		Title:        plannerTaskLifecycleTitle(task),
+		Content:      plannerTaskLifecycleContent(task),
+	})
 	c.JSON(http.StatusOK, gin.H{"code": 0, "task": task})
+}
+
+func (h *PlannerHandler) CreateTaskBatch(c *gin.Context) {
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	var req createPlannerTaskBatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Tasks) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供至少一条事项", "code": 400})
+		return
+	}
+	if len(req.Tasks) > 50 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "一次最多写入 50 条事项", "code": 400})
+		return
+	}
+	tasks := make([]*models.PlannerTask, 0, len(req.Tasks))
+	for index, item := range req.Tasks {
+		task, err := h.buildPlannerTask(profile, item)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error":        fmt.Sprintf("第 %d 条事项无效: %s", index+1, err.Error()),
+				"code":         400,
+				"failed_index": index,
+			})
+			return
+		}
+		tasks = append(tasks, task)
+	}
+	if err := h.db.CreatePlannerTasks(tasks); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "批量写入失败", "code": 500})
+		return
+	}
+	for _, task := range tasks {
+		_ = h.db.CreatePlannerTaskActivity(&models.PlannerTaskActivity{
+			TaskID:       task.ID,
+			ProfileID:    task.ProfileID,
+			ActivityType: "created",
+			Title:        plannerTaskLifecycleTitle(task),
+			Content:      plannerTaskLifecycleContent(task),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "created_count": len(tasks), "tasks": tasks})
 }
 
 func (h *PlannerHandler) UpdateTask(c *gin.Context) {
@@ -867,6 +1002,7 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 	if !ok {
 		return
 	}
+	before := *task
 	originalPlanned := task.PlannedFor
 	var req updatePlannerTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -953,6 +1089,9 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败", "code": 500})
 		return
 	}
+	for _, activity := range plannerTaskActivitiesFromUpdate(&before, task) {
+		_ = h.db.CreatePlannerTaskActivity(activity)
+	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "task": task})
 }
 
@@ -1005,6 +1144,191 @@ func (h *PlannerHandler) CreateTaskComment(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "comment": comment})
+}
+
+func plannerTaskLifecycleTitle(task *models.PlannerTask) string {
+	if task.EntryType == models.PlannerEntryEvent {
+		return "创建了一个事件"
+	}
+	return "创建了一个事项"
+}
+
+func plannerTaskLifecycleContent(task *models.PlannerTask) string {
+	parts := []string{task.Title}
+	if strings.TrimSpace(task.PlannedFor) != "" {
+		parts = append(parts, "日期 "+task.PlannedFor)
+	}
+	if task.RemindAt != nil {
+		parts = append(parts, "提醒 "+task.RemindAt.In(time.Local).Format("2006-01-02 15:04"))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func plannerTaskActivitiesFromUpdate(before, after *models.PlannerTask) []*models.PlannerTaskActivity {
+	items := make([]*models.PlannerTaskActivity, 0)
+	appendActivity := func(activityType, title, content string) {
+		items = append(items, &models.PlannerTaskActivity{
+			TaskID:       after.ID,
+			ProfileID:    after.ProfileID,
+			ActivityType: activityType,
+			Title:        title,
+			Content:      strings.TrimSpace(content),
+		})
+	}
+
+	if before.PlannedFor != after.PlannedFor {
+		appendActivity("schedule_changed", "调整了日期", fmt.Sprintf("%s -> %s", plannerFirstNonEmpty(before.PlannedFor, "未设置"), plannerFirstNonEmpty(after.PlannedFor, "未设置")))
+	}
+	beforeRemind := ""
+	if before.RemindAt != nil {
+		beforeRemind = before.RemindAt.In(time.Local).Format("2006-01-02 15:04")
+	}
+	afterRemind := ""
+	if after.RemindAt != nil {
+		afterRemind = after.RemindAt.In(time.Local).Format("2006-01-02 15:04")
+	}
+	if beforeRemind != afterRemind {
+		content := fmt.Sprintf("%s -> %s", plannerFirstNonEmpty(beforeRemind, "未设置"), plannerFirstNonEmpty(afterRemind, "未设置"))
+		appendActivity("reminder_changed", "调整了提醒时间", content)
+	}
+	if before.Status != after.Status {
+		title := "更新了状态"
+		switch after.Status {
+		case plannerStatusDone:
+			title = "完成了这条记录"
+		case plannerStatusCancelled:
+			title = "取消了这条记录"
+		case plannerStatusInProgress:
+			title = "开始推进这条记录"
+		case plannerStatusOpen:
+			title = "重新打开这条记录"
+		}
+		content := fmt.Sprintf("%s -> %s", statusLabelForActivity(before.Status), statusLabelForActivity(after.Status))
+		if after.Status == plannerStatusCancelled && strings.TrimSpace(after.CancelReason) != "" {
+			content = plannerFirstNonEmpty(content, "") + " · 原因：" + strings.TrimSpace(after.CancelReason)
+		}
+		appendActivity("status_changed", title, strings.Trim(content, " ·"))
+	}
+	if before.Bucket != after.Bucket && after.EntryType != models.PlannerEntryEvent {
+		appendActivity("bucket_changed", "调整了分区", fmt.Sprintf("%s -> %s", bucketLabelForActivity(before.Bucket), bucketLabelForActivity(after.Bucket)))
+	}
+	if before.Title != after.Title || before.Detail != after.Detail || before.Notes != after.Notes {
+		summary := after.Title
+		if before.Title != after.Title {
+			summary = fmt.Sprintf("%s -> %s", plannerFirstNonEmpty(before.Title, "未命名"), plannerFirstNonEmpty(after.Title, "未命名"))
+		}
+		appendActivity("content_updated", "更新了内容", summary)
+	}
+	return items
+}
+
+func statusLabelForActivity(status string) string {
+	switch normalizePlannerStatus(status) {
+	case plannerStatusInProgress:
+		return "进行中"
+	case plannerStatusDone:
+		return "已完成"
+	case plannerStatusCancelled:
+		return "已取消"
+	default:
+		return "未开始"
+	}
+}
+
+func bucketLabelForActivity(bucket string) string {
+	switch bucket {
+	case models.PlannerBucketInbox:
+		return "收件箱"
+	case models.PlannerBucketSomeday:
+		return "放一放"
+	default:
+		return "计划中"
+	}
+}
+
+func plannerTaskSyntheticActivities(task *models.PlannerTask) []*plannerTaskActivityItem {
+	items := []*plannerTaskActivityItem{
+		{
+			ID:           "synthetic-created",
+			Source:       "system",
+			ActivityType: "created",
+			Title:        plannerTaskLifecycleTitle(task),
+			Content:      plannerTaskLifecycleContent(task),
+			CreatedAt:    task.CreatedAt,
+		},
+	}
+	if task.LastPostponedAt != nil {
+		items = append(items, &plannerTaskActivityItem{
+			ID:           "synthetic-postpone",
+			Source:       "system",
+			ActivityType: "schedule_changed",
+			Title:        "最近一次顺延",
+			Content:      plannerFirstNonEmpty(task.LastPostponeReason, "已调整日期"),
+			CreatedAt:    *task.LastPostponedAt,
+		})
+	}
+	if task.CompletedAt != nil {
+		title := "完成了这条记录"
+		content := statusLabelForActivity(task.Status)
+		if normalizePlannerStatus(task.Status) == plannerStatusCancelled {
+			title = "取消了这条记录"
+			content = plannerFirstNonEmpty(strings.TrimSpace(task.CancelReason), content)
+		}
+		items = append(items, &plannerTaskActivityItem{
+			ID:           "synthetic-completed",
+			Source:       "system",
+			ActivityType: "status_changed",
+			Title:        title,
+			Content:      content,
+			CreatedAt:    *task.CompletedAt,
+		})
+	}
+	return items
+}
+
+func (h *PlannerHandler) ListTaskActivities(c *gin.Context) {
+	_, task, ok := h.loadTask(c)
+	if !ok {
+		return
+	}
+	activities, err := h.db.ListPlannerTaskActivities(task.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取生命周期失败", "code": 500})
+		return
+	}
+	comments, err := h.db.ListPlannerTaskComments(task.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取评论失败", "code": 500})
+		return
+	}
+	items := make([]*plannerTaskActivityItem, 0, len(activities)+len(comments)+3)
+	if len(activities) == 0 {
+		items = append(items, plannerTaskSyntheticActivities(task)...)
+	}
+	for _, activity := range activities {
+		items = append(items, &plannerTaskActivityItem{
+			ID:           activity.ID,
+			Source:       "system",
+			ActivityType: activity.ActivityType,
+			Title:        activity.Title,
+			Content:      activity.Content,
+			CreatedAt:    activity.CreatedAt,
+		})
+	}
+	for _, comment := range comments {
+		items = append(items, &plannerTaskActivityItem{
+			ID:           "comment-" + comment.ID,
+			Source:       "comment",
+			ActivityType: "comment",
+			Title:        plannerFirstNonEmpty(comment.Author, "我") + " 留下了一条进展",
+			Content:      comment.Content,
+			CreatedAt:    comment.CreatedAt,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].CreatedAt.Before(items[j].CreatedAt)
+	})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "activities": items})
 }
 
 func buildPlannerICS(task *models.PlannerTask) []byte {
@@ -1156,29 +1480,34 @@ kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title
 		"temperature": 0.2,
 	}
 	body, _ := json.Marshal(reqBody)
-	req, err := http.NewRequest("POST", "https://api.minimax.chat/v1/text/chatcompletion_v2", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", plannerMiniMaxAPIURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, "", err
+		log.Printf("planner ai parse: build request failed, fallback enabled: %v", err)
+		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("MiniMax 请求失败: %v", err)
+		log.Printf("planner ai parse: minimax request failed, fallback enabled: %v", err)
+		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("MiniMax 返回异常(%d): %s", resp.StatusCode, string(respBody))
+		log.Printf("planner ai parse: minimax returned %d, fallback enabled", resp.StatusCode)
+		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	var raw map[string]interface{}
 	if err := json.Unmarshal(respBody, &raw); err != nil {
-		return nil, "", fmt.Errorf("解析 AI 响应失败: %v", err)
+		log.Printf("planner ai parse: invalid minimax response, fallback enabled: %v", err)
+		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	choices, _ := raw["choices"].([]interface{})
 	if len(choices) == 0 {
-		return nil, "", fmt.Errorf("AI 未返回结果")
+		log.Printf("planner ai parse: minimax returned no choices, fallback enabled")
+		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	first, _ := choices[0].(map[string]interface{})
 	msg, _ := first["message"].(map[string]interface{})
@@ -1236,29 +1565,34 @@ suggestions(string[])
 		"temperature": 0.3,
 	}
 	body, _ := json.Marshal(reqBody)
-	req, err := http.NewRequest("POST", "https://api.minimax.chat/v1/text/chatcompletion_v2", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", plannerMiniMaxAPIURL, bytes.NewReader(body))
 	if err != nil {
-		return plannerAICoachResponse{}, "", err
+		log.Printf("planner ai advise: build request failed, fallback enabled: %v", err)
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return plannerAICoachResponse{}, "", fmt.Errorf("MiniMax 请求失败: %v", err)
+		log.Printf("planner ai advise: minimax request failed, fallback enabled: %v", err)
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return plannerAICoachResponse{}, "", fmt.Errorf("MiniMax 返回异常(%d): %s", resp.StatusCode, string(respBody))
+		log.Printf("planner ai advise: minimax returned %d, fallback enabled", resp.StatusCode)
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
 	}
 	var raw map[string]interface{}
 	if err := json.Unmarshal(respBody, &raw); err != nil {
-		return plannerAICoachResponse{}, "", fmt.Errorf("解析 AI 响应失败: %v", err)
+		log.Printf("planner ai advise: invalid minimax response, fallback enabled: %v", err)
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
 	}
 	choices, _ := raw["choices"].([]interface{})
 	if len(choices) == 0 {
-		return plannerAICoachResponse{}, "", fmt.Errorf("AI 未返回结果")
+		log.Printf("planner ai advise: minimax returned no choices, fallback enabled")
+		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil
 	}
 	first, _ := choices[0].(map[string]interface{})
 	msg, _ := first["message"].(map[string]interface{})

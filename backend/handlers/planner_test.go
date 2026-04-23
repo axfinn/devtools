@@ -204,3 +204,143 @@ func TestPlannerUpdateTaskPatchDoesNotClearOtherFields(t *testing.T) {
 		t.Fatalf("expected completed_at set")
 	}
 }
+
+func TestPlannerProfileUpdateRequiresCreatorKey(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	if err := db.InitPlanner(); err != nil {
+		t.Fatalf("init planner failed: %v", err)
+	}
+
+	hashedCreatorKey, err := utils.HashPassword("creator-key")
+	if err != nil {
+		t.Fatalf("hash creator key failed: %v", err)
+	}
+	profile := &models.PlannerProfile{
+		PasswordIndex: plannerPasswordIndex("secret-1234"),
+		CreatorKey:    hashedCreatorKey,
+		Name:          "测试档案",
+	}
+	if err := db.CreatePlannerProfile(profile, nil); err != nil {
+		t.Fatalf("create profile failed: %v", err)
+	}
+
+	handler := NewPlannerHandler(db, config.DefaultConfig())
+	body, _ := json.Marshal(map[string]string{"name": "新名字"})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/planner/profile/"+profile.ID, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Password", "secret-1234")
+	c.Params = gin.Params{{Key: "id", Value: profile.ID}}
+
+	handler.UpdateProfile(c)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when using password only, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/planner/profile/"+profile.ID, bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("X-Creator-Key", "creator-key")
+	c.Params = gin.Params{{Key: "id", Value: profile.ID}}
+
+	handler.UpdateProfile(c)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when using creator key, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPlannerParseFallsBackWhenMiniMaxFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"upstream unavailable"}`))
+	}))
+	defer server.Close()
+
+	originalURL := plannerMiniMaxAPIURL
+	plannerMiniMaxAPIURL = server.URL
+	defer func() {
+		plannerMiniMaxAPIURL = originalURL
+	}()
+
+	cfg := config.DefaultConfig()
+	cfg.MiniMax.APIKey = "test-key"
+	handler := NewPlannerHandler(nil, cfg)
+
+	tasks, provider, err := handler.parsePlannerText("今天开会确认方案\n下班后买水果", plannerKindWork)
+	if err != nil {
+		t.Fatalf("expected fallback without error, got %v", err)
+	}
+	if provider != "fallback" {
+		t.Fatalf("expected fallback provider, got %s", provider)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected fallback tasks, got %d", len(tasks))
+	}
+}
+
+func TestPlannerAdviseFallsBackWhenMiniMaxFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+		_, _ = w.Write([]byte(`timeout`))
+	}))
+	defer server.Close()
+
+	originalURL := plannerMiniMaxAPIURL
+	plannerMiniMaxAPIURL = server.URL
+	defer func() {
+		plannerMiniMaxAPIURL = originalURL
+	}()
+
+	cfg := config.DefaultConfig()
+	cfg.MiniMax.APIKey = "test-key"
+	handler := NewPlannerHandler(nil, cfg)
+	profile := &models.PlannerProfile{Name: "测试档案"}
+	board := createEmptyPlannerBoardForTest()
+	board.Kind = plannerKindWork
+	board.Focus.TodayPrimaryCount = 1
+	board.Focus.TodayPrimaryLimit = 3
+	board.Focus.Message = "今天主推进 1 件，节奏还比较舒服。"
+	board.Recovery.Message = "收件箱里还有 1 条想法。"
+	board.Recovery.InboxOpen = 1
+	board.Counts[plannerStatusOpen] = 2
+
+	advice, provider, err := handler.advisePlanner(profile, board, "plan", "")
+	if err != nil {
+		t.Fatalf("expected fallback without error, got %v", err)
+	}
+	if provider != "fallback" {
+		t.Fatalf("expected fallback provider, got %s", provider)
+	}
+	if strings.TrimSpace(advice.Summary) == "" {
+		t.Fatalf("expected fallback advice summary")
+	}
+}
+
+func createEmptyPlannerBoardForTest() plannerBoardResponse {
+	return plannerBoardResponse{
+		Kind:         plannerKindLife,
+		Groups:       []*plannerTimelineGroup{},
+		EventGroups:  []*plannerTimelineGroup{},
+		InboxItems:   []*plannerTimelineItem{},
+		SomedayItems: []*plannerTimelineItem{},
+		RecentItems:  []*plannerTimelineItem{},
+		Counts: map[string]int{
+			plannerStatusOpen:       0,
+			plannerStatusInProgress: 0,
+			plannerStatusDone:       0,
+			plannerStatusCancelled:  0,
+			"rolled_over":           0,
+			"inbox_open":            0,
+			"event_open":            0,
+			"someday_open":          0,
+		},
+		Focus: plannerFocusSummary{
+			TodayPrimaryLimit: 3,
+		},
+		Recovery: plannerRecoverySummary{},
+	}
+}

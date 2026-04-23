@@ -650,10 +650,12 @@ func main() {
 			planner.DELETE("/profile/:id", plannerHandler.DeleteProfile)
 			planner.GET("/profile/:id/timeline", plannerHandler.ListTimeline)
 			planner.POST("/profile/:id/tasks", plannerHandler.CreateTask)
+			planner.POST("/profile/:id/tasks/batch", plannerHandler.CreateTaskBatch)
 			planner.PUT("/profile/:id/tasks/:taskId", plannerHandler.UpdateTask)
 			planner.DELETE("/profile/:id/tasks/:taskId", plannerHandler.DeleteTask)
 			planner.GET("/profile/:id/tasks/:taskId/comments", plannerHandler.ListTaskComments)
 			planner.POST("/profile/:id/tasks/:taskId/comments", plannerHandler.CreateTaskComment)
+			planner.GET("/profile/:id/tasks/:taskId/activities", plannerHandler.ListTaskActivities)
 			planner.GET("/profile/:id/tasks/:taskId/calendar", plannerHandler.DownloadCalendar)
 			planner.POST("/profile/:id/ai/parse", plannerHandler.AIParse)
 			planner.POST("/profile/:id/ai/advise", plannerHandler.AIAdvise)
@@ -1058,6 +1060,16 @@ func main() {
 	r.StaticFile("/", distDir+"/index.html")
 	r.StaticFile("/alipay.jpeg", distDir+"/alipay.jpeg")
 	r.StaticFile("/wxpay.jpeg", distDir+"/wxpay.jpeg")
+	r.GET("/manifest.webmanifest", func(c *gin.Context) {
+		c.Header("Content-Type", "application/manifest+json; charset=utf-8")
+		c.File(distDir + "/manifest.webmanifest")
+	})
+	r.GET("/sw.js", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.File(distDir + "/sw.js")
+	})
+	r.StaticFile("/pregnancy-shortcut-192.png", distDir+"/pregnancy-shortcut-192.png")
+	r.StaticFile("/pregnancy-shortcut-512.png", distDir+"/pregnancy-shortcut-512.png")
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
 		if path == "/api" || strings.HasPrefix(path, "/api/") {
