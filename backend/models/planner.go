@@ -119,30 +119,44 @@ func (db *DB) InitPlanner() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (task_id) REFERENCES planner_tasks(id) ON DELETE CASCADE,
 			FOREIGN KEY (profile_id) REFERENCES planner_profiles(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_planner_profiles_expires_at ON planner_profiles(expires_at);
-		CREATE INDEX IF NOT EXISTS idx_planner_tasks_profile_kind_status ON planner_tasks(profile_id, kind, status, planned_for);
-		CREATE INDEX IF NOT EXISTS idx_planner_tasks_bucket_entry_type ON planner_tasks(profile_id, bucket, entry_type, status);
-		CREATE INDEX IF NOT EXISTS idx_planner_tasks_remind_at ON planner_tasks(status, remind_at, last_notified_at);
-		CREATE INDEX IF NOT EXISTS idx_planner_comments_task_created_at ON planner_task_comments(task_id, created_at);
+		)
 	`)
 	if err != nil {
 		return err
 	}
 
-	db.conn.Exec("ALTER TABLE planner_profiles ADD COLUMN notify_email TEXT DEFAULT ''")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'task'")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN bucket TEXT NOT NULL DEFAULT 'planned'")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN notes TEXT DEFAULT ''")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN notify_email TEXT DEFAULT ''")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN last_notified_at DATETIME")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN completed_at DATETIME")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN original_planned_for TEXT DEFAULT ''")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN rollover_count INTEGER DEFAULT 0")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN last_postpone_reason TEXT DEFAULT ''")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN last_postponed_at DATETIME")
-	db.conn.Exec("ALTER TABLE planner_tasks ADD COLUMN cancel_reason TEXT DEFAULT ''")
+	migrations := []string{
+		"ALTER TABLE planner_profiles ADD COLUMN notify_email TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'task'",
+		"ALTER TABLE planner_tasks ADD COLUMN bucket TEXT NOT NULL DEFAULT 'planned'",
+		"ALTER TABLE planner_tasks ADD COLUMN notes TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN notify_email TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN last_notified_at DATETIME",
+		"ALTER TABLE planner_tasks ADD COLUMN completed_at DATETIME",
+		"ALTER TABLE planner_tasks ADD COLUMN original_planned_for TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN rollover_count INTEGER DEFAULT 0",
+		"ALTER TABLE planner_tasks ADD COLUMN last_postpone_reason TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN last_postponed_at DATETIME",
+		"ALTER TABLE planner_tasks ADD COLUMN cancel_reason TEXT DEFAULT ''",
+	}
+	for _, stmt := range migrations {
+		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return err
+		}
+	}
+
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_planner_profiles_expires_at ON planner_profiles(expires_at)",
+		"CREATE INDEX IF NOT EXISTS idx_planner_tasks_profile_kind_status ON planner_tasks(profile_id, kind, status, planned_for)",
+		"CREATE INDEX IF NOT EXISTS idx_planner_tasks_bucket_entry_type ON planner_tasks(profile_id, bucket, entry_type, status)",
+		"CREATE INDEX IF NOT EXISTS idx_planner_tasks_remind_at ON planner_tasks(status, remind_at, last_notified_at)",
+		"CREATE INDEX IF NOT EXISTS idx_planner_comments_task_created_at ON planner_task_comments(task_id, created_at)",
+	}
+	for _, stmt := range indexes {
+		if _, err := db.conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
