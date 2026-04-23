@@ -468,7 +468,7 @@
       </section>
     </section>
 
-    <el-drawer v-model="settingsVisible" title="档案设置" size="420px">
+    <el-drawer v-model="settingsVisible" title="档案设置" :size="drawerSize">
       <div class="drawer-stack">
         <el-input v-model="profileForm.name" placeholder="档案名称" />
         <el-input v-model="profileForm.notifyEmail" placeholder="默认提醒邮箱" />
@@ -484,7 +484,7 @@
       </div>
     </el-drawer>
 
-    <el-drawer v-model="taskDrawerVisible" :title="taskForm.id ? '编辑事项' : '事项详情'" size="480px">
+    <el-drawer v-model="taskDrawerVisible" :title="taskForm.id ? '编辑事项' : '事项详情'" :size="detailDrawerSize">
       <div class="drawer-stack">
         <el-input v-model="taskForm.title" placeholder="事项标题" />
         <div class="quick-row">
@@ -547,7 +547,7 @@
       </div>
     </el-drawer>
 
-    <el-drawer v-model="commentDrawerVisible" title="事项评论" size="420px">
+    <el-drawer v-model="commentDrawerVisible" title="事项评论" :size="drawerSize">
       <div class="drawer-stack">
         <div class="comment-timeline">
           <div v-for="comment in comments" :key="comment.id" class="comment-item">
@@ -569,7 +569,7 @@
       </div>
     </el-drawer>
 
-    <el-dialog v-model="aiDialogVisible" title="AI 整理事项" width="720px">
+    <el-dialog v-model="aiDialogVisible" title="AI 整理事项" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="panel-heading-actions">
           <el-button plain @click="openVoice('ai')">
@@ -600,7 +600,7 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="adviceDialogVisible" title="AI 总结 / 规划" width="720px">
+    <el-dialog v-model="adviceDialogVisible" title="AI 总结 / 规划" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="quick-row">
           <el-select v-model="adviceMode">
@@ -635,7 +635,7 @@
       </div>
     </el-dialog>
 
-    <el-dialog v-model="adminDialogVisible" title="超级管理员" width="720px">
+    <el-dialog v-model="adminDialogVisible" title="超级管理员" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="quick-row">
           <el-input v-model="adminPassword" type="password" show-password placeholder="输入超管密码" />
@@ -662,7 +662,7 @@
       </div>
     </el-dialog>
 
-    <el-drawer v-model="adminDetailVisible" title="超管查看档案" size="460px">
+    <el-drawer v-model="adminDetailVisible" title="超管查看档案" :size="detailDrawerSize">
       <div class="drawer-stack">
         <div class="soft-note">{{ adminDetail.profile.id || '' }}</div>
         <el-input v-model="adminDetail.profile.name" placeholder="档案名称" />
@@ -688,7 +688,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Calendar, ChatDotRound, EditPen, MagicStick, Microphone, Refresh, Setting } from '@element-plus/icons-vue'
 
@@ -746,6 +746,7 @@ const board = ref(createEmptyBoard())
 const activeKind = ref('life')
 const activeView = ref(localStorage.getItem('planner_active_view') || 'timeline')
 const modeHint = ref('当前是下班或休息时段，默认进入生活模式')
+const isMobile = ref(false)
 
 const createForm = reactive({
   name: '',
@@ -893,6 +894,10 @@ const currentViewMeta = computed(() => {
   }[activeView.value]
 })
 
+const drawerSize = computed(() => (isMobile.value ? '100%' : '420px'))
+const detailDrawerSize = computed(() => (isMobile.value ? '100%' : '480px'))
+const dialogWidth = computed(() => (isMobile.value ? '100%' : '720px'))
+
 function defaultModeByTime() {
   const now = new Date()
   const day = now.getDay()
@@ -905,6 +910,10 @@ function defaultModeByTime() {
 
 function plannerModeCopy() {
   return activeKind.value === 'work' ? '当前聚焦工作事项。' : '当前聚焦生活事项。'
+}
+
+function syncViewportFlags() {
+  isMobile.value = window.innerWidth <= 768
 }
 
 function fillTodayDefaults() {
@@ -1679,6 +1688,8 @@ watch(
 )
 
 onMounted(async () => {
+  syncViewportFlags()
+  window.addEventListener('resize', syncViewportFlags, { passive: true })
   restoreSession()
   fillTodayDefaults()
   resetTaskForm()
@@ -1690,6 +1701,10 @@ onMounted(async () => {
       clearSession()
     }
   }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncViewportFlags)
 })
 </script>
 
@@ -1831,6 +1846,21 @@ onMounted(async () => {
   gap: 12px;
 }
 
+.entry-card-header > *,
+.panel-heading > *,
+.timeline-header > *,
+.planner-topbar > *,
+.comment-item-top > *,
+.timeline-group-head > *,
+.task-card-top > *,
+.drawer-actions > *,
+.quick-row > *,
+.topbar-actions > *,
+.panel-heading-actions > *,
+.advice-header > * {
+  min-width: 0;
+}
+
 .entry-input,
 .entry-btn {
   margin-top: 12px;
@@ -1908,6 +1938,10 @@ onMounted(async () => {
 
 .topbar-copy {
   max-width: 680px;
+}
+
+.topbar-actions {
+  flex-wrap: wrap;
 }
 
 .mode-switcher {
@@ -2105,6 +2139,14 @@ onMounted(async () => {
 
 .task-copy {
   cursor: pointer;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.task-copy h5 {
+  font-size: 16px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .task-copy p,
@@ -2112,6 +2154,14 @@ onMounted(async () => {
 .comment-item p,
 .ai-card p {
   margin: 8px 0 0;
+}
+
+.task-copy p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .priority-high {
@@ -2136,6 +2186,12 @@ onMounted(async () => {
 
 .task-actions {
   margin-top: 12px;
+}
+
+.task-actions .el-button,
+.panel-heading-actions .el-button,
+.quick-actions .el-button {
+  min-width: 0;
 }
 
 .rolled-tag {
@@ -2190,7 +2246,7 @@ onMounted(async () => {
 
 @media (max-width: 768px) {
   .planner-shell {
-    padding: 14px 10px 72px;
+    padding: 12px 8px 72px;
   }
 
   .planner-topbar,
@@ -2202,27 +2258,147 @@ onMounted(async () => {
     grid-template-columns: 1fr;
   }
 
+  .entry-hero,
+  .planner-topbar,
+  .hero-card,
+  .quick-panel,
+  .board-panel {
+    border-radius: 22px;
+    padding: 16px;
+  }
+
+  .entry-card,
+  .board-switcher,
+  .summary-strip,
+  .advice-card,
+  .admin-card,
+  .comment-item,
+  .ai-card,
+  .task-card {
+    border-radius: 18px;
+  }
+
+  .entry-hero h1,
+  .planner-topbar h2,
+  .hero-card h3 {
+    font-size: 24px;
+  }
+
   .summary-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px;
   }
 
   .hero-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .board-switcher {
-    top: 78px;
+  .metric-card {
+    padding: 12px;
   }
 
-  .task-actions .el-button {
-    flex: 1 1 calc(50% - 5px);
-    min-width: 0;
+  .metric-card strong,
+  .summary-chip strong {
+    font-size: 22px;
+  }
+
+  .board-switcher {
+    top: 78px;
+    gap: 8px;
+    padding: 8px;
+    margin-top: 12px;
+  }
+
+  .view-tab {
+    padding: 8px 10px;
+  }
+
+  .task-card-top,
+  .timeline-group-head {
+    align-items: flex-start;
+  }
+
+  .task-tags {
+    gap: 6px;
+  }
+
+  .task-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .task-actions .el-button,
+  .panel-heading-actions .el-button,
+  .quick-actions .el-button {
+    width: 100%;
+    margin: 0;
+  }
+
+  .quick-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .panel-heading-actions,
   .topbar-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .panel-heading-actions :deep(.el-button),
+  .topbar-actions :deep(.el-button),
+  .topbar-actions :deep(.el-tag) {
+    width: 100%;
+  }
+
+  .topbar-actions :deep(.el-tag) {
+    justify-content: center;
+    margin: 0;
+  }
+
+  .timeline-empty {
+    padding: 22px 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  .mode-switcher {
+    grid-template-columns: 1fr;
+    padding: 6px;
+  }
+
+  .hero-metrics,
+  .summary-strip,
+  .quick-actions,
+  .task-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .board-switcher {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+
+  .view-tab {
+    justify-content: space-between;
+  }
+
+  .task-card {
+    padding: 14px;
+  }
+
+  .task-card-top {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .task-tags {
     justify-content: flex-start;
-    flex-wrap: wrap;
   }
 }
 </style>
