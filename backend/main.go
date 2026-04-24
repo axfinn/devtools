@@ -165,6 +165,11 @@ func main() {
 		log.Fatalf("MiniMax Speech Tasks 数据库初始化失败: %v", err)
 	}
 
+	// 初始化 MiniMax 结果分享表
+	if err := db.InitMiniMaxResultShares(); err != nil {
+		log.Fatalf("MiniMax Result Shares 数据库初始化失败: %v", err)
+	}
+
 	// 初始化 Voice Clone 音色表
 	if err := db.InitVoiceClones(); err != nil {
 		log.Fatalf("Voice Clone 数据库初始化失败: %v", err)
@@ -899,6 +904,16 @@ func main() {
 		api.GET("/minimax/music/docs", aiGatewayHandler.GetMiniMaxMusicDocs)
 		api.POST("/minimax/music/v1/lyrics_generation", aiGatewayHandler.MiniMaxLyricsGeneration)
 		api.POST("/minimax/music/v1/cover_preprocess", aiGatewayHandler.MiniMaxMusicCoverPreprocess)
+
+		// MiniMax 结果分享
+		api.GET("/minimax/result-shares/docs", aiGatewayHandler.GetMiniMaxResultShareDocs)
+		api.POST("/minimax/result-shares", aiGatewayHandler.CreateMiniMaxResultShare)
+		api.GET("/minimax/result-shares/:id", aiGatewayHandler.GetMiniMaxResultShare)
+		api.GET("/minimax/result-shares/:id/assets/:assetId", aiGatewayHandler.GetMiniMaxResultShareAsset)
+		api.GET("/minimax/result-shares/admin/list", aiGatewayHandler.AdminListMiniMaxResultShares)
+		api.GET("/minimax/result-shares/admin/:id", aiGatewayHandler.AdminGetMiniMaxResultShare)
+		api.PUT("/minimax/result-shares/admin/:id", aiGatewayHandler.AdminUpdateMiniMaxResultShare)
+		api.DELETE("/minimax/result-shares/admin/:id", aiGatewayHandler.AdminDeleteMiniMaxResultShare)
 
 		// MiniMax Voice Cloning 音色克隆代理
 		api.POST("/minimax/voice-cloning/upload", aiGatewayHandler.UploadVoiceClone)

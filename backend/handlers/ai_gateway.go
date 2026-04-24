@@ -48,13 +48,19 @@ type CreateAIAPIKeyRequest struct {
 }
 
 type ChatCompletionRequest struct {
-	Model       string                   `json:"model" binding:"required"`
-	Messages    []map[string]interface{} `json:"messages" binding:"required"`
-	Temperature *float64                 `json:"temperature"`
-	MaxTokens   *int                     `json:"max_tokens"`
-	TopP        *float64                 `json:"top_p"`
-	Stream      bool                     `json:"stream"`
-	Metadata    map[string]interface{}   `json:"metadata"`
+	Model           string                   `json:"model" binding:"required"`
+	Messages        []map[string]interface{} `json:"messages" binding:"required"`
+	Temperature     *float64                 `json:"temperature"`
+	MaxTokens       *int                     `json:"max_tokens"`
+	TopP            *float64                 `json:"top_p"`
+	Stop            interface{}              `json:"stop"`
+	ResponseFormat  map[string]interface{}   `json:"response_format"`
+	Tools           []map[string]interface{} `json:"tools"`
+	ToolChoice      interface{}              `json:"tool_choice"`
+	ReasoningEffort string                   `json:"reasoning_effort"`
+	ExtraBody       map[string]interface{}   `json:"extra_body"`
+	Stream          bool                     `json:"stream"`
+	Metadata        map[string]interface{}   `json:"metadata"`
 }
 
 type MediaGenerationRequest struct {
@@ -181,7 +187,7 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"title":   "AI Gateway API 文档",
-		"summary": "统一对外开放 DeepSeek、MiniMax、Bailian 模型能力，使用超级管理员签发的 API Key 访问。",
+		"summary": "统一对外开放 DeepSeek、MiniMax、Bailian 模型能力，使用超级管理员签发的 API Key 访问。DeepSeek 已兼容 deepseek-chat、deepseek-reasoner、deepseek-v4-flash、deepseek-v4-pro。",
 		"auth": gin.H{
 			"admin_header": "X-Super-Admin-Password",
 			"api_key":      "Authorization: Bearer dtk_ai_xxx",
@@ -208,13 +214,14 @@ func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 		},
 		"examples": gin.H{
 			"chat": gin.H{
-				"model": "deepseek-chat",
+				"model": "deepseek-v4-pro",
 				"messages": []gin.H{
 					{"role": "system", "content": "你是一个专业助手"},
 					{"role": "user", "content": "请写一个 Go HTTP 服务的示例"},
 				},
-				"temperature": 0.7,
-				"max_tokens":  1024,
+				"temperature":      0.7,
+				"max_tokens":       1024,
+				"reasoning_effort": "medium",
 			},
 			"media": gin.H{
 				"model":        "qwen-image-2.0-pro",
@@ -376,13 +383,30 @@ main();`,
 func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
 	catalog := make([]gin.H, 0)
 	if h.cfg.DeepSeek.APIKey != "" {
-		catalog = append(catalog, gin.H{
-			"model":       fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"),
-			"provider":    "deepseek",
-			"type":        "chat",
-			"endpoint":    "/api/ai-gateway/v1/chat/completions",
-			"description": "DeepSeek 文本模型",
-		})
+		deepseekModels := []struct {
+			model       string
+			description string
+		}{
+			{fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"), "DeepSeek 默认文本模型（来自配置）"},
+			{"deepseek-chat", "DeepSeek 通用聊天模型"},
+			{"deepseek-reasoner", "DeepSeek 推理模型，返回 reasoning_content"},
+			{"deepseek-v4-flash", "DeepSeek V4 Flash，偏向速度与成本"},
+			{"deepseek-v4-pro", "DeepSeek V4 Pro，偏向质量与复杂任务"},
+		}
+		seen := map[string]bool{}
+		for _, model := range deepseekModels {
+			if seen[model.model] || strings.TrimSpace(model.model) == "" {
+				continue
+			}
+			seen[model.model] = true
+			catalog = append(catalog, gin.H{
+				"model":       model.model,
+				"provider":    "deepseek",
+				"type":        "chat",
+				"endpoint":    "/api/ai-gateway/v1/chat/completions",
+				"description": model.description,
+			})
+		}
 	}
 	if h.cfg.MiniMax.APIKey != "" {
 		catalog = append(catalog, gin.H{
@@ -1213,8 +1237,26 @@ func (h *AIGatewayHandler) callDeepSeek(req ChatCompletionRequest) (gin.H, map[s
 	if req.TopP != nil {
 		bodyMap["top_p"] = *req.TopP
 	}
+	if req.Stop != nil {
+		bodyMap["stop"] = req.Stop
+	}
+	if len(req.ResponseFormat) > 0 {
+		bodyMap["response_format"] = req.ResponseFormat
+	}
+	if len(req.Tools) > 0 {
+		bodyMap["tools"] = req.Tools
+	}
+	if req.ToolChoice != nil {
+		bodyMap["tool_choice"] = req.ToolChoice
+	}
+	if strings.TrimSpace(req.ReasoningEffort) != "" {
+		bodyMap["reasoning_effort"] = strings.TrimSpace(req.ReasoningEffort)
+	}
+	for key, value := range req.ExtraBody {
+		bodyMap[key] = value
+	}
 
-	raw, err := h.doJSONRequest("https://api.deepseek.com/chat/completions", h.cfg.DeepSeek.APIKey, bodyMap)
+	raw, err := h.doJSONRequest(deepseekChatCompletionURL(req.Messages), h.cfg.DeepSeek.APIKey, bodyMap)
 	if err != nil {
 		return nil, raw, err
 	}
@@ -1222,6 +1264,7 @@ func (h *AIGatewayHandler) callDeepSeek(req ChatCompletionRequest) (gin.H, map[s
 	if content == "" {
 		content = extractMessageContentFromChoices(raw["choices"])
 	}
+	reasoningContent := extractReasoningContentFromChoices(raw["choices"])
 	result := gin.H{
 		"id":           fallbackString(extractString(raw, "id"), "chatcmpl-"+utils.GenerateHexKey(4)),
 		"object":       "chat.completion",
@@ -1232,6 +1275,9 @@ func (h *AIGatewayHandler) callDeepSeek(req ChatCompletionRequest) (gin.H, map[s
 		"usage":        raw["usage"],
 		"content":      content,
 		"raw_response": raw,
+	}
+	if reasoningContent != "" {
+		result["reasoning_content"] = reasoningContent
 	}
 	return result, raw, nil
 }
@@ -2580,7 +2626,7 @@ func (h *AIGatewayHandler) resolveChatProvider(model string) string {
 		return "dashscope"
 	}
 	switch model {
-	case fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"), "deepseek-chat":
+	case fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"), "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-coder":
 		return "deepseek"
 	case fallbackString(h.cfg.MiniMax.Model, "abab6.5s-chat"), "abab6.5s-chat", "MiniMax-M2.5":
 		return "minimax"
@@ -2676,6 +2722,23 @@ func extractMessageContentFromChoices(choices interface{}) string {
 	return content
 }
 
+func extractReasoningContentFromChoices(choices interface{}) string {
+	items, ok := choices.([]interface{})
+	if !ok || len(items) == 0 {
+		return ""
+	}
+	first, ok := items[0].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	message, ok := first["message"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	content, _ := message["reasoning_content"].(string)
+	return content
+}
+
 func jsonStringContains(raw, target string) bool {
 	var items []string
 	if err := json.Unmarshal([]byte(raw), &items); err != nil {
@@ -2694,6 +2757,18 @@ func fallbackString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func deepseekChatCompletionURL(messages []map[string]interface{}) string {
+	if len(messages) > 0 {
+		last := messages[len(messages)-1]
+		if strings.EqualFold(fmt.Sprint(last["role"]), "assistant") {
+			if prefix, ok := last["prefix"].(bool); ok && prefix {
+				return "https://api.deepseek.com/beta/chat/completions"
+			}
+		}
+	}
+	return "https://api.deepseek.com/chat/completions"
 }
 
 func boundedInt(raw string, fallback, min, max int) int {

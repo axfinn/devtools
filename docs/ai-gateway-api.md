@@ -3,7 +3,11 @@
 统一对外开放项目内已有 AI 能力：
 
 - 文本模型
-  - `deepseek-chat` 或配置中的 `deepseek.model`
+  - `deepseek-chat`
+  - `deepseek-reasoner`
+  - `deepseek-v4-flash`
+  - `deepseek-v4-pro`
+  - 或配置中的 `deepseek.model`
   - `abab6.5s-chat` / `MiniMax-M2.5` 或配置中的 `minimax.model`
 - 图片 / 视频模型
   - `qwen-image-2.0-pro`
@@ -124,13 +128,14 @@ X-API-Key: dtk_ai_xxxxxxxxxxxxx
 
 ```json
 {
-  "model": "deepseek-chat",
+  "model": "deepseek-v4-pro",
   "messages": [
     { "role": "system", "content": "你是一个专业的后端助手" },
     { "role": "user", "content": "写一个 Gin 健康检查接口示例" }
   ],
   "temperature": 0.7,
-  "max_tokens": 1024
+  "max_tokens": 1024,
+  "reasoning_effort": "medium"
 }
 ```
 
@@ -161,6 +166,7 @@ X-API-Key: dtk_ai_xxxxxxxxxxxxx
 
 说明：
 - `DeepSeek` 直接透传 `choices`
+- `deepseek-reasoner` 额外返回 `reasoning_content`
 - `MiniMax` 会被适配成统一 `choices`
 
 ## 5. 图片 / 视频模型接口

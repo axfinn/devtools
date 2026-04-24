@@ -1481,11 +1481,12 @@ const gatewayCurlExample = `curl -X POST ${origin}/api/ai-gateway/v1/chat/comple
   -H "Authorization: Bearer ai_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "deepseek-chat",
+    "model": "deepseek-v4-pro",
     "messages": [
       { "role": "system", "content": "你是一个业务助手" },
       { "role": "user", "content": "帮我生成一段活动宣传文案" }
-    ]
+    ],
+    "reasoning_effort": "medium"
   }'`
 
 const gatewayJsExample = `const response = await fetch("${origin}/api/ai-gateway/v1/chat/completions", {
@@ -1495,10 +1496,11 @@ const gatewayJsExample = `const response = await fetch("${origin}/api/ai-gateway
     "Authorization": "Bearer ai_xxx"
   },
   body: JSON.stringify({
-    model: "deepseek-chat",
+    model: "deepseek-reasoner",
     messages: [
       { role: "user", content: "输出一份周报摘要" }
-    ]
+    ],
+    reasoning_effort: "medium"
   })
 })
 
@@ -1515,7 +1517,7 @@ resp = requests.post(
         "Content-Type": "application/json",
     },
     json={
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "messages": [
             {"role": "user", "content": "生成 3 条商品卖点"}
         ],
@@ -1544,7 +1546,7 @@ curl ${origin}/api/ai-gateway/v1/media/tasks/task_xxx \\
 
 const gatewayResponseExample = `{
   "id": "chatcmpl_xxx",
-  "model": "deepseek-chat",
+  "model": "deepseek-reasoner",
   "choices": [
     {
       "index": 0,
@@ -1554,6 +1556,7 @@ const gatewayResponseExample = `{
       }
     }
   ],
+  "reasoning_content": "我先分析业务目标、受众和表达风格...",
   "usage_summary": {
     "input_tokens": 123,
     "output_tokens": 456,
@@ -1564,8 +1567,9 @@ const gatewayResponseExample = `{
 }`
 
 const gatewayFieldDocs = [
-  { field: 'model', required: '是', description: '要调用的模型名，必须在当前 API Key 白名单内。', example: 'deepseek-chat' },
+  { field: 'model', required: '是', description: '要调用的模型名，必须在当前 API Key 白名单内。', example: 'deepseek-v4-pro / deepseek-reasoner' },
   { field: 'messages', required: '聊天必填', description: '聊天消息数组，兼容 OpenAI 风格。', example: '[{"role":"user","content":"你好"}]' },
+  { field: 'reasoning_effort', required: '否', description: 'DeepSeek 推理模型可选，控制推理强度。', example: 'low / medium / high' },
   { field: 'prompt', required: '媒体必填', description: '图片或视频生成提示词。', example: '北欧风客厅海报' },
   { field: 'images', required: '按模型', description: '媒体模型输入图，支持 base64 或公网 URL。', example: '["data:image/png;base64,..."]' },
   { field: 'parameters', required: '否', description: '模型高级参数，原样透传给对应提供商。', example: '{"size":"1328x1328"}' },

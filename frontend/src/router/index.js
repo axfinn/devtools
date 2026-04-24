@@ -502,6 +502,12 @@ const toolRoutes = [
     name: 'PhotoWallShareView',
     component: () => import('../views/PhotoWallShareView.vue'),
     meta: { title: '照片墙分享', icon: 'PictureFilled', hideSidebar: true }
+  },
+  {
+    path: '/minimax/share/:id',
+    name: 'MiniMaxResultShare',
+    component: () => import('../views/MiniMaxResultShareView.vue'),
+    meta: { title: 'MiniMax 分享', icon: 'MagicStick', hideSidebar: true }
   }
 ]
 

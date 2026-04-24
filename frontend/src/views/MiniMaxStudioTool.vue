@@ -109,7 +109,10 @@
             <template #header>
               <div class="panel-head">
                 <span>响应</span>
-                <el-button text :disabled="!textResult" @click="copyText(textResult)">复制文本</el-button>
+                <div class="inline-actions">
+                  <el-button text :disabled="!textResult" @click="copyText(textResult)">复制文本</el-button>
+                  <el-button text :disabled="!textResult" @click="openShareDialog('text')">保存分享</el-button>
+                </div>
               </div>
             </template>
             <div v-if="textResult" class="result-text">{{ textResult }}</div>
@@ -214,6 +217,7 @@
                 <div class="inline-actions">
                   <el-button text :disabled="!currentMediaTask" @click="pollCurrentMediaTask">轮询</el-button>
                   <el-button text :disabled="!currentMediaTask" @click="downloadCurrentMedia">代理下载</el-button>
+                  <el-button text :disabled="!currentMediaTask" @click="openShareDialog('media')">保存分享</el-button>
                 </div>
               </div>
             </template>
@@ -327,7 +331,10 @@
             <template #header>
               <div class="panel-head">
                 <span>歌词结果</span>
-                <el-button text :disabled="!lyricsResultText" @click="copyText(lyricsResultText)">复制</el-button>
+                <div class="inline-actions">
+                  <el-button text :disabled="!lyricsResultText" @click="copyText(lyricsResultText)">复制</el-button>
+                  <el-button text :disabled="!lyricsResultText" @click="openShareDialog('lyrics')">保存分享</el-button>
+                </div>
               </div>
             </template>
             <div v-if="lyricsResultText" class="result-text">{{ lyricsResultText }}</div>
@@ -339,7 +346,10 @@
             <template #header>
               <div class="panel-head">
                 <span>翻唱前处理结果</span>
-                <el-button text :disabled="!coverFeatureId" @click="copyText(coverFeatureId)">复制 feature_id</el-button>
+                <div class="inline-actions">
+                  <el-button text :disabled="!coverFeatureId" @click="copyText(coverFeatureId)">复制 feature_id</el-button>
+                  <el-button text :disabled="!coverFeatureId" @click="openShareDialog('cover')">保存分享</el-button>
+                </div>
               </div>
             </template>
             <div v-if="coverFeatureId" class="result-key">{{ coverFeatureId }}</div>
@@ -347,6 +357,132 @@
             <pre class="result-json">{{ coverRawPretty }}</pre>
           </el-card>
         </section>
+      </el-tab-pane>
+
+      <el-tab-pane label="结果分享 / API" name="archive">
+        <section class="panel-grid">
+          <el-card class="panel-card" shadow="never">
+            <template #header>
+              <div class="panel-head">
+                <span>结果归档</span>
+                <el-tag size="small" type="success">保存后可直接看 / 直接播</el-tag>
+              </div>
+            </template>
+
+            <div class="archive-actions">
+              <el-button :disabled="!textResult" @click="openShareDialog('text')">保存文本结果</el-button>
+              <el-button :disabled="!currentMediaTask" @click="openShareDialog('media')">保存媒体任务</el-button>
+              <el-button :disabled="!lyricsResultText" @click="openShareDialog('lyrics')">保存歌词结果</el-button>
+              <el-button :disabled="!coverFeatureId" @click="openShareDialog('cover')">保存翻唱前处理</el-button>
+            </div>
+
+            <el-alert
+              title="创建分享时，媒体资产会被下载到本地存储，不依赖上游临时 URL。"
+              type="info"
+              :closable="false"
+              show-icon
+              class="archive-alert"
+            />
+
+            <div v-if="latestShare" class="share-highlight">
+              <div class="share-highlight-top">
+                <div>
+                  <strong>{{ latestShare.title || '未命名分享' }}</strong>
+                  <p>{{ latestShare.summary || '最近一次已保存的 MiniMax 结果。' }}</p>
+                </div>
+                <el-tag type="success">{{ latestShare.result_type }}</el-tag>
+              </div>
+              <div class="share-meta-line">
+                <span>{{ latestShare.model || '未标注模型' }}</span>
+                <span>{{ latestShare.assets?.length || 0 }} 个资产</span>
+                <span>{{ formatTime(latestShare.created_at) }}</span>
+              </div>
+              <div class="archive-actions">
+                <el-button type="primary" @click="openLink(latestShare.share_url)">打开分享页</el-button>
+                <el-button @click="copyText(latestShare.share_url)">复制分享链接</el-button>
+              </div>
+            </div>
+            <div v-else class="empty-block">还没有保存过 MiniMax 结果。</div>
+          </el-card>
+
+          <el-card class="panel-card" shadow="never">
+            <template #header>
+              <div class="panel-head">
+                <span>API 接入文档</span>
+                <el-button text :loading="resultShareDocsLoading" @click="loadResultShareDocs">刷新</el-button>
+              </div>
+            </template>
+
+            <div v-if="resultShareDocs" class="api-docs">
+              <el-alert :title="resultShareDocs.summary" type="success" :closable="false" show-icon />
+              <el-descriptions :column="1" border class="docs-descriptions">
+                <el-descriptions-item label="创建接口">POST /api/minimax/result-shares</el-descriptions-item>
+                <el-descriptions-item label="公开查看">GET /api/minimax/result-shares/:id</el-descriptions-item>
+                <el-descriptions-item label="公开资产">GET /api/minimax/result-shares/:id/assets/:assetId</el-descriptions-item>
+                <el-descriptions-item label="鉴权">
+                  创建支持 `Authorization: Bearer dtk_ai_xxx` 或 `X-Super-Admin-Password`
+                </el-descriptions-item>
+              </el-descriptions>
+
+              <pre class="result-json">{{ resultShareCurlSnippet }}</pre>
+              <pre class="result-json">{{ resultShareFetchSnippet }}</pre>
+            </div>
+            <div v-else class="empty-block">文档加载中或暂未获取到内容。</div>
+          </el-card>
+        </section>
+
+        <el-card class="panel-card task-table-card" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <span>管理台</span>
+              <span class="field-hint">填入 AI Gateway 超级管理员密码后可查看、修改、停用、删除全部分享。</span>
+            </div>
+          </template>
+
+          <div v-if="adminReady" class="admin-toolbar">
+            <el-input v-model="adminKeyword" placeholder="按标题 / 摘要 / 模型搜索" clearable class="admin-search" @keyup.enter="loadAdminShares" />
+            <el-select v-model="adminStatus" class="admin-filter" @change="loadAdminShares">
+              <el-option label="全部状态" value="" />
+              <el-option label="启用" value="active" />
+              <el-option label="停用" value="disabled" />
+            </el-select>
+            <el-button :loading="adminSharesLoading" @click="loadAdminShares">刷新列表</el-button>
+          </div>
+          <el-alert
+            v-else
+            title="当前未填写超级管理员密码，只能创建自己的分享，不能查看管理台。"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="archive-alert"
+          />
+
+          <el-table v-if="adminReady" :data="adminShares" v-loading="adminSharesLoading" stripe size="small" max-height="420">
+            <el-table-column prop="title" label="标题" min-width="220">
+              <template #default="{ row }">{{ row.title || '未命名分享' }}</template>
+            </el-table-column>
+            <el-table-column prop="result_type" label="类型" width="120" />
+            <el-table-column prop="status" label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="asset_count" label="资产" width="80" />
+            <el-table-column prop="created_at" label="创建时间" width="180">
+              <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" min-width="250">
+              <template #default="{ row }">
+                <div class="inline-actions">
+                  <el-button text type="primary" @click="inspectAdminShare(row.id)">查看 / 设置</el-button>
+                  <el-button text @click="copyText(row.share_url)">复制链接</el-button>
+                  <el-button text @click="openLink(row.share_url)">打开</el-button>
+                  <el-button text type="danger" @click="deleteAdminShare(row)">删除</el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
       </el-tab-pane>
 
       <el-tab-pane label="图像理解 / Coding Plan" name="coding">
@@ -364,6 +500,84 @@
         <ImageUnderstandingTool class="coding-embed" />
       </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="createShareVisible" width="760px" title="保存 MiniMax 结果分享">
+      <div class="share-dialog-body">
+        <el-form label-position="top">
+          <div class="inline-fields">
+            <el-form-item label="标题">
+              <el-input v-model="shareForm.title" maxlength="120" placeholder="例如：Hailuo 产品演示短片" />
+            </el-form-item>
+            <el-form-item label="摘要">
+              <el-input v-model="shareForm.summary" maxlength="240" placeholder="给分享页补一段说明" />
+            </el-form-item>
+          </div>
+        </el-form>
+        <div class="share-draft-grid">
+          <div class="share-draft-meta">
+            <div class="draft-kv"><span>来源</span><strong>{{ shareDraft.sourceLabel || '-' }}</strong></div>
+            <div class="draft-kv"><span>类型</span><strong>{{ shareDraft.resultType || '-' }}</strong></div>
+            <div class="draft-kv"><span>模型</span><strong>{{ shareDraft.model || '-' }}</strong></div>
+            <div class="draft-kv"><span>资产</span><strong>{{ shareDraft.assets?.length || 0 }} 个</strong></div>
+          </div>
+          <pre class="result-json">{{ shareDraftPretty }}</pre>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="createShareVisible = false">取消</el-button>
+        <el-button type="primary" :loading="createShareSubmitting" @click="submitResultShare">保存分享</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="adminEditorVisible" width="860px" title="分享设置">
+      <div v-if="adminEditingShare" class="share-dialog-body">
+        <el-form label-position="top">
+          <div class="inline-fields">
+            <el-form-item label="标题">
+              <el-input v-model="adminForm.title" maxlength="120" />
+            </el-form-item>
+            <el-form-item label="状态">
+              <el-select v-model="adminForm.status" class="w-full">
+                <el-option label="启用" value="active" />
+                <el-option label="停用" value="disabled" />
+              </el-select>
+            </el-form-item>
+          </div>
+          <el-form-item label="摘要">
+            <el-input v-model="adminForm.summary" type="textarea" :rows="3" maxlength="240" show-word-limit />
+          </el-form-item>
+        </el-form>
+
+        <div class="share-highlight">
+          <div class="share-highlight-top">
+            <div>
+              <strong>{{ adminEditingShare.share_url }}</strong>
+              <p>{{ adminEditingShare.model || '未标注模型' }} · {{ adminEditingShare.result_type }}</p>
+            </div>
+            <div class="inline-actions">
+              <el-button @click="copyText(adminEditingShare.share_url)">复制链接</el-button>
+              <el-button type="primary" @click="openLink(adminEditingShare.share_url)">打开分享页</el-button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="adminEditingShare.assets?.length" class="asset-grid">
+          <div v-for="asset in adminEditingShare.assets" :key="asset.id" class="asset-card">
+            <img v-if="asset.kind === 'image'" :src="asset.asset_url" :alt="asset.filename" />
+            <video v-else-if="asset.kind === 'video'" :src="asset.asset_url" controls />
+            <audio v-else-if="asset.kind === 'audio'" :src="asset.asset_url" controls />
+            <div v-else class="empty-block">文件资产：{{ asset.filename }}</div>
+            <div class="asset-url">{{ asset.asset_url }}</div>
+          </div>
+        </div>
+
+        <pre class="result-json">{{ pretty(adminEditingShare.payload) }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="adminEditorVisible = false">关闭</el-button>
+        <el-button type="primary" @click="saveAdminShare">保存设置</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -376,6 +590,7 @@ import ImageUnderstandingTool from './ImageUnderstandingTool.vue'
 const OFFICIAL_DOCS_URL = 'https://platform.minimaxi.com/docs/api-reference/api-overview'
 const SUPER_ADMIN_KEY = 'minimax_studio_super_admin_password'
 const API_KEY_STORAGE = 'minimax_studio_api_key'
+const pageOrigin = window.location.origin
 
 const activeTab = ref('text')
 const superAdminPassword = ref(sessionStorage.getItem(SUPER_ADMIN_KEY) || '')
@@ -423,6 +638,37 @@ const coverRaw = ref(null)
 const coverForm = ref({
   audioUrl: '',
   jsonText: '{\n  "model": "music-cover"\n}'
+})
+
+const resultShareDocsLoading = ref(false)
+const resultShareDocs = ref(null)
+const createShareVisible = ref(false)
+const createShareSubmitting = ref(false)
+const latestShare = ref(null)
+const shareDraft = ref({
+  sourceLabel: '',
+  title: '',
+  summary: '',
+  resultType: '',
+  model: '',
+  payload: {},
+  assets: []
+})
+const shareForm = ref({
+  title: '',
+  summary: ''
+})
+const adminReady = computed(() => Boolean(superAdminPassword.value.trim()))
+const adminSharesLoading = ref(false)
+const adminShares = ref([])
+const adminKeyword = ref('')
+const adminStatus = ref('')
+const adminEditorVisible = ref(false)
+const adminEditingShare = ref(null)
+const adminForm = ref({
+  title: '',
+  summary: '',
+  status: 'active'
 })
 
 const textModels = [
@@ -474,6 +720,41 @@ const coverRawPretty = computed(() => pretty(coverRaw.value))
 const lyricsResultText = computed(() => extractLyricsText(lyricsRaw.value))
 const coverFeatureId = computed(() => extractCoverFeatureId(coverRaw.value))
 const mediaAssets = computed(() => extractTaskAssets(currentMediaTask.value))
+const shareDraftPretty = computed(() => pretty(shareDraft.value.payload))
+const resultShareCurlSnippet = computed(() => {
+  return `curl -X POST ${pageOrigin}/api/minimax/result-shares \\
+  -H "X-Super-Admin-Password: your_super_admin_password" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "title": "MiniMax 结果归档",
+    "summary": "保存后即可公开查看或直接播放",
+    "result_type": "text",
+    "model": "MiniMax-M2.5",
+    "payload": {"text": "hello world"}
+  }'`
+})
+const resultShareFetchSnippet = computed(() => {
+  return `const response = await fetch('${pageOrigin}/api/minimax/result-shares', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer dtk_ai_xxx',
+    // 或者：'X-Super-Admin-Password': 'your_super_admin_password',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    title: 'MiniMax 结果归档',
+    summary: '保存后即可公开查看或直接播放',
+    result_type: 'media',
+    model: 'MiniMax-Hailuo-2.3-Fast',
+    payload: { task_id: 'task_xxx' },
+    assets: [
+      { url: 'https://example.com/output.mp4', kind: 'video', filename: 'output.mp4' }
+    ]
+  })
+})
+
+const data = await response.json()`
+})
 
 watch(() => currentMediaTask.value?.status, (status) => {
   if (!status || !mediaForm.value.autoPoll) return
@@ -493,8 +774,12 @@ watch(activeTab, (tab) => {
 })
 
 onMounted(() => {
+  void loadResultShareDocs()
   if (hasCredential.value) {
     void loadMediaTasks()
+  }
+  if (adminReady.value) {
+    void loadAdminShares()
   }
 })
 
@@ -509,6 +794,9 @@ function saveCredentials() {
   if (hasCredential.value) {
     void loadMediaTasks()
   }
+  if (adminReady.value) {
+    void loadAdminShares()
+  }
 }
 
 function clearCredentials() {
@@ -516,6 +804,8 @@ function clearCredentials() {
   apiKey.value = ''
   sessionStorage.removeItem(SUPER_ADMIN_KEY)
   sessionStorage.removeItem(API_KEY_STORAGE)
+  adminShares.value = []
+  adminEditingShare.value = null
   ElMessage.success('已清空当前会话凭证')
 }
 
@@ -823,6 +1113,243 @@ function applyCoverToMedia() {
   ElMessage.success('cover_feature_id 已带入翻唱任务')
 }
 
+async function loadResultShareDocs() {
+  resultShareDocsLoading.value = true
+  try {
+    const res = await fetch('/api/minimax/result-shares/docs')
+    const data = await safeJson(res)
+    if (!res.ok) throw new Error(data.error || '加载文档失败')
+    resultShareDocs.value = data
+  } catch (err) {
+    ElMessage.error(err.message || '加载文档失败')
+  } finally {
+    resultShareDocsLoading.value = false
+  }
+}
+
+function openShareDialog(source) {
+  if (!requireCredential()) return
+  try {
+    const draft = buildShareDraft(source)
+    shareDraft.value = draft
+    shareForm.value.title = draft.title
+    shareForm.value.summary = draft.summary
+    createShareVisible.value = true
+  } catch (err) {
+    ElMessage.error(err.message || '当前结果还不能保存分享')
+  }
+}
+
+function buildShareDraft(source) {
+  switch (source) {
+    case 'text':
+      if (!textResult.value) {
+        throw new Error('当前没有文本结果')
+      }
+      return {
+        sourceLabel: '文本生成',
+        title: buildShareTitle('文本结果', textForm.value.prompt),
+        summary: `模型 ${textForm.value.model} 的文本生成结果`,
+        resultType: 'text',
+        model: textForm.value.model,
+        payload: {
+          prompt: textForm.value.prompt,
+          system: textForm.value.system,
+          text: textResult.value,
+          raw: textRaw.value
+        },
+        assets: []
+      }
+    case 'media':
+      if (!currentMediaTask.value) {
+        throw new Error('当前没有媒体任务')
+      }
+      return {
+        sourceLabel: '媒体任务',
+        title: buildShareTitle(currentMediaTask.value.model || '媒体结果', currentMediaTask.value.prompt || mediaForm.value.prompt),
+        summary: buildMediaShareSummary(currentMediaTask.value, mediaAssets.value),
+        resultType: inferShareTypeFromTask(currentMediaTask.value, mediaAssets.value),
+        model: currentMediaTask.value.model || mediaForm.value.model,
+        payload: currentMediaTask.value,
+        assets: mediaAssets.value.map((asset, index) => ({
+          url: asset.url,
+          filename: buildAssetFilename(asset.url, currentMediaTask.value.task_id, index),
+          kind: asset.type
+        }))
+      }
+    case 'lyrics':
+      if (!lyricsResultText.value) {
+        throw new Error('当前没有歌词结果')
+      }
+      return {
+        sourceLabel: '歌词工作流',
+        title: buildShareTitle('歌词结果', lyricsForm.value.prompt),
+        summary: `lyrics_generation 产物，模式 ${lyricsForm.value.mode}`,
+        resultType: 'lyrics',
+        model: 'lyrics_generation',
+        payload: {
+          mode: lyricsForm.value.mode,
+          prompt: lyricsForm.value.prompt,
+          lyrics: lyricsResultText.value,
+          raw: lyricsRaw.value
+        },
+        assets: []
+      }
+    case 'cover':
+      if (!coverFeatureId.value) {
+        throw new Error('当前没有 cover_feature_id')
+      }
+      return {
+        sourceLabel: '翻唱前处理',
+        title: buildShareTitle('Cover Feature', coverForm.value.audioUrl),
+        summary: 'music-cover 前处理结果，可给后续工具直接复用',
+        resultType: 'cover_feature',
+        model: 'music-cover',
+        payload: {
+          audio_url: coverForm.value.audioUrl,
+          cover_feature_id: coverFeatureId.value,
+          raw: coverRaw.value
+        },
+        assets: [],
+      }
+    default:
+      throw new Error('未知的分享来源')
+  }
+}
+
+async function submitResultShare() {
+  if (!requireCredential()) return
+  createShareSubmitting.value = true
+  try {
+    const res = await fetch('/api/minimax/result-shares', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({
+        title: shareForm.value.title.trim(),
+        summary: shareForm.value.summary.trim(),
+        result_type: shareDraft.value.resultType,
+        model: shareDraft.value.model,
+        payload: shareDraft.value.payload,
+        assets: shareDraft.value.assets
+      })
+    })
+    const data = await safeJson(res)
+    if (!res.ok) throw new Error(data.error || '保存分享失败')
+    latestShare.value = data
+    createShareVisible.value = false
+    activeTab.value = 'archive'
+    ElMessage.success('MiniMax 结果已保存为分享页')
+    if (adminReady.value) {
+      await loadAdminShares()
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    createShareSubmitting.value = false
+  }
+}
+
+async function loadAdminShares() {
+  if (!adminReady.value) return
+  adminSharesLoading.value = true
+  try {
+    const query = new URLSearchParams({
+      limit: '50',
+      offset: '0'
+    })
+    if (adminKeyword.value.trim()) {
+      query.set('keyword', adminKeyword.value.trim())
+    }
+    if (adminStatus.value) {
+      query.set('status', adminStatus.value)
+    }
+    const res = await fetch(`/api/minimax/result-shares/admin/list?${query.toString()}`, {
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value.trim() }
+    })
+    const data = await safeJson(res)
+    if (!res.ok) throw new Error(data.error || '加载管理列表失败')
+    adminShares.value = data.items || []
+  } catch (err) {
+    ElMessage.error(err.message || '加载管理列表失败')
+  } finally {
+    adminSharesLoading.value = false
+  }
+}
+
+async function inspectAdminShare(id) {
+  if (!adminReady.value) {
+    ElMessage.error('请先填写超级管理员密码')
+    return
+  }
+  try {
+    const res = await fetch(`/api/minimax/result-shares/admin/${encodeURIComponent(id)}`, {
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value.trim() }
+    })
+    const data = await safeJson(res)
+    if (!res.ok) throw new Error(data.error || '加载分享详情失败')
+    adminEditingShare.value = data
+    adminForm.value = {
+      title: data.title || '',
+      summary: data.summary || '',
+      status: data.status || 'active'
+    }
+    adminEditorVisible.value = true
+  } catch (err) {
+    ElMessage.error(err.message || '加载分享详情失败')
+  }
+}
+
+async function saveAdminShare() {
+  if (!adminReady.value || !adminEditingShare.value) return
+  try {
+    const res = await fetch(`/api/minimax/result-shares/admin/${encodeURIComponent(adminEditingShare.value.id)}`, {
+      method: 'PUT',
+      headers: {
+        'X-Super-Admin-Password': superAdminPassword.value.trim(),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: adminForm.value.title.trim(),
+        summary: adminForm.value.summary.trim(),
+        status: adminForm.value.status
+      })
+    })
+    const data = await safeJson(res)
+    if (!res.ok) throw new Error(data.error || '保存设置失败')
+    adminEditingShare.value = data
+    await loadAdminShares()
+    ElMessage.success('分享设置已更新')
+  } catch (err) {
+    ElMessage.error(err.message || '保存设置失败')
+  }
+}
+
+async function deleteAdminShare(row) {
+  if (!adminReady.value) {
+    ElMessage.error('请先填写超级管理员密码')
+    return
+  }
+  if (!window.confirm(`确定删除分享「${row.title || row.id}」吗？`)) {
+    return
+  }
+  try {
+    const res = await fetch(`/api/minimax/result-shares/admin/${encodeURIComponent(row.id)}`, {
+      method: 'DELETE',
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value.trim() }
+    })
+    const data = await safeJson(res)
+    if (!res.ok) throw new Error(data.error || '删除分享失败')
+    if (adminEditingShare.value?.id === row.id) {
+      adminEditorVisible.value = false
+      adminEditingShare.value = null
+    }
+    await loadAdminShares()
+    ElMessage.success('分享已删除')
+  } catch (err) {
+    ElMessage.error(err.message || '删除分享失败')
+  }
+}
+
 function jumpToTab(tab) {
   activeTab.value = tab
 }
@@ -831,10 +1358,53 @@ function openOfficialDocs() {
   window.open(OFFICIAL_DOCS_URL, '_blank', 'noopener,noreferrer')
 }
 
+function openLink(url) {
+  if (!url) return
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
 function copyText(text) {
   navigator.clipboard.writeText(text || '')
     .then(() => ElMessage.success('已复制'))
     .catch(() => ElMessage.error('复制失败'))
+}
+
+function buildShareTitle(prefix, raw) {
+  const text = String(raw || '').trim()
+  if (!text) return prefix
+  return `${prefix} · ${text.slice(0, 36)}`
+}
+
+function buildMediaShareSummary(task, assets) {
+  const prompt = String(task?.prompt || mediaForm.value.prompt || '').trim()
+  const assetCount = assets?.length || 0
+  if (!prompt) {
+    return `模型 ${task?.model || mediaForm.value.model} 的媒体结果，共 ${assetCount} 个资产`
+  }
+  return `${prompt.slice(0, 60)}${prompt.length > 60 ? '…' : ''} · ${assetCount} 个资产`
+}
+
+function inferShareTypeFromTask(task, assets) {
+  const types = (assets || []).map(item => item.type)
+  if (types.includes('video')) return 'video'
+  if (types.includes('audio')) return 'audio'
+  if (types.includes('image')) return 'image'
+  const model = String(task?.model || '').toLowerCase()
+  if (model.startsWith('music-')) return 'audio'
+  if (model.startsWith('image-')) return 'image'
+  return 'media'
+}
+
+function buildAssetFilename(url, taskId, index) {
+  try {
+    const parsed = new URL(url)
+    const pathname = parsed.pathname || ''
+    const rawName = pathname.split('/').pop() || ''
+    if (rawName && rawName.includes('.')) {
+      return rawName
+    }
+  } catch {}
+  return `${taskId || 'asset'}-${index + 1}`
 }
 
 function pretty(value) {
@@ -1132,6 +1702,94 @@ async function safeJson(res) {
   gap: 8px;
 }
 
+.archive-actions,
+.admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.archive-alert {
+  margin-top: 14px;
+}
+
+.share-highlight {
+  margin-top: 16px;
+  padding: 18px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(30, 64, 175, 0.08));
+}
+
+.share-highlight-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.share-highlight-top strong,
+.draft-kv strong {
+  color: #0f172a;
+}
+
+.share-highlight-top p,
+.share-meta-line,
+.draft-kv span {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.share-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.api-docs {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.docs-descriptions {
+  margin-top: 4px;
+}
+
+.admin-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+.admin-filter {
+  width: 140px;
+}
+
+.share-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.share-draft-grid {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 14px;
+}
+
+.share-draft-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.draft-kv {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
 .result-text,
 .result-key {
   white-space: pre-wrap;
@@ -1258,14 +1916,20 @@ async function safeJson(res) {
 
   .capability-grid,
   .inline-fields,
-  .asset-grid {
+  .asset-grid,
+  .share-draft-grid {
     grid-template-columns: 1fr;
   }
 
   .credential-actions,
   .panel-actions,
-  .inline-actions {
+  .inline-actions,
+  .share-highlight-top {
     flex-wrap: wrap;
+  }
+
+  .admin-filter {
+    width: 100%;
   }
 }
 </style>

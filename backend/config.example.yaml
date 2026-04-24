@@ -182,15 +182,18 @@ deepseek:
   # API Key，从 https://platform.deepseek.com 获取
   # 也可通过环境变量 DEEPSEEK_API_KEY 设置
   api_key: ""
-  # 模型名称，默认 deepseek-chat
+  # 模型名称，支持 deepseek-chat / deepseek-reasoner / deepseek-v4-flash / deepseek-v4-pro
+  # 记账、家庭物品、AI Gateway 文本路由都会优先复用这里
   model: "deepseek-chat"
 
 # MiniMax AI 配置（用于事项 AI 整理/总结/规划、血糖智能解析等）
 minimax:
   # API Key，从 https://platform.minimax.io 获取
   # 也可通过环境变量 MINIMAX_API_KEY 设置
+  # MiniMax Studio 的文本生成也复用这里的 API Key
   api_key: ""
-  # 模型名称，默认 abab6.5s-chat
+  # 文本默认模型
+  # MiniMax Studio 文本页 / 事项管理 AI 总结与规划都会优先复用这里
   model: "abab6.5s-chat"
 
 # MiniMax MCP 配置（图像理解）
@@ -226,6 +229,7 @@ hermes:
 # 支持模型（官方模型名）: speech-01-hd, speech-01-turbo, speech-02-hd, speech-02-turbo,
 #                         speech-2.6-hd, speech-2.6-turbo, speech-2.8-hd, speech-2.8-turbo
 # API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_TTS_API_KEY 覆盖
+# MiniMax Studio 的“语音 / 音色”页复用这里
 minimax_tts:
   # API Key（可与 minimax.api_key 共用）
   api_key: ""
@@ -236,10 +240,11 @@ minimax_tts:
 # 支持模型（官方模型名）:
 #   TTS: speech-01-hd, speech-01-turbo, speech-02-hd, speech-02-turbo,
 #        speech-2.6-hd, speech-2.6-turbo, speech-2.8-hd, speech-2.8-turbo
-#   Hailuo: MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01
-#   Music: music-2.5
+#   Hailuo: MiniMax-Hailuo-2.3-Fast, MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01
+#   Music: music-2.5, music-2.6, music-cover
 #   Image: image-01, image-01-live
 # API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_TOKEN_PLAN_API_KEY 覆盖
+# MiniMax Studio 的“媒体生成”页复用这里；结果保存分享后媒体会落盘，不需要额外配置
 minimax_token_plan:
   # API Key（可与 minimax.api_key 共用）
   api_key: ""
@@ -253,6 +258,7 @@ minimax_token_plan:
 #   - 删除音色 (DELETE /api/minimax/voice-cloning/voices/:id)
 #   - 使用音色 TTS (POST /api/minimax/voice-cloning/tts)
 # API Key 与 minimax.api_key 共用；可通过环境变量 MINIMAX_VOICE_CLONING_API_KEY 覆盖
+# MiniMax Studio / AI Gateway 音色克隆调试页复用这里
 minimax_voice_cloning:
   # API Key（可与 minimax.api_key 共用）
   api_key: ""
@@ -406,6 +412,10 @@ nfs_share:
 ai_gateway:
   # 超级管理员密码，用于签发和吊销对外 API Key
   # 也可通过环境变量 AI_GATEWAY_SUPER_ADMIN_PASSWORD 设置
+  # MiniMax Studio 的“结果分享 / API”管理台也复用这里：
+  # 1. 超管可查看/停用/删除全部 MiniMax 结果分享
+  # 2. 结果分享创建接口支持 X-Super-Admin-Password
+  # 3. 如果不给超管密码，也可使用 AI Gateway API Key 创建分享
   super_admin_password: ""
   # 新建 API Key 默认有效期（天）
   default_key_expires_days: 90
@@ -427,6 +437,24 @@ ai_gateway:
   # 计费配置。input/output 单位是每 1000 token 价格；request_cost 用于图片/视频按次计费
   pricing:
     - model: "deepseek-chat"
+      provider: "deepseek"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "deepseek-reasoner"
+      provider: "deepseek"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "deepseek-v4-flash"
+      provider: "deepseek"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "deepseek-v4-pro"
       provider: "deepseek"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
@@ -599,6 +627,12 @@ ai_gateway:
       request_cost: 0
       currency: "CNY"
     # Hailuo 视频（官方模型名）
+    - model: "MiniMax-Hailuo-2.3-Fast"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
     - model: "MiniMax-Hailuo-2.3"
       provider: "minimax"
       input_per_1k_tokens: 0
@@ -625,6 +659,18 @@ ai_gateway:
       currency: "CNY"
     # Music
     - model: "music-2.5"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "music-2.6"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0
+      currency: "CNY"
+    - model: "music-cover"
       provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
