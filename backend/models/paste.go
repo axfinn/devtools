@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,6 +29,34 @@ type Paste struct {
 
 type DB struct {
 	conn *sql.DB
+}
+
+// initRegistry 表初始化注册表
+var initRegistry []struct {
+	name string
+	fn   func(*DB) error
+}
+
+// RegisterInit 注册数据库表初始化函数
+func RegisterInit(name string, fn func(*DB) error) {
+	initRegistry = append(initRegistry, struct {
+		name string
+		fn   func(*DB) error
+	}{name, fn})
+}
+
+// InitAll 初始化所有已注册的表
+func (db *DB) InitAll() error {
+	for _, r := range initRegistry {
+		if err := r.fn(db); err != nil {
+			return fmt.Errorf("初始化 %s 失败: %w", r.name, err)
+		}
+	}
+	return nil
+}
+
+func init() {
+	RegisterInit("粘贴板(pastes)", func(db *DB) error { return db.init() })
 }
 
 func NewDB(dbPath string) (*DB, error) {

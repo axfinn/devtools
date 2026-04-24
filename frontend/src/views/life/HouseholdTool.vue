@@ -280,16 +280,16 @@ import {
   Document, MagicStick, ShoppingCart, ChatDotRound, Camera, Download, Picture, Ticket, Location
 } from '@element-plus/icons-vue'
 
-import HouseholdAddDialog from './household/HouseholdAddDialog.vue'
-import HouseholdTemplateDialog from './household/HouseholdTemplateDialog.vue'
-import HouseholdScanDialog from './household/HouseholdScanDialog.vue'
-import HouseholdReceiptDialog from './household/HouseholdReceiptDialog.vue'
-import HouseholdQRDialog from './household/HouseholdQRDialog.vue'
-import HouseholdShoppingDialog from './household/HouseholdShoppingDialog.vue'
-import HouseholdExportDialog from './household/HouseholdExportDialog.vue'
-import HouseholdExtendDialog from './household/HouseholdExtendDialog.vue'
-import HouseholdLocationDialog from './household/HouseholdLocationDialog.vue'
-import HouseholdChatDrawer from './household/HouseholdChatDrawer.vue'
+import HouseholdAddDialog from '../household/HouseholdAddDialog.vue'
+import HouseholdTemplateDialog from '../household/HouseholdTemplateDialog.vue'
+import HouseholdScanDialog from '../household/HouseholdScanDialog.vue'
+import HouseholdReceiptDialog from '../household/HouseholdReceiptDialog.vue'
+import HouseholdQRDialog from '../household/HouseholdQRDialog.vue'
+import HouseholdShoppingDialog from '../household/HouseholdShoppingDialog.vue'
+import HouseholdExportDialog from '../household/HouseholdExportDialog.vue'
+import HouseholdExtendDialog from '../household/HouseholdExtendDialog.vue'
+import HouseholdLocationDialog from '../household/HouseholdLocationDialog.vue'
+import HouseholdChatDrawer from '../household/HouseholdChatDrawer.vue'
 
 const API_BASE = '/api'
 

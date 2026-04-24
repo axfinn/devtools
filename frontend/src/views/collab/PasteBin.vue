@@ -687,7 +687,7 @@ import { ElImageViewer } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files, Reading, Microphone, Camera, VideoCamera, Monitor, VideoPlay, VideoPause, Bell, WarnTriangleFilled } from '@element-plus/icons-vue'
 import QRCode from 'qrcode'
-import { API_BASE } from '../api'
+import { API_BASE } from '../../api'
 import { FFmpeg } from '@ffmpeg/ffmpeg'
 import { fetchFile, toBlobURL } from '@ffmpeg/util'
 

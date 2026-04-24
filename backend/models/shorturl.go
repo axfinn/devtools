@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("短链(short_urls)", (*DB).InitShortURL)
+}
+
 type ShortURL struct {
 	ID          string     `json:"id"`
 	OriginalURL string     `json:"original_url"`

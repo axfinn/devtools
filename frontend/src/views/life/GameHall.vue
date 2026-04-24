@@ -31,11 +31,11 @@
 
 <script setup>
 import { ref, computed, shallowRef } from 'vue'
-import SheepSolitaire from './games/SheepSolitaire.vue'
-import RiddleGame from './games/RiddleGame.vue'
-import FortuneGame from './games/FortuneGame.vue'
-import QuizGame from './games/QuizGame.vue'
-import IdiomGame from './games/IdiomGame.vue'
+import SheepSolitaire from '../games/SheepSolitaire.vue'
+import RiddleGame from '../games/RiddleGame.vue'
+import FortuneGame from '../games/FortuneGame.vue'
+import QuizGame from '../games/QuizGame.vue'
+import IdiomGame from '../games/IdiomGame.vue'
 
 const games = [
   {

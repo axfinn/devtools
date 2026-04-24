@@ -255,7 +255,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElImageViewer, ElMessage, ElMessageBox } from 'element-plus'
-import { API_BASE } from '../api'
+import { API_BASE } from '../../api'
 
 const STORAGE_KEY = 'photowall_session_v1'
 const ADMIN_KEY = 'photowall_admin_password'

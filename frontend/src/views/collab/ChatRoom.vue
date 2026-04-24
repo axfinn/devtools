@@ -462,7 +462,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElImageViewer, ElMessageBox } from 'element-plus'
-import { API_BASE, WS_BASE } from '../api'
+import { API_BASE, WS_BASE } from '../../api'
 import QRCode from 'qrcode'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'

@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("AutoDev(autodev_tasks)", (*DB).InitAutoDevTasks)
+}
+
 // Task type constants
 const (
 	TaskTypeDevelop = "develop"

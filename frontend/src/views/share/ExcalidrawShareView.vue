@@ -96,8 +96,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import ExcalidrawWrapper from '../components/ExcalidrawWrapper.vue'
-import { useTheme } from '../composables/useTheme'
+import ExcalidrawWrapper from '../../components/ExcalidrawWrapper.vue'
+import { useTheme } from '../../composables/useTheme'
 
 const route = useRoute()
 const router = useRouter()

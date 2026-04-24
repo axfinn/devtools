@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("AI Gateway(llm_tasks)", (*DB).InitLLMTasks)
+	RegisterInit("AI Gateway(ai_api_keys)", (*DB).InitAIGateway)
+	RegisterInit("MiniMax Media(media_tasks)", (*DB).InitMiniMaxMediaTasks)
+	RegisterInit("语音克隆(voice_clones)", (*DB).InitVoiceClones)
+}
+
 type AIAPIKey struct {
 	ID                string     `json:"id"`
 	Name              string     `json:"name"`

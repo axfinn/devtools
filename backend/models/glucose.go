@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("血糖(glucose_records)", (*DB).InitGlucose)
+}
+
 // GlucoseProfile 血糖档案主表
 type GlucoseProfile struct {
 	ID            string     `json:"id"`

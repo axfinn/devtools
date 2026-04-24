@@ -333,7 +333,7 @@
 import { ref, onMounted, onActivated, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getMermaid } from '../utils/vendor-loaders'
+import { getMermaid } from '../../utils/vendor-loaders'
 
 const route = useRoute()
 

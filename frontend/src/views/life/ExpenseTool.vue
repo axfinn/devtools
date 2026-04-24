@@ -764,7 +764,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getECharts } from '../utils/vendor-loaders'
+import { getECharts } from '../../utils/vendor-loaders'
 
 const API_BASE = '/api'
 

@@ -345,7 +345,7 @@ import markdownItMark from 'markdown-it-mark'
 import markdownItSub from 'markdown-it-sub'
 import markdownItSup from 'markdown-it-sup'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getMermaid } from '../utils/vendor-loaders'
+import { getMermaid } from '../../utils/vendor-loaders'
 
 const router = useRouter()
 

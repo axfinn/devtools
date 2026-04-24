@@ -4,6 +4,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("聊天室(chat_rooms)", (*DB).InitChat)
+}
+
 type ChatRoom struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`

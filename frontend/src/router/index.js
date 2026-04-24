@@ -15,7 +15,7 @@ const toolRoutes = [
   {
     path: '/json',
     name: 'JSON',
-    component: () => import('../views/JsonTool.vue'),
+    component: () => import('../views/dev/JsonTool.vue'),
     meta: {
       title: 'JSON 格式化',
       icon: 'Document',
@@ -27,7 +27,7 @@ const toolRoutes = [
   {
     path: '/diff',
     name: 'Diff',
-    component: () => import('../views/DiffTool.vue'),
+    component: () => import('../views/dev/DiffTool.vue'),
     meta: {
       title: 'Diff 对比',
       icon: 'Switch',
@@ -39,7 +39,7 @@ const toolRoutes = [
   {
     path: '/mockapi',
     name: 'MockApi',
-    component: () => import('../views/MockApi.vue'),
+    component: () => import('../views/dev/MockApi.vue'),
     meta: {
       title: 'Mock API',
       icon: 'Connection',
@@ -50,7 +50,7 @@ const toolRoutes = [
   {
     path: '/regex',
     name: 'Regex',
-    component: () => import('../views/RegexTool.vue'),
+    component: () => import('../views/dev/RegexTool.vue'),
     meta: {
       title: '正则测试',
       icon: 'Search',
@@ -61,7 +61,7 @@ const toolRoutes = [
   {
     path: '/terminal',
     name: 'Terminal',
-    component: () => import('../views/TerminalTool.vue'),
+    component: () => import('../views/dev/TerminalTool.vue'),
     meta: {
       title: 'SSH 终端',
       icon: 'Monitor',
@@ -72,7 +72,7 @@ const toolRoutes = [
   {
     path: '/autodev',
     name: 'AutoDev',
-    component: () => import('../views/AutoDevTool.vue'),
+    component: () => import('../views/dev/AutoDevTool.vue'),
     meta: {
       title: 'AutoDev AI',
       icon: 'MagicStick',
@@ -83,7 +83,7 @@ const toolRoutes = [
   {
     path: '/hermes',
     name: 'Hermes',
-    component: () => import('../views/HermesTool.vue'),
+    component: () => import('../views/dev/HermesTool.vue'),
     meta: {
       title: 'Hermes Agent',
       icon: 'Connection',
@@ -94,7 +94,7 @@ const toolRoutes = [
   {
     path: '/proxy',
     name: 'Proxy',
-    component: () => import('../views/ProxyTool.vue'),
+    component: () => import('../views/other/ProxyTool.vue'),
     meta: {
       title: '科学上网',
       icon: 'Connection',
@@ -105,7 +105,7 @@ const toolRoutes = [
   {
     path: '/nps',
     name: 'NPS',
-    component: () => import('../views/NPSTool.vue'),
+    component: () => import('../views/other/NPSTool.vue'),
     meta: {
       title: 'NPS 端口映射',
       icon: 'Share',
@@ -116,7 +116,7 @@ const toolRoutes = [
   {
     path: '/base64',
     name: 'Base64',
-    component: () => import('../views/Base64Tool.vue'),
+    component: () => import('../views/convert/Base64Tool.vue'),
     meta: {
       title: 'Base64',
       icon: 'Key',
@@ -128,7 +128,7 @@ const toolRoutes = [
   {
     path: '/url',
     name: 'URL',
-    component: () => import('../views/UrlTool.vue'),
+    component: () => import('../views/convert/UrlTool.vue'),
     meta: {
       title: 'URL 编解码',
       icon: 'Link',
@@ -140,7 +140,7 @@ const toolRoutes = [
   {
     path: '/timestamp',
     name: 'Timestamp',
-    component: () => import('../views/TimestampTool.vue'),
+    component: () => import('../views/convert/TimestampTool.vue'),
     meta: {
       title: '时间戳',
       icon: 'Clock',
@@ -151,7 +151,7 @@ const toolRoutes = [
   {
     path: '/text',
     name: 'Text',
-    component: () => import('../views/TextTool.vue'),
+    component: () => import('../views/convert/TextTool.vue'),
     meta: {
       title: '文本转换',
       icon: 'ChatDotRound',
@@ -162,7 +162,7 @@ const toolRoutes = [
   {
     path: '/replace',
     name: 'Replace',
-    component: () => import('../views/ReplaceTool.vue'),
+    component: () => import('../views/convert/ReplaceTool.vue'),
     meta: {
       title: '批量替换',
       icon: 'Switch',
@@ -173,7 +173,7 @@ const toolRoutes = [
   {
     path: '/dns',
     name: 'DNS',
-    component: () => import('../views/DnsTool.vue'),
+    component: () => import('../views/convert/DnsTool.vue'),
     meta: {
       title: 'IP/DNS',
       icon: 'Position',
@@ -184,7 +184,7 @@ const toolRoutes = [
   {
     path: '/markdown',
     name: 'Markdown',
-    component: () => import('../views/MarkdownTool.vue'),
+    component: () => import('../views/draw/MarkdownTool.vue'),
     meta: {
       title: 'Markdown',
       icon: 'EditPen',
@@ -196,7 +196,7 @@ const toolRoutes = [
   {
     path: '/mermaid',
     name: 'Mermaid',
-    component: () => import('../views/MermaidTool.vue'),
+    component: () => import('../views/draw/MermaidTool.vue'),
     meta: {
       title: 'Mermaid 图表',
       icon: 'Share',
@@ -207,7 +207,7 @@ const toolRoutes = [
   {
     path: '/mindmap',
     name: 'MindMap',
-    component: () => import('../views/MindMapTool.vue'),
+    component: () => import('../views/draw/MindMapTool.vue'),
     meta: {
       title: '思维导图',
       icon: 'Share',
@@ -219,7 +219,7 @@ const toolRoutes = [
   {
     path: '/excalidraw',
     name: 'Excalidraw',
-    component: () => import('../views/ExcalidrawTool.vue'),
+    component: () => import('../views/draw/ExcalidrawTool.vue'),
     meta: {
       title: 'Excalidraw 画图',
       icon: 'Edit',
@@ -230,7 +230,7 @@ const toolRoutes = [
   {
     path: '/paste',
     name: 'PasteBin',
-    component: () => import('../views/PasteBin.vue'),
+    component: () => import('../views/collab/PasteBin.vue'),
     meta: {
       title: '粘贴板',
       icon: 'DocumentCopy',
@@ -242,7 +242,7 @@ const toolRoutes = [
   {
     path: '/nfsshare',
     name: 'NFSShare',
-    component: () => import('../views/NFSShareTool.vue'),
+    component: () => import('../views/collab/NFSShareTool.vue'),
     meta: {
       title: 'NFS 文件分享',
       icon: 'FolderOpened',
@@ -253,7 +253,7 @@ const toolRoutes = [
   {
     path: '/shorturl',
     name: 'ShortUrl',
-    component: () => import('../views/ShortUrl.vue'),
+    component: () => import('../views/collab/ShortUrl.vue'),
     meta: {
       title: '短链生成',
       icon: 'Link',
@@ -264,7 +264,7 @@ const toolRoutes = [
   {
     path: '/chat',
     name: 'Chat',
-    component: () => import('../views/ChatRoom.vue'),
+    component: () => import('../views/collab/ChatRoom.vue'),
     meta: {
       title: '聊天室',
       icon: 'ChatLineSquare',
@@ -275,7 +275,7 @@ const toolRoutes = [
   {
     path: '/yun',
     name: 'Pregnancy',
-    component: () => import('../views/PregnancyTool.vue'),
+    component: () => import('../views/life/PregnancyTool.vue'),
     meta: {
       title: '孕期管理',
       icon: 'Calendar',
@@ -287,7 +287,7 @@ const toolRoutes = [
   {
     path: '/recipe',
     name: 'Recipe',
-    component: () => import('../views/RecipeTool.vue'),
+    component: () => import('../views/life/RecipeTool.vue'),
     meta: {
       title: '每日菜谱',
       icon: 'Food',
@@ -298,7 +298,7 @@ const toolRoutes = [
   {
     path: '/expense',
     name: 'Expense',
-    component: () => import('../views/ExpenseTool.vue'),
+    component: () => import('../views/life/ExpenseTool.vue'),
     meta: {
       title: '生活记账',
       icon: 'Money',
@@ -309,7 +309,7 @@ const toolRoutes = [
   {
     path: '/planner',
     name: 'Planner',
-    component: () => import('../views/PlannerTool.vue'),
+    component: () => import('../views/life/PlannerTool.vue'),
     meta: {
       title: '事项管理',
       icon: 'Calendar',
@@ -321,7 +321,7 @@ const toolRoutes = [
   {
     path: '/household',
     name: 'Household',
-    component: () => import('../views/HouseholdTool.vue'),
+    component: () => import('../views/life/HouseholdTool.vue'),
     meta: {
       title: '整理模块',
       icon: 'Box',
@@ -332,7 +332,7 @@ const toolRoutes = [
   {
     path: '/household/space',
     name: 'HouseholdSpace',
-    component: () => import('../views/HouseholdSpace3D.vue'),
+    component: () => import('../views/life/HouseholdSpace3D.vue'),
     meta: {
       title: '整理空间3D',
       icon: 'Location',
@@ -343,7 +343,7 @@ const toolRoutes = [
   {
     path: '/photowall',
     name: 'PhotoWall',
-    component: () => import('../views/PhotoWallTool.vue'),
+    component: () => import('../views/life/PhotoWallTool.vue'),
     meta: {
       title: '档案照片墙',
       icon: 'PictureFilled',
@@ -354,7 +354,7 @@ const toolRoutes = [
   {
     path: '/glucose',
     name: 'Glucose',
-    component: () => import('../views/GlucoseTool.vue'),
+    component: () => import('../views/life/GlucoseTool.vue'),
     meta: {
       title: '血糖记录',
       icon: 'FirstAidKit',
@@ -365,7 +365,7 @@ const toolRoutes = [
   {
     path: '/qrcode',
     name: 'QrCode',
-    component: () => import('../views/QrCodeTool.vue'),
+    component: () => import('../views/convert/QrCodeTool.vue'),
     meta: {
       title: '二维码',
       icon: 'Picture',
@@ -376,7 +376,7 @@ const toolRoutes = [
   {
     path: '/background',
     name: 'Background',
-    component: () => import('../views/BackgroundTool.vue'),
+    component: () => import('../views/other/BackgroundTool.vue'),
     meta: {
       title: '背景图库',
       icon: 'PictureFilled',
@@ -387,7 +387,7 @@ const toolRoutes = [
   {
     path: '/bailian-image',
     name: 'BailianImage',
-    component: () => import('../views/BailianImageTool.vue'),
+    component: () => import('../views/other/BailianImageTool.vue'),
     meta: {
       title: '百炼图片',
       icon: 'Picture',
@@ -398,7 +398,7 @@ const toolRoutes = [
   {
     path: '/image-understanding',
     name: 'ImageUnderstanding',
-    component: () => import('../views/ImageUnderstandingTool.vue'),
+    component: () => import('../views/other/ImageUnderstandingTool.vue'),
     meta: {
       title: '图像理解',
       icon: 'Picture',
@@ -409,7 +409,7 @@ const toolRoutes = [
   {
     path: '/ai-gateway',
     name: 'AIGateway',
-    component: () => import('../views/AIGatewayTool.vue'),
+    component: () => import('../views/other/AIGatewayTool.vue'),
     meta: {
       title: 'AI Gateway',
       icon: 'Key',
@@ -420,7 +420,7 @@ const toolRoutes = [
   {
     path: '/minimax-studio',
     name: 'MiniMaxStudio',
-    component: () => import('../views/MiniMaxStudioTool.vue'),
+    component: () => import('../views/other/MiniMaxStudioTool.vue'),
     meta: {
       title: 'MiniMax Studio',
       icon: 'MagicStick',
@@ -431,7 +431,7 @@ const toolRoutes = [
   {
     path: '/edge-tts',
     name: 'EdgeTTS',
-    component: () => import('../views/EdgeTTSTool.vue'),
+    component: () => import('../views/dev/EdgeTTSTool.vue'),
     meta: {
       title: 'Edge TTS',
       icon: 'Headset',
@@ -442,7 +442,7 @@ const toolRoutes = [
   {
     path: '/games',
     name: 'GameHall',
-    component: () => import('../views/GameHall.vue'),
+    component: () => import('../views/life/GameHall.vue'),
     meta: {
       title: '小游戏',
       icon: 'Connection',
@@ -453,7 +453,7 @@ const toolRoutes = [
   {
     path: '/image-viewer',
     name: 'ImageViewer',
-    component: () => import('../views/ImageViewerTool.vue'),
+    component: () => import('../views/other/ImageViewerTool.vue'),
     meta: {
       title: '批量看图',
       icon: 'Picture',
@@ -464,7 +464,7 @@ const toolRoutes = [
   {
     path: '/console',
     name: 'Console',
-    component: () => import('../views/ConsoleTool.vue'),
+    component: () => import('../views/other/ConsoleTool.vue'),
     meta: {
       title: '控制台',
       icon: 'Setting',
@@ -476,37 +476,37 @@ const toolRoutes = [
   {
     path: '/md/:id',
     name: 'MarkdownShare',
-    component: () => import('../views/MarkdownShareView.vue'),
+    component: () => import('../views/share/MarkdownShareView.vue'),
     meta: { title: 'Markdown 分享', icon: 'EditPen', hideSidebar: true }
   },
   {
     path: '/paste/:id',
     name: 'PasteView',
-    component: () => import('../views/PasteView.vue'),
+    component: () => import('../views/share/PasteView.vue'),
     meta: { title: '查看分享', icon: 'DocumentCopy', hideSidebar: true }
   },
   {
     path: '/draw/:id',
     name: 'ExcalidrawShare',
-    component: () => import('../views/ExcalidrawShareView.vue'),
+    component: () => import('../views/share/ExcalidrawShareView.vue'),
     meta: { title: '查看画图', icon: 'Edit', hideSidebar: true }
   },
   {
     path: '/nfs/:id',
     name: 'NFSShareView',
-    component: () => import('../views/NFSShareView.vue'),
+    component: () => import('../views/share/NFSShareView.vue'),
     meta: { title: '文件分享', icon: 'FolderOpened', hideSidebar: true }
   },
   {
     path: '/wall/:id',
     name: 'PhotoWallShareView',
-    component: () => import('../views/PhotoWallShareView.vue'),
+    component: () => import('../views/share/PhotoWallShareView.vue'),
     meta: { title: '照片墙分享', icon: 'PictureFilled', hideSidebar: true }
   },
   {
     path: '/minimax/share/:id',
     name: 'MiniMaxResultShare',
-    component: () => import('../views/MiniMaxResultShareView.vue'),
+    component: () => import('../views/share/MiniMaxResultShareView.vue'),
     meta: { title: 'MiniMax 分享', icon: 'MagicStick', hideSidebar: true }
   }
 ]
@@ -515,7 +515,7 @@ const toolRoutes = [
 const homeRoute = {
   path: '/',
   name: 'Home',
-  component: () => import('../views/HomeView.vue'),
+  component: () => import('../views/home/HomeView.vue'),
   meta: { title: '首页', icon: 'Home', category: 'home' }
 }
 
@@ -524,7 +524,7 @@ const shareRoutes = [
   {
     path: '/s/:id',
     name: 'ShortUrlRedirect',
-    component: () => import('../views/HomeView.vue'),
+    component: () => import('../views/home/HomeView.vue'),
     meta: { title: '跳转中...', hideSidebar: true }
   }
 ]

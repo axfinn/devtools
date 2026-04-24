@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("MiniMax结果分享(minimax_result_shares)", (*DB).InitMiniMaxResultShares)
+}
+
 type MiniMaxResultShare struct {
 	ID         string    `json:"id"`
 	APIKeyID   string    `json:"api_key_id"`

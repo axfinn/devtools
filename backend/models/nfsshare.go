@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("NFS分享(nfs_shares)", (*DB).InitNFSShare)
+}
+
 // NFSShare NFS 文件分享记录
 type NFSShare struct {
 	ID            string     `json:"id"`

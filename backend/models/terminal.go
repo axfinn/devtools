@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("SSH终端(ssh_sessions)", (*DB).InitSSH)
+}
+
 // SSHSession SSH 会话结构体
 type SSHSession struct {
 	ID       string `json:"id"`

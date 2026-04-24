@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("记账(expenses)", (*DB).InitExpense)
+}
+
 // ExpenseProfile 档案主表
 type ExpenseProfile struct {
 	ID            string     `json:"id"`

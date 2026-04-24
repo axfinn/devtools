@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("Markdown分享(markdown_shares)", (*DB).InitMDShare)
+}
+
 type MDShare struct {
 	ID         string     `json:"id"`
 	Content    string     `json:"content"`

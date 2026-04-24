@@ -223,7 +223,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download, Microphone, Upload } from '@element-plus/icons-vue'
-import { getECharts } from '../utils/vendor-loaders'
+import { getECharts } from '../../utils/vendor-loaders'
 
 const API_BASE = '/api'
 

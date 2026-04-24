@@ -88,7 +88,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { toolRoutes, categories } from '../router'
+import { toolRoutes, categories } from '../../router'
 
 const router = useRouter()
 const searchText = ref('')

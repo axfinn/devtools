@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("孕期(pregnancy_records)", (*DB).InitPregnancy)
+}
+
 type PregnancyProfile struct {
 	ID            string     `json:"id"`
 	EDD           string     `json:"edd"`

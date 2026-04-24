@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("百炼(bailian_tasks)", (*DB).InitBailian)
+}
+
 type BailianImageTask struct {
 	ID             string     `json:"id"`
 	Model          string     `json:"model"`

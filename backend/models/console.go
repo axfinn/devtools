@@ -1,5 +1,9 @@
 package models
 
+func init() {
+	RegisterInit("控制台设置(console_settings)", (*DB).InitConsoleSettings)
+}
+
 func (db *DB) InitConsoleSettings() error {
 	_, err := db.conn.Exec(`CREATE TABLE IF NOT EXISTS console_settings (
 		key   TEXT PRIMARY KEY,

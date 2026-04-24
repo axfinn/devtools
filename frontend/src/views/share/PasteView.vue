@@ -303,10 +303,10 @@ import footnote from 'markdown-it-footnote'
 import mark from 'markdown-it-mark'
 import taskLists from 'markdown-it-task-lists'
 import 'highlight.js/styles/github-dark.css'
-import { API_BASE } from '../api'
+import { API_BASE } from '../../api'
 
-const PdfViewer = defineAsyncComponent(() => import('../components/PdfViewer.vue'))
-const ZipViewer = defineAsyncComponent(() => import('../components/ZipViewer.vue'))
+const PdfViewer = defineAsyncComponent(() => import('../../components/PdfViewer.vue'))
+const ZipViewer = defineAsyncComponent(() => import('../../components/ZipViewer.vue'))
 
 // 初始化 markdown-it
 const md = new MarkdownIt({

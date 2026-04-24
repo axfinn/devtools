@@ -2,6 +2,11 @@ package models
 
 import "time"
 
+func init() {
+	RegisterInit("MiniMax语音(minimax_speech_files)", (*DB).InitMiniMaxSpeechFiles)
+	RegisterInit("MiniMax语音任务(minimax_speech_tasks)", (*DB).InitMiniMaxSpeechTasks)
+}
+
 // MiniMaxSpeechFile 记录通过网关上传或生成的语音文件，便于按 API Key 做资源隔离。
 type MiniMaxSpeechFile struct {
 	ID        int64     `json:"id"`

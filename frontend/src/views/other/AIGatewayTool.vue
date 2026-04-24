@@ -937,7 +937,7 @@ tasks.forEach(task => {
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox, ElIcon } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
-import AIGatewaySpeechPanel from '../components/AIGatewaySpeechPanel.vue'
+import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
 
 const API_BASE = '/api/ai-gateway'
 const PASSWORD_KEY = 'ai_gateway_super_admin_password'

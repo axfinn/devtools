@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("事项规划(planner_profiles)", (*DB).InitPlanner)
+}
+
 const (
 	PlannerEntryTask  = "task"
 	PlannerEntryEvent = "event"

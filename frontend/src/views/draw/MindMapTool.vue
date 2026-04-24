@@ -361,8 +361,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { API_BASE } from '../api'
-import { getMermaid } from '../utils/vendor-loaders'
+import { API_BASE } from '../../api'
+import { getMermaid } from '../../utils/vendor-loaders'
 
 // ===== 状态 =====
 const title = ref('新建思维导图')

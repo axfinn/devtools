@@ -16,7 +16,7 @@ import '../neon/index.css'
 import '../neon/locales/i18n'
 
 // 导入 AppRouter
-import { AppRouter } from '../neon/router'
+import { AppRouter } from '../../neon/router'
 
 let reactRoot = null
 

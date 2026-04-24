@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("Mermaid(mermaid_shares)", (*DB).InitMermaid)
+}
+
 type MermaidProject struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`

@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("Mock API(mock_apis)", (*DB).InitMockAPI)
+}
+
 type MockAPI struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`

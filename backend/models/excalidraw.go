@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("Excalidraw(excalidraw_shares)", (*DB).InitExcalidraw)
+}
+
 type ExcalidrawShare struct {
 	ID          string     `json:"id"`
 	Content     string     `json:"content"`

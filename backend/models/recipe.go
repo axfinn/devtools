@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("菜谱(recipes)", (*DB).InitRecipe)
+}
+
 type Recipe struct {
 	ID          string     `json:"id"`
 	Name        string     `json:"name"`

@@ -1253,7 +1253,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useTheme } from '../composables/useTheme'
+import { useTheme } from '../../composables/useTheme'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 import {
@@ -1332,7 +1332,7 @@ const { currentTheme, themeMode, toggleTheme } = useTheme()
 const isDark = computed(() => currentTheme.value === 'dark')
 
 // ---- mermaid setup ----
-import { getMermaid } from '../utils/vendor-loaders'
+import { getMermaid } from '../../utils/vendor-loaders'
 
 const initMermaid = () => {
   return getMermaid({

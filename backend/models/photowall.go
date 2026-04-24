@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+func init() {
+	RegisterInit("PhotoWall(photowall_profiles)", (*DB).InitPhotoWall)
+}
+
 const photoWallUploadDir = "./data/photowall"
 
 type PhotoWallProfile struct {

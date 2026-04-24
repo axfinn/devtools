@@ -369,8 +369,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import ExcalidrawWrapper from '../components/ExcalidrawWrapper.vue'
-import { useTheme } from '../composables/useTheme'
+import ExcalidrawWrapper from '../../components/ExcalidrawWrapper.vue'
+import { useTheme } from '../../composables/useTheme'
 
 const excalidrawRef = ref(null)
 const { currentTheme } = useTheme()

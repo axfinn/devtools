@@ -602,7 +602,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import AIGatewaySpeechPanel from '../components/AIGatewaySpeechPanel.vue'
+import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
 import ImageUnderstandingTool from './ImageUnderstandingTool.vue'
 
 const OFFICIAL_DOCS_URL = 'https://platform.minimaxi.com/docs/api-reference/api-overview'
@@ -806,6 +806,9 @@ watch(activeTab, (tab) => {
     clearMediaPoll()
   } else if (currentMediaTask.value && mediaForm.value.autoPoll) {
     scheduleMediaPoll()
+  }
+  if (tab === 'archive') {
+    void loadAdminShares()
   }
 })
 
