@@ -382,6 +382,44 @@ func TestPlannerParseFallsBackWhenMiniMaxFails(t *testing.T) {
 	}
 }
 
+func TestFallbackParsePlannerTextExtractsEventReminder(t *testing.T) {
+	now := time.Now()
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+
+	tasks := fallbackParsePlannerText("明天下午3点开会确认方案", plannerKindWork)
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	task := tasks[0]
+	if task.EntryType != models.PlannerEntryEvent {
+		t.Fatalf("expected event, got %s", task.EntryType)
+	}
+	if task.PlannedFor != tomorrow {
+		t.Fatalf("expected planned_for %s, got %s", tomorrow, task.PlannedFor)
+	}
+	if task.RemindAt != tomorrow+"T15:00" {
+		t.Fatalf("expected remind_at %sT15:00, got %s", tomorrow, task.RemindAt)
+	}
+}
+
+func TestNormalizePlannerAITaskInfersReminderFromText(t *testing.T) {
+	task := normalizePlannerAITask(plannerAITask{
+		EntryType: models.PlannerEntryEvent,
+		Title:     "周五晚上8点和客户开会",
+		Detail:    "确认方案",
+	}, plannerKindWork)
+
+	if task.EntryType != models.PlannerEntryEvent {
+		t.Fatalf("expected event, got %s", task.EntryType)
+	}
+	if task.RemindAt == "" {
+		t.Fatalf("expected remind_at to be inferred")
+	}
+	if !strings.Contains(task.RemindAt, "T20:00") {
+		t.Fatalf("expected inferred 20:00 reminder, got %s", task.RemindAt)
+	}
+}
+
 func TestPlannerAdviseFallsBackWhenMiniMaxFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusGatewayTimeout)

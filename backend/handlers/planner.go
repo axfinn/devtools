@@ -230,6 +230,13 @@ type plannerAICoachResponse struct {
 	Suggestions []string `json:"suggestions"`
 }
 
+type plannerParsedSchedule struct {
+	PlannedFor string
+	RemindAt   string
+	HasDate    bool
+	HasTime    bool
+}
+
 func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
 	plannerCfg := cfg.Planner
 	if plannerCfg.DefaultExpiresDays <= 0 {
@@ -386,6 +393,138 @@ func parsePlannerDateTime(value string) *time.Time {
 		}
 	}
 	return nil
+}
+
+func plannerFormatDateTimeValue(t time.Time) string {
+	return t.In(time.Local).Format("2006-01-02T15:04")
+}
+
+func plannerNextWeekday(base time.Time, weekday time.Weekday, forceNextWeek bool) time.Time {
+	base = time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, time.Local)
+	diff := int(weekday - base.Weekday())
+	if diff < 0 {
+		diff += 7
+	}
+	if forceNextWeek || diff == 0 {
+		diff += 7
+	}
+	return base.AddDate(0, 0, diff)
+}
+
+func plannerResolveDateFromText(text string, base time.Time) (time.Time, bool) {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	date := time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, time.Local)
+	switch {
+	case strings.Contains(lower, "大后天"):
+		return date.AddDate(0, 0, 3), true
+	case strings.Contains(lower, "后天"):
+		return date.AddDate(0, 0, 2), true
+	case strings.Contains(lower, "明天"), strings.Contains(lower, "明早"), strings.Contains(lower, "明晚"), strings.Contains(lower, "明晨"):
+		return date.AddDate(0, 0, 1), true
+	case strings.Contains(lower, "今天"), strings.Contains(lower, "今晚"), strings.Contains(lower, "今早"), strings.Contains(lower, "今日"), strings.Contains(lower, "今天晚上"):
+		return date, true
+	}
+
+	weekdayMap := map[string]time.Weekday{
+		"日": time.Sunday,
+		"天": time.Sunday,
+		"一": time.Monday,
+		"二": time.Tuesday,
+		"三": time.Wednesday,
+		"四": time.Thursday,
+		"五": time.Friday,
+		"六": time.Saturday,
+	}
+	if matches := regexp.MustCompile(`(下周|这周|本周|周|星期)([一二三四五六日天])`).FindStringSubmatch(text); len(matches) == 3 {
+		prefix := matches[1]
+		target := weekdayMap[matches[2]]
+		return plannerNextWeekday(date, target, prefix == "下周"), true
+	}
+	if matches := regexp.MustCompile(`(\d{1,2})月(\d{1,2})[日号]?`).FindStringSubmatch(text); len(matches) == 3 {
+		month, _ := strconv.Atoi(matches[1])
+		day, _ := strconv.Atoi(matches[2])
+		year := date.Year()
+		candidate := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.Local)
+		if candidate.Month() == time.Month(month) && candidate.Day() == day {
+			if candidate.Before(date) {
+				candidate = time.Date(year+1, time.Month(month), day, 0, 0, 0, 0, time.Local)
+			}
+			return candidate, true
+		}
+	}
+	if matches := regexp.MustCompile(`(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})`).FindStringSubmatch(text); len(matches) == 4 {
+		year, _ := strconv.Atoi(matches[1])
+		month, _ := strconv.Atoi(matches[2])
+		day, _ := strconv.Atoi(matches[3])
+		candidate := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.Local)
+		if candidate.Year() == year && candidate.Month() == time.Month(month) && candidate.Day() == day {
+			return candidate, true
+		}
+	}
+	return date, false
+}
+
+func plannerResolveTimeFromText(text string) (int, int, bool) {
+	if matches := regexp.MustCompile(`(\d{1,2})[:：](\d{2})`).FindStringSubmatch(text); len(matches) == 3 {
+		hour, _ := strconv.Atoi(matches[1])
+		minute, _ := strconv.Atoi(matches[2])
+		if hour >= 0 && hour < 24 && minute >= 0 && minute < 60 {
+			return hour, minute, true
+		}
+	}
+	if matches := regexp.MustCompile(`(凌晨|早上|上午|中午|下午|傍晚|晚上|今晚|半夜)?\s*(\d{1,2})点(?:(\d{1,2})分?|半)?`).FindStringSubmatch(text); len(matches) >= 3 {
+		period := matches[1]
+		hour, _ := strconv.Atoi(matches[2])
+		minute := 0
+		switch matches[3] {
+		case "半":
+			minute = 30
+		case "":
+			minute = 0
+		default:
+			minute, _ = strconv.Atoi(matches[3])
+		}
+		if minute < 0 || minute >= 60 || hour < 0 || hour > 23 {
+			return 0, 0, false
+		}
+		switch period {
+		case "下午", "傍晚", "晚上", "今晚":
+			if hour < 12 {
+				hour += 12
+			}
+		case "中午":
+			if hour < 11 {
+				hour += 12
+			}
+		case "凌晨", "半夜":
+			if hour == 12 {
+				hour = 0
+			}
+		}
+		if hour >= 0 && hour < 24 {
+			return hour, minute, true
+		}
+	}
+	return 0, 0, false
+}
+
+func plannerExtractScheduleFromText(text string, base time.Time) plannerParsedSchedule {
+	date, hasDate := plannerResolveDateFromText(text, base)
+	hour, minute, hasTime := plannerResolveTimeFromText(text)
+	schedule := plannerParsedSchedule{}
+	if hasDate {
+		schedule.HasDate = true
+		schedule.PlannedFor = date.Format("2006-01-02")
+	}
+	if hasTime {
+		schedule.HasTime = true
+		if !hasDate {
+			date = time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, time.Local)
+			schedule.PlannedFor = date.Format("2006-01-02")
+		}
+		schedule.RemindAt = plannerFormatDateTimeValue(time.Date(date.Year(), date.Month(), date.Day(), hour, minute, 0, 0, time.Local))
+	}
+	return schedule
 }
 
 func plannerModeDefault(now time.Time) string {
@@ -1939,8 +2078,10 @@ kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title
 3. 如果是明确时间发生的安排，如会议、复诊、预约、航班、出发，请优先标为 event。
 4. 如果只是先记下来、回头处理、尚未排期，请放到 inbox。
 5. 如果是以后再说、周末、有空再做，请优先放到 someday。
-6. 如果没有明确日期，planned_for 可以用今天。
-7. 不要编造不存在的信息。
+6. 用户说了明确日期就要写入 planned_for；用户说了明确钟点时间就必须写入 remind_at。
+7. 对 event 来说，只要原文出现具体时间点，remind_at 不要留空。
+8. 如果没有明确日期，planned_for 可以用今天。
+9. 不要编造不存在的信息。
 
 原始内容：
 %s`, defaultKind, text)
@@ -2185,12 +2326,36 @@ func minPlannerInt(a, b int) int {
 }
 
 func normalizePlannerAITask(task plannerAITask, defaultKind string) plannerAITask {
+	rawPlannedFor := strings.TrimSpace(task.PlannedFor)
+	rawRemindAt := strings.TrimSpace(task.RemindAt)
+	scheduleSource := strings.Join([]string{
+		strings.TrimSpace(task.Title),
+		strings.TrimSpace(task.Detail),
+		strings.TrimSpace(task.Notes),
+	}, " ")
+	inferred := plannerExtractScheduleFromText(scheduleSource, time.Now())
 	task.Kind = normalizePlannerKind(plannerFirstNonEmpty(task.Kind, defaultKind))
 	task.EntryType = normalizePlannerEntryType(task.EntryType)
 	task.Bucket = normalizePlannerBucket(task.Bucket, task.EntryType)
 	task.Priority = normalizePlannerPriority(task.Priority)
 	task.Status = normalizePlannerStatus(task.Status)
-	task.PlannedFor = parsePlannerDate(task.PlannedFor)
+	if rawPlannedFor != "" {
+		task.PlannedFor = parsePlannerDate(rawPlannedFor)
+	} else if inferred.HasDate || inferred.HasTime {
+		task.PlannedFor = inferred.PlannedFor
+	} else {
+		task.PlannedFor = plannerToday()
+	}
+	if parsedRemindAt := parsePlannerDateTime(rawRemindAt); parsedRemindAt != nil {
+		task.RemindAt = plannerFormatDateTimeValue(*parsedRemindAt)
+	} else if inferred.HasTime {
+		task.RemindAt = inferred.RemindAt
+	} else {
+		task.RemindAt = ""
+	}
+	if task.EntryType == models.PlannerEntryEvent && task.Bucket != models.PlannerBucketPlanned {
+		task.Bucket = models.PlannerBucketPlanned
+	}
 	if strings.TrimSpace(task.Title) == "" {
 		task.Title = "待整理事项"
 	}
@@ -2207,6 +2372,7 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 		if item == "" {
 			continue
 		}
+		schedule := plannerExtractScheduleFromText(item, time.Now())
 		lower := strings.ToLower(item)
 		kind := defaultKind
 		if strings.Contains(lower, "生活") || strings.Contains(item, "买菜") || strings.Contains(item, "买水果") || strings.Contains(item, "家里") || strings.Contains(item, "散步") {
@@ -2218,7 +2384,7 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 
 		entryType := models.PlannerEntryTask
 		bucket := models.PlannerBucketPlanned
-		if looksLikeEvent(item) {
+		if looksLikeEvent(item) || schedule.HasTime {
 			entryType = models.PlannerEntryEvent
 			bucket = models.PlannerBucketPlanned
 		} else if strings.Contains(item, "回头") || strings.Contains(item, "记一下") || strings.Contains(item, "先记") {
@@ -2239,7 +2405,8 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 			Detail:     item,
 			Priority:   priority,
 			Status:     plannerStatusOpen,
-			PlannedFor: plannerToday(),
+			PlannedFor: plannerFirstNonEmpty(schedule.PlannedFor, plannerToday()),
+			RemindAt:   schedule.RemindAt,
 		})
 	}
 	if len(result) == 0 {
