@@ -248,7 +248,7 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 				"name":        "MiniMax",
 				"base_url":    "/api/minimax/anthropic",
 				"upstream":    "https://api.minimaxi.com/anthropic",
-				"models":      []string{"MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2", "MiniMax-M2.7"},
+				"models":      []string{"MiniMax-M2.7", "MiniMax-M2.5"},
 				"description": "MiniMax Anthropic 兼容端点",
 			},
 			{
@@ -1325,7 +1325,7 @@ func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[st
 // ProxyMinimaxAnthropic 转发 Anthropic 协议格式的请求到 MiniMax Anthropic 兼容端点
 // POST /api/minimax/anthropic/v1/messages
 func (h *AIGatewayHandler) ProxyMinimaxAnthropic(c *gin.Context) {
-	h.proxyAnthropic(c, "https://api.minimaxi.com/anthropic", h.cfg.MiniMax.APIKey, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2", "MiniMax-M2.7"})
+	h.proxyAnthropic(c, "https://api.minimaxi.com/anthropic", h.cfg.MiniMax.APIKey, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.7", "MiniMax-M2.5"})
 }
 
 // ProxyDashScopeAnthropic 转发 Anthropic 协议格式的请求到 DashScope Anthropic 兼容端点

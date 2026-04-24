@@ -77,6 +77,7 @@
             <div v-if="syncAudioUrl" class="audio-result">
               <div class="result-title">音频预览</div>
               <audio :src="syncAudioUrl" controls style="width: 100%;" />
+              <el-button type="primary" size="small" :loading="sharingSync" @click="shareSyncResult" style="margin-top: 10px;">保存分享</el-button>
             </div>
             <div class="result-title">最近响应</div>
             <pre class="speech-json">{{ syncResponsePretty }}</pre>
@@ -123,6 +124,7 @@
             <div v-if="asyncAudioUrl" class="audio-result">
               <div class="result-title">任务音频</div>
               <audio :src="asyncAudioUrl" controls style="width: 100%;" />
+              <el-button type="primary" size="small" :loading="sharingAsync" @click="shareAsyncResult" style="margin-top: 10px;">保存分享</el-button>
             </div>
             <div class="result-title">当前任务</div>
             <pre class="speech-json">{{ currentTaskPretty }}</pre>
@@ -296,6 +298,8 @@ const props = defineProps({
   }
 })
 
+const emit = defineEmits(['share'])
+
 const activeTab = ref('sync')
 const debugApiKey = ref('')
 const docsVisible = ref(false)
@@ -329,6 +333,8 @@ const pollingTask = ref(false)
 const uploadingFile = ref(false)
 const designingVoice = ref(false)
 const cloningVoice = ref(false)
+const sharingSync = ref(false)
+const sharingAsync = ref(false)
 
 const syncResponse = ref(null)
 const syncAudioUrl = ref('')
@@ -1043,6 +1049,65 @@ function hexToBlob(hex, mime) {
   const pairs = normalized.match(/.{1,2}/g) || []
   const bytes = new Uint8Array(pairs.map(item => parseInt(item, 16)))
   return new Blob([bytes], { type: mime })
+}
+
+async function blobUrlToDataUrl(blobUrl) {
+  if (!blobUrl || !String(blobUrl).startsWith('blob:')) return null
+  try {
+    const response = await fetch(blobUrl)
+    const blob = await response.blob()
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.onerror = reject
+      reader.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+
+async function shareSyncResult() {
+  if (!syncAudioUrl.value || !hasAnyCredential()) return
+  sharingSync.value = true
+  try {
+    const dataUrl = await blobUrlToDataUrl(syncAudioUrl.value)
+    const draft = {
+      sourceLabel: '语音合成',
+      title: `TTS · ${syncForm.text.trim().slice(0, 36)}`,
+      summary: `${syncForm.model} 同步合成 · 音色 ${syncForm.voiceId}`,
+      resultType: 'speech',
+      model: syncForm.model,
+      payload: { text: syncForm.text, voice_id: syncForm.voiceId, speed: syncForm.speed, raw: syncResponse.value },
+      assets: dataUrl ? [{ data_url: dataUrl, kind: 'audio', filename: `tts-${syncForm.model}.mp3`, content_type: guessAudioMime(syncForm.format) }] : []
+    }
+    emit('share', draft)
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingSync.value = false
+  }
+}
+
+async function shareAsyncResult() {
+  if (!asyncAudioUrl.value || !hasAnyCredential()) return
+  sharingAsync.value = true
+  try {
+    const dataUrl = await blobUrlToDataUrl(asyncAudioUrl.value)
+    const text = asyncForm.mode === 'text' ? asyncForm.text : asyncForm.textFileId
+    const draft = {
+      sourceLabel: '语音合成',
+      title: `TTS · ${String(text || '').trim().slice(0, 36)}`,
+      summary: `${asyncForm.model} 异步合成 · 音色 ${asyncForm.voiceId}`,
+      resultType: 'speech',
+      model: asyncForm.model,
+      payload: { text: text, voice_id: asyncForm.voiceId, mode: asyncForm.mode, raw: currentTask.value },
+      assets: dataUrl ? [{ data_url: dataUrl, kind: 'audio', filename: `tts-${asyncForm.model}.mp3`, content_type: 'audio/mpeg' }] : []
+    }
+    emit('share', draft)
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingAsync.value = false
+  }
 }
 
 async function copyText(text) {

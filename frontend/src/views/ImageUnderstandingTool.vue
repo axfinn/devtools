@@ -85,6 +85,7 @@
               <div class="panel-header">
                 <span>结果</span>
                 <el-button text :disabled="!resultText" @click="copyResult">复制文本</el-button>
+                <el-button text :disabled="!resultText" :loading="sharingMcp" @click="shareMcpResult">保存分享</el-button>
               </div>
             </template>
 
@@ -209,6 +210,7 @@
                 <div class="panel-actions">
                   <el-tag v-if="qwenUsedModel" size="small" type="info">{{ qwenUsedModel }}</el-tag>
                   <el-button text :disabled="!qwenResultText" @click="copyQwenResult">复制文本</el-button>
+                  <el-button text :disabled="!qwenResultText" :loading="sharingQwen" @click="shareQwenResult">保存分享</el-button>
                 </div>
               </div>
             </template>
@@ -287,6 +289,13 @@ import { ElMessage } from 'element-plus'
 import { Upload, Picture } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
+const props = defineProps({
+  superAdminPassword: { type: String, default: '' },
+  apiKey: { type: String, default: '' }
+})
+
+const emit = defineEmits(['share'])
+
 // ---- 模式切换 ----
 const activeMode = ref('minimax')
 
@@ -306,6 +315,8 @@ const resultText = ref('')
 const rawResult = ref('')
 const resultTab = ref('render')
 const isListening = ref(false)
+const sharingMcp = ref(false)
+const sharingQwen = ref(false)
 
 // ---- Qwen 大模型理解 ----
 const qwenModel = ref('qwen3.5-plus')
@@ -482,6 +493,48 @@ const copyQwenResult = async () => {
     ElMessage.success('已复制')
   } catch {
     ElMessage.error('复制失败')
+  }
+}
+
+async function shareMcpResult() {
+  if (!resultText.value) return
+  sharingMcp.value = true
+  try {
+    const draft = {
+      sourceLabel: '图像理解',
+      title: `图像理解 · ${(prompt.value || '').trim().slice(0, 36)}`,
+      summary: `MiniMax MCP 图像理解 · 工具 ${selectedTool.value || 'auto'}`,
+      resultType: 'image_understanding',
+      model: selectedTool.value || 'MiniMax-MCP',
+      payload: { text: resultText.value, prompt: prompt.value, raw: rawResult.value },
+      assets: []
+    }
+    emit('share', draft)
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingMcp.value = false
+  }
+}
+
+async function shareQwenResult() {
+  if (!qwenResultText.value) return
+  sharingQwen.value = true
+  try {
+    const draft = {
+      sourceLabel: '图像理解',
+      title: `图像理解 · ${(qwenPrompt.value || '').trim().slice(0, 36)}`,
+      summary: `Qwen 模型理解 · ${qwenUsedModel.value || qwenModel.value}`,
+      resultType: 'image_understanding',
+      model: qwenUsedModel.value || qwenModel.value,
+      payload: { text: qwenResultText.value, prompt: qwenPrompt.value, images_count: qwenImages.value.length },
+      assets: []
+    }
+    emit('share', draft)
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingQwen.value = false
   }
 }
 

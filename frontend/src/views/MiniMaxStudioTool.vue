@@ -123,7 +123,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="语音 / 音色" name="speech">
-        <AIGatewaySpeechPanel :super-admin-password="superAdminPassword" :prefill-api-key="apiKey" />
+        <AIGatewaySpeechPanel :super-admin-password="superAdminPassword" :prefill-api-key="apiKey" @share="handleShareFromChild" />
       </el-tab-pane>
 
       <el-tab-pane label="媒体生成" name="media">
@@ -289,6 +289,11 @@
             <el-table-column label="结果" min-width="220">
               <template #default="{ row }">
                 <span class="result-links">{{ (row.result_urls || []).slice(0, 2).join(' | ') || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 'succeeded'" text type="primary" :loading="sharingTaskId === row.task_id" @click="shareMediaTask(row)">保存分享</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -515,7 +520,7 @@
             这里直接嵌入现有的 MiniMax MCP 图像理解能力。它就是当前项目里最接近 `coding-plan-vlm / search` 的使用入口。
           </template>
         </el-alert>
-        <ImageUnderstandingTool class="coding-embed" />
+        <ImageUnderstandingTool class="coding-embed" :super-admin-password="superAdminPassword" :api-key="apiKey" @share="handleShareFromChild" />
       </el-tab-pane>
     </el-tabs>
 
@@ -661,6 +666,7 @@ const coverForm = ref({
   jsonText: '{\n  "model": "music-cover"\n}'
 })
 
+const sharingTaskId = ref('')
 const resultShareDocsLoading = ref(false)
 const resultShareDocs = ref(null)
 const createShareVisible = ref(false)
@@ -693,12 +699,8 @@ const adminForm = ref({
 })
 
 const textModels = [
-  'MiniMax-M2.5',
-  'MiniMax-M2.5-highspeed',
-  'MiniMax-M2.1',
-  'MiniMax-M2.1-highspeed',
-  'MiniMax-M2',
-  'MiniMax-M2.7'
+  'MiniMax-M2.7',
+  'MiniMax-M2.5'
 ]
 
 const mediaModels = [
@@ -1074,6 +1076,24 @@ function clearMediaPoll() {
   }
 }
 
+async function shareMediaTask(task) {
+  if (!requireCredential()) return
+  sharingTaskId.value = task.task_id
+  try {
+    await openMediaTask(task.task_id)
+    if (!currentMediaTask.value) {
+      ElMessage.error('加载任务详情失败')
+      return
+    }
+    const draft = buildShareDraft('media')
+    openShareWithDraft(draft)
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingTaskId.value = ''
+  }
+}
+
 async function downloadCurrentMedia() {
   if (!requireCredential()) return
   const taskId = currentMediaTask.value?.task_id
@@ -1225,13 +1245,21 @@ function openShareDialog(source) {
   if (!requireCredential()) return
   try {
     const draft = buildShareDraft(source)
-    shareDraft.value = draft
-    shareForm.value.title = draft.title
-    shareForm.value.summary = draft.summary
-    createShareVisible.value = true
+    openShareWithDraft(draft)
   } catch (err) {
     ElMessage.error(err.message || '当前结果还不能保存分享')
   }
+}
+
+function handleShareFromChild(draft) {
+  openShareWithDraft(draft)
+}
+
+function openShareWithDraft(draft) {
+  shareDraft.value = draft
+  shareForm.value.title = draft.title
+  shareForm.value.summary = draft.summary
+  createShareVisible.value = true
 }
 
 function buildShareDraft(source) {

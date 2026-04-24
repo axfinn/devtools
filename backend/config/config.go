@@ -472,7 +472,7 @@ func DefaultConfig() *Config {
 		MiniMaxMCP: MiniMaxMCPConfig{
 			APIHost:        "https://api.minimaxi.com",
 			Command:        "uvx",
-			Args:           []string{"minimax-coding-plan-mcp"},
+			Args:           []string{"minimax-coding-plan-mcp", "-y"},
 			TimeoutSeconds: 600,
 			Transport:      "line",
 		},
