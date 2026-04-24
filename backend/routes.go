@@ -30,7 +30,7 @@ type routeHandlers struct {
 	bailianHandler            *handlers.BailianHandler
 	aiGatewayHandler          *handlers.AIGatewayHandler
 	imageUnderstandingHandler *handlers.ImageUnderstandingHandler
-	apiGatewayHandler         *handlers.APIGatewayHandler
+	cpaProxyHandler           *handlers.CPAProxyHandler
 	autoDevHandler            *handlers.AutoDevHandler
 	mermaidHandler            *handlers.MermaidHandler
 	npsHandler                *handlers.NPSHandler
@@ -288,6 +288,14 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		planner.GET("/profile/:id/tasks/:taskId/calendar", h.plannerHandler.DownloadCalendar)
 		planner.POST("/profile/:id/ai/parse", h.plannerHandler.AIParse)
 		planner.POST("/profile/:id/ai/advise", h.plannerHandler.AIAdvise)
+		planner.GET("/profile/:id/meetings", h.plannerHandler.ListMeetingMinutes)
+		planner.POST("/profile/:id/meetings", h.plannerHandler.CreateMeetingMinutes)
+		planner.GET("/profile/:id/meetings/:meetingId", h.plannerHandler.GetMeetingMinutes)
+		planner.PUT("/profile/:id/meetings/:meetingId", h.plannerHandler.UpdateMeetingMinutes)
+		planner.DELETE("/profile/:id/meetings/:meetingId", h.plannerHandler.DeleteMeetingMinutes)
+		planner.POST("/profile/:id/meetings/:meetingId/summarize", h.plannerHandler.SummarizeMeetingMinutes)
+		planner.POST("/profile/:id/recordings", h.plannerHandler.UploadMeetingRecording)
+		planner.GET("/recordings/:filename", h.plannerHandler.ServeRecording)
 		planner.GET("/admin/list", h.plannerHandler.AdminList)
 		planner.GET("/admin/:id", h.plannerHandler.AdminGet)
 		planner.PUT("/admin/:id", h.plannerHandler.AdminUpdate)
@@ -504,6 +512,12 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		aigw.POST("/v1/media/generations", h.aiGatewayHandler.MediaGenerations)
 		aigw.GET("/v1/media/tasks", h.aiGatewayHandler.ListMediaTasks)
 		aigw.GET("/v1/media/tasks/:id", h.aiGatewayHandler.GetMediaTask)
+			// 图像理解（需 API Key 认证，scope: media）
+			aigw.POST("/v1/image/understanding", h.aiGatewayHandler.ImageUnderstanding)
+			aigw.POST("/v1/image/understanding/file", h.aiGatewayHandler.ImageUnderstandingFile)
+			aigw.POST("/v1/image/understanding/sse", h.aiGatewayHandler.ImageUnderstandingSSE)
+			aigw.POST("/v1/image/understanding/sse/file", h.aiGatewayHandler.ImageUnderstandingSSEFile)
+			aigw.GET("/v1/image/understanding/stream/:id", h.aiGatewayHandler.ImageUnderstandingStream)
 	}
 
 	// 内部免认证聊天接口（同域浏览器调用）
@@ -568,17 +582,11 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	// DeepSeek Anthropic 协议代理
 	api.POST("/deepseek/anthropic/v1/messages", h.aiGatewayHandler.ProxyDeepSeekAnthropic)
 
-	// 通用 API Gateway 代理
+	// 通用 API Gateway 代理（CPA 反向代理）
 	apigw := api.Group("/api-gateway")
 	{
-		apigw.Any("/cpa/v1", h.apiGatewayHandler.ProxyCPA)
-		apigw.Any("/cpa/v1/*proxyPath", h.apiGatewayHandler.ProxyCPA)
-		apigw.POST("/v1/image/understanding", h.apiGatewayHandler.ImageUnderstanding)
-		apigw.POST("/v1/image/understanding/file", h.apiGatewayHandler.ImageUnderstandingFile)
-		// SSE 模式
-		apigw.POST("/v1/image/understanding/sse", h.apiGatewayHandler.ImageUnderstandingSSE)
-		apigw.POST("/v1/image/understanding/sse/file", h.apiGatewayHandler.ImageUnderstandingSSEFile)
-		apigw.GET("/v1/image/understanding/stream/:id", h.apiGatewayHandler.ImageUnderstandingStream)
+		apigw.Any("/cpa/v1", h.cpaProxyHandler.ProxyCPA)
+		apigw.Any("/cpa/v1/*proxyPath", h.cpaProxyHandler.ProxyCPA)
 	}
 
 	// AutoDev AI 任务

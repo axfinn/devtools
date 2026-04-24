@@ -35,8 +35,11 @@
             <el-form label-position="top">
               <el-form-item label="模型">
                 <el-select v-model="syncForm.model" style="width: 220px;">
-                  <el-option v-for="model in speechModels" :key="model" :label="model" :value="model" />
+                  <el-option v-for="model in filteredSpeechModels" :key="model.name" :label="model.name" :value="model.name" />
                 </el-select>
+                <div style="margin-top: 2px">
+                  <el-checkbox v-model="showDeprecatedSpeechModels" size="small">显示已弃用模型</el-checkbox>
+                </div>
               </el-form-item>
               <el-form-item label="音色">
                 <el-select v-model="syncForm.voiceId" filterable allow-create default-first-option placeholder="输入或选择 voice_id" style="width: 320px;">
@@ -90,7 +93,7 @@
             <el-form label-position="top">
               <el-form-item label="模型">
                 <el-select v-model="asyncForm.model" style="width: 220px;">
-                  <el-option v-for="model in speechModels" :key="model" :label="model" :value="model" />
+                  <el-option v-for="model in filteredSpeechModels" :key="model.name" :label="model.name" :value="model.name" />
                 </el-select>
               </el-form-item>
               <el-form-item label="音色">
@@ -303,15 +306,22 @@ const speechDocs = ref(null)
 const superAdminPassword = computed(() => props.superAdminPassword || '')
 
 const speechModels = [
-  'speech-01-hd',
-  'speech-01-turbo',
-  'speech-02-hd',
-  'speech-02-turbo',
-  'speech-2.6-hd',
-  'speech-2.6-turbo',
-  'speech-2.8-hd',
-  'speech-2.8-turbo'
+  { name: 'speech-01-hd', deprecated: true },
+  { name: 'speech-01-turbo', deprecated: true },
+  { name: 'speech-02-hd', deprecated: true },
+  { name: 'speech-02-turbo', deprecated: true },
+  { name: 'speech-2.6-hd', deprecated: false },
+  { name: 'speech-2.6-turbo', deprecated: false },
+  { name: 'speech-2.8-hd', deprecated: false },
+  { name: 'speech-2.8-turbo', deprecated: false }
 ]
+
+const showDeprecatedSpeechModels = ref(false)
+
+const filteredSpeechModels = computed(() => {
+  if (showDeprecatedSpeechModels.value) return speechModels
+  return speechModels.filter(m => !m.deprecated)
+})
 
 const fileListPurposes = ['voice_clone', 'prompt_audio', 't2a_async_input']
 const activeCredential = computed(() => debugApiKey.value.trim() || props.superAdminPassword.trim())

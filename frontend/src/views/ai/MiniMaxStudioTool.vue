@@ -81,8 +81,11 @@
             <el-form label-position="top">
               <el-form-item label="模型">
                 <el-select v-model="textForm.model" class="w-full">
-                  <el-option v-for="model in textModels" :key="model" :label="model" :value="model" />
+                  <el-option v-for="model in filteredTextModels" :key="model.name" :label="model.name" :value="model.name" />
                 </el-select>
+                <div class="field-hint" style="margin-top: 4px">
+                  <el-checkbox v-model="showDeprecatedTextModels" size="small">显示已弃用模型</el-checkbox>
+                </div>
               </el-form-item>
               <el-form-item label="System Prompt">
                 <el-input v-model="textForm.system" type="textarea" :rows="3" placeholder="例如：你是一位严谨的中文助手。" />
@@ -693,13 +696,20 @@ const adminForm = ref({
 })
 
 const textModels = [
-  'MiniMax-M2.5',
-  'MiniMax-M2.5-highspeed',
-  'MiniMax-M2.1',
-  'MiniMax-M2.1-highspeed',
-  'MiniMax-M2',
-  'MiniMax-M2.7'
+  { name: 'MiniMax-M2.5', deprecated: false },
+  { name: 'MiniMax-M2.5-highspeed', deprecated: false },
+  { name: 'MiniMax-M2.1', deprecated: false },
+  { name: 'MiniMax-M2.1-highspeed', deprecated: false },
+  { name: 'MiniMax-M2', deprecated: true },
+  { name: 'MiniMax-M2.7', deprecated: false }
 ]
+
+const showDeprecatedTextModels = ref(false)
+
+const filteredTextModels = computed(() => {
+  if (showDeprecatedTextModels.value) return textModels
+  return textModels.filter(m => !m.deprecated)
+})
 
 const mediaModels = [
   { value: 'MiniMax-Hailuo-2.3-Fast', label: 'Hailuo Fast', hint: '图生视频模型，需提供首帧图片 URL。', tone: 'video' },

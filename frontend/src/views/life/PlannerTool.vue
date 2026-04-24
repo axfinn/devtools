@@ -228,6 +228,10 @@
               <el-icon><EditPen /></el-icon>
               AI 整理入库
             </el-button>
+            <el-button plain @click="openMeetingDialog">
+              <el-icon><Document /></el-icon>
+              会议纪要
+            </el-button>
           </div>
         </div>
 
@@ -546,6 +550,91 @@
             </div>
           </div>
 
+          <div v-else-if="activeView === 'minutes'">
+            <div class="timeline-header-inner">
+              <div class="timeline-header-actions">
+                <el-button type="primary" @click="openMeetingDialog">
+                  <el-icon><Plus /></el-icon>
+                  新建会议纪要
+                </el-button>
+              </div>
+            </div>
+            <div v-if="meetings.length === 0" class="timeline-empty">
+              <strong>还没有会议纪要</strong>
+              <span>记录会议内容和待办，支持录音和 AI 总结。</span>
+            </div>
+            <div v-else class="task-list">
+              <article
+                v-for="m in meetings"
+                :key="m.id"
+                class="meeting-card"
+                :class="m.status === 'finalized' ? 'meeting-done' : 'meeting-draft'"
+              >
+                <!-- Header: status + tags -->
+                <div class="meeting-card-head">
+                  <div class="meeting-card-badges">
+                    <el-tag v-if="m.status === 'finalized'" size="small" type="success" effect="dark" round>已定稿</el-tag>
+                    <el-tag v-else size="small" type="info" round>草稿</el-tag>
+                    <el-tag
+                      v-for="tag in parseJsonArray(m.tags)"
+                      :key="tag"
+                      size="small"
+                      type="warning"
+                      round
+                    >{{ tag }}</el-tag>
+                  </div>
+                </div>
+
+                <!-- Title -->
+                <h4 class="meeting-card-title" @click="openMeetingEdit(m)">{{ m.title }}</h4>
+
+                <!-- Meta: date, time, duration, participants -->
+                <div class="meeting-card-meta">
+                  <span class="meeting-card-meta-item">
+                    <el-icon><Calendar /></el-icon>
+                    {{ m.meeting_date }}<template v-if="m.meeting_time"> {{ m.meeting_time }}</template>
+                  </span>
+                  <span v-if="m.duration_minutes" class="meeting-card-meta-item">
+                    <el-icon><Clock /></el-icon>
+                    {{ formatDuration(m.duration_minutes) }}
+                  </span>
+                  <span v-if="m.participants && m.participants !== '[]'" class="meeting-card-meta-item">
+                    <el-icon><UserFilled /></el-icon>
+                    {{ parseJsonArray(m.participants).join('、') }}
+                  </span>
+                </div>
+
+                <!-- Content preview -->
+                <div v-if="m.content" class="meeting-card-body" @click="openMeetingEdit(m)">
+                  <p>{{ m.content.length > 120 ? m.content.slice(0, 120) + '...' : m.content }}</p>
+                </div>
+
+                <!-- Summary + action items row -->
+                <div v-if="m.summary || (m.action_items && m.action_items !== '[]')" class="meeting-card-extras">
+                  <div v-if="m.summary" class="meeting-card-summary" @click="openMeetingEdit(m)">
+                    <el-tag size="small" type="primary">AI 摘要</el-tag>
+                    <span>{{ m.summary.length > 80 ? m.summary.slice(0, 80) + '...' : m.summary }}</span>
+                  </div>
+                  <div v-if="m.action_items && m.action_items !== '[]'" class="meeting-card-todos" @click="openMeetingEdit(m)">
+                    <span class="meeting-card-todo-badge">{{ parseJsonArray(m.action_items).length }} 项待办</span>
+                  </div>
+                </div>
+
+                <!-- Recording player inline -->
+                <div v-if="m.recording_url" class="meeting-card-recording" @click.stop>
+                  <audio :src="m.recording_url" controls class="meeting-card-audio" preload="metadata"></audio>
+                </div>
+
+                <!-- Actions -->
+                <div class="meeting-card-actions">
+                  <el-button size="small" type="primary" plain @click="openMeetingEdit(m)">编辑</el-button>
+                  <el-button v-if="m.content && !m.summary" size="small" plain :loading="summarizingId === m.id" @click="summarizeMeeting(m)">AI 总结</el-button>
+                  <el-button size="small" plain @click="deleteMeetingConfirm(m)">删除</el-button>
+                </div>
+              </article>
+            </div>
+          </div>
+
           <div v-else>
             <div v-if="board.recent_items.length === 0" class="timeline-empty">
               <strong>最近还没有完成或取消记录</strong>
@@ -586,6 +675,8 @@
             </div>
           </div>
         </template>
+
+
       </section>
     </section>
 
@@ -998,13 +1089,74 @@
         </div>
       </div>
     </el-drawer>
+
+    <el-drawer v-model="meetingDialogVisible" title="会议纪要" :size="detailDrawerSize" @closed="resetMeetingForm">
+      <div class="drawer-stack">
+        <div class="quick-row">
+          <el-input v-model="meetingForm.title" placeholder="会议标题（必填）" maxlength="80" show-word-limit style="flex:1" />
+          <el-select v-model="meetingForm.status" style="width:120px">
+            <el-option label="草稿" value="draft" />
+            <el-option label="已定稿" value="finalized" />
+          </el-select>
+        </div>
+        <div class="quick-row">
+          <el-date-picker v-model="meetingForm.meetingDate" type="date" value-format="YYYY-MM-DD" placeholder="会议日期" style="flex:1" />
+          <el-time-picker v-model="meetingForm.meetingTime" value-format="HH:mm" placeholder="时间" style="flex:1" />
+          <el-input-number v-model="meetingForm.durationMinutes" :min="0" :max="480" placeholder="时长(分)" style="flex:1" />
+        </div>
+        <el-input v-model="meetingForm.participantsText" placeholder="参与人，用逗号分隔" />
+        <el-input v-model="meetingForm.tagsText" placeholder="标签，用逗号分隔（如：产品评审、需求）" />
+        <div v-if="meetingVoiceState === 'recording' && meetingInterimText" class="meeting-interim">
+          <el-tag size="small" type="danger" effect="dark" class="recording-badge">录音中</el-tag>
+          <span class="interim-text">{{ meetingInterimText }}</span>
+        </div>
+        <el-input
+          v-model="meetingForm.content"
+          type="textarea"
+          :rows="8"
+          placeholder="会议内容记录…&#10;支持录音实时转写"
+        />
+        <div v-if="meetingLocalAudioUrl || meetingForm.recordingUrl" class="voice-audio-wrapper">
+          <audio :src="meetingLocalAudioUrl || meetingForm.recordingUrl" controls class="voice-audio" />
+          <el-button size="small" plain @click="meetingForm.recordingUrl = ''; meetingLocalAudioUrl = ''">移除录音</el-button>
+        </div>
+        <div v-if="meetingForm.summary" class="meeting-summary-section">
+          <div class="panel-heading">
+            <h4>AI 摘要</h4>
+            <el-button v-if="meetingForm.id && meetingForm.content" size="small" plain :loading="summarizingId === meetingForm.id" @click="summarizeMeeting(meetingForm)">
+              <el-icon><MagicStick /></el-icon>重新总结
+            </el-button>
+          </div>
+          <p class="meeting-summary-text">{{ meetingForm.summary }}</p>
+        </div>
+        <div v-if="meetingForm.actionItems && meetingForm.actionItems !== '[]'" class="meeting-summary-section">
+          <div class="panel-heading"><h4>待办事项</h4></div>
+          <div v-for="(item, idx) in parsedActionItems" :key="idx" class="meeting-action-item">
+            <el-tag size="small" type="primary" class="meeting-action-tag">{{ item.assignee || '未指定' }}</el-tag>
+            <span>{{ item.task }}</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="drawer-actions">
+          <el-button v-if="meetingForm.id" plain @click="deleteMeeting">删除此纪要</el-button>
+          <div>
+            <el-button @click="meetingDialogVisible = false">关闭</el-button>
+            <el-button plain @click="startMeetingVoice">
+              <el-icon><Microphone /></el-icon>{{ meetingVoiceState === 'recording' ? '停止录音' : '录音' }}
+            </el-button>
+            <el-button type="primary" :loading="savingMeeting" @click="saveMeeting">保存</el-button>
+          </div>
+        </div>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Calendar, ChatDotRound, EditPen, MagicStick, Microphone, Refresh, Setting } from '@element-plus/icons-vue'
+import { Calendar, ChatDotRound, Clock, Document, EditPen, MagicStick, Microphone, Plus, Refresh, Setting, UserFilled } from '@element-plus/icons-vue'
 
 const API_BASE = '/api/planner'
 
@@ -1099,6 +1251,84 @@ const quickForm = reactive({
   priority: 'medium',
   notifyEmail: ''
 })
+
+const meetingDialogVisible = ref(false)
+const meetings = ref([])
+const loadingMeetings = ref(false)
+const savingMeeting = ref(false)
+const summarizingId = ref('')
+const meetingVoiceState = ref('idle')
+const meetingLocalAudioUrl = ref('')
+const meetingForm = reactive({
+  id: '',
+  title: '',
+  content: '',
+  summary: '',
+  actionItems: '[]',
+  participantsText: '',
+  tagsText: '',
+  meetingDate: '',
+  meetingTime: '',
+  durationMinutes: 0,
+  recordingUrl: '',
+  status: 'draft'
+})
+
+function stopMeetingRecording() {
+  if (meetingRecognition) {
+    try { meetingRecognition.stop() } catch {}
+    meetingRecognition = null
+  }
+  if (meetingMediaRecorder && meetingMediaRecorder.state === 'recording') {
+    meetingMediaRecorder.stop()
+  }
+  if (meetingMediaStream) {
+    meetingMediaStream.getTracks().forEach(t => t.stop())
+    meetingMediaStream = null
+  }
+  meetingVoiceState.value = 'idle'
+}
+
+function resetMeetingForm() {
+  stopMeetingRecording()
+  meetingForm.id = ''
+  meetingForm.title = ''
+  meetingForm.content = ''
+  meetingForm.summary = ''
+  meetingForm.actionItems = '[]'
+  meetingForm.participantsText = ''
+  meetingForm.tagsText = ''
+  meetingForm.meetingDate = ''
+  meetingForm.meetingTime = ''
+  meetingForm.durationMinutes = 0
+  meetingForm.recordingUrl = ''
+  meetingForm.status = 'draft'
+  meetingVoiceState.value = 'idle'
+  meetingLocalAudioUrl.value = ''
+}
+
+const parsedActionItems = computed(() => {
+  try {
+    const items = JSON.parse(meetingForm.actionItems || '[]')
+    return Array.isArray(items) ? items : []
+  } catch { return [] }
+})
+
+function parseJsonArray(str) {
+  try {
+    const arr = JSON.parse(str || '[]')
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+function formatDuration(minutes) {
+  if (!minutes || minutes <= 0) return ''
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h > 0 && m > 0) return `${h}小时${m}分`
+  if (h > 0) return `${h}小时`
+  return `${m}分钟`
+}
 
 const taskForm = reactive({
   id: '',
@@ -1228,6 +1458,7 @@ const viewOptions = computed(() => [
   { key: 'events', label: '事件', count: board.value.event_groups.reduce((sum, group) => sum + group.items.length, 0) },
   { key: 'inbox', label: '收件箱', count: board.value.inbox_items.length },
   { key: 'someday', label: '放一放', count: board.value.someday_items.length },
+  { key: 'minutes', label: '会议纪要', count: meetings.value.length },
   { key: 'recent', label: '最近', count: board.value.recent_items.length }
 ])
 
@@ -1252,6 +1483,10 @@ const currentViewMeta = computed(() => {
     recent: {
       title: '最近完成',
       body: '完成和取消都应该留下痕迹，帮助你复盘节奏。'
+    },
+    minutes: {
+      title: '会议纪要',
+      body: '记录会议内容和待办，支持录音和 AI 总结。'
     }
   }[activeView.value]
 })
@@ -1368,7 +1603,7 @@ async function plannerFetch(url, options = {}) {
   if (creatorKey.value) {
     headers['X-Creator-Key'] = creatorKey.value
   }
-  if (options.body) {
+  if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
   const response = await fetch(url, {
@@ -1523,6 +1758,9 @@ function switchKind(kind) {
 function switchView(view) {
   activeView.value = view
   localStorage.setItem('planner_active_view', view)
+  if (view === 'minutes' && meetings.value.length === 0) {
+    loadMeetings()
+  }
 }
 
 async function refreshBoard() {
@@ -1538,11 +1776,13 @@ async function refreshBoard() {
   } finally {
     timelineLoading.value = false
   }
+  loadMeetings()
 }
 
 async function refreshAll() {
   await loadProfile()
   await refreshBoard()
+  loadMeetings()
 }
 
 async function createQuickTask() {
@@ -1853,27 +2093,284 @@ async function deleteProfile() {
   }
 }
 
-function logout() {
-  clearSession()
-  board.value = createEmptyBoard()
-  comments.value = []
-  taskCommentsPreview.value = []
-  taskActivities.value = []
-  taskActivitiesPreview.value = []
-  aiSuggestions.value = []
-  review.label = ''
-  review.summary = ''
-  review.stats = {}
-  review.wins = []
-  review.drifts = []
-  review.suggestions = []
-  review.highlights = []
-  profile.name = ''
-  profile.notify_email = ''
-  profile.expires_at = ''
-  modeHint.value = '当前是下班或休息时段，默认进入生活模式'
-  fillTodayDefaults()
-  resetTaskForm()
+
+async function loadMeetings() {
+  if (!profileId.value) return
+  loadingMeetings.value = true
+  try {
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings`)
+    const data = await response.json()
+    meetings.value = data.meetings || []
+  } catch (error) {
+    ElMessage.error('\u52a0\u8f7d\u4f1a\u8bae\u7eaa\u8981\u5931\u8d25\uff1a' + error.message)
+  } finally {
+    loadingMeetings.value = false
+  }
+}
+
+function openMeetingDialog() {
+  resetMeetingForm()
+  meetingForm.meetingDate = new Date().toISOString().slice(0, 10)
+  meetingDialogVisible.value = true
+}
+
+function openMeetingEdit(m) {
+  meetingForm.id = m.id
+  meetingForm.title = m.title
+  meetingForm.content = m.content || ''
+  meetingForm.summary = m.summary || ''
+  meetingForm.actionItems = m.action_items || '[]'
+  meetingForm.meetingDate = m.meeting_date || ''
+  meetingForm.meetingTime = m.meeting_time || ''
+  meetingForm.durationMinutes = m.duration_minutes || 0
+  meetingForm.recordingUrl = m.recording_url || ''
+  meetingForm.status = m.status || 'draft'
+  try {
+    const participants = JSON.parse(m.participants || '[]')
+    meetingForm.participantsText = Array.isArray(participants) ? participants.join(', ') : ''
+  } catch {
+    meetingForm.participantsText = ''
+  }
+  try {
+    const tags = JSON.parse(m.tags || '[]')
+    meetingForm.tagsText = Array.isArray(tags) ? tags.join(', ') : ''
+  } catch {
+    meetingForm.tagsText = ''
+  }
+  meetingDialogVisible.value = true
+}
+
+async function saveMeeting() {
+  if (!meetingForm.title.trim()) {
+    ElMessage.warning('\u8bf7\u586b\u5199\u4f1a\u8bae\u6807\u9898')
+    return
+  }
+  savingMeeting.value = true
+  const participants = meetingForm.participantsText
+    .split(/[,\uff0c\u3001]/)
+    .map(s => s.trim())
+    .filter(Boolean)
+  const tags = meetingForm.tagsText
+    .split(/[,\uff0c\u3001]/)
+    .map(s => s.trim())
+    .filter(Boolean)
+  const payload = {
+    title: meetingForm.title,
+    content: meetingForm.content,
+    summary: meetingForm.summary,
+    action_items: meetingForm.actionItems,
+    participants: JSON.stringify(participants),
+    tags: JSON.stringify(tags),
+    meeting_date: meetingForm.meetingDate || new Date().toISOString().slice(0, 10),
+    meeting_time: meetingForm.meetingTime,
+    duration_minutes: meetingForm.durationMinutes,
+    recording_url: meetingForm.recordingUrl,
+    status: meetingForm.status || 'draft'
+  }
+  try {
+    if (meetingForm.id) {
+      await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings/${meetingForm.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      })
+      ElMessage.success('\u4f1a\u8bae\u7eaa\u8981\u5df2\u66f4\u65b0')
+    } else {
+      await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
+      ElMessage.success('\u4f1a\u8bae\u7eaa\u8981\u5df2\u521b\u5efa')
+      resetMeetingForm()
+    }
+    meetingDialogVisible.value = false
+    await loadMeetings()
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    savingMeeting.value = false
+  }
+}
+
+async function deleteMeeting() {
+  if (!meetingForm.id) return
+  try {
+    await ElMessageBox.confirm('\u786e\u5b9a\u5220\u9664\u8fd9\u4efd\u4f1a\u8bae\u7eaa\u8981\uff1f', '\u5220\u9664\u786e\u8ba4', { type: 'warning' })
+    await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings/${meetingForm.id}`, {
+      method: 'DELETE'
+    })
+    meetingDialogVisible.value = false
+    ElMessage.success('\u5df2\u5220\u9664')
+    await loadMeetings()
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error.message || '\u5220\u9664\u5931\u8d25')
+  }
+}
+
+async function deleteMeetingConfirm(m) {
+  try {
+    await ElMessageBox.confirm(`\u786e\u5b9a\u5220\u9664\u300c${m.title}\u300d\uff1f`, '\u5220\u9664\u786e\u8ba4', { type: 'warning' })
+    await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings/${m.id}`, {
+      method: 'DELETE'
+    })
+    ElMessage.success('\u5df2\u5220\u9664')
+    await loadMeetings()
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error.message || '\u5220\u9664\u5931\u8d25')
+  }
+}
+
+async function summarizeMeeting(m) {
+  const targetId = m.id || meetingForm.id
+  if (!targetId || !(m.content || meetingForm.content)) return
+  summarizingId.value = targetId
+  try {
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings/${targetId}/summarize`, {
+      method: 'POST'
+    })
+    const data = await response.json()
+    if (data.code === 0) {
+      meetingForm.summary = data.summary || ''
+      meetingForm.actionItems = data.action_items || '[]'
+      if (m.id) {
+        const found = meetings.value.find(x => x.id === m.id)
+        if (found) {
+          found.summary = data.summary || ''
+          found.action_items = data.action_items || '[]'
+        }
+      }
+      ElMessage.success('AI \u603b\u7ed3\u5b8c\u6210')
+    } else {
+      ElMessage.error(data.error || '\u603b\u7ed3\u5931\u8d25')
+    }
+  } catch (error) {
+    ElMessage.error(error.message)
+  } finally {
+    summarizingId.value = ''
+  }
+}
+
+let meetingRecognition = null
+let meetingMediaRecorder = null
+let meetingMediaStream = null
+let meetingVoiceChunks = []
+let meetingTranscriptText = ''
+const meetingInterimText = ref('')
+
+function startMeetingVoice() {
+  if (meetingVoiceState.value === 'recording') {
+    // --- STOP ---
+    if (meetingRecognition) {
+      try { meetingRecognition.stop() } catch {}
+      meetingRecognition = null
+    }
+    if (meetingMediaRecorder && meetingMediaRecorder.state === 'recording') {
+      meetingMediaRecorder.stop()
+    }
+    if (meetingMediaStream) {
+      meetingMediaStream.getTracks().forEach(t => t.stop())
+      meetingMediaStream = null
+    }
+    meetingVoiceState.value = 'idle'
+
+    // Append transcript to meeting content
+    if (meetingTranscriptText.trim()) {
+      const prefix = meetingForm.content ? meetingForm.content + '\n\n' : ''
+      meetingForm.content = prefix + meetingTranscriptText.trim()
+    }
+
+    // Create local blob URL + upload to backend
+    if (meetingVoiceChunks.length > 0) {
+      const blob = new Blob(meetingVoiceChunks, { type: meetingMediaRecorder?.mimeType || 'audio/webm' })
+      // Local URL for instant playback
+      if (meetingLocalAudioUrl.value) {
+        URL.revokeObjectURL(meetingLocalAudioUrl.value)
+      }
+      meetingLocalAudioUrl.value = URL.createObjectURL(blob)
+      // Upload to backend async
+      const formData = new FormData()
+      formData.append('file', blob, `meeting_${Date.now()}.webm`)
+      plannerFetch(`${API_BASE}/profile/${profileId.value}/recordings`, {
+        method: 'POST',
+        body: formData
+      }).then(res => res.json()).then(data => {
+        if (data.recording_url) {
+          meetingForm.recordingUrl = data.recording_url
+        }
+      }).catch(() => {})
+    }
+
+    if (meetingTranscriptText.trim() || meetingInterimText.value.trim()) {
+      ElMessage.success('\u8f6c\u5199\u6587\u5b57\u5df2\u5199\u5165\u4f1a\u8bae\u5185\u5bb9')
+    }
+    return
+  }
+
+  // --- START ---
+  const SpeechAPI = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (!SpeechAPI && !navigator.mediaDevices?.getUserMedia) {
+    ElMessage.warning('\u5f53\u524d\u6d4f\u89c8\u5668\u4e0d\u652f\u6301\u5f55\u97f3\u548c\u8bed\u97f3\u8f6c\u5199')
+    return
+  }
+
+  meetingTranscriptText = ''
+  meetingInterimText.value = ''
+  meetingVoiceChunks = []
+
+  // Start MediaRecorder (audio backup)
+  if (navigator.mediaDevices?.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      meetingMediaStream = stream
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm'
+      meetingMediaRecorder = new MediaRecorder(stream, { mimeType })
+      meetingMediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) meetingVoiceChunks.push(e.data)
+      }
+      meetingMediaRecorder.start()
+    }).catch(() => {})
+  }
+
+  // Start SpeechRecognition (ASR)
+  if (SpeechAPI) {
+    try {
+      meetingRecognition = new SpeechAPI()
+      meetingRecognition.lang = 'zh-CN'
+      meetingRecognition.continuous = true
+      meetingRecognition.interimResults = true
+      meetingRecognition.onresult = (event) => {
+        let finalText = ''
+        let interimText = ''
+        for (let i = 0; i < event.results.length; i += 1) {
+          const text = event.results[i][0]?.transcript || ''
+          if (event.results[i].isFinal) {
+            finalText += text
+          } else {
+            interimText += text
+          }
+        }
+        if (finalText) {
+          meetingTranscriptText = [meetingTranscriptText, finalText].filter(Boolean).join('')
+        }
+        meetingInterimText.value = interimText
+      }
+      meetingRecognition.onerror = (event) => {
+        if (event?.error !== 'no-speech' && event?.error !== 'aborted') {
+          console.warn('Meeting ASR error:', event?.error)
+        }
+      }
+      meetingRecognition.start()
+    } catch (e) {
+      console.warn('Meeting ASR start failed:', e)
+    }
+  }
+
+  meetingVoiceState.value = 'recording'
+  if (meetingInterimText.value || meetingTranscriptText) {
+    ElMessage.info('\u5f00\u59cb\u5f55\u97f3\uff0c\u8bf4\u8bdd\u5185\u5bb9\u5c06\u5b9e\u65f6\u8f6c\u5199')
+  } else {
+    ElMessage.info('\u5f00\u59cb\u5f55\u97f3')
+  }
 }
 
 async function parseAI() {
@@ -2536,6 +3033,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   resetVoiceDraft()
+  stopMeetingRecording()
+  if (meetingLocalAudioUrl.value) {
+    URL.revokeObjectURL(meetingLocalAudioUrl.value)
+  }
   window.removeEventListener('resize', syncViewportFlags)
   if (beforeInstallPromptHandler) {
     window.removeEventListener('beforeinstallprompt', beforeInstallPromptHandler)
@@ -3224,6 +3725,77 @@ onBeforeUnmount(() => {
   }
 }
 
+.meeting-summary-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(255,255,255,0.5);
+  border-radius: 8px;
+}
+
+.meeting-summary-text {
+  font-size: 0.9em;
+  line-height: 1.6;
+  color: var(--text-secondary, #555);
+  margin: 4px 0 0;
+}
+
+.meeting-action-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 0.9em;
+}
+
+.meeting-action-tag {
+  flex-shrink: 0;
+}
+
+.meeting-interim {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 87, 87, 0.06);
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.recording-badge {
+  flex-shrink: 0;
+  animation: pulse-badge 1.2s ease-in-out infinite;
+}
+
+.interim-text {
+  font-size: 0.9em;
+  color: var(--text-secondary, #666);
+  line-height: 1.5;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.voice-audio-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.timeline-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.timeline-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
 @media (min-width: 900px) {
   .entry-layout {
     grid-template-columns: 1.05fr 1fr;
@@ -3406,6 +3978,148 @@ onBeforeUnmount(() => {
 
   .task-tags {
     justify-content: flex-start;
+  }
+}
+
+/* ── Meeting Card ── */
+.meeting-card {
+  background: var(--card-bg, #fff);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  border: 1px solid var(--border-color, #eee);
+  transition: box-shadow 0.2s;
+}
+.meeting-card:hover {
+  box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+}
+.meeting-card + .meeting-card {
+  margin-top: 12px;
+}
+.meeting-done {
+  border-left: 3px solid var(--el-color-success, #67c23a);
+}
+.meeting-draft {
+  border-left: 3px solid var(--el-color-info, #909399);
+}
+
+.meeting-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.meeting-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meeting-card-title {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin: 0 0 8px;
+  cursor: pointer;
+  color: var(--text-primary, #333);
+}
+.meeting-card-title:hover {
+  color: var(--el-color-primary, #409eff);
+}
+
+.meeting-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 0.85em;
+  color: var(--text-secondary, #666);
+}
+.meeting-card-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.meeting-card-meta-item .el-icon {
+  font-size: 14px;
+}
+
+.meeting-card-body {
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.meeting-card-body p {
+  margin: 0;
+  font-size: 0.88em;
+  line-height: 1.6;
+  color: var(--text-secondary, #555);
+}
+
+.meeting-card-extras {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.meeting-card-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--text-secondary, #555);
+  cursor: pointer;
+  padding: 4px 10px;
+  background: rgba(64,158,255,0.06);
+  border-radius: 6px;
+}
+.meeting-card-todos {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--text-secondary, #555);
+  cursor: pointer;
+  padding: 4px 10px;
+  background: rgba(103,194,58,0.06);
+  border-radius: 6px;
+}
+.meeting-card-todo-badge {
+  background: var(--el-color-success, #67c23a);
+  color: #fff;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 0.8em;
+  font-weight: 500;
+}
+
+.meeting-card-recording {
+  margin-bottom: 10px;
+}
+.meeting-card-audio {
+  width: 100%;
+  height: 36px;
+}
+
+.meeting-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 768px) {
+  .meeting-card {
+    padding: 14px;
+  }
+  .meeting-card-meta {
+    flex-direction: column;
+    gap: 4px;
+  }
+  .meeting-card-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .meeting-card-actions .el-button {
+    width: 100%;
+    margin: 0;
   }
 }
 </style>

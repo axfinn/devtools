@@ -155,9 +155,9 @@ func main() {
 	nfsShareHandler := handlers.NewNFSShareHandler(db, cfg.NFSShare)
 	ocrHandler := handlers.NewOCRHandler()
 	bailianHandler := handlers.NewBailianHandler(db, cfg)
-	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler)
 	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg, transientStore)
-	apiGatewayHandler := handlers.NewAPIGatewayHandler(aiGatewayHandler, imageUnderstandingHandler)
+	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler, imageUnderstandingHandler)
+	cpaProxyHandler := handlers.NewCPAProxyHandler()
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 	mermaidHandler := handlers.NewMermaidHandler(db, cfg)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
@@ -204,7 +204,7 @@ func main() {
 		bailianHandler:            bailianHandler,
 		aiGatewayHandler:          aiGatewayHandler,
 		imageUnderstandingHandler: imageUnderstandingHandler,
-		apiGatewayHandler:         apiGatewayHandler,
+		cpaProxyHandler:         cpaProxyHandler,
 		autoDevHandler:            autoDevHandler,
 		mermaidHandler:            mermaidHandler,
 		npsHandler:                npsHandler,

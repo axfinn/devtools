@@ -12,6 +12,7 @@ type AIGatewayHandler struct {
 	db            *models.DB
 	cfg           *config.Config
 	bailian       *BailianHandler
+	imageHandler  *ImageUnderstandingHandler
 	client        *http.Client // 带代理，用于 OpenAI 兼容接口
 	noProxyClient *http.Client // 不走代理，用于 MiniMax 等外部 API
 }
@@ -158,12 +159,13 @@ type TTSRequest struct {
 	AudioFormat string  `json:"audio_format"` // mp3/wav/pcm
 }
 
-func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler) *AIGatewayHandler {
+func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler, imageHandler *ImageUnderstandingHandler) *AIGatewayHandler {
 	return &AIGatewayHandler{
-		db:      db,
-		cfg:     cfg,
-		bailian: bailian,
-		client:  &http.Client{Timeout: 90 * time.Second},
+		db:           db,
+		cfg:          cfg,
+		bailian:      bailian,
+		imageHandler: imageHandler,
+		client:       &http.Client{Timeout: 90 * time.Second},
 		noProxyClient: &http.Client{
 			Timeout: 90 * time.Second,
 			Transport: &http.Transport{

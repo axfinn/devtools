@@ -7,6 +7,7 @@ const categories = {
   draw: { name: '绘图/图表', icon: 'Edit' },
   collab: { name: '协作分享', icon: 'Connection' },
   life: { name: '生活工具', icon: 'Calendar' },
+  ai: { name: 'AI 工具', icon: 'MagicStick' },
   other: { name: '其他工具', icon: 'Tools' }
 }
 
@@ -387,44 +388,44 @@ const toolRoutes = [
   {
     path: '/bailian-image',
     name: 'BailianImage',
-    component: () => import('../views/other/BailianImageTool.vue'),
+    component: () => import('../views/ai/BailianImageTool.vue'),
     meta: {
       title: '百炼图片',
       icon: 'Picture',
-      category: 'other',
+      category: 'ai',
       description: '阿里云百炼图片/视频模型调试台'
     }
   },
   {
     path: '/image-understanding',
     name: 'ImageUnderstanding',
-    component: () => import('../views/other/ImageUnderstandingTool.vue'),
+    component: () => import('../views/ai/ImageUnderstandingTool.vue'),
     meta: {
       title: '图像理解',
       icon: 'Picture',
-      category: 'other',
+      category: 'ai',
       description: 'MiniMax MCP 图像理解'
     }
   },
   {
     path: '/ai-gateway',
     name: 'AIGateway',
-    component: () => import('../views/other/AIGatewayTool.vue'),
+    component: () => import('../views/ai/AIGatewayTool.vue'),
     meta: {
       title: 'AI Gateway',
       icon: 'Key',
-      category: 'other',
+      category: 'ai',
       description: '统一 AI API Key 管理与对外开放'
     }
   },
   {
     path: '/minimax-studio',
     name: 'MiniMaxStudio',
-    component: () => import('../views/other/MiniMaxStudioTool.vue'),
+    component: () => import('../views/ai/MiniMaxStudioTool.vue'),
     meta: {
       title: 'MiniMax Studio',
       icon: 'MagicStick',
-      category: 'other',
+      category: 'ai',
       description: 'MiniMax 文本、语音、视频、音乐、图像理解统一工作台'
     }
   },
