@@ -153,6 +153,10 @@
                 <el-input v-model="mediaForm.prompt" type="textarea" :rows="5" placeholder="描述你要生成的画面、音乐风格或主题。" />
               </el-form-item>
 
+              <el-form-item v-if="requiresVideoImage" label="首帧图片 URL">
+                <el-input v-model="mediaForm.imageUrl" placeholder="MiniMax-Hailuo-2.3-Fast 需要提供图片 URL 才能生成视频" />
+              </el-form-item>
+
               <div v-if="isMusicModel" class="inline-fields">
                 <el-form-item label="时长（秒）">
                   <el-input-number v-model="mediaForm.duration" :min="6" :max="300" class="w-full" />
@@ -616,6 +620,7 @@ const mediaParametersText = ref('{\n  "style": "cinematic"\n}')
 const mediaForm = ref({
   model: 'MiniMax-Hailuo-2.3-Fast',
   prompt: '',
+  imageUrl: '',
   duration: 6,
   resolution: '768P',
   size: '1024x1024',
@@ -681,26 +686,22 @@ const textModels = [
 ]
 
 const mediaModels = [
-  { value: 'MiniMax-Hailuo-2.3-Fast', label: 'Hailuo Fast', hint: '适合 768P / 6 秒视频。', tone: 'video' },
+  { value: 'MiniMax-Hailuo-2.3-Fast', label: 'Hailuo Fast', hint: '图生视频模型，需提供首帧图片 URL。', tone: 'video' },
   { value: 'MiniMax-Hailuo-2.3', label: 'Hailuo 2.3', hint: '标准 Hailuo 视频生成。', tone: 'video' },
-  { value: 'MiniMax-Hailuo-02', label: 'Hailuo 02', hint: '兼容旧版 Hailuo 视频链路。', tone: 'video' },
-  { value: 'T2V-01-Director', label: 'T2V Director', hint: '导演风格的视频生成。', tone: 'video' },
-  { value: 'T2V-01', label: 'T2V 01', hint: '基础视频生成。', tone: 'video' },
   { value: 'music-2.5', label: 'Music 2.5', hint: '音乐生成，适合常规乐曲草稿。', tone: 'music' },
   { value: 'music-2.6', label: 'Music 2.6', hint: '更适合新版音乐额度。', tone: 'music' },
-  { value: 'music-cover', label: 'Music Cover', hint: '翻唱任务，需先拿到 cover_feature_id。', tone: 'music' },
-  { value: 'image-01', label: 'Image 01', hint: '图像生成。', tone: 'image' },
-  { value: 'image-01-live', label: 'Image 01 Live', hint: '图像生成 live 版。', tone: 'image' }
+  { value: 'music-cover', label: 'Music Cover', hint: '翻唱任务，需先完成前处理并补齐歌词/结构元数据。', tone: 'music' },
+  { value: 'image-01', label: 'Image 01', hint: '图像生成。', tone: 'image' }
 ]
 
 const capabilityCards = [
   { name: '文本生成', badge: 'Direct', model: 'MiniMax-M2.x', desc: '直接调 Anthropic 兼容文本接口。', tab: 'text', tone: 'text' },
   { name: 'Text to Speech HD', badge: 'Direct', model: 'speech-2.8-hd', desc: '官方 Speech / TTS 调试入口。', tab: 'speech', tone: 'speech' },
-  { name: 'Hailuo-2.3-Fast-768P 6s', badge: 'Direct', model: 'MiniMax-Hailuo-2.3-Fast', desc: '快速视频链路。', tab: 'media', tone: 'video' },
+  { name: 'Hailuo-2.3-Fast-768P 6s', badge: 'Image To Video', model: 'MiniMax-Hailuo-2.3-Fast', desc: '图生视频，需提供参考图片。', tab: 'media', tone: 'video' },
   { name: 'Hailuo-2.3-768P 6s', badge: 'Direct', model: 'MiniMax-Hailuo-2.3', desc: '标准视频链路。', tab: 'media', tone: 'video' },
   { name: 'music-2.5', badge: 'Direct', model: 'music-2.5', desc: '基础音乐生成。', tab: 'media', tone: 'music' },
   { name: 'music-2.6', badge: 'Direct', model: 'music-2.6', desc: '新版音乐额度入口。', tab: 'media', tone: 'music' },
-  { name: 'music-cover', badge: 'Workflow', model: 'music-cover', desc: '支持前处理 + 生成。', tab: 'music', tone: 'music' },
+  { name: 'music-cover', badge: 'Workflow', model: 'music-cover', desc: '先做前处理，再带上歌词和结构元数据生成。', tab: 'music', tone: 'music' },
   { name: 'lyrics_generation', badge: 'Workflow', model: 'lyrics_generation', desc: '先写歌词，再带入音乐生成。', tab: 'music', tone: 'music' },
   { name: 'image-01', badge: 'Direct', model: 'image-01', desc: '图像生成任务入口。', tab: 'media', tone: 'image' },
   { name: 'coding-plan-vlm', badge: 'Integrated', model: 'MiniMax MCP', desc: '在图像理解页内使用。', tab: 'coding', tone: 'coding' },
@@ -713,6 +714,7 @@ const selectedMediaModel = computed(() => mediaModels.find(item => item.value ==
 const isMusicModel = computed(() => mediaForm.value.model.startsWith('music-'))
 const isVideoModel = computed(() => mediaForm.value.model.startsWith('MiniMax-Hailuo-') || mediaForm.value.model.startsWith('T2V-'))
 const isImageModel = computed(() => mediaForm.value.model.startsWith('image-'))
+const requiresVideoImage = computed(() => mediaForm.value.model === 'MiniMax-Hailuo-2.3-Fast')
 const textRawPretty = computed(() => pretty(textRaw.value))
 const mediaTaskPretty = computed(() => pretty(currentMediaTask.value))
 const lyricsRawPretty = computed(() => pretty(lyricsRaw.value))
@@ -888,6 +890,10 @@ async function submitMedia() {
     ElMessage.error('请输入 Prompt')
     return
   }
+  if (requiresVideoImage.value && !mediaForm.value.imageUrl.trim()) {
+    ElMessage.error('MiniMax-Hailuo-2.3-Fast 需要提供首帧图片 URL')
+    return
+  }
   mediaSubmitting.value = true
   try {
     const payload = {
@@ -897,6 +903,9 @@ async function submitMedia() {
     if (isVideoModel.value) {
       payload.duration = mediaForm.value.duration
       payload.resolution = mediaForm.value.resolution
+      if (mediaForm.value.imageUrl.trim()) {
+        payload.first_frame_image = mediaForm.value.imageUrl.trim()
+      }
     }
     if (isImageModel.value) {
       payload.size = mediaForm.value.size
@@ -904,6 +913,30 @@ async function submitMedia() {
     }
     if (isMusicModel.value) {
       payload.duration = mediaForm.value.duration
+      if ((mediaForm.value.model === 'music-2.5' || mediaForm.value.model === 'music-2.6') && !mediaForm.value.lyrics.trim()) {
+        throw new Error(`${mediaForm.value.model} 需要先提供歌词，可先到下方 lyrics_generation 生成后带入`)
+      }
+      if (mediaForm.value.model === 'music-cover') {
+        if (!mediaForm.value.coverFeatureId.trim()) {
+          throw new Error('music-cover 需要先完成前处理并带入 cover_feature_id')
+        }
+        const coverMeta = coverRaw.value || {}
+        const fallbackLyrics = String(coverMeta.formatted_lyrics || '').trim()
+        const effectiveLyrics = mediaForm.value.lyrics.trim() || fallbackLyrics
+        if (!effectiveLyrics) {
+          throw new Error('music-cover 需要歌词，若前处理未返回可用歌词，请手动补充')
+        }
+        payload.lyrics = effectiveLyrics
+        if (coverMeta.formatted_lyrics) {
+          payload.formatted_lyrics = coverMeta.formatted_lyrics
+        }
+        if (coverMeta.structure_result) {
+          payload.structure_result = coverMeta.structure_result
+        }
+        if (coverMeta.audio_duration) {
+          payload.audio_duration = coverMeta.audio_duration
+        }
+      }
       if (mediaForm.value.lyrics.trim()) {
         payload.lyrics = mediaForm.value.lyrics.trim()
       }
@@ -1023,6 +1056,7 @@ async function downloadCurrentMedia() {
 
 function resetMediaForm() {
   mediaForm.value.prompt = ''
+  mediaForm.value.imageUrl = ''
   mediaForm.value.lyrics = ''
   mediaForm.value.coverFeatureId = ''
   mediaParametersText.value = '{\n  "style": "cinematic"\n}'
@@ -1109,8 +1143,11 @@ function applyCoverToMedia() {
   }
   mediaForm.value.model = 'music-cover'
   mediaForm.value.coverFeatureId = featureId
+  if (!mediaForm.value.lyrics.trim() && typeof coverRaw.value?.formatted_lyrics === 'string') {
+    mediaForm.value.lyrics = coverRaw.value.formatted_lyrics
+  }
   activeTab.value = 'media'
-  ElMessage.success('cover_feature_id 已带入翻唱任务')
+  ElMessage.success('cover_feature_id 和前处理歌词已带入翻唱任务')
 }
 
 async function loadResultShareDocs() {

@@ -44,6 +44,9 @@ func (h *AIGatewayHandler) GetMiniMaxMusicDocs(c *gin.Context) {
 				"prompt":           "Mandopop, warm male vocal, emotional chorus",
 				"cover_feature_id": "your-cover-feature-id",
 				"lyrics":           "[Verse]\\n这一段歌词...",
+				"formatted_lyrics": "[Verse]\\n这一段歌词...",
+				"structure_result": "{\"num_segments\":2,\"segments\":[...]}",
+				"audio_duration":   19.2,
 			},
 		},
 	})

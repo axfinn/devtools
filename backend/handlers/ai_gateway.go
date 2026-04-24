@@ -1367,6 +1367,14 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 		return
 	}
 
+	// MiniMax 音乐模型优先返回可直接播放/下载的 URL，避免默认十六进制音频结果无法在页面里直接使用。
+	if strings.HasPrefix(model, "music-") {
+		if _, exists := bodyMap["output_format"]; !exists {
+			bodyMap["output_format"] = "url"
+			bodyBytes, _ = json.Marshal(bodyMap)
+		}
+	}
+
 	// 校验模型是否在允许列表中
 	if !isModelAllowed(model, TTSAllowedModels) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("该端点不支持模型 %s，允许的模型: %v", model, TTSAllowedModels)})
@@ -1609,6 +1617,25 @@ func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
 		return
 	}
 
+	// MiniMax-Hailuo-2.3-Fast 是图生视频模型，兼容前端已有的 image 字段。
+	if model == "MiniMax-Hailuo-2.3-Fast" {
+		if firstFrame := interfaceToString(bodyMap["first_frame_image"]); strings.TrimSpace(firstFrame) == "" {
+			if image := strings.TrimSpace(interfaceToString(bodyMap["image"])); image != "" {
+				bodyMap["first_frame_image"] = image
+				delete(bodyMap, "image")
+				bodyBytes, _ = json.Marshal(bodyMap)
+			}
+		}
+	}
+
+	// 音乐模型默认要求 URL 输出，避免返回不可直接播放/分享的十六进制音频内容。
+	if strings.HasPrefix(model, "music-") {
+		if _, exists := bodyMap["output_format"]; !exists {
+			bodyMap["output_format"] = "url"
+			bodyBytes, _ = json.Marshal(bodyMap)
+		}
+	}
+
 	// 校验模型是否在允许列表中
 	if !isModelAllowed(model, TokenPlanAllowedModels) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("该端点不支持模型 %s，允许的模型: %v", model, TokenPlanAllowedModels)})
@@ -1736,33 +1763,17 @@ func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, ups
 	// 解析响应获取 task_id 和检查是否有同步结果
 	var respMap map[string]interface{}
 	hasSyncResult := false
+	baseErr := ""
 	if err := json.Unmarshal(respBody, &respMap); err == nil {
 		// 尝试从响应中提取 MiniMax 的任务 ID
 		externalTaskID := extractMinimaxTaskID(respMap)
 		if externalTaskID != "" {
 			task.ExternalTaskID = externalTaskID
+			_ = h.db.UpdateMiniMaxMediaTask(task)
 		}
 
-		// 检查响应是否直接包含同步结果（image/audio/video URLs）
-		if data, ok := respMap["data"].(map[string]interface{}); ok {
-			if _, hasImages := data["image_urls"]; hasImages {
-				hasSyncResult = true
-			} else if _, hasAudio := data["audio_url"]; hasAudio {
-				hasSyncResult = true
-			} else if _, hasVideo := data["video_url"]; hasVideo {
-				hasSyncResult = true
-			} else if urls, ok := data["image_url"]; ok && urls != nil {
-				hasSyncResult = true
-			} else if urls, ok := data["audio"]; ok && urls != nil && model == "speech-2.8-hd" {
-				// TTS 返回 base64 音频在 data.audio
-				hasSyncResult = true
-			}
-		}
-
-		// 也检查 content-type 是否为媒体类型
-		if !hasSyncResult && (strings.HasPrefix(respContentType, "audio/") || strings.HasPrefix(respContentType, "image/") || strings.HasPrefix(respContentType, "video/")) {
-			hasSyncResult = true
-		}
+		baseErr = minimaxBaseRespError(respMap)
+		hasSyncResult = minimaxHasInlineMediaResult(respMap, model, respContentType)
 	}
 
 	// 同步返回了媒体内容
@@ -1778,9 +1789,13 @@ func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, ups
 
 	// 异步模式：需要轮询 external_task_id
 	if task.ExternalTaskID == "" {
-		// 无法获取任务ID，标记为失败
 		task.Status = "failed"
-		task.ErrorMessage = "无法获取 MiniMax 任务 ID"
+		task.ResultJSON = string(respBody)
+		if baseErr != "" {
+			task.ErrorMessage = baseErr
+		} else {
+			task.ErrorMessage = "无法获取 MiniMax 任务 ID"
+		}
 		now := time.Now()
 		task.CompletedAt = &now
 		_ = h.db.UpdateMiniMaxMediaTask(task)
@@ -1788,7 +1803,7 @@ func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, ups
 	}
 
 	// 轮询 MiniMax 任务状态
-	deadline := start.Add(5 * time.Minute) // 最多等待5分钟
+	deadline := start.Add(minimaxAsyncTimeout(model))
 	for {
 		if time.Now().After(deadline) {
 			task.Status = "failed"
@@ -1833,8 +1848,7 @@ type minimaxPollResponse struct {
 
 // pollMinimaxTaskStatus 轮询 MiniMax 任务状态
 func (h *AIGatewayHandler) pollMinimaxTaskStatus(externalTaskID, apiKey, baseURL, model string) (*minimaxPollResponse, error) {
-	// MiniMax 任务查询端点格式：/v1/tasks/{task_id}
-	pollURL := strings.TrimRight(baseURL, "/") + "/v1/tasks/" + externalTaskID
+	pollURL := resolveMinimaxPollURL(baseURL, externalTaskID, model)
 
 	req, err := http.NewRequest(http.MethodGet, pollURL, nil)
 	if err != nil {
@@ -1865,35 +1879,196 @@ func (h *AIGatewayHandler) pollMinimaxTaskStatus(externalTaskID, apiKey, baseURL
 
 	// 解析状态
 	status := extractMinimaxTaskStatus(payload)
-	resultJSON := ""
-	errorMessage := extractMinimaxTaskError(payload)
+	resultPayload := payload
+	errorMessage := firstNonEmpty(minimaxBaseRespError(payload), extractMinimaxTaskError(payload))
 
-	if status == "succeeded" {
-		resultJSON = string(body)
+	if mapMinimaxAsyncStatus(status) == "succeeded" {
+		if fileID := extractString(payload, "file_id"); fileID != "" {
+			if filePayload, err := h.retrieveMinimaxFile(apiKey, baseURL, fileID); err == nil {
+				resultPayload = mergeMaps(payload, filePayload)
+				if fileObj, ok := filePayload["file"].(map[string]interface{}); ok {
+					if downloadURL := extractString(fileObj, "download_url"); downloadURL != "" {
+						resultPayload["download_url"] = downloadURL
+						if isMiniMaxVideoModel(model) {
+							resultPayload["video_url"] = downloadURL
+						}
+					}
+				}
+			}
+		}
 	}
+	resultJSON, _ := json.Marshal(resultPayload)
 
 	return &minimaxPollResponse{
 		Status:       mapMinimaxAsyncStatus(status),
-		ResultJSON:   resultJSON,
+		ResultJSON:   string(resultJSON),
 		ErrorMessage: errorMessage,
 	}, nil
 }
 
+func minimaxAsyncTimeout(model string) time.Duration {
+	switch {
+	case isMiniMaxVideoModel(model):
+		return 15 * time.Minute
+	case strings.HasPrefix(model, "music-"):
+		return 8 * time.Minute
+	default:
+		return 5 * time.Minute
+	}
+}
+
+func resolveMinimaxPollURL(baseURL, externalTaskID, model string) string {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if isMiniMaxVideoModel(model) {
+		return baseURL + "/v1/query/video_generation?" + url.Values{"task_id": []string{externalTaskID}}.Encode()
+	}
+	return baseURL + "/v1/tasks/" + externalTaskID
+}
+
+func isMiniMaxVideoModel(model string) bool {
+	return strings.HasPrefix(model, "MiniMax-Hailuo-") || strings.HasPrefix(model, "T2V-")
+}
+
+func (h *AIGatewayHandler) retrieveMinimaxFile(apiKey, baseURL, fileID string) (map[string]interface{}, error) {
+	endpoint := strings.TrimRight(baseURL, "/") + "/v1/files/retrieve?" + url.Values{"file_id": []string{fileID}}.Encode()
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.noProxyClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf(firstNonEmpty(minimaxBaseRespError(payload), fmt.Sprintf("文件查询失败，状态码 %d", resp.StatusCode)))
+	}
+	return payload, nil
+}
+
+func mergeMaps(primary, secondary map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{}, len(primary)+len(secondary))
+	for key, value := range primary {
+		merged[key] = value
+	}
+	for key, value := range secondary {
+		if _, exists := merged[key]; exists && key == "file" {
+			continue
+		}
+		merged[key] = value
+	}
+	return merged
+}
+
 // extractMinimaxTaskID 从响应中提取 MiniMax 任务 ID
 func extractMinimaxTaskID(payload map[string]interface{}) string {
-	// 可能的字段名：task_id, id, output.task_id
-	if id := extractString(payload, "task_id"); id != "" {
-		return id
-	}
-	if id := extractString(payload, "id"); id != "" {
-		return id
-	}
-	if output, ok := payload["output"].(map[string]interface{}); ok {
-		if id := extractString(output, "task_id"); id != "" {
+	for _, keyPath := range [][]string{
+		{"task_id"},
+		{"taskId"},
+		{"id"},
+		{"data", "task_id"},
+		{"data", "taskId"},
+		{"data", "id"},
+		{"output", "task_id"},
+		{"output", "taskId"},
+		{"output", "id"},
+		{"data", "task", "task_id"},
+		{"data", "task", "taskId"},
+		{"task", "task_id"},
+		{"task", "taskId"},
+	} {
+		if id := extractString(payload, keyPath...); id != "" {
 			return id
 		}
 	}
 	return ""
+}
+
+func minimaxHasInlineMediaResult(payload map[string]interface{}, model, respContentType string) bool {
+	if len(extractMediaURLs(payload)) > 0 {
+		return true
+	}
+	if strings.HasPrefix(respContentType, "audio/") || strings.HasPrefix(respContentType, "image/") || strings.HasPrefix(respContentType, "video/") {
+		return true
+	}
+	for _, candidate := range []map[string]interface{}{
+		payload,
+		mapAt(payload, "data"),
+		mapAt(payload, "output"),
+		mapAt(mapAt(payload, "data"), "task"),
+	} {
+		if candidate == nil {
+			continue
+		}
+		for _, key := range []string{
+			"audio", "audio_url", "audio_urls",
+			"video", "video_url", "video_urls",
+			"image", "image_url", "image_urls",
+			"file_url", "file_urls", "url", "urls",
+		} {
+			if hasNonEmptyValue(candidate[key]) {
+				return true
+			}
+		}
+	}
+	// 音乐 / TTS 同步接口即便没有 URL，也可能直接内嵌音频内容。
+	if strings.HasPrefix(model, "music-") || strings.HasPrefix(model, "speech-") {
+		if hasNonEmptyValue(extractAny(payload, "data", "audio")) || hasNonEmptyValue(extractAny(payload, "audio")) {
+			return true
+		}
+	}
+	return false
+}
+
+func mapAt(payload map[string]interface{}, key string) map[string]interface{} {
+	if payload == nil {
+		return nil
+	}
+	value, ok := payload[key]
+	if !ok {
+		return nil
+	}
+	result, _ := value.(map[string]interface{})
+	return result
+}
+
+func extractAny(payload map[string]interface{}, path ...string) interface{} {
+	var current interface{} = payload
+	for _, key := range path {
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		current = obj[key]
+	}
+	return current
+}
+
+func hasNonEmptyValue(value interface{}) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(v) != ""
+	case []interface{}:
+		return len(v) > 0
+	case map[string]interface{}:
+		return len(v) > 0
+	default:
+		return true
+	}
 }
 
 // extractMinimaxTaskStatus 从响应中提取任务状态
@@ -2068,12 +2243,16 @@ func (h *AIGatewayHandler) GetMinimaxTokenPlanTask(c *gin.Context) {
 // extractMediaURLs 从结果中提取媒体 URL
 func extractMediaURLs(output map[string]interface{}) []string {
 	urls := make([]string, 0)
+	seen := make(map[string]struct{})
 	var walk func(v interface{})
 	walk = func(v interface{}) {
 		switch val := v.(type) {
 		case string:
 			if strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://") {
-				urls = append(urls, val)
+				if _, exists := seen[val]; !exists {
+					seen[val] = struct{}{}
+					urls = append(urls, val)
+				}
 			}
 		case map[string]interface{}:
 			for _, v := range val {
@@ -2405,16 +2584,21 @@ func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	// 透传必要的 headers（过滤掉代理相关和可能导致 HTTP/2 问题的 headers）
 	skipHeaders := map[string]bool{
-		"Content-Type":     true,
-		"Authorization":    true,
-		"Accept":           true,
-		"Connection":       true,
-		"Proxy-Connection": true,
-		"Upgrade":          true,
-		"Keep-Alive":       true,
+		"Content-Type":      true,
+		"Authorization":     true,
+		"Accept":            true,
+		"Connection":        true,
+		"Proxy-Connection":  true,
+		"Upgrade":           true,
+		"Keep-Alive":        true,
+		"TE":                true,
+		"Trailer":           true,
+		"Transfer-Encoding": true,
+		"Host":              true,
+		"Content-Length":    true,
 	}
 	for key, values := range headers {
-		if skipHeaders[key] {
+		if skipHeaders[http.CanonicalHeaderKey(key)] {
 			continue
 		}
 		for _, v := range values {

@@ -605,6 +605,10 @@ func Load(path string) (*Config, error) {
 	if apiKey := os.Getenv("MINIMAX_TOKEN_PLAN_API_KEY"); apiKey != "" {
 		cfg.MiniMaxTokenPlan.APIKey = apiKey
 	}
+	// MiniMax Voice Cloning API Key 支持环境变量覆盖
+	if apiKey := os.Getenv("MINIMAX_VOICE_CLONING_API_KEY"); apiKey != "" {
+		cfg.MiniMaxVoiceCloning.APIKey = apiKey
+	}
 	// DashScope API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("DASHSCOPE_API_KEY"); apiKey != "" {
 		cfg.DashScope.APIKey = apiKey
@@ -662,6 +666,17 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Chat.TTSServiceURL == "" {
 		cfg.Chat.TTSServiceURL = "http://127.0.0.1:8083"
+	}
+
+	// MiniMax 子模块默认复用主 API Key，只有显式配置时才覆盖。
+	if cfg.MiniMaxTTS.APIKey == "" {
+		cfg.MiniMaxTTS.APIKey = cfg.MiniMax.APIKey
+	}
+	if cfg.MiniMaxTokenPlan.APIKey == "" {
+		cfg.MiniMaxTokenPlan.APIKey = cfg.MiniMax.APIKey
+	}
+	if cfg.MiniMaxVoiceCloning.APIKey == "" {
+		cfg.MiniMaxVoiceCloning.APIKey = cfg.MiniMax.APIKey
 	}
 
 	globalConfig = cfg

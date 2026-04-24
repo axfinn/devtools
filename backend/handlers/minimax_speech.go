@@ -870,7 +870,7 @@ func cloneHeaders(src http.Header) http.Header {
 	result := make(http.Header)
 	for key, values := range src {
 		switch http.CanonicalHeaderKey(key) {
-		case "Authorization", "Content-Length", "Host":
+		case "Authorization", "Content-Length", "Host", "Connection", "Proxy-Connection", "Upgrade", "Keep-Alive", "Te", "Trailer", "Transfer-Encoding":
 			continue
 		}
 		for _, value := range values {
