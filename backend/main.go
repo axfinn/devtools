@@ -895,6 +895,11 @@ func main() {
 		api.GET("/minimax/token-plan/tasks/:id", aiGatewayHandler.GetMinimaxTokenPlanTask)
 		api.GET("/minimax/token-plan/tasks/:id/download", aiGatewayHandler.DownloadMinimaxTokenPlanTask)
 
+		// MiniMax Music 工作流代理
+		api.GET("/minimax/music/docs", aiGatewayHandler.GetMiniMaxMusicDocs)
+		api.POST("/minimax/music/v1/lyrics_generation", aiGatewayHandler.MiniMaxLyricsGeneration)
+		api.POST("/minimax/music/v1/cover_preprocess", aiGatewayHandler.MiniMaxMusicCoverPreprocess)
+
 		// MiniMax Voice Cloning 音色克隆代理
 		api.POST("/minimax/voice-cloning/upload", aiGatewayHandler.UploadVoiceClone)
 		api.GET("/minimax/voice-cloning/voices", aiGatewayHandler.ListVoiceClones)

@@ -418,6 +418,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/minimax-studio',
+    name: 'MiniMaxStudio',
+    component: () => import('../views/MiniMaxStudioTool.vue'),
+    meta: {
+      title: 'MiniMax Studio',
+      icon: 'MagicStick',
+      category: 'other',
+      description: 'MiniMax 文本、语音、视频、音乐、图像理解统一工作台'
+    }
+  },
+  {
     path: '/edge-tts',
     name: 'EdgeTTS',
     component: () => import('../views/EdgeTTSTool.vue'),

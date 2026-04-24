@@ -20,10 +20,10 @@ import (
 )
 
 type AIGatewayHandler struct {
-	db           *models.DB
-	cfg          *config.Config
-	bailian      *BailianHandler
-	client       *http.Client  // 带代理，用于 OpenAI 兼容接口
+	db            *models.DB
+	cfg           *config.Config
+	bailian       *BailianHandler
+	client        *http.Client // 带代理，用于 OpenAI 兼容接口
 	noProxyClient *http.Client // 不走代理，用于 MiniMax 等外部 API
 }
 
@@ -100,13 +100,16 @@ var TokenPlanAllowedModels = []string{
 	"speech-2.6-turbo",
 	"speech-2.8-hd",
 	"speech-2.8-turbo",
-	// Hailuo 视频（官方模型名: MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01）
+	// Hailuo 视频（官方模型名: MiniMax-Hailuo-2.3-Fast, MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01）
+	"MiniMax-Hailuo-2.3-Fast",
 	"MiniMax-Hailuo-2.3",
 	"MiniMax-Hailuo-02",
 	"T2V-01-Director",
 	"T2V-01",
-	// Music（官方模型名: music-2.5）
+	// Music（官方模型名: music-2.5, music-2.6, music-cover）
 	"music-2.5",
+	"music-2.6",
+	"music-cover",
 	// Image（官方模型名: image-01, image-01-live）
 	"image-01",
 	"image-01-live",
@@ -114,11 +117,14 @@ var TokenPlanAllowedModels = []string{
 
 // TokenPlanAsyncModels 需要异步轮询的模型（视频、音乐、图片生成）
 var TokenPlanAsyncModels = []string{
+	"MiniMax-Hailuo-2.3-Fast",
 	"MiniMax-Hailuo-2.3",
 	"MiniMax-Hailuo-02",
 	"T2V-01-Director",
 	"T2V-01",
 	"music-2.5",
+	"music-2.6",
+	"music-cover",
 	"image-01",
 	"image-01-live",
 }
@@ -135,14 +141,14 @@ func isTokenPlanAsyncModel(model string) bool {
 
 // TokenPlanRequest MiniMax Token Plan 通用请求
 type TokenPlanRequest struct {
-	Model    string                 `json:"model" binding:"required"`
-	Prompt   string                 `json:"prompt"`
-	Text     string                 `json:"text"`
-	Image    string                 `json:"image"`
-	Images   []string               `json:"images"`
-	Size     string                 `json:"size"`
-	Duration int                    `json:"duration"`
-	Count    int                    `json:"count"`
+	Model      string                 `json:"model" binding:"required"`
+	Prompt     string                 `json:"prompt"`
+	Text       string                 `json:"text"`
+	Image      string                 `json:"image"`
+	Images     []string               `json:"images"`
+	Size       string                 `json:"size"`
+	Duration   int                    `json:"duration"`
+	Count      int                    `json:"count"`
 	Parameters map[string]interface{} `json:"parameters"`
 }
 
@@ -235,7 +241,7 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 				"name":        "MiniMax",
 				"base_url":    "/api/minimax/anthropic",
 				"upstream":    "https://api.minimaxi.com/anthropic",
-				"models":      []string{"MiniMax-M2.5", "MiniMax-M2.7"},
+				"models":      []string{"MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2", "MiniMax-M2.7"},
 				"description": "MiniMax Anthropic 兼容端点",
 			},
 			{
@@ -262,7 +268,7 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 					"max_tokens": 1024,
 				},
 				"claude_code_config": gin.H{
-					"language": "Claude Code",
+					"language":    "Claude Code",
 					"description": "Claude Code MiniMax 配置示例",
 					"code": `{
   "skills": {
@@ -294,7 +300,7 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 					"max_tokens": 1024,
 				},
 				"claude_code_config": gin.H{
-					"language": "Claude Code",
+					"language":    "Claude Code",
 					"description": "Claude Code DashScope 配置示例",
 					"code": `{
   "skills": {
@@ -1273,7 +1279,7 @@ func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[st
 // ProxyMinimaxAnthropic 转发 Anthropic 协议格式的请求到 MiniMax Anthropic 兼容端点
 // POST /api/minimax/anthropic/v1/messages
 func (h *AIGatewayHandler) ProxyMinimaxAnthropic(c *gin.Context) {
-	h.proxyAnthropic(c, "https://api.minimaxi.com/anthropic", h.cfg.MiniMax.APIKey, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.5", "MiniMax-M2.7"})
+	h.proxyAnthropic(c, "https://api.minimaxi.com/anthropic", h.cfg.MiniMax.APIKey, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2", "MiniMax-M2.7"})
 }
 
 // ProxyDashScopeAnthropic 转发 Anthropic 协议格式的请求到 DashScope Anthropic 兼容端点
@@ -1285,7 +1291,7 @@ func (h *AIGatewayHandler) ProxyDashScopeAnthropic(c *gin.Context) {
 // ProxyMinimaxTTS 转发 TTS 请求到 MiniMax TTS 端点
 // POST /api/minimax/tts/v1/generations
 func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -1321,7 +1327,7 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureModelAllowed(c, key, model) {
+	if key != nil && !h.ensureModelAllowed(c, key, model) {
 		return
 	}
 
@@ -1452,19 +1458,19 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
 			"api_key": "Authorization: Bearer dtk_ai_xxx",
 			"scope":   "media",
 		},
-		"base_url":  "/api/minimax/tts",
-		"upstream":  "https://api.minimaxi.com/v1/t2a_v2",
-		"models":    TTSAllowedModels,
+		"base_url": "/api/minimax/tts",
+		"upstream": "https://api.minimaxi.com/v1/t2a_v2",
+		"models":   TTSAllowedModels,
 		"routes": []gin.H{
 			{"method": "GET", "path": "/api/minimax/tts/docs", "description": "获取本文档"},
 			{"method": "POST", "path": "/api/minimax/tts/v1/generations", "description": "MiniMax TTS 接口"},
 		},
 		"examples": gin.H{
 			"request": gin.H{
-				"model": "speech-2.8-hd",
-				"text":  "你好，这是语音合成测试",
-				"voice": "shanghai",
-				"speed": 1.0,
+				"model":        "speech-2.8-hd",
+				"text":         "你好，这是语音合成测试",
+				"voice":        "shanghai",
+				"speed":        1.0,
 				"audio_format": "mp3",
 			},
 			"curl": gin.H{
@@ -1483,18 +1489,18 @@ func (h *AIGatewayHandler) GetTTSDocs(c *gin.Context) {
 			},
 		},
 		"voice_ids": gin.H{
-			"description": "有效的 voice_id 列表（根据实际测试）",
+			"description":  "有效的 voice_id 列表（根据实际测试）",
 			"valid_voices": []string{"shanghai", "woman", "man", "cantonese", "cantonese_male"},
 		},
 		"model_descriptions": gin.H{
-			"speech-01-hd":       "高清语音合成（speech-01 系列）",
-			"speech-01-turbo":    "标准语音合成（speech-01 系列 turbo 版）",
-			"speech-02-hd":       "高清语音合成（speech-02 系列）",
-			"speech-02-turbo":    "标准语音合成（speech-02 系列 turbo 版）",
-			"speech-2.6-hd":      "高清语音合成（speech-2.6 系列）",
-			"speech-2.6-turbo":   "标准语音合成（speech-2.6 系列 turbo 版）",
-			"speech-2.8-hd":      "高清语音合成（speech-2.8 系列，推荐）",
-			"speech-2.8-turbo":   "标准语音合成（speech-2.8 系列 turbo 版）",
+			"speech-01-hd":     "高清语音合成（speech-01 系列）",
+			"speech-01-turbo":  "标准语音合成（speech-01 系列 turbo 版）",
+			"speech-02-hd":     "高清语音合成（speech-02 系列）",
+			"speech-02-turbo":  "标准语音合成（speech-02 系列 turbo 版）",
+			"speech-2.6-hd":    "高清语音合成（speech-2.6 系列）",
+			"speech-2.6-turbo": "标准语音合成（speech-2.6 系列 turbo 版）",
+			"speech-2.8-hd":    "高清语音合成（speech-2.8 系列，推荐）",
+			"speech-2.8-turbo": "标准语音合成（speech-2.8 系列 turbo 版）",
 		},
 	})
 }
@@ -1509,12 +1515,12 @@ func resolveTokenPlanModelEndpoint(model string) string {
 		"speech-2.8-hd", "speech-2.8-turbo":
 		return "/v1/t2a_v2"
 	// Hailuo 视频 - 正确端点: /v1/video_generation
-	// 官方模型名: MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01
-	case "MiniMax-Hailuo-2.3", "MiniMax-Hailuo-02",
+	// 官方模型名: MiniMax-Hailuo-2.3-Fast, MiniMax-Hailuo-2.3, MiniMax-Hailuo-02, T2V-01-Director, T2V-01
+	case "MiniMax-Hailuo-2.3-Fast", "MiniMax-Hailuo-2.3", "MiniMax-Hailuo-02",
 		"T2V-01-Director", "T2V-01":
 		return "/v1/video_generation"
 	// Music - 正确端点: /v1/music_generation
-	case "music-2.5":
+	case "music-2.5", "music-2.6", "music-cover":
 		return "/v1/music_generation"
 	// Image - 正确端点: /v1/image_generation
 	case "image-01", "image-01-live":
@@ -1527,7 +1533,7 @@ func resolveTokenPlanModelEndpoint(model string) string {
 // ProxyMinimaxTokenPlan 转发 Token Plan 请求到 MiniMax Token Plan 端点
 // POST /api/minimax/token-plan/v1/generations
 func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -1563,7 +1569,7 @@ func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
 		return
 	}
 
-	if !h.ensureModelAllowed(c, key, model) {
+	if key != nil && !h.ensureModelAllowed(c, key, model) {
 		return
 	}
 
@@ -1630,13 +1636,13 @@ func (h *AIGatewayHandler) handleAsyncTokenPlanRequest(c *gin.Context, key *mode
 	// 创建本地任务记录
 	taskID := "mmt_" + utils.GenerateHexKey(12)
 	task := &models.MiniMaxMediaTask{
-		ID:           taskID,
-		APIKeyID:     key.ID,
-		Model:        model,
-		Provider:     "minimax",
-		Status:       "pending",
-		RequestBody:  truncateString(string(bodyBytes), 50000),
-		ClientIP:     c.ClientIP(),
+		ID:          taskID,
+		APIKeyID:    firstAPIKeyID(key),
+		Model:       model,
+		Provider:    "minimax",
+		Status:      "pending",
+		RequestBody: truncateString(string(bodyBytes), 50000),
+		ClientIP:    c.ClientIP(),
 	}
 	if err := h.db.CreateMiniMaxMediaTask(task); err != nil {
 		h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusInternalServerError, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
@@ -1646,15 +1652,15 @@ func (h *AIGatewayHandler) handleAsyncTokenPlanRequest(c *gin.Context, key *mode
 
 	// 立即返回任务ID，让客户端可以轮询
 	c.JSON(http.StatusOK, gin.H{
-		"task_id":     taskID,
-		"model":       model,
-		"status":      "pending",
-		"created_at":  task.CreatedAt.Format(time.RFC3339),
-		"message":     "任务已提交，请通过 GET /api/minimax/token-plan/tasks/" + taskID + " 查询状态",
+		"task_id":    taskID,
+		"model":      model,
+		"status":     "pending",
+		"created_at": task.CreatedAt.Format(time.RFC3339),
+		"message":    "任务已提交，请通过 GET /api/minimax/token-plan/tasks/" + taskID + " 查询状态",
 	})
 
 	// 异步提交到 MiniMax API 并轮询结果
-	go h.runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, upstreamURL, bodyBytes, model, key.ID)
+	go h.runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, upstreamURL, bodyBytes, model, firstAPIKeyID(key))
 }
 
 // runAsyncMinimaxMediaTask 后台异步执行 MiniMax 媒体任务并轮询结果
@@ -1893,7 +1899,7 @@ func mapMinimaxAsyncStatus(status string) string {
 // ListMinimaxTokenPlanTasks 获取当前 API Key 的 MiniMax 媒体任务列表
 // GET /api/minimax/token-plan/tasks
 func (h *AIGatewayHandler) ListMinimaxTokenPlanTasks(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -1907,24 +1913,25 @@ func (h *AIGatewayHandler) ListMinimaxTokenPlanTasks(c *gin.Context) {
 		offset = o
 	}
 
-	tasks, err := h.db.ListMiniMaxMediaTasks(key.ID, limit, offset)
+	apiKeyID := firstAPIKeyID(key)
+	tasks, err := h.db.ListMiniMaxMediaTasks(apiKeyID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务列表失败", "code": 500})
 		return
 	}
 
-	total, _ := h.db.CountMiniMaxMediaTasks(key.ID)
+	total, _ := h.db.CountMiniMaxMediaTasks(apiKeyID)
 
 	// 转换输出格式
 	taskList := make([]gin.H, 0, len(tasks))
 	for _, t := range tasks {
 		item := gin.H{
-			"task_id":     t.ID,
-			"model":       t.Model,
-			"provider":    t.Provider,
-			"status":      t.Status,
-			"error":       t.ErrorMessage,
-			"created_at":  t.CreatedAt.Format(time.RFC3339),
+			"task_id":    t.ID,
+			"model":      t.Model,
+			"provider":   t.Provider,
+			"status":     t.Status,
+			"error":      t.ErrorMessage,
+			"created_at": t.CreatedAt.Format(time.RFC3339),
 		}
 		if t.CompletedAt != nil {
 			item["completed_at"] = t.CompletedAt.Format(time.RFC3339)
@@ -1958,7 +1965,7 @@ func (h *AIGatewayHandler) ListMinimaxTokenPlanTasks(c *gin.Context) {
 // GetMinimaxTokenPlanTask 获取 MiniMax 媒体任务详情
 // GET /api/minimax/token-plan/tasks/:id
 func (h *AIGatewayHandler) GetMinimaxTokenPlanTask(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -1971,19 +1978,19 @@ func (h *AIGatewayHandler) GetMinimaxTokenPlanTask(c *gin.Context) {
 	}
 
 	// 验证任务属于当前 API Key
-	if task.APIKeyID != key.ID {
+	if key != nil && task.APIKeyID != key.ID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问此任务", "code": 403})
 		return
 	}
 
 	result := gin.H{
-		"task_id":     task.ID,
-		"model":       task.Model,
-		"provider":    task.Provider,
-		"status":      task.Status,
-		"error":       task.ErrorMessage,
-		"request":     task.RequestBody,
-		"created_at":  task.CreatedAt.Format(time.RFC3339),
+		"task_id":    task.ID,
+		"model":      task.Model,
+		"provider":   task.Provider,
+		"status":     task.Status,
+		"error":      task.ErrorMessage,
+		"request":    task.RequestBody,
+		"created_at": task.CreatedAt.Format(time.RFC3339),
 	}
 
 	if task.CompletedAt != nil {
@@ -2120,9 +2127,9 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 			"api_key": "Authorization: Bearer dtk_ai_xxx",
 			"scope":   "media",
 		},
-		"base_url":  "/api/minimax/token-plan",
-		"upstream":  "https://api.minimaxi.com",
-		"models":    TokenPlanAllowedModels,
+		"base_url": "/api/minimax/token-plan",
+		"upstream": "https://api.minimaxi.com",
+		"models":   TokenPlanAllowedModels,
 		"routes": []gin.H{
 			{"method": "GET", "path": "/api/minimax/token-plan/docs", "description": "获取本文档"},
 			{"method": "POST", "path": "/api/minimax/token-plan/v1/generations", "description": "MiniMax Token Plan 媒体生成接口"},
@@ -2136,21 +2143,21 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 				"text":  "你好，这是语音合成测试",
 				"voice_setting": gin.H{
 					"voice_id": "male-qn",
-					"speed":   1.0,
+					"speed":    1.0,
 				},
 				"audio_setting": gin.H{
 					"audio_format": "mp3",
-					"sample_rate": 32000,
+					"sample_rate":  32000,
 				},
 			},
 			"hailuo_request": gin.H{
-				"model":      "MiniMax-Hailuo-2.3",
+				"model":      "MiniMax-Hailuo-2.3-Fast",
 				"prompt":     "一只猫在草地上玩耍",
 				"duration":   6,
 				"resolution": "768P",
 			},
 			"music_request": gin.H{
-				"model":    "music-2.5",
+				"model":    "music-2.6",
 				"prompt":   "轻松的爵士音乐，适合咖啡厅背景",
 				"duration": 300,
 			},
@@ -2172,31 +2179,34 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 		},
 		"model_descriptions": gin.H{
 			// TTS HD / Turbo 系列
-			"speech-01-hd":       "高清语音合成（speech-01 系列）",
-			"speech-01-turbo":    "标准语音合成（speech-01 系列 turbo 版）",
-			"speech-02-hd":       "高清语音合成（speech-02 系列）",
-			"speech-02-turbo":    "标准语音合成（speech-02 系列 turbo 版）",
-			"speech-2.6-hd":      "高清语音合成（speech-2.6 系列）",
-			"speech-2.6-turbo":  "标准语音合成（speech-2.6 系列 turbo 版）",
-			"speech-2.8-hd":      "高清语音合成（speech-2.8 系列，推荐）",
-			"speech-2.8-turbo":   "标准语音合成（speech-2.8 系列 turbo 版）",
+			"speech-01-hd":     "高清语音合成（speech-01 系列）",
+			"speech-01-turbo":  "标准语音合成（speech-01 系列 turbo 版）",
+			"speech-02-hd":     "高清语音合成（speech-02 系列）",
+			"speech-02-turbo":  "标准语音合成（speech-02 系列 turbo 版）",
+			"speech-2.6-hd":    "高清语音合成（speech-2.6 系列）",
+			"speech-2.6-turbo": "标准语音合成（speech-2.6 系列 turbo 版）",
+			"speech-2.8-hd":    "高清语音合成（speech-2.8 系列，推荐）",
+			"speech-2.8-turbo": "标准语音合成（speech-2.8 系列 turbo 版）",
 			// Hailuo 视频（官方模型名）
-			"MiniMax-Hailuo-2.3": "Hailuo 视频生成（MiniMax-Hailuo-2.3）",
-			"MiniMax-Hailuo-02":  "Hailuo 视频生成（MiniMax-Hailuo-02）",
-			"T2V-01-Director":    "视频生成（T2V-01-Director）",
-			"T2V-01":             "视频生成（T2V-01）",
+			"MiniMax-Hailuo-2.3-Fast": "Hailuo 视频生成（Fast 6s / 768P）",
+			"MiniMax-Hailuo-2.3":      "Hailuo 视频生成（MiniMax-Hailuo-2.3）",
+			"MiniMax-Hailuo-02":       "Hailuo 视频生成（MiniMax-Hailuo-02）",
+			"T2V-01-Director":         "视频生成（T2V-01-Director）",
+			"T2V-01":                  "视频生成（T2V-01）",
 			// Music
-			"music-2.5":          "音乐生成（最长 5 分钟）",
+			"music-2.5":   "音乐生成（2.5）",
+			"music-2.6":   "音乐生成（2.6）",
+			"music-cover": "翻唱生成（需先拿到 cover_feature_id）",
 			// Image
-			"image-01":           "图像生成",
-			"image-01-live":      "图像生成（live 版）",
+			"image-01":      "图像生成",
+			"image-01-live": "图像生成（live 版）",
 		},
 	})
 }
 
 // proxyAnthropic 转发 Anthropic 协议请求到指定上游
 func (h *AIGatewayHandler) proxyAnthropic(c *gin.Context, upstreamBase, apiKey, logPath string, allowedModels []string) {
-	key, ok := h.authenticateAPIKey(c, "chat")
+	key, ok := h.authenticateAdminOrAPIKey(c, "chat")
 	if !ok {
 		return
 	}
@@ -2232,7 +2242,7 @@ func (h *AIGatewayHandler) proxyAnthropic(c *gin.Context, upstreamBase, apiKey, 
 		return
 	}
 
-	if !h.ensureModelAllowed(c, key, model) {
+	if key != nil && !h.ensureModelAllowed(c, key, model) {
 		return
 	}
 
@@ -2453,6 +2463,13 @@ func (h *AIGatewayHandler) authenticateAdminOrAPIKey(c *gin.Context, scope strin
 	return h.authenticateAPIKey(c, scope)
 }
 
+func firstAPIKeyID(key *models.AIAPIKey) string {
+	if key == nil {
+		return ""
+	}
+	return key.ID
+}
+
 func (h *AIGatewayHandler) ensureModelAllowed(c *gin.Context, key *models.AIAPIKey, model string) bool {
 	if jsonStringContains(key.AllowedModels, "*") || jsonStringContains(key.AllowedModels, model) {
 		return true
@@ -2552,9 +2569,9 @@ var dashscopeModels = map[string]bool{
 	"qwen3-max-2026-01-23": true,
 	"qwen3-coder-next":     true,
 	"qwen3-coder-plus":     true,
-	"glm-5":               true,
-	"glm-4.7":             true,
-	"kimi-k2.5":           true,
+	"glm-5":                true,
+	"glm-4.7":              true,
+	"kimi-k2.5":            true,
 }
 
 func (h *AIGatewayHandler) resolveChatProvider(model string) string {
@@ -2836,7 +2853,7 @@ func fetchImageAsBase64(client *http.Client, imageURL string) (string, string, e
 // DownloadMinimaxTokenPlanTask 下载 MiniMax 媒体任务产物
 // GET /api/minimax/token-plan/tasks/:id/download
 func (h *AIGatewayHandler) DownloadMinimaxTokenPlanTask(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -2849,7 +2866,7 @@ func (h *AIGatewayHandler) DownloadMinimaxTokenPlanTask(c *gin.Context) {
 	}
 
 	// 验证任务属于当前 API Key
-	if task.APIKeyID != key.ID {
+	if key != nil && task.APIKeyID != key.ID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问此任务", "code": 403})
 		return
 	}
@@ -3468,10 +3485,10 @@ func (h *AIGatewayHandler) GetVoiceCloningDocs(c *gin.Context) {
 				},
 			},
 			"tts_request": gin.H{
-				"model":    "speech-2.8-hd",
-				"text":     "你好，这是使用自定义音色的语音合成",
-				"voice_id": "clone_xxx",
-				"speed":    1.0,
+				"model":        "speech-2.8-hd",
+				"text":         "你好，这是使用自定义音色的语音合成",
+				"voice_id":     "clone_xxx",
+				"speed":        1.0,
 				"audio_format": "mp3",
 			},
 			"curl_upload": gin.H{
