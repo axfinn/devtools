@@ -154,6 +154,9 @@ type createPlannerTaskRequest struct {
 	Priority       string `json:"priority"`
 	PlannedFor     string `json:"planned_for"`
 	RemindAt       string `json:"remind_at"`
+	RepeatType     string `json:"repeat_type"`
+	RepeatInterval int    `json:"repeat_interval"`
+	RepeatUntil    string `json:"repeat_until"`
 	NotifyEmail    string `json:"notify_email"`
 	CancelReason   string `json:"cancel_reason"`
 	PostponeReason string `json:"postpone_reason"`
@@ -174,6 +177,9 @@ type updatePlannerTaskRequest struct {
 	Priority       *string `json:"priority"`
 	PlannedFor     *string `json:"planned_for"`
 	RemindAt       *string `json:"remind_at"`
+	RepeatType     *string `json:"repeat_type"`
+	RepeatInterval *int    `json:"repeat_interval"`
+	RepeatUntil    *string `json:"repeat_until"`
 	NotifyEmail    *string `json:"notify_email"`
 	CancelReason   *string `json:"cancel_reason"`
 	PostponeReason *string `json:"postpone_reason"`
@@ -316,6 +322,32 @@ func normalizePlannerBucket(bucket, entryType string) string {
 		return models.PlannerBucketPlanned
 	}
 	return models.PlannerBucketPlanned
+}
+
+func normalizePlannerRepeatType(repeatType string) string {
+	switch strings.TrimSpace(strings.ToLower(repeatType)) {
+	case "daily":
+		return "daily"
+	case "weekdays":
+		return "weekdays"
+	case "weekly":
+		return "weekly"
+	case "monthly":
+		return "monthly"
+	default:
+		return "none"
+	}
+}
+
+func normalizePlannerRepeatInterval(interval int) int {
+	switch {
+	case interval <= 0:
+		return 1
+	case interval > 365:
+		return 365
+	default:
+		return interval
+	}
 }
 
 func plannerToday() string {
@@ -1156,6 +1188,9 @@ func (h *PlannerHandler) buildPlannerTask(profile *models.PlannerProfile, req cr
 		PlannedFor:         parsePlannerDate(req.PlannedFor),
 		OriginalPlannedFor: parsePlannerDate(req.PlannedFor),
 		RemindAt:           parsePlannerDateTime(req.RemindAt),
+		RepeatType:         normalizePlannerRepeatType(req.RepeatType),
+		RepeatInterval:     normalizePlannerRepeatInterval(req.RepeatInterval),
+		RepeatUntil:        parsePlannerDateTime(req.RepeatUntil),
 		NotifyEmail:        strings.TrimSpace(req.NotifyEmail),
 		CancelReason:       strings.TrimSpace(req.CancelReason),
 	}
@@ -1164,6 +1199,21 @@ func (h *PlannerHandler) buildPlannerTask(profile *models.PlannerProfile, req cr
 	}
 	if task.NotifyEmail == "" {
 		task.NotifyEmail = profile.NotifyEmail
+	}
+	if task.RepeatType == "none" {
+		task.RepeatInterval = 1
+		task.RepeatUntil = nil
+	}
+	if task.RemindAt == nil {
+		task.RepeatType = "none"
+		task.RepeatInterval = 1
+		task.RepeatUntil = nil
+	}
+	if task.RepeatType != "none" && task.RemindAt == nil {
+		return nil, fmt.Errorf("重复提醒需要先设置提醒时间")
+	}
+	if task.RepeatUntil != nil && task.RemindAt != nil && task.RepeatUntil.Before(*task.RemindAt) {
+		return nil, fmt.Errorf("重复提醒结束时间不能早于首次提醒")
 	}
 	if task.EntryType == models.PlannerEntryEvent {
 		task.Bucket = models.PlannerBucketPlanned
@@ -1300,9 +1350,40 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 	}
 	if req.RemindAt != nil {
 		task.RemindAt = parsePlannerDateTime(*req.RemindAt)
+		task.LastNotifiedAt = nil
+	}
+	if req.RepeatType != nil {
+		task.RepeatType = normalizePlannerRepeatType(*req.RepeatType)
+		task.LastNotifiedAt = nil
+	}
+	if req.RepeatInterval != nil {
+		task.RepeatInterval = normalizePlannerRepeatInterval(*req.RepeatInterval)
+		task.LastNotifiedAt = nil
+	}
+	if req.RepeatUntil != nil {
+		task.RepeatUntil = parsePlannerDateTime(*req.RepeatUntil)
+		task.LastNotifiedAt = nil
+	}
+	if task.RepeatType == "none" {
+		task.RepeatInterval = 1
+		task.RepeatUntil = nil
 	}
 	if req.PlannedFor != nil {
 		task.PlannedFor = parsePlannerDate(*req.PlannedFor)
+	}
+	if task.RemindAt == nil {
+		task.RepeatType = "none"
+		task.RepeatInterval = 1
+		task.RepeatUntil = nil
+		task.LastNotifiedAt = nil
+	}
+	if task.RepeatType != "none" && task.RemindAt == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "重复提醒需要先设置提醒时间", "code": 400})
+		return
+	}
+	if task.RepeatUntil != nil && task.RemindAt != nil && task.RepeatUntil.Before(*task.RemindAt) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "重复提醒结束时间不能早于首次提醒", "code": 400})
+		return
 	}
 	if task.EntryType == models.PlannerEntryEvent {
 		task.Bucket = models.PlannerBucketPlanned
@@ -1418,6 +1499,9 @@ func plannerTaskLifecycleContent(task *models.PlannerTask) string {
 	if task.RemindAt != nil {
 		parts = append(parts, "提醒 "+task.RemindAt.In(time.Local).Format("2006-01-02 15:04"))
 	}
+	if repeatSummary := plannerRepeatSummary(task); repeatSummary != "" {
+		parts = append(parts, repeatSummary)
+	}
 	return strings.Join(parts, " · ")
 }
 
@@ -1447,6 +1531,12 @@ func plannerTaskActivitiesFromUpdate(before, after *models.PlannerTask) []*model
 	if beforeRemind != afterRemind {
 		content := fmt.Sprintf("%s -> %s", plannerFirstNonEmpty(beforeRemind, "未设置"), plannerFirstNonEmpty(afterRemind, "未设置"))
 		appendActivity("reminder_changed", "调整了提醒时间", content)
+	}
+	beforeRepeat := plannerRepeatSummary(before)
+	afterRepeat := plannerRepeatSummary(after)
+	if beforeRepeat != afterRepeat {
+		content := fmt.Sprintf("%s -> %s", plannerFirstNonEmpty(beforeRepeat, "不重复"), plannerFirstNonEmpty(afterRepeat, "不重复"))
+		appendActivity("repeat_changed", "调整了重复提醒", content)
 	}
 	if before.Status != after.Status {
 		title := "更新了状态"
@@ -1619,6 +1709,9 @@ func buildPlannerICS(task *models.PlannerTask) []byte {
 		end := start.Add(30 * time.Minute)
 		sb.WriteString(fmt.Sprintf("DTSTART:%s\r\n", start.Format("20060102T150405")))
 		sb.WriteString(fmt.Sprintf("DTEND:%s\r\n", end.Format("20060102T150405")))
+		if rrule := plannerICSRRULE(task); rrule != "" {
+			sb.WriteString(fmt.Sprintf("RRULE:%s\r\n", rrule))
+		}
 		sb.WriteString("BEGIN:VALARM\r\n")
 		sb.WriteString("TRIGGER:PT0M\r\n")
 		sb.WriteString("ACTION:DISPLAY\r\n")
@@ -1648,6 +1741,130 @@ func plannerCalendarFilename(task *models.PlannerTask) string {
 		title = "planner"
 	}
 	return fmt.Sprintf("%s-%s.ics", task.Kind, title)
+}
+
+func plannerRepeatSummary(task *models.PlannerTask) string {
+	if task == nil || task.RemindAt == nil {
+		return ""
+	}
+	timePart := task.RemindAt.In(time.Local).Format("15:04")
+	untilPart := ""
+	if task.RepeatUntil != nil {
+		untilPart = "，截止 " + task.RepeatUntil.In(time.Local).Format("2006-01-02 15:04")
+	}
+	switch normalizePlannerRepeatType(task.RepeatType) {
+	case "daily":
+		interval := max(1, task.RepeatInterval)
+		if interval == 1 {
+			return "每天 " + timePart + untilPart
+		}
+		return fmt.Sprintf("每 %d 天 %s%s", interval, timePart, untilPart)
+	case "weekdays":
+		return "工作日 " + timePart + untilPart
+	case "weekly":
+		interval := max(1, task.RepeatInterval)
+		weekday := []string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}[task.RemindAt.In(time.Local).Weekday()]
+		if interval == 1 {
+			return weekday + " " + timePart + untilPart
+		}
+		return fmt.Sprintf("每 %d 周%s %s%s", interval, weekday, timePart, untilPart)
+	case "monthly":
+		interval := max(1, task.RepeatInterval)
+		day := task.RemindAt.In(time.Local).Day()
+		if interval == 1 {
+			return fmt.Sprintf("每月 %d 日 %s%s", day, timePart, untilPart)
+		}
+		return fmt.Sprintf("每 %d 月 %d 日 %s%s", interval, day, timePart, untilPart)
+	default:
+		return ""
+	}
+}
+
+func plannerICSRRULE(task *models.PlannerTask) string {
+	if task == nil || task.RemindAt == nil {
+		return ""
+	}
+	repeatType := normalizePlannerRepeatType(task.RepeatType)
+	if repeatType == "none" {
+		return ""
+	}
+	interval := normalizePlannerRepeatInterval(task.RepeatInterval)
+	parts := []string{}
+	switch repeatType {
+	case "daily":
+		parts = append(parts, "FREQ=DAILY")
+	case "weekdays":
+		parts = append(parts, "FREQ=WEEKLY", "BYDAY=MO,TU,WE,TH,FR")
+	case "weekly":
+		weekdayMap := []string{"SU", "MO", "TU", "WE", "TH", "FR", "SA"}
+		parts = append(parts, "FREQ=WEEKLY", "BYDAY="+weekdayMap[task.RemindAt.In(time.Local).Weekday()])
+	case "monthly":
+		parts = append(parts, "FREQ=MONTHLY", fmt.Sprintf("BYMONTHDAY=%d", task.RemindAt.In(time.Local).Day()))
+	default:
+		return ""
+	}
+	if interval > 1 {
+		parts = append(parts, fmt.Sprintf("INTERVAL=%d", interval))
+	}
+	if task.RepeatUntil != nil {
+		parts = append(parts, "UNTIL="+task.RepeatUntil.In(time.Local).UTC().Format("20060102T150405Z"))
+	}
+	return strings.Join(parts, ";")
+}
+
+func plannerNextMonthlyReminder(current time.Time, interval int) time.Time {
+	anchor := current.In(time.Local)
+	anchorDay := anchor.Day()
+	cursor := time.Date(anchor.Year(), anchor.Month(), 1, anchor.Hour(), anchor.Minute(), anchor.Second(), anchor.Nanosecond(), time.Local)
+	for i := 0; i < 1024; i++ {
+		cursor = cursor.AddDate(0, interval, 0)
+		candidate := time.Date(cursor.Year(), cursor.Month(), anchorDay, anchor.Hour(), anchor.Minute(), anchor.Second(), anchor.Nanosecond(), time.Local)
+		if candidate.Month() == cursor.Month() {
+			return candidate
+		}
+	}
+	return anchor
+}
+
+func plannerNextReminderAfter(task *models.PlannerTask, now time.Time) *time.Time {
+	if task == nil || task.RemindAt == nil {
+		return nil
+	}
+	repeatType := normalizePlannerRepeatType(task.RepeatType)
+	if repeatType == "none" {
+		return nil
+	}
+	interval := normalizePlannerRepeatInterval(task.RepeatInterval)
+	current := task.RemindAt.In(time.Local)
+	until := task.RepeatUntil
+	for i := 0; i < 1024; i++ {
+		switch repeatType {
+		case "daily":
+			current = current.AddDate(0, 0, interval)
+		case "weekdays":
+			for {
+				current = current.AddDate(0, 0, 1)
+				weekday := current.Weekday()
+				if weekday >= time.Monday && weekday <= time.Friday {
+					break
+				}
+			}
+		case "weekly":
+			current = current.AddDate(0, 0, 7*interval)
+		case "monthly":
+			current = plannerNextMonthlyReminder(current, interval)
+		default:
+			return nil
+		}
+		if until != nil && current.After(until.In(time.Local)) {
+			return nil
+		}
+		if current.After(now) {
+			next := current
+			return &next
+		}
+	}
+	return nil
 }
 
 func (h *PlannerHandler) DownloadCalendar(c *gin.Context) {
@@ -2181,6 +2398,9 @@ func (h *PlannerHandler) ProcessDueReminders() {
 		if task.RemindAt != nil {
 			bodyLines = append(bodyLines, fmt.Sprintf("提醒时间: %s", task.RemindAt.In(time.Local).Format("2006-01-02 15:04")))
 		}
+		if repeatSummary := plannerRepeatSummary(task); repeatSummary != "" {
+			bodyLines = append(bodyLines, fmt.Sprintf("重复提醒: %s", repeatSummary))
+		}
 		if strings.TrimSpace(task.Detail) != "" {
 			bodyLines = append(bodyLines, "", "详情:", task.Detail)
 		}
@@ -2199,7 +2419,13 @@ func (h *PlannerHandler) ProcessDueReminders() {
 			log.Printf("planner reminder: send failed for task %s: %v", task.ID, err)
 			continue
 		}
-		_ = h.db.MarkPlannerTaskReminderSent(task.ID, time.Now())
+		sentAt := time.Now()
+		nextRemindAt := plannerNextReminderAfter(task, sentAt)
+		if nextRemindAt != nil {
+			_ = h.db.UpdatePlannerTaskReminderState(task.ID, nextRemindAt, task.RepeatUntil, &sentAt)
+			continue
+		}
+		_ = h.db.MarkPlannerTaskReminderSent(task.ID, sentAt)
 	}
 }
 

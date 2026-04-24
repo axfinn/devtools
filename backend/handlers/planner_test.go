@@ -83,16 +83,19 @@ func TestBuildPlannerBoardRollover(t *testing.T) {
 
 func TestBuildPlannerICSTimedEvent(t *testing.T) {
 	remindAt := time.Date(2026, 4, 23, 19, 30, 0, 0, time.Local)
+	repeatUntil := time.Date(2026, 5, 23, 19, 30, 0, 0, time.Local)
 	task := &models.PlannerTask{
-		ID:         "ics123",
-		Kind:       "life",
-		EntryType:  models.PlannerEntryEvent,
-		Bucket:     models.PlannerBucketPlanned,
-		Title:      "预约复诊",
-		Detail:     "去医院复诊",
-		Notes:      "带医保卡",
-		PlannedFor: "2026-04-24",
-		RemindAt:   &remindAt,
+		ID:          "ics123",
+		Kind:        "life",
+		EntryType:   models.PlannerEntryEvent,
+		Bucket:      models.PlannerBucketPlanned,
+		Title:       "预约复诊",
+		Detail:      "去医院复诊",
+		Notes:       "带医保卡",
+		PlannedFor:  "2026-04-24",
+		RemindAt:    &remindAt,
+		RepeatType:  "weekly",
+		RepeatUntil: &repeatUntil,
 	}
 
 	content := string(buildPlannerICS(task))
@@ -104,6 +107,60 @@ func TestBuildPlannerICSTimedEvent(t *testing.T) {
 	}
 	if !strings.Contains(content, "BEGIN:VALARM") {
 		t.Fatalf("expected alarm block in calendar content")
+	}
+	if !strings.Contains(content, "RRULE:FREQ=WEEKLY") {
+		t.Fatalf("expected repeat rule in calendar content, got %s", content)
+	}
+}
+
+func TestPlannerNextReminderAfterDaily(t *testing.T) {
+	base := time.Date(2026, 4, 24, 9, 30, 0, 0, time.Local)
+	task := &models.PlannerTask{
+		RemindAt:       &base,
+		RepeatType:     "daily",
+		RepeatInterval: 1,
+	}
+
+	next := plannerNextReminderAfter(task, time.Date(2026, 4, 24, 10, 0, 0, 0, time.Local))
+	if next == nil {
+		t.Fatalf("expected next reminder")
+	}
+	if got := next.Format("2006-01-02 15:04"); got != "2026-04-25 09:30" {
+		t.Fatalf("expected 2026-04-25 09:30, got %s", got)
+	}
+}
+
+func TestPlannerNextReminderAfterWeekdays(t *testing.T) {
+	friday := time.Date(2026, 4, 24, 18, 0, 0, 0, time.Local)
+	task := &models.PlannerTask{
+		RemindAt:       &friday,
+		RepeatType:     "weekdays",
+		RepeatInterval: 1,
+	}
+
+	next := plannerNextReminderAfter(task, time.Date(2026, 4, 24, 18, 5, 0, 0, time.Local))
+	if next == nil {
+		t.Fatalf("expected next reminder")
+	}
+	if got := next.Format("2006-01-02 15:04"); got != "2026-04-27 18:00" {
+		t.Fatalf("expected 2026-04-27 18:00, got %s", got)
+	}
+}
+
+func TestPlannerNextReminderAfterMonthlySkipsInvalidDays(t *testing.T) {
+	january31 := time.Date(2026, 1, 31, 9, 0, 0, 0, time.Local)
+	task := &models.PlannerTask{
+		RemindAt:       &january31,
+		RepeatType:     "monthly",
+		RepeatInterval: 1,
+	}
+
+	next := plannerNextReminderAfter(task, time.Date(2026, 1, 31, 9, 5, 0, 0, time.Local))
+	if next == nil {
+		t.Fatalf("expected next reminder")
+	}
+	if got := next.Format("2006-01-02 15:04"); got != "2026-03-31 09:00" {
+		t.Fatalf("expected 2026-03-31 09:00, got %s", got)
 	}
 }
 

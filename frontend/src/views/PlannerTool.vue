@@ -284,6 +284,29 @@
               placeholder="提醒时间"
             />
           </div>
+          <div class="quick-row">
+            <el-select v-model="quickForm.repeatType" :disabled="!quickForm.remindAt" placeholder="重复提醒">
+              <el-option label="不重复" value="none" />
+              <el-option label="每天" value="daily" />
+              <el-option label="工作日" value="weekdays" />
+              <el-option label="每周" value="weekly" />
+              <el-option label="每月" value="monthly" />
+            </el-select>
+            <el-input-number
+              v-if="['daily', 'weekly', 'monthly'].includes(quickForm.repeatType)"
+              v-model="quickForm.repeatInterval"
+              :min="1"
+              :max="30"
+              placeholder="间隔"
+            />
+            <el-date-picker
+              v-model="quickForm.repeatUntil"
+              type="datetime"
+              value-format="YYYY-MM-DDTHH:mm"
+              placeholder="结束时间（可选）"
+              :disabled="quickForm.repeatType === 'none'"
+            />
+          </div>
           <el-input v-model="quickForm.notifyEmail" placeholder="提醒邮箱，默认用档案邮箱" />
         </div>
       </section>
@@ -352,6 +375,7 @@
                     <div class="task-meta">
                       <span>计划 {{ task.planned_for }}</span>
                       <span v-if="task.remind_at">提醒 {{ formatDateTime(task.remind_at) }}</span>
+                      <span v-if="repeatSummary(task)">重复 {{ repeatSummary(task) }}</span>
                       <span v-if="task.is_rolled_over" class="rolled-tag">已顺延到今天</span>
                       <span v-if="task.last_postpone_reason">顺延原因：{{ task.last_postpone_reason }}</span>
                     </div>
@@ -417,6 +441,7 @@
                     <div class="task-meta">
                       <span>日期 {{ task.planned_for }}</span>
                       <span v-if="task.remind_at">提醒 {{ formatDateTime(task.remind_at) }}</span>
+                      <span v-if="repeatSummary(task)">重复 {{ repeatSummary(task) }}</span>
                       <span v-if="task.time_hint">{{ task.time_hint }}</span>
                       <span v-if="task.event_phase">{{ eventPhaseLabel(task.event_phase) }}</span>
                       <span v-if="task.needs_closure" class="rolled-tag">待收尾</span>
@@ -621,6 +646,29 @@
             type="datetime"
             value-format="YYYY-MM-DDTHH:mm"
             placeholder="提醒时间"
+          />
+        </div>
+        <div class="quick-row">
+          <el-select v-model="taskForm.repeatType" :disabled="!taskForm.remindAt" placeholder="重复提醒">
+            <el-option label="不重复" value="none" />
+            <el-option label="每天" value="daily" />
+            <el-option label="工作日" value="weekdays" />
+            <el-option label="每周" value="weekly" />
+            <el-option label="每月" value="monthly" />
+          </el-select>
+          <el-input-number
+            v-if="['daily', 'weekly', 'monthly'].includes(taskForm.repeatType)"
+            v-model="taskForm.repeatInterval"
+            :min="1"
+            :max="30"
+            placeholder="间隔"
+          />
+          <el-date-picker
+            v-model="taskForm.repeatUntil"
+            type="datetime"
+            value-format="YYYY-MM-DDTHH:mm"
+            placeholder="结束时间（可选）"
+            :disabled="taskForm.repeatType === 'none'"
           />
         </div>
         <el-input v-model="taskForm.notifyEmail" placeholder="提醒邮箱" />
@@ -852,6 +900,55 @@
       </div>
     </el-dialog>
 
+    <el-dialog v-model="voiceDialogVisible" title="语音录入" :width="voiceDialogWidth" :fullscreen="isMobile" @closed="resetVoiceDraft">
+      <div class="drawer-stack">
+        <div class="voice-panel-card">
+          <div class="voice-panel-head">
+            <div>
+              <strong>{{ voiceTarget === 'quick' ? '写入快速记录' : '追加到 AI 整理内容' }}</strong>
+              <p class="soft-note">支持录音备份；浏览器支持时会同步转写文字。</p>
+            </div>
+            <el-tag :type="voiceState === 'recording' ? 'danger' : voiceState === 'ready' ? 'success' : 'info'">
+              {{ voiceState === 'recording' ? `录音中 ${formatVoiceDuration(voiceDuration)}` : voiceState === 'ready' ? '可写入' : '待开始' }}
+            </el-tag>
+          </div>
+          <div class="voice-panel-actions">
+            <el-button v-if="voiceState !== 'recording'" type="primary" @click="startVoiceCapture">
+              开始录音
+            </el-button>
+            <el-button v-else type="danger" plain @click="stopVoiceCapture({ keepDraft: true })">
+              结束录音
+            </el-button>
+            <el-button plain @click="resetVoiceDraft">重置</el-button>
+            <el-button type="success" :disabled="![voiceTranscript, voiceInterimTranscript].join('').trim()" @click="applyVoiceDraft">
+              写入内容
+            </el-button>
+          </div>
+          <div class="voice-capability">
+            <span>{{ browserSpeechSupported ? '浏览器转写已启用' : '当前浏览器不支持原生转写，仅保留录音' }}</span>
+            <span>{{ mediaRecorderSupported ? '录音备份可用' : '当前浏览器不支持录音备份' }}</span>
+          </div>
+          <el-input
+            v-model="voiceTranscript"
+            type="textarea"
+            :rows="6"
+            placeholder="转写结果会显示在这里，也可以手动修改后再写入。"
+          />
+          <div v-if="voiceInterimTranscript" class="soft-note">识别中：{{ voiceInterimTranscript }}</div>
+          <div v-if="voiceError" class="voice-error">{{ voiceError }}</div>
+          <audio v-if="voiceAudioURL" class="voice-audio" :src="voiceAudioURL" controls />
+        </div>
+      </div>
+      <template #footer>
+        <div class="drawer-actions">
+          <el-button @click="closeVoiceDialog">关闭</el-button>
+          <el-button type="primary" :disabled="![voiceTranscript, voiceInterimTranscript].join('').trim()" @click="applyVoiceDraft">
+            写入
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="adminDialogVisible" title="超级管理员" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="quick-row">
@@ -996,6 +1093,9 @@ const quickForm = reactive({
   bucket: 'planned',
   plannedFor: '',
   remindAt: '',
+  repeatType: 'none',
+  repeatInterval: 1,
+  repeatUntil: '',
   priority: 'medium',
   notifyEmail: ''
 })
@@ -1010,6 +1110,9 @@ const taskForm = reactive({
   notes: '',
   plannedFor: '',
   remindAt: '',
+  repeatType: 'none',
+  repeatInterval: 1,
+  repeatUntil: '',
   priority: 'medium',
   status: 'open',
   notifyEmail: '',
@@ -1075,6 +1178,16 @@ const adviceMode = ref('plan')
 const adviceText = ref('')
 const adviceProvider = ref('fallback')
 const reviewPeriod = ref('week')
+const voiceDialogVisible = ref(false)
+const voiceTarget = ref('quick')
+const voiceState = ref('idle')
+const voiceTranscript = ref('')
+const voiceInterimTranscript = ref('')
+const voiceError = ref('')
+const voiceDuration = ref(0)
+const voiceAudioURL = ref('')
+const browserSpeechSupported = ref(false)
+const mediaRecorderSupported = ref(false)
 const adminDetail = reactive({
   profile: {
     id: '',
@@ -1146,8 +1259,15 @@ const currentViewMeta = computed(() => {
 const drawerSize = computed(() => (isMobile.value ? '100%' : '420px'))
 const detailDrawerSize = computed(() => (isMobile.value ? '100%' : '480px'))
 const dialogWidth = computed(() => (isMobile.value ? '100%' : '720px'))
+const voiceDialogWidth = computed(() => (isMobile.value ? '100%' : '560px'))
 
 let deferredInstallPrompt = null
+let recognition = null
+let mediaRecorder = null
+let mediaStream = null
+let voiceChunks = []
+let voiceTimer = null
+let voiceCaptureToken = 0
 
 function defaultModeByTime() {
   const now = new Date()
@@ -1187,6 +1307,8 @@ function setCreatorKeyForProfile(id, key) {
 function syncViewportFlags() {
   isMobile.value = window.innerWidth <= 768
   isStandaloneMode.value = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+  browserSpeechSupported.value = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
+  mediaRecorderSupported.value = Boolean(window.MediaRecorder && navigator.mediaDevices?.getUserMedia)
 }
 
 function fillTodayDefaults() {
@@ -1196,6 +1318,9 @@ function fillTodayDefaults() {
   quickForm.bucket = 'planned'
   quickForm.plannedFor = new Date().toISOString().slice(0, 10)
   quickForm.remindAt = ''
+  quickForm.repeatType = 'none'
+  quickForm.repeatInterval = 1
+  quickForm.repeatUntil = ''
   quickForm.priority = 'medium'
   quickForm.notifyEmail = profile.notify_email || ''
   if (isMobile.value) {
@@ -1222,6 +1347,9 @@ function resetTaskForm() {
   taskForm.notes = ''
   taskForm.plannedFor = new Date().toISOString().slice(0, 10)
   taskForm.remindAt = ''
+  taskForm.repeatType = 'none'
+  taskForm.repeatInterval = 1
+  taskForm.repeatUntil = ''
   taskForm.priority = 'medium'
   taskForm.status = 'open'
   taskForm.notifyEmail = profile.notify_email || ''
@@ -1434,6 +1562,9 @@ async function createQuickTask() {
         detail: quickForm.detail,
         planned_for: quickForm.plannedFor,
         remind_at: quickForm.remindAt,
+        repeat_type: quickForm.repeatType,
+        repeat_interval: quickForm.repeatInterval,
+        repeat_until: quickForm.repeatUntil,
         priority: quickForm.priority,
         notify_email: quickForm.notifyEmail
       })
@@ -1460,6 +1591,9 @@ function openTask(task) {
   taskForm.status = task.status || 'open'
   taskForm.plannedFor = task.planned_for || ''
   taskForm.remindAt = task.remind_at ? task.remind_at.slice(0, 16) : ''
+  taskForm.repeatType = task.repeat_type || 'none'
+  taskForm.repeatInterval = task.repeat_interval || 1
+  taskForm.repeatUntil = task.repeat_until ? task.repeat_until.slice(0, 16) : ''
   taskForm.notifyEmail = task.notify_email || ''
   taskForm.cancelReason = task.cancel_reason || ''
   taskForm.postponeReason = task.last_postpone_reason || ''
@@ -1519,6 +1653,9 @@ async function saveTask() {
         notes: taskForm.notes,
         planned_for: taskForm.plannedFor,
         remind_at: taskForm.remindAt,
+        repeat_type: taskForm.repeatType,
+        repeat_interval: taskForm.repeatInterval,
+        repeat_until: taskForm.repeatUntil,
         priority: taskForm.priority,
         status: taskForm.status,
         notify_email: taskForm.notifyEmail,
@@ -1972,34 +2109,258 @@ async function deleteAdminProfile(item) {
   }
 }
 
-let recognition = null
 let beforeInstallPromptHandler = null
 let appInstalledHandler = null
 
 function openVoice(target) {
-  const API = window.SpeechRecognition || window.webkitSpeechRecognition
-  if (!API) {
-    ElMessage.warning('当前浏览器不支持语音识别')
+  if (!browserSpeechSupported.value && !mediaRecorderSupported.value) {
+    ElMessage.warning('当前浏览器不支持语音录入')
     return
   }
-  recognition = new API()
-  recognition.lang = 'zh-CN'
-  recognition.interimResults = false
-  recognition.onresult = (event) => {
-    let text = ''
-    for (let i = 0; i < event.results.length; i += 1) {
-      text += event.results[i][0].transcript
+  voiceTarget.value = target
+  voiceDialogVisible.value = true
+  resetVoiceDraft()
+  startVoiceCapture()
+}
+
+function repeatTypeLabel(type) {
+  return {
+    none: '不重复',
+    daily: '每天',
+    weekdays: '工作日',
+    weekly: '每周',
+    monthly: '每月'
+  }[type] || '不重复'
+}
+
+function formatTimeOnly(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+function weekdayLabelFromValue(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+  return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()]
+}
+
+function repeatSummary(task) {
+  if (!task?.remind_at) return ''
+  const repeatType = task.repeat_type || 'none'
+  if (repeatType === 'none') return ''
+  const interval = Number(task.repeat_interval || 1)
+  const timePart = formatTimeOnly(task.remind_at)
+  const untilPart = task.repeat_until ? `，截止 ${formatDateTime(task.repeat_until)}` : ''
+  switch (repeatType) {
+    case 'daily':
+      return interval > 1 ? `每 ${interval} 天 ${timePart}${untilPart}` : `每天 ${timePart}${untilPart}`
+    case 'weekdays':
+      return `工作日 ${timePart}${untilPart}`
+    case 'weekly':
+      return interval > 1
+        ? `每 ${interval} 周${weekdayLabelFromValue(task.remind_at)} ${timePart}${untilPart}`
+        : `${weekdayLabelFromValue(task.remind_at)} ${timePart}${untilPart}`
+    case 'monthly':
+      return interval > 1
+        ? `每 ${interval} 月 ${new Date(task.remind_at).getDate()} 日 ${timePart}${untilPart}`
+        : `每月 ${new Date(task.remind_at).getDate()} 日 ${timePart}${untilPart}`
+    default:
+      return ''
+  }
+}
+
+function formatVoiceDuration(totalSeconds) {
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
+  const seconds = String(totalSeconds % 60).padStart(2, '0')
+  return `${minutes}:${seconds}`
+}
+
+async function startVoiceCapture() {
+  stopVoiceCapture({ keepDraft: true })
+  voiceCaptureToken += 1
+  const captureToken = voiceCaptureToken
+  voiceError.value = ''
+  voiceTranscript.value = ''
+  voiceInterimTranscript.value = ''
+  voiceDuration.value = 0
+  voiceState.value = 'idle'
+  voiceChunks = []
+  let startedRecorder = false
+  let startedRecognition = false
+
+  if (voiceAudioURL.value) {
+    URL.revokeObjectURL(voiceAudioURL.value)
+    voiceAudioURL.value = ''
+  }
+
+  if (mediaRecorderSupported.value) {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const preferredTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
+      const mimeType = preferredTypes.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || ''
+      mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream)
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          voiceChunks.push(event.data)
+        }
+      }
+      mediaRecorder.onstop = () => {
+        if (captureToken !== voiceCaptureToken) {
+          return
+        }
+        if (voiceChunks.length > 0) {
+          const blob = new Blob(voiceChunks, { type: mediaRecorder?.mimeType || 'audio/webm' })
+          voiceAudioURL.value = URL.createObjectURL(blob)
+        }
+      }
+      mediaRecorder.start()
+      startedRecorder = true
+    } catch (error) {
+      voiceError.value = error?.message || '麦克风权限获取失败'
     }
-    if (target === 'quick') {
-      quickForm.title = text
+  }
+
+  if (browserSpeechSupported.value) {
+    try {
+      const API = window.SpeechRecognition || window.webkitSpeechRecognition
+      recognition = new API()
+      recognition.lang = 'zh-CN'
+      recognition.continuous = true
+      recognition.interimResults = true
+      recognition.onresult = (event) => {
+        let finalText = ''
+        let interimText = ''
+        for (let i = 0; i < event.results.length; i += 1) {
+          const text = event.results[i][0]?.transcript || ''
+          if (event.results[i].isFinal) {
+            finalText += text
+          } else {
+            interimText += text
+          }
+        }
+        if (finalText) {
+          voiceTranscript.value = [voiceTranscript.value, finalText].filter(Boolean).join('')
+        }
+        voiceInterimTranscript.value = interimText
+      }
+      recognition.onerror = (event) => {
+        if (event?.error !== 'no-speech' && event?.error !== 'aborted') {
+          voiceError.value = `转写失败: ${event?.error || '未知错误'}`
+        }
+      }
+      recognition.onend = () => {
+        recognition = null
+        if (voiceState.value === 'recording' && (!mediaRecorder || mediaRecorder.state === 'inactive')) {
+          voiceState.value = voiceTranscript.value.trim() ? 'ready' : 'idle'
+        }
+      }
+      recognition.start()
+      startedRecognition = true
+    } catch (error) {
+      voiceError.value = voiceError.value || error?.message || '启动语音转写失败'
+    }
+  }
+
+  if (!startedRecorder && !startedRecognition) {
+    voiceState.value = voiceTranscript.value.trim() ? 'ready' : 'idle'
+    if (!voiceError.value) {
+      voiceError.value = '当前浏览器未成功启动语音录入，请检查麦克风权限。'
+    }
+    return
+  }
+
+  voiceState.value = 'recording'
+  if (voiceTimer) {
+    clearInterval(voiceTimer)
+  }
+  voiceTimer = setInterval(() => {
+    voiceDuration.value += 1
+  }, 1000)
+}
+
+function stopMediaStream() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop())
+    mediaStream = null
+  }
+}
+
+function stopVoiceCapture(options = {}) {
+  const { keepDraft = false } = options
+  if (recognition) {
+    try {
+      recognition.stop()
+    } catch {
+      // ignore
+    }
+    recognition = null
+  }
+  if (mediaRecorder) {
+    if (mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop()
+    }
+    mediaRecorder = null
+  }
+  if (voiceTimer) {
+    clearInterval(voiceTimer)
+    voiceTimer = null
+  }
+  stopMediaStream()
+  voiceInterimTranscript.value = ''
+  voiceState.value = keepDraft && (voiceTranscript.value.trim() || voiceAudioURL.value) ? 'ready' : 'idle'
+}
+
+function resetVoiceDraft() {
+  voiceCaptureToken += 1
+  stopVoiceCapture({ keepDraft: false })
+  voiceTranscript.value = ''
+  voiceInterimTranscript.value = ''
+  voiceError.value = ''
+  voiceDuration.value = 0
+  voiceChunks = []
+  if (voiceAudioURL.value) {
+    URL.revokeObjectURL(voiceAudioURL.value)
+    voiceAudioURL.value = ''
+  }
+}
+
+function closeVoiceDialog() {
+  resetVoiceDraft()
+  voiceDialogVisible.value = false
+}
+
+function applyVoiceDraft() {
+  const finalText = [voiceTranscript.value, voiceInterimTranscript.value].filter(Boolean).join('').trim()
+  if (!finalText) {
+    ElMessage.warning('还没有可用的转写内容')
+    return
+  }
+  if (voiceTarget.value === 'quick') {
+    if (!quickForm.title.trim()) {
+      const segments = finalText.split(/[。！!？?\n]/).map(item => item.trim()).filter(Boolean)
+      quickForm.title = segments[0] || finalText.slice(0, 40)
+      if (!quickForm.detail.trim()) {
+        quickForm.detail = segments.length > 1 ? segments.slice(1).join('\n') : finalText
+      }
     } else {
-      aiText.value = [aiText.value, text].filter(Boolean).join('\n')
+      quickForm.detail = [quickForm.detail, finalText].filter(Boolean).join('\n')
     }
+  } else {
+    aiText.value = [aiText.value, finalText].filter(Boolean).join('\n')
   }
-  recognition.onerror = () => {
-    ElMessage.warning('语音识别失败，请重试')
-  }
-  recognition.start()
+  voiceDialogVisible.value = false
+  resetVoiceDraft()
+  ElMessage.success('语音内容已写入')
 }
 
 function priorityLabel(priority) {
@@ -2092,6 +2453,48 @@ watch(
 )
 
 watch(
+  () => quickForm.remindAt,
+  (value) => {
+    if (!value) {
+      quickForm.repeatType = 'none'
+      quickForm.repeatInterval = 1
+      quickForm.repeatUntil = ''
+    }
+  }
+)
+
+watch(
+  () => quickForm.repeatType,
+  (value) => {
+    if (value === 'none') {
+      quickForm.repeatInterval = 1
+      quickForm.repeatUntil = ''
+    }
+  }
+)
+
+watch(
+  () => taskForm.remindAt,
+  (value) => {
+    if (!value) {
+      taskForm.repeatType = 'none'
+      taskForm.repeatInterval = 1
+      taskForm.repeatUntil = ''
+    }
+  }
+)
+
+watch(
+  () => taskForm.repeatType,
+  (value) => {
+    if (value === 'none') {
+      taskForm.repeatInterval = 1
+      taskForm.repeatUntil = ''
+    }
+  }
+)
+
+watch(
   () => profile.notify_email,
   (value, oldValue) => {
     if (!quickForm.notifyEmail || quickForm.notifyEmail === oldValue) {
@@ -2132,6 +2535,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  resetVoiceDraft()
   window.removeEventListener('resize', syncViewportFlags)
   if (beforeInstallPromptHandler) {
     window.removeEventListener('beforeinstallprompt', beforeInstallPromptHandler)
@@ -2774,6 +3178,42 @@ onBeforeUnmount(() => {
   margin-top: 8px;
 }
 
+.voice-panel-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+}
+
+.voice-panel-head,
+.voice-panel-actions,
+.voice-capability {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.voice-capability {
+  color: #5f6f84;
+  font-size: 12px;
+}
+
+.voice-error {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(220, 38, 38, 0.08);
+  color: #b42318;
+  font-size: 13px;
+}
+
+.voice-audio {
+  width: 100%;
+}
+
 @keyframes floatOrb {
   0%,
   100% {
@@ -2906,7 +3346,10 @@ onBeforeUnmount(() => {
 
   .panel-heading-actions,
   .topbar-actions,
-  .install-actions {
+  .install-actions,
+  .voice-panel-head,
+  .voice-panel-actions,
+  .voice-capability {
     display: grid;
     grid-template-columns: 1fr;
     justify-content: stretch;
