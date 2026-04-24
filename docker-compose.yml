@@ -28,14 +28,17 @@ services:
       - REDIS_ADDR=redis:6379
       - TZ=Asia/Shanghai
       - OCR_SERVICE_URL=http://ocr-service:8000
-      - no_proxy=ocr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
-      - NO_PROXY=ocr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
+      - ASR_SERVICE_URL=http://asr-service:9000
+      - no_proxy=ocr-service,asr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
+      - NO_PROXY=ocr-service,asr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
       - AUTODEV_PATH=/app/data/clawtest/autodev/autodev
       - AUTODEV_DATA_DIR=/app/data/autodev
     depends_on:
       redis:
         condition: service_healthy
       ocr-service:
+        condition: service_healthy
+      asr-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/api/health"]
@@ -86,6 +89,38 @@ services:
       retries: 20
       start_period: 180s
 
+  asr-service:
+    build:
+      context: ./asr-service
+      args:
+        - HTTP_PROXY=
+        - HTTPS_PROXY=
+        - http_proxy=
+        - https_proxy=
+        - NO_PROXY=
+        - no_proxy=
+    container_name: asr-service
+    restart: unless-stopped
+    volumes:
+      - asr-model-cache:/root/.cache/huggingface
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - NO_PROXY=
+      - no_proxy=
+      - ASR_MODEL=small
+      - ASR_DEVICE=cpu
+      - ASR_COMPUTE_TYPE=int8
+      - ASR_LANGUAGE=zh
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 240s
+
 volumes:
   devtools-data:
     driver: local
@@ -98,4 +133,6 @@ volumes:
   devtools-redis-data:
     driver: local
   ocr-model-cache:
+    driver: local
+  asr-model-cache:
     driver: local

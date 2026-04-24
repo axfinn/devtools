@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ const (
 )
 
 var plannerMiniMaxAPIURL = "https://api.minimax.chat/v1/text/chatcompletion_v2"
+var plannerASRServiceURL = "http://asr-service:9000"
 
 type PlannerHandler struct {
 	db                *models.DB
@@ -38,6 +40,8 @@ type PlannerHandler struct {
 	smtpPort          int
 	smtpUser          string
 	smtpPass          string
+	asrServiceURL     string
+	serviceHTTPClient *http.Client
 }
 
 type plannerProfileResponse struct {
@@ -239,6 +243,10 @@ func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
 	if plannerCfg.SMTPPort == 0 {
 		plannerCfg.SMTPPort = 465
 	}
+	asrServiceURL := strings.TrimSpace(os.Getenv("ASR_SERVICE_URL"))
+	if asrServiceURL == "" {
+		asrServiceURL = plannerASRServiceURL
+	}
 	return &PlannerHandler{
 		db:                db,
 		cfg:               cfg,
@@ -249,6 +257,8 @@ func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
 		smtpPort:          plannerCfg.SMTPPort,
 		smtpUser:          plannerCfg.SMTPUser,
 		smtpPass:          plannerCfg.SMTPPass,
+		asrServiceURL:     asrServiceURL,
+		serviceHTTPClient: &http.Client{Timeout: 5 * time.Minute, Transport: &http.Transport{Proxy: nil}},
 	}
 }
 

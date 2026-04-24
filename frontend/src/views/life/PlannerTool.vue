@@ -1116,18 +1116,28 @@
           :rows="8"
           placeholder="会议内容记录…&#10;支持录音实时转写"
         />
+        <div v-if="meetingAudioProcessing || meetingAudioError || (!browserSpeechSupported && mediaRecorderSupported)" class="meeting-summary-section">
+          <div class="panel-heading">
+            <h4>语音转写</h4>
+          </div>
+          <p v-if="meetingAudioProcessing" class="meeting-summary-text">录音已上传，正在调用内部转写服务处理，请稍等后再保存。</p>
+          <p v-else-if="meetingAudioError" class="meeting-summary-text">{{ meetingAudioError }}</p>
+          <p v-else class="meeting-summary-text">当前浏览器不支持内置语音识别，停止录音后会自动调用服务端开源 ASR 转文字。</p>
+        </div>
         <div v-if="meetingLocalAudioUrl || meetingForm.recordingUrl" class="voice-audio-wrapper">
           <audio :src="meetingLocalAudioUrl || meetingForm.recordingUrl" controls class="voice-audio" />
           <el-button size="small" plain @click="meetingForm.recordingUrl = ''; meetingLocalAudioUrl = ''">移除录音</el-button>
         </div>
-        <div v-if="meetingForm.summary" class="meeting-summary-section">
+        <div v-if="meetingForm.summary || meetingCanSummarize || meetingForm.content" class="meeting-summary-section">
           <div class="panel-heading">
             <h4>AI 摘要</h4>
-            <el-button v-if="meetingForm.id && meetingForm.content" size="small" plain :loading="summarizingId === meetingForm.id" @click="summarizeMeeting(meetingForm)">
-              <el-icon><MagicStick /></el-icon>重新总结
+            <el-button v-if="meetingCanSummarize" size="small" plain :loading="summarizingId === meetingForm.id" @click="summarizeMeeting(meetingForm)">
+              <el-icon><MagicStick /></el-icon>{{ meetingForm.summary ? '重新总结' : '生成总结' }}
             </el-button>
           </div>
-          <p class="meeting-summary-text">{{ meetingForm.summary }}</p>
+          <p v-if="meetingForm.summary" class="meeting-summary-text">{{ meetingForm.summary }}</p>
+          <p v-else-if="meetingForm.id && meetingForm.content" class="meeting-summary-text">纪要内容已就绪，可以直接生成总结和待办。</p>
+          <p v-else-if="meetingForm.content" class="meeting-summary-text">先保存纪要，再生成总结和待办。</p>
         </div>
         <div v-if="meetingForm.actionItems && meetingForm.actionItems !== '[]'" class="meeting-summary-section">
           <div class="panel-heading"><h4>待办事项</h4></div>
@@ -1145,7 +1155,7 @@
             <el-button plain @click="startMeetingVoice">
               <el-icon><Microphone /></el-icon>{{ meetingVoiceState === 'recording' ? '停止录音' : '录音' }}
             </el-button>
-            <el-button type="primary" :loading="savingMeeting" @click="saveMeeting">保存</el-button>
+            <el-button type="primary" :loading="savingMeeting || meetingAudioProcessing" @click="saveMeeting">保存</el-button>
           </div>
         </div>
       </template>
@@ -1259,6 +1269,8 @@ const savingMeeting = ref(false)
 const summarizingId = ref('')
 const meetingVoiceState = ref('idle')
 const meetingLocalAudioUrl = ref('')
+const meetingAudioProcessing = ref(false)
+const meetingAudioError = ref('')
 const meetingForm = reactive({
   id: '',
   title: '',
@@ -1273,6 +1285,9 @@ const meetingForm = reactive({
   recordingUrl: '',
   status: 'draft'
 })
+const meetingCanSummarize = computed(() => Boolean(meetingForm.id && meetingForm.content.trim()))
+
+let meetingAudioUploadPromise = null
 
 function stopMeetingRecording() {
   if (meetingRecognition) {
@@ -1291,6 +1306,9 @@ function stopMeetingRecording() {
 
 function resetMeetingForm() {
   stopMeetingRecording()
+  if (meetingLocalAudioUrl.value) {
+    URL.revokeObjectURL(meetingLocalAudioUrl.value)
+  }
   meetingForm.id = ''
   meetingForm.title = ''
   meetingForm.content = ''
@@ -1305,6 +1323,9 @@ function resetMeetingForm() {
   meetingForm.status = 'draft'
   meetingVoiceState.value = 'idle'
   meetingLocalAudioUrl.value = ''
+  meetingAudioProcessing.value = false
+  meetingAudioError.value = ''
+  meetingAudioUploadPromise = null
 }
 
 const parsedActionItems = computed(() => {
@@ -2115,6 +2136,9 @@ function openMeetingDialog() {
 }
 
 function openMeetingEdit(m) {
+  if (meetingLocalAudioUrl.value) {
+    URL.revokeObjectURL(meetingLocalAudioUrl.value)
+  }
   meetingForm.id = m.id
   meetingForm.title = m.title
   meetingForm.content = m.content || ''
@@ -2137,6 +2161,10 @@ function openMeetingEdit(m) {
   } catch {
     meetingForm.tagsText = ''
   }
+  meetingLocalAudioUrl.value = ''
+  meetingAudioError.value = ''
+  meetingAudioProcessing.value = false
+  meetingAudioUploadPromise = null
   meetingDialogVisible.value = true
 }
 
@@ -2144,6 +2172,14 @@ async function saveMeeting() {
   if (!meetingForm.title.trim()) {
     ElMessage.warning('\u8bf7\u586b\u5199\u4f1a\u8bae\u6807\u9898')
     return
+  }
+  if (meetingAudioUploadPromise) {
+    ElMessage.info('等待录音上传和转写完成…')
+    try {
+      await meetingAudioUploadPromise
+    } catch {
+      // 上传错误已经在录音流程里提示，这里继续允许手动保存文本纪要
+    }
   }
   savingMeeting.value = true
   const participants = meetingForm.participantsText
@@ -2168,22 +2204,32 @@ async function saveMeeting() {
     status: meetingForm.status || 'draft'
   }
   try {
+    let savedMeeting = null
     if (meetingForm.id) {
-      await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings/${meetingForm.id}`, {
+      const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings/${meetingForm.id}`, {
         method: 'PUT',
         body: JSON.stringify(payload)
       })
+      const data = await response.json()
+      savedMeeting = data.meeting || { id: meetingForm.id, content: meetingForm.content }
       ElMessage.success('\u4f1a\u8bae\u7eaa\u8981\u5df2\u66f4\u65b0')
     } else {
-      await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings`, {
+      const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings`, {
         method: 'POST',
         body: JSON.stringify(payload)
       })
+      const data = await response.json()
+      savedMeeting = data.meeting || null
       ElMessage.success('\u4f1a\u8bae\u7eaa\u8981\u5df2\u521b\u5efa')
-      resetMeetingForm()
     }
+    const shouldAutoSummarize = Boolean(savedMeeting?.id && savedMeeting?.content && !savedMeeting?.summary && !meetingForm.id)
     meetingDialogVisible.value = false
     await loadMeetings()
+    if (shouldAutoSummarize) {
+      const target = meetings.value.find(x => x.id === savedMeeting.id) || savedMeeting
+      await summarizeMeeting(target)
+    }
+    resetMeetingForm()
   } catch (error) {
     ElMessage.error(error.message)
   } finally {
@@ -2256,7 +2302,50 @@ let meetingVoiceChunks = []
 let meetingTranscriptText = ''
 const meetingInterimText = ref('')
 
-function startMeetingVoice() {
+function appendTranscriptToMeetingContent(text) {
+  const normalized = (text || '').trim()
+  if (!normalized) return
+  const exists = meetingForm.content.includes(normalized)
+  if (exists) return
+  const prefix = meetingForm.content ? meetingForm.content + '\n\n' : ''
+  meetingForm.content = prefix + normalized
+}
+
+async function uploadMeetingRecording(blob) {
+  const formData = new FormData()
+  formData.append('file', blob, `meeting_${Date.now()}.webm`)
+  meetingAudioProcessing.value = true
+  meetingAudioError.value = ''
+  try {
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/recordings`, {
+      method: 'POST',
+      body: formData
+    })
+    const data = await response.json()
+    if (data.recording_url) {
+      meetingForm.recordingUrl = data.recording_url
+    }
+    if (data.transcript) {
+      appendTranscriptToMeetingContent(data.transcript)
+      meetingTranscriptText = data.transcript
+      ElMessage.success('录音已转写为文字')
+    } else if (data.transcript_error) {
+      meetingAudioError.value = data.transcript_error
+      ElMessage.warning(data.transcript_error)
+    } else if (data.transcript_status === 'skipped') {
+      meetingAudioError.value = '录音已保存，但未启用语音转文字服务。'
+    }
+  } catch (error) {
+    meetingAudioError.value = error.message || '录音上传或转写失败'
+    ElMessage.error(meetingAudioError.value)
+    throw error
+  } finally {
+    meetingAudioProcessing.value = false
+    meetingAudioUploadPromise = null
+  }
+}
+
+async function startMeetingVoice() {
   if (meetingVoiceState.value === 'recording') {
     // --- STOP ---
     if (meetingRecognition) {
@@ -2273,10 +2362,7 @@ function startMeetingVoice() {
     meetingVoiceState.value = 'idle'
 
     // Append transcript to meeting content
-    if (meetingTranscriptText.trim()) {
-      const prefix = meetingForm.content ? meetingForm.content + '\n\n' : ''
-      meetingForm.content = prefix + meetingTranscriptText.trim()
-    }
+    appendTranscriptToMeetingContent(meetingTranscriptText)
 
     // Create local blob URL + upload to backend
     if (meetingVoiceChunks.length > 0) {
@@ -2286,17 +2372,8 @@ function startMeetingVoice() {
         URL.revokeObjectURL(meetingLocalAudioUrl.value)
       }
       meetingLocalAudioUrl.value = URL.createObjectURL(blob)
-      // Upload to backend async
-      const formData = new FormData()
-      formData.append('file', blob, `meeting_${Date.now()}.webm`)
-      plannerFetch(`${API_BASE}/profile/${profileId.value}/recordings`, {
-        method: 'POST',
-        body: formData
-      }).then(res => res.json()).then(data => {
-        if (data.recording_url) {
-          meetingForm.recordingUrl = data.recording_url
-        }
-      }).catch(() => {})
+      meetingAudioUploadPromise = uploadMeetingRecording(blob)
+      await meetingAudioUploadPromise.catch(() => {})
     }
 
     if (meetingTranscriptText.trim() || meetingInterimText.value.trim()) {
@@ -2315,6 +2392,7 @@ function startMeetingVoice() {
   meetingTranscriptText = ''
   meetingInterimText.value = ''
   meetingVoiceChunks = []
+  meetingAudioError.value = ''
 
   // Start MediaRecorder (audio backup)
   if (navigator.mediaDevices?.getUserMedia) {
