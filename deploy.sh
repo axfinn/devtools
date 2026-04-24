@@ -225,15 +225,52 @@ wait_for_health() {
     return 1
 }
 
+healthcheck_retry_budget() {
+    local container_id="$1"
+    local default_retries="${2:-40}"
+    local delay="${3:-3}"
+    local inspect_output start_period interval retries timeout_seconds
+
+    if [ -z "$container_id" ]; then
+        echo "$default_retries"
+        return 0
+    fi
+
+    inspect_output="$(docker inspect --format '{{if .Config.Healthcheck}}{{.Config.Healthcheck.StartPeriod}} {{.Config.Healthcheck.Interval}} {{.Config.Healthcheck.Retries}}{{else}}0 0 0{{end}}' "$container_id" 2>/dev/null || echo "0 0 0")"
+    read -r start_period interval retries <<< "$inspect_output"
+
+    if [ "${retries:-0}" -le 0 ] || [ "${interval:-0}" -le 0 ]; then
+        echo "$default_retries"
+        return 0
+    fi
+
+    timeout_seconds=$(( (start_period + interval * retries + 30000000000 + 999999999) / 1000000000 ))
+    if [ "$timeout_seconds" -le 0 ]; then
+        echo "$default_retries"
+        return 0
+    fi
+
+    timeout_seconds=$(( timeout_seconds / delay + 1 ))
+    if [ "$timeout_seconds" -lt "$default_retries" ]; then
+        echo "$default_retries"
+        return 0
+    fi
+
+    echo "$timeout_seconds"
+}
+
 wait_for_container_health() {
     local service="$1"
     local retries="${2:-40}"
     local delay="${3:-3}"
-    local i container_id status
+    local i container_id status resolved_retries="$retries"
 
-    for ((i=1; i<=retries; i++)); do
+    for ((i=1; i<=resolved_retries; i++)); do
         container_id="$(compose ps -q "$service" 2>/dev/null | head -n 1)"
         if [ -n "$container_id" ]; then
+            if [ "$resolved_retries" = "$retries" ]; then
+                resolved_retries="$(healthcheck_retry_budget "$container_id" "$retries" "$delay")"
+            fi
             status="$(docker inspect --format '{{if .State.Running}}{{if .State.Health}}{{.State.Health.Status}}{{else}}running{{end}}{{else}}stopped{{end}}' "$container_id" 2>/dev/null || echo "missing")"
             case "$status" in
                 healthy|running)
@@ -448,6 +485,7 @@ docker_deploy() {
     fi
 
     log_info "确保其他服务已就绪..."
+    local service_wait_retries="${SERVICE_WAIT_RETRIES:-600}"
     local -a other_services=()
     local service
     while IFS= read -r service; do
@@ -456,7 +494,7 @@ docker_deploy() {
     if [ "${#other_services[@]}" -gt 0 ]; then
         compose up -d "${other_services[@]}"
         for service in "${other_services[@]}"; do
-            if ! wait_for_container_health "$service" 90 3; then
+            if ! wait_for_container_health "$service" "$service_wait_retries" 3; then
                 log_error "$service 未就绪，停止替换 devtools"
                 compose ps || true
                 exit 1

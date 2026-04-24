@@ -1090,7 +1090,7 @@
       </div>
     </el-drawer>
 
-    <el-drawer v-model="meetingDialogVisible" title="会议纪要" :size="detailDrawerSize" @closed="resetMeetingForm">
+    <el-drawer v-model="meetingDialogVisible" title="会议纪要" :size="meetingDrawerSize" @closed="resetMeetingForm">
       <div class="drawer-stack">
         <div class="quick-row">
           <el-input v-model="meetingForm.title" placeholder="会议标题（必填）" maxlength="80" show-word-limit style="flex:1" />
@@ -1113,7 +1113,8 @@
         <el-input
           v-model="meetingForm.content"
           type="textarea"
-          :rows="8"
+          :rows="14"
+          class="meeting-content-input"
           placeholder="会议内容记录…&#10;支持录音实时转写"
         />
         <div v-if="meetingAudioProcessing || meetingAudioError || (!browserSpeechSupported && mediaRecorderSupported)" class="meeting-summary-section">
@@ -1126,7 +1127,7 @@
         </div>
         <div v-if="meetingLocalAudioUrl || meetingForm.recordingUrl" class="voice-audio-wrapper">
           <audio :src="meetingLocalAudioUrl || meetingForm.recordingUrl" controls class="voice-audio" />
-          <el-button size="small" plain @click="meetingForm.recordingUrl = ''; meetingLocalAudioUrl = ''">移除录音</el-button>
+          <el-button size="small" plain @click="clearMeetingRecording">移除录音</el-button>
         </div>
         <div v-if="meetingForm.summary || meetingCanSummarize || meetingForm.content" class="meeting-summary-section">
           <div class="panel-heading">
@@ -1289,6 +1290,96 @@ const meetingCanSummarize = computed(() => Boolean(meetingForm.id && meetingForm
 
 let meetingAudioUploadPromise = null
 
+function revokeMeetingLocalAudio() {
+  if (meetingLocalAudioUrl.value) {
+    URL.revokeObjectURL(meetingLocalAudioUrl.value)
+    meetingLocalAudioUrl.value = ''
+  }
+}
+
+function clearMeetingRecording() {
+  meetingForm.recordingUrl = ''
+  revokeMeetingLocalAudio()
+}
+
+function applyMeetingToForm(meeting, options = {}) {
+  const { preserveLocalAudio = false } = options
+  if (!preserveLocalAudio) {
+    revokeMeetingLocalAudio()
+  }
+  meetingForm.id = meeting?.id || ''
+  meetingForm.title = meeting?.title || ''
+  meetingForm.content = meeting?.content || ''
+  meetingForm.summary = meeting?.summary || ''
+  meetingForm.actionItems = meeting?.action_items || '[]'
+  meetingForm.meetingDate = meeting?.meeting_date || ''
+  meetingForm.meetingTime = meeting?.meeting_time || ''
+  meetingForm.durationMinutes = meeting?.duration_minutes || 0
+  meetingForm.recordingUrl = meeting?.recording_url || ''
+  meetingForm.status = meeting?.status || 'draft'
+  try {
+    const participants = JSON.parse(meeting?.participants || '[]')
+    meetingForm.participantsText = Array.isArray(participants) ? participants.join(', ') : ''
+  } catch {
+    meetingForm.participantsText = ''
+  }
+  try {
+    const tags = JSON.parse(meeting?.tags || '[]')
+    meetingForm.tagsText = Array.isArray(tags) ? tags.join(', ') : ''
+  } catch {
+    meetingForm.tagsText = ''
+  }
+  meetingAudioError.value = ''
+  meetingAudioProcessing.value = false
+  meetingAudioUploadPromise = null
+}
+
+function buildMeetingSnapshot(participants, tags) {
+  return {
+    id: meetingForm.id,
+    title: meetingForm.title,
+    content: meetingForm.content,
+    summary: meetingForm.summary,
+    action_items: meetingForm.actionItems,
+    participants: JSON.stringify(participants),
+    tags: JSON.stringify(tags),
+    meeting_date: meetingForm.meetingDate || new Date().toISOString().slice(0, 10),
+    meeting_time: meetingForm.meetingTime,
+    duration_minutes: meetingForm.durationMinutes,
+    recording_url: meetingForm.recordingUrl,
+    status: meetingForm.status || 'draft'
+  }
+}
+
+function mergeMeetingData(baseMeeting, incomingMeeting) {
+  return {
+    ...baseMeeting,
+    ...(incomingMeeting || {}),
+    id: incomingMeeting?.id || baseMeeting.id,
+    title: incomingMeeting?.title ?? baseMeeting.title,
+    content: incomingMeeting?.content ?? baseMeeting.content,
+    summary: incomingMeeting?.summary ?? baseMeeting.summary,
+    action_items: incomingMeeting?.action_items ?? baseMeeting.action_items,
+    participants: incomingMeeting?.participants ?? baseMeeting.participants,
+    tags: incomingMeeting?.tags ?? baseMeeting.tags,
+    meeting_date: incomingMeeting?.meeting_date ?? baseMeeting.meeting_date,
+    meeting_time: incomingMeeting?.meeting_time ?? baseMeeting.meeting_time,
+    duration_minutes: incomingMeeting?.duration_minutes ?? baseMeeting.duration_minutes,
+    recording_url: incomingMeeting?.recording_url ?? baseMeeting.recording_url,
+    status: incomingMeeting?.status ?? baseMeeting.status
+  }
+}
+
+function upsertMeeting(meeting) {
+  if (!meeting?.id) return
+  const index = meetings.value.findIndex(item => item.id === meeting.id)
+  if (index >= 0) {
+    meetings.value[index] = { ...meetings.value[index], ...meeting }
+    return
+  }
+  meetings.value = [meeting, ...meetings.value]
+}
+
 function stopMeetingRecording() {
   if (meetingRecognition) {
     try { meetingRecognition.stop() } catch {}
@@ -1306,9 +1397,7 @@ function stopMeetingRecording() {
 
 function resetMeetingForm() {
   stopMeetingRecording()
-  if (meetingLocalAudioUrl.value) {
-    URL.revokeObjectURL(meetingLocalAudioUrl.value)
-  }
+  revokeMeetingLocalAudio()
   meetingForm.id = ''
   meetingForm.title = ''
   meetingForm.content = ''
@@ -1322,7 +1411,6 @@ function resetMeetingForm() {
   meetingForm.recordingUrl = ''
   meetingForm.status = 'draft'
   meetingVoiceState.value = 'idle'
-  meetingLocalAudioUrl.value = ''
   meetingAudioProcessing.value = false
   meetingAudioError.value = ''
   meetingAudioUploadPromise = null
@@ -1514,6 +1602,7 @@ const currentViewMeta = computed(() => {
 
 const drawerSize = computed(() => (isMobile.value ? '100%' : '420px'))
 const detailDrawerSize = computed(() => (isMobile.value ? '100%' : '480px'))
+const meetingDrawerSize = computed(() => (isMobile.value ? '100%' : 'min(1080px, 92vw)'))
 const dialogWidth = computed(() => (isMobile.value ? '100%' : '720px'))
 const voiceDialogWidth = computed(() => (isMobile.value ? '100%' : '560px'))
 
@@ -2136,35 +2225,7 @@ function openMeetingDialog() {
 }
 
 function openMeetingEdit(m) {
-  if (meetingLocalAudioUrl.value) {
-    URL.revokeObjectURL(meetingLocalAudioUrl.value)
-  }
-  meetingForm.id = m.id
-  meetingForm.title = m.title
-  meetingForm.content = m.content || ''
-  meetingForm.summary = m.summary || ''
-  meetingForm.actionItems = m.action_items || '[]'
-  meetingForm.meetingDate = m.meeting_date || ''
-  meetingForm.meetingTime = m.meeting_time || ''
-  meetingForm.durationMinutes = m.duration_minutes || 0
-  meetingForm.recordingUrl = m.recording_url || ''
-  meetingForm.status = m.status || 'draft'
-  try {
-    const participants = JSON.parse(m.participants || '[]')
-    meetingForm.participantsText = Array.isArray(participants) ? participants.join(', ') : ''
-  } catch {
-    meetingForm.participantsText = ''
-  }
-  try {
-    const tags = JSON.parse(m.tags || '[]')
-    meetingForm.tagsText = Array.isArray(tags) ? tags.join(', ') : ''
-  } catch {
-    meetingForm.tagsText = ''
-  }
-  meetingLocalAudioUrl.value = ''
-  meetingAudioError.value = ''
-  meetingAudioProcessing.value = false
-  meetingAudioUploadPromise = null
+  applyMeetingToForm(m)
   meetingDialogVisible.value = true
 }
 
@@ -2190,19 +2251,8 @@ async function saveMeeting() {
     .split(/[,\uff0c\u3001]/)
     .map(s => s.trim())
     .filter(Boolean)
-  const payload = {
-    title: meetingForm.title,
-    content: meetingForm.content,
-    summary: meetingForm.summary,
-    action_items: meetingForm.actionItems,
-    participants: JSON.stringify(participants),
-    tags: JSON.stringify(tags),
-    meeting_date: meetingForm.meetingDate || new Date().toISOString().slice(0, 10),
-    meeting_time: meetingForm.meetingTime,
-    duration_minutes: meetingForm.durationMinutes,
-    recording_url: meetingForm.recordingUrl,
-    status: meetingForm.status || 'draft'
-  }
+  const payload = buildMeetingSnapshot(participants, tags)
+  const isCreating = !meetingForm.id
   try {
     let savedMeeting = null
     if (meetingForm.id) {
@@ -2211,25 +2261,30 @@ async function saveMeeting() {
         body: JSON.stringify(payload)
       })
       const data = await response.json()
-      savedMeeting = data.meeting || { id: meetingForm.id, content: meetingForm.content }
-      ElMessage.success('\u4f1a\u8bae\u7eaa\u8981\u5df2\u66f4\u65b0')
+      savedMeeting = data.meeting || {}
+      ElMessage.success('会议纪要已保存，可继续编辑')
     } else {
       const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/meetings`, {
         method: 'POST',
         body: JSON.stringify(payload)
       })
       const data = await response.json()
-      savedMeeting = data.meeting || null
-      ElMessage.success('\u4f1a\u8bae\u7eaa\u8981\u5df2\u521b\u5efa')
+      savedMeeting = data.meeting || {}
+      ElMessage.success('会议纪要已创建并保存，可继续补充内容')
     }
-    const shouldAutoSummarize = Boolean(savedMeeting?.id && savedMeeting?.content && !savedMeeting?.summary && !meetingForm.id)
-    meetingDialogVisible.value = false
+    const mergedMeeting = mergeMeetingData(payload, savedMeeting)
+    applyMeetingToForm(mergedMeeting, { preserveLocalAudio: true })
+    upsertMeeting(mergedMeeting)
+    const shouldAutoSummarize = Boolean(isCreating && mergedMeeting.id && mergedMeeting.content && !mergedMeeting.summary)
     await loadMeetings()
+    const refreshedMeeting = meetings.value.find(item => item.id === mergedMeeting.id)
+    if (refreshedMeeting) {
+      applyMeetingToForm(refreshedMeeting, { preserveLocalAudio: true })
+    }
     if (shouldAutoSummarize) {
-      const target = meetings.value.find(x => x.id === savedMeeting.id) || savedMeeting
+      const target = meetings.value.find(item => item.id === mergedMeeting.id) || mergedMeeting
       await summarizeMeeting(target)
     }
-    resetMeetingForm()
   } catch (error) {
     ElMessage.error(error.message)
   } finally {
@@ -2368,9 +2423,7 @@ async function startMeetingVoice() {
     if (meetingVoiceChunks.length > 0) {
       const blob = new Blob(meetingVoiceChunks, { type: meetingMediaRecorder?.mimeType || 'audio/webm' })
       // Local URL for instant playback
-      if (meetingLocalAudioUrl.value) {
-        URL.revokeObjectURL(meetingLocalAudioUrl.value)
-      }
+      revokeMeetingLocalAudio()
       meetingLocalAudioUrl.value = URL.createObjectURL(blob)
       meetingAudioUploadPromise = uploadMeetingRecording(blob)
       await meetingAudioUploadPromise.catch(() => {})
@@ -3112,9 +3165,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   resetVoiceDraft()
   stopMeetingRecording()
-  if (meetingLocalAudioUrl.value) {
-    URL.revokeObjectURL(meetingLocalAudioUrl.value)
-  }
+  revokeMeetingLocalAudio()
   window.removeEventListener('resize', syncViewportFlags)
   if (beforeInstallPromptHandler) {
     window.removeEventListener('beforeinstallprompt', beforeInstallPromptHandler)
@@ -3858,8 +3909,14 @@ onBeforeUnmount(() => {
 .voice-audio-wrapper {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+
+.meeting-content-input :deep(.el-textarea__inner) {
+  min-height: 320px;
+  line-height: 1.7;
 }
 
 .timeline-header-inner {
