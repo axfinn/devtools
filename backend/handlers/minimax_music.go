@@ -126,8 +126,8 @@ func (h *AIGatewayHandler) performMiniMaxMusicRequest(apiKey, url string, body [
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	for key, values := range incoming {
-		switch key {
-		case "Authorization", "Content-Type", "Content-Length", "Host":
+		switch http.CanonicalHeaderKey(key) {
+		case "Authorization", "Content-Type", "Content-Length", "Host", "Connection", "Proxy-Connection", "Upgrade", "Keep-Alive", "Te", "Trailer", "Transfer-Encoding":
 			continue
 		}
 		for _, value := range values {

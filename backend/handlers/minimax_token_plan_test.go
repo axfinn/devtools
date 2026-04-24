@@ -89,3 +89,12 @@ func TestExtractMediaURLsDeduplicatesRepeatedURLs(t *testing.T) {
 		t.Fatalf("extractMediaURLs() = %#v, want [%q]", got, url)
 	}
 }
+
+func TestMiniMaxImageAspectRatioFromSize(t *testing.T) {
+	if got, ok := minimaxImageAspectRatioFromSize("1024x1024"); !ok || got != "1:1" {
+		t.Fatalf("1024x1024 => (%q, %v), want (1:1, true)", got, ok)
+	}
+	if _, ok := minimaxImageAspectRatioFromSize("1344x768"); ok {
+		t.Fatal("1344x768 should not be accepted for image-01")
+	}
+}

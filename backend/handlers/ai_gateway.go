@@ -1617,6 +1617,34 @@ func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
 		return
 	}
 
+	if model == "image-01" {
+		if _, exists := bodyMap["style"]; exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "image-01 不支持 style 参数，请改用 response_format / subject_reference 等官方字段", "code": 400})
+			return
+		}
+		if _, exists := bodyMap["response_format"]; !exists {
+			bodyMap["response_format"] = "url"
+		}
+		if count, exists := bodyMap["count"]; exists {
+			if _, hasN := bodyMap["n"]; !hasN {
+				bodyMap["n"] = count
+			}
+			delete(bodyMap, "count")
+		}
+		if size, ok := bodyMap["size"].(string); ok && size != "" {
+			if _, hasAspect := bodyMap["aspect_ratio"]; !hasAspect {
+				aspectRatio, supported := minimaxImageAspectRatioFromSize(size)
+				if !supported {
+					c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("image-01 不支持尺寸 %s，请使用官方支持的尺寸", size), "code": 400})
+					return
+				}
+				bodyMap["aspect_ratio"] = aspectRatio
+			}
+			delete(bodyMap, "size")
+		}
+		bodyBytes, _ = json.Marshal(bodyMap)
+	}
+
 	// MiniMax-Hailuo-2.3-Fast 是图生视频模型，兼容前端已有的 image 字段。
 	if model == "MiniMax-Hailuo-2.3-Fast" {
 		if firstFrame := interfaceToString(bodyMap["first_frame_image"]); strings.TrimSpace(firstFrame) == "" {
@@ -1914,6 +1942,31 @@ func minimaxAsyncTimeout(model string) time.Duration {
 		return 8 * time.Minute
 	default:
 		return 5 * time.Minute
+	}
+}
+
+func minimaxImageAspectRatioFromSize(size string) (string, bool) {
+	switch strings.TrimSpace(size) {
+	case "1024x1024":
+		return "1:1", true
+	case "1280x720":
+		return "16:9", true
+	case "720x1280":
+		return "9:16", true
+	case "1152x864":
+		return "4:3", true
+	case "864x1152":
+		return "3:4", true
+	case "1248x832":
+		return "3:2", true
+	case "832x1248":
+		return "2:3", true
+	case "1344x576":
+		return "21:9", true
+	case "576x1344":
+		return "9:21", true
+	default:
+		return "", false
 	}
 }
 

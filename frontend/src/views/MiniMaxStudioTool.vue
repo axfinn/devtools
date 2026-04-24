@@ -184,14 +184,28 @@
 
               <div v-if="isImageModel" class="inline-fields">
                 <el-form-item label="尺寸">
-                  <el-select v-model="mediaForm.size" class="w-full">
-                    <el-option label="1024x1024" value="1024x1024" />
-                    <el-option label="1344x768" value="1344x768" />
-                    <el-option label="768x1344" value="768x1344" />
+                  <el-select v-model="mediaForm.aspectRatio" class="w-full">
+                    <el-option
+                      v-for="item in imageAspectRatioOptions"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
                   </el-select>
                 </el-form-item>
                 <el-form-item label="张数">
                   <el-input-number v-model="mediaForm.count" :min="1" :max="4" class="w-full" />
+                </el-form-item>
+              </div>
+
+              <div v-if="isImageModel" class="inline-fields">
+                <el-form-item label="参考图 URL">
+                  <el-input v-model="mediaForm.referenceImageUrl" placeholder="可选。填入后按图生图发送 subject_reference" />
+                </el-form-item>
+                <el-form-item label="参考类型">
+                  <el-select v-model="mediaForm.referenceType" class="w-full">
+                    <el-option label="人物主体" value="character" />
+                  </el-select>
                 </el-form-item>
               </div>
 
@@ -200,7 +214,7 @@
                   v-model="mediaParametersText"
                   type="textarea"
                   :rows="5"
-                  placeholder='{"style":"cinematic","camera_movement":"push_in"}'
+                  :placeholder="mediaJSONPlaceholder"
                 />
               </el-form-item>
 
@@ -291,12 +305,12 @@
               </div>
             </template>
             <el-form label-position="top">
-              <el-form-item label="模式">
-                <el-select v-model="lyricsForm.mode" class="w-full">
-                  <el-option label="write_full_song" value="write_full_song" />
-                  <el-option label="continue_song" value="continue_song" />
-                </el-select>
-              </el-form-item>
+                <el-form-item label="模式">
+                  <el-select v-model="lyricsForm.mode" class="w-full">
+                    <el-option label="write_full_song" value="write_full_song" />
+                    <el-option label="edit" value="edit" />
+                  </el-select>
+                </el-form-item>
               <el-form-item label="Prompt">
                 <el-input v-model="lyricsForm.prompt" type="textarea" :rows="5" placeholder="例如：写一首温柔的城市夜晚情歌。" />
               </el-form-item>
@@ -616,15 +630,17 @@ const mediaTasksLoading = ref(false)
 const mediaTasks = ref([])
 const currentMediaTask = ref(null)
 const mediaPollTimer = ref(null)
-const mediaParametersText = ref('{\n  "style": "cinematic"\n}')
+const mediaParametersText = ref('{}')
 const mediaForm = ref({
   model: 'MiniMax-Hailuo-2.3-Fast',
   prompt: '',
   imageUrl: '',
   duration: 6,
   resolution: '768P',
-  size: '1024x1024',
+  aspectRatio: '1:1',
   count: 1,
+  referenceImageUrl: '',
+  referenceType: 'character',
   coverFeatureId: '',
   lyrics: '',
   autoPoll: true
@@ -708,6 +724,18 @@ const capabilityCards = [
   { name: 'coding-plan-search', badge: 'Integrated', model: 'MiniMax MCP', desc: '在图像理解页内使用。', tab: 'coding', tone: 'coding' }
 ]
 
+const imageAspectRatioOptions = [
+  { value: '1:1', label: '1024x1024 · 1:1' },
+  { value: '16:9', label: '1280x720 · 16:9' },
+  { value: '9:16', label: '720x1280 · 9:16' },
+  { value: '4:3', label: '1152x864 · 4:3' },
+  { value: '3:4', label: '864x1152 · 3:4' },
+  { value: '3:2', label: '1248x832 · 3:2' },
+  { value: '2:3', label: '832x1248 · 2:3' },
+  { value: '21:9', label: '1344x576 · 21:9' },
+  { value: '9:21', label: '576x1344 · 9:21' }
+]
+
 const hasCredential = computed(() => Boolean(apiKey.value.trim() || superAdminPassword.value.trim()))
 const credentialHint = computed(() => apiKey.value.trim() ? '当前优先使用 API Key 调试。' : '当前使用超级管理员密码调试。')
 const selectedMediaModel = computed(() => mediaModels.find(item => item.value === mediaForm.value.model) || null)
@@ -722,6 +750,12 @@ const coverRawPretty = computed(() => pretty(coverRaw.value))
 const lyricsResultText = computed(() => extractLyricsText(lyricsRaw.value))
 const coverFeatureId = computed(() => extractCoverFeatureId(coverRaw.value))
 const mediaAssets = computed(() => extractTaskAssets(currentMediaTask.value))
+const mediaJSONPlaceholder = computed(() => {
+  if (isVideoModel.value) return '{\n  "camera_movement": "push_in"\n}'
+  if (isMusicModel.value) return '{\n  "style": "cinematic"\n}'
+  if (isImageModel.value) return '{\n  "response_format": "url"\n}'
+  return '{}'
+})
 const shareDraftPretty = computed(() => pretty(shareDraft.value.payload))
 const resultShareCurlSnippet = computed(() => {
   return `curl -X POST ${pageOrigin}/api/minimax/result-shares \\
@@ -773,6 +807,11 @@ watch(activeTab, (tab) => {
   } else if (currentMediaTask.value && mediaForm.value.autoPoll) {
     scheduleMediaPoll()
   }
+})
+
+watch(() => mediaForm.value.model, (model, previous) => {
+  if (!model || model === previous) return
+  mediaParametersText.value = defaultMediaParametersText(model)
 })
 
 onMounted(() => {
@@ -896,6 +935,7 @@ async function submitMedia() {
   }
   mediaSubmitting.value = true
   try {
+    const extraParams = parseOptionalJSON(mediaParametersText.value, '高级参数 JSON')
     const payload = {
       model: mediaForm.value.model,
       prompt: mediaForm.value.prompt.trim()
@@ -908,8 +948,18 @@ async function submitMedia() {
       }
     }
     if (isImageModel.value) {
-      payload.size = mediaForm.value.size
-      payload.count = mediaForm.value.count
+      payload.aspect_ratio = mediaForm.value.aspectRatio
+      payload.n = mediaForm.value.count
+      payload.response_format = 'url'
+      if ('style' in extraParams) {
+        throw new Error('image-01 不支持 style 参数，请删除后重试')
+      }
+      if (mediaForm.value.referenceImageUrl.trim()) {
+        payload.subject_reference = [{
+          type: mediaForm.value.referenceType,
+          image_file: mediaForm.value.referenceImageUrl.trim()
+        }]
+      }
     }
     if (isMusicModel.value) {
       payload.duration = mediaForm.value.duration
@@ -944,7 +994,7 @@ async function submitMedia() {
         payload.cover_feature_id = mediaForm.value.coverFeatureId.trim()
       }
     }
-    Object.assign(payload, parseOptionalJSON(mediaParametersText.value, '高级参数 JSON'))
+    Object.assign(payload, extraParams)
 
     const res = await fetch('/api/minimax/token-plan/v1/generations', {
       method: 'POST',
@@ -1057,15 +1107,22 @@ async function downloadCurrentMedia() {
 function resetMediaForm() {
   mediaForm.value.prompt = ''
   mediaForm.value.imageUrl = ''
+  mediaForm.value.referenceImageUrl = ''
+  mediaForm.value.referenceType = 'character'
   mediaForm.value.lyrics = ''
   mediaForm.value.coverFeatureId = ''
-  mediaParametersText.value = '{\n  "style": "cinematic"\n}'
+  mediaForm.value.aspectRatio = '1:1'
+  mediaParametersText.value = '{}'
 }
 
 async function generateLyrics() {
   if (!requireCredential()) return
   if (!lyricsForm.value.prompt.trim()) {
     ElMessage.error('请输入歌词生成 Prompt')
+    return
+  }
+  if (!['write_full_song', 'edit'].includes(lyricsForm.value.mode)) {
+    ElMessage.error('lyrics_generation 只支持 write_full_song 或 edit')
     return
   }
   lyricsLoading.value = true
@@ -1446,6 +1503,19 @@ function buildAssetFilename(url, taskId, index) {
 
 function pretty(value) {
   return value ? JSON.stringify(value, null, 2) : ''
+}
+
+function defaultMediaParametersText(model) {
+  if (String(model || '').startsWith('music-')) {
+    return '{\n  "style": "cinematic"\n}'
+  }
+  if (String(model || '').startsWith('MiniMax-Hailuo-') || String(model || '').startsWith('T2V-')) {
+    return '{\n  "camera_movement": "push_in"\n}'
+  }
+  if (String(model || '').startsWith('image-')) {
+    return '{\n  "response_format": "url"\n}'
+  }
+  return '{}'
 }
 
 function parseOptionalJSON(text, label) {
