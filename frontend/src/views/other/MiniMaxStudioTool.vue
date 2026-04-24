@@ -1365,7 +1365,11 @@ async function loadAdminShares() {
     })
     const data = await safeJson(res)
     if (!res.ok) throw new Error(data.error || '加载管理列表失败')
-    adminShares.value = data.items || []
+    const items = data.items || []
+    adminShares.value = items
+    if (items.length > 0 && !latestShare.value) {
+      latestShare.value = items[0]
+    }
   } catch (err) {
     ElMessage.error(err.message || '加载管理列表失败')
   } finally {
