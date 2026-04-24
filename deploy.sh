@@ -225,11 +225,50 @@ wait_for_health() {
     return 1
 }
 
+duration_to_seconds_ceiling() {
+    local input="$1"
+    local remaining="$1"
+    local total_ns=0
+    local value unit factor
+
+    if [ -z "$input" ] || [ "$input" = "0" ]; then
+        echo 0
+        return 0
+    fi
+
+    while [ -n "$remaining" ]; do
+        if [[ "$remaining" =~ ^([0-9]+)(ns|us|µs|ms|s|m|h)(.*)$ ]]; then
+            value="${BASH_REMATCH[1]}"
+            unit="${BASH_REMATCH[2]}"
+            remaining="${BASH_REMATCH[3]}"
+            case "$unit" in
+                ns) factor=1 ;;
+                us|µs) factor=1000 ;;
+                ms) factor=1000000 ;;
+                s) factor=1000000000 ;;
+                m) factor=60000000000 ;;
+                h) factor=3600000000000 ;;
+                *)
+                    echo 0
+                    return 1
+                    ;;
+            esac
+            total_ns=$(( total_ns + value * factor ))
+        else
+            echo 0
+            return 1
+        fi
+    done
+
+    echo $(( (total_ns + 999999999) / 1000000000 ))
+}
+
 healthcheck_retry_budget() {
     local container_id="$1"
     local default_retries="${2:-40}"
     local delay="${3:-3}"
     local inspect_output start_period interval retries timeout_seconds
+    local start_period_seconds interval_seconds grace_seconds
 
     if [ -z "$container_id" ]; then
         echo "$default_retries"
@@ -239,12 +278,16 @@ healthcheck_retry_budget() {
     inspect_output="$(docker inspect --format '{{if .Config.Healthcheck}}{{.Config.Healthcheck.StartPeriod}} {{.Config.Healthcheck.Interval}} {{.Config.Healthcheck.Retries}}{{else}}0 0 0{{end}}' "$container_id" 2>/dev/null || echo "0 0 0")"
     read -r start_period interval retries <<< "$inspect_output"
 
-    if [ "${retries:-0}" -le 0 ] || [ "${interval:-0}" -le 0 ]; then
+    start_period_seconds="$(duration_to_seconds_ceiling "$start_period" || echo 0)"
+    interval_seconds="$(duration_to_seconds_ceiling "$interval" || echo 0)"
+
+    if [ "${retries:-0}" -le 0 ] || [ "${interval_seconds:-0}" -le 0 ]; then
         echo "$default_retries"
         return 0
     fi
 
-    timeout_seconds=$(( (start_period + interval * retries + 30000000000 + 999999999) / 1000000000 ))
+    grace_seconds=30
+    timeout_seconds=$(( start_period_seconds + interval_seconds * retries + grace_seconds ))
     if [ "$timeout_seconds" -le 0 ]; then
         echo "$default_retries"
         return 0
@@ -573,6 +616,36 @@ docker_status() {
     fi
 }
 
+docker_warm_asr() {
+    local service_wait_retries="${SERVICE_WAIT_RETRIES:-600}"
+
+    log_info "预热 ASR Docker 服务..."
+    cd "$SCRIPT_DIR"
+
+    if [ "${NO_CACHE:-0}" = "1" ]; then
+        compose build --no-cache asr-service
+    else
+        compose build asr-service
+    fi
+
+    log_info "下载并缓存 ASR 模型到 Docker volume..."
+    compose run --rm --no-deps asr-service \
+        python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.getenv('ASR_MODEL', 'small'), device=os.getenv('ASR_DEVICE', 'cpu'), compute_type=os.getenv('ASR_COMPUTE_TYPE', 'int8'))"
+
+    log_info "启动 asr-service 并等待健康检查..."
+    compose up -d asr-service
+    if wait_for_container_health "asr-service" "$service_wait_retries" 3; then
+        log_success "asr-service 已就绪"
+        compose ps asr-service
+        return
+    fi
+
+    log_error "asr-service 预热失败"
+    compose ps asr-service || true
+    compose logs --tail=100 asr-service || true
+    exit 1
+}
+
 help() {
     echo "DevTools 快速部署脚本"
     echo ""
@@ -589,6 +662,7 @@ help() {
     echo ""
     echo "Docker 命令:"
     echo "  docker            Docker 先构建、再替换 devtools，失败时尝试回滚"
+    echo "  docker-warm-asr   预构建 asr-service、预下载模型并等待就绪"
     echo "  docker-stop       停止 Docker 容器"
     echo "  docker-restart    重启 Docker 容器"
     echo "  docker-logs       查看 Docker 日志"
@@ -607,6 +681,7 @@ help() {
     echo "  ./deploy.sh docker-logs         # 查看 Docker 日志"
     echo "  PORT=8081 ./deploy.sh start     # 指定端口启动本地服务"
     echo "  NO_CACHE=1 ./deploy.sh docker   # 无缓存重建 Docker 镜像"
+    echo "  ./deploy.sh docker-warm-asr     # 预热 ASR 镜像和模型缓存"
 }
 
 case "${1:-help}" in
@@ -633,6 +708,9 @@ case "${1:-help}" in
         ;;
     docker)
         docker_deploy
+        ;;
+    docker-warm-asr)
+        docker_warm_asr
         ;;
     docker-stop)
         docker_stop
