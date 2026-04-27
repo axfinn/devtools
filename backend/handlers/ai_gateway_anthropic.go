@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -34,6 +35,18 @@ func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProvide
 			APIURL: "https://api.deepseek.com/anthropic",
 			APIKey: h.cfg.DeepSeek.APIKey,
 			Models: []string{"deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"},
+		},
+		{
+			Name:   "PackyAPI",
+			APIURL: "https://www.packyapi.com",
+			APIKey: os.Getenv("ANTHROPIC_PACKYAPI_API_KEY"),
+			Models: []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-sonnet-4-5"},
+		},
+		{
+			Name:   "OpenClaudeCode",
+			APIURL: "https://www.openclaudecode.cn",
+			APIKey: os.Getenv("ANTHROPIC_OPENCLOUDECODE_API_KEY"),
+			Models: []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-sonnet-4-5"},
 		},
 	}
 }
@@ -120,6 +133,10 @@ func (h *AIGatewayHandler) fallbackAPIKeyForProvider(name string) string {
 		return h.cfg.DashScope.APIKey
 	case "deepseek":
 		return h.cfg.DeepSeek.APIKey
+	case "packyapi":
+		return os.Getenv("ANTHROPIC_PACKYAPI_API_KEY")
+	case "openclaudecode":
+		return os.Getenv("ANTHROPIC_OPENCLOUDECODE_API_KEY")
 	default:
 		return ""
 	}
@@ -278,6 +295,74 @@ func (h *AIGatewayHandler) proxyAnthropicWithRewrite(c *gin.Context, provider *c
 	h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusOK, true, "", string(bodyBytes), string(raw), c.ClientIP(), time.Since(start), usageSummary{})
 
 	c.Data(http.StatusOK, "application/json", raw)
+}
+
+// testAnthropicModel 直连 Anthropic 上游测试模型可用性（AdminTestModel 调用）
+func (h *AIGatewayHandler) testAnthropicModel(c *gin.Context, model, prompt string, provider *config.AnthropicProviderConfig) {
+	upstreamModel := resolveModelUpstream(provider, model)
+	body := map[string]interface{}{
+		"model":      upstreamModel,
+		"max_tokens": 256,
+		"messages":   []map[string]interface{}{{"role": "user", "content": prompt}},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	upstreamURL := strings.TrimRight(provider.APIURL, "/") + "/v1/messages"
+
+	start := time.Now()
+	raw, err := h.doRawRequest(upstreamURL, provider.APIKey, "POST", bodyBytes, nil)
+	latency := time.Since(start).Milliseconds()
+
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"model":          model,
+			"upstream_model": upstreamModel,
+			"provider":       provider.Name,
+			"status":         "error",
+			"error":          err.Error(),
+			"latency":        latency,
+		})
+		return
+	}
+
+	var respMap map[string]interface{}
+	if json.Unmarshal(raw, &respMap) == nil {
+		// 提取 content
+		if contentBlocks, ok := respMap["content"].([]interface{}); ok && len(contentBlocks) > 0 {
+			if block, ok := contentBlocks[0].(map[string]interface{}); ok {
+				if text, ok := block["text"].(string); ok {
+					usage, _ := respMap["usage"].(map[string]interface{})
+					var tokens int
+					if usage != nil {
+						if it, ok := usage["input_tokens"].(float64); ok {
+							tokens += int(it)
+						}
+						if ot, ok := usage["output_tokens"].(float64); ok {
+							tokens += int(ot)
+						}
+					}
+					c.JSON(http.StatusOK, gin.H{
+						"model":          model,
+						"upstream_model": upstreamModel,
+						"provider":       provider.Name,
+						"status":         "ok",
+						"reply":          text,
+						"latency":        latency,
+						"tokens":         tokens,
+					})
+					return
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"model":          model,
+		"upstream_model": upstreamModel,
+		"provider":       provider.Name,
+		"status":         "ok",
+		"reply":          string(raw),
+		"latency":        latency,
+	})
 }
 
 func isModelAllowed(model string, allowed []string) bool {

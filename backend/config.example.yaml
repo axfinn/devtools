@@ -478,6 +478,22 @@ ai_gateway:
           upstream_model: "deepseek-v4-pro"
         - model: "gateway-fast"
           upstream_model: "deepseek-v4-flash"
+    - name: "PackyAPI"
+      api_url: "https://www.packyapi.com"
+      api_key: ""   # 通过环境变量 ANTHROPIC_PACKYAPI_API_KEY 设置
+      models:
+        - "claude-opus-4-7"
+        - "claude-sonnet-4-6"
+        - "claude-haiku-4-5-20251001"
+        - "claude-sonnet-4-5"
+    - name: "OpenClaudeCode"
+      api_url: "https://www.openclaudecode.cn"
+      api_key: ""   # 通过环境变量 ANTHROPIC_OPENCLOUDECODE_API_KEY 设置
+      models:
+        - "claude-opus-4-7"
+        - "claude-sonnet-4-6"
+        - "claude-haiku-4-5-20251001"
+        - "claude-sonnet-4-5"
   # 计费配置。input/output 单位是每 1000 token 价格；request_cost 用于图片/视频按次计费
   pricing:
     - model: "deepseek-chat"

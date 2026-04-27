@@ -1123,7 +1123,7 @@ const loadCatalog = async () => {
   try {
     const res = await fetch(`${API_BASE}/catalog`)
     const data = await res.json()
-    catalogChat.value = (data.models || []).filter(m => m.type === 'chat')
+    catalogChat.value = (data.models || []).filter(m => m.type === 'chat' || m.type === 'anthropic')
   } finally {
     loadingCatalog.value = false
   }

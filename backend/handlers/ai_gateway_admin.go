@@ -73,9 +73,11 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 	// 动态构建 provider 文档列表
 	providerDocs := make([]gin.H, 0, len(providers))
 	providerNameMap := map[string]string{
-		"MiniMax":   "/api/minimax/anthropic",
-		"DashScope": "/api/dashscope/anthropic",
-		"DeepSeek":  "/api/deepseek/anthropic",
+		"MiniMax":       "/api/minimax/anthropic",
+		"DashScope":     "/api/dashscope/anthropic",
+		"DeepSeek":      "/api/deepseek/anthropic",
+		"PackyAPI":      "/api/anthropic",
+		"OpenClaudeCode": "/api/anthropic",
 	}
 	for _, p := range providers {
 		baseURL, ok := providerNameMap[p.Name]
@@ -320,6 +322,32 @@ func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
 			})
 		}
 	}
+	// Anthropic 协议模型（通用端点，支持别名）
+	anthropicProviders := h.allAnthropicProviders()
+	for _, p := range anthropicProviders {
+		// 别名模型
+		for _, a := range p.Aliases {
+			catalog = append(catalog, gin.H{
+				"model":          a.Model,
+				"provider":       strings.ToLower(p.Name),
+				"type":           "anthropic",
+				"endpoint":       "/api/anthropic/v1/messages",
+				"description":    p.Name + " Anthropic 别名模型 → " + a.UpstreamModel,
+				"upstream_model": a.UpstreamModel,
+			})
+		}
+		// 直通模型
+		for _, m := range p.Models {
+			catalog = append(catalog, gin.H{
+				"model":       m,
+				"provider":    strings.ToLower(p.Name),
+				"type":        "anthropic",
+				"endpoint":    "/api/anthropic/v1/messages",
+				"description": p.Name + " Anthropic 直通模型",
+			})
+		}
+	}
+
 	if h.hasProxyConfig() {
 		proxyModels := h.getProxyModels()
 		for _, model := range proxyModels {
@@ -508,6 +536,13 @@ func (h *AIGatewayHandler) AdminTestModel(c *gin.Context) {
 	if prompt == "" {
 		prompt = "你好，请用一句话介绍你自己（包含你的模型名）。"
 	}
+
+	// 检查是否为 Anthropic 模型，走 Anthropic 上游测试
+	if provider, found := h.resolveAnthropicProvider(req.Model); found {
+		h.testAnthropicModel(c, req.Model, prompt, provider)
+		return
+	}
+
 	chatReq := ChatCompletionRequest{
 		Model:    req.Model,
 		Messages: []map[string]interface{}{{"role": "user", "content": prompt}},
