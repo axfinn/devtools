@@ -2916,16 +2916,16 @@ func extractJSONPayload(content string) (string, bool) {
 	clean = strings.ReplaceAll(clean, "```", "")
 	clean = strings.TrimSpace(clean)
 
-	startObj := strings.Index(clean, "{")
-	endObj := strings.LastIndex(clean, "}")
-	if startObj != -1 && endObj != -1 && endObj > startObj {
-		return clean[startObj : endObj+1], true
-	}
-
 	startArr := strings.Index(clean, "[")
 	endArr := strings.LastIndex(clean, "]")
 	if startArr != -1 && endArr != -1 && endArr > startArr {
 		return clean[startArr : endArr+1], true
+	}
+
+	startObj := strings.Index(clean, "{")
+	endObj := strings.LastIndex(clean, "}")
+	if startObj != -1 && endObj != -1 && endObj > startObj {
+		return clean[startObj : endObj+1], true
 	}
 
 	return "", false
