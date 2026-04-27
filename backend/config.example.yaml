@@ -437,7 +437,9 @@ ai_gateway:
   # Anthropic 协议下游提供商路由配置
   # 通用端点 /api/anthropic/v1/messages 根据 model 自动路由到匹配的下游
   # 不配置时自动使用内置默认值（MiniMax / DashScope / DeepSeek）
-  # 管理员新增下游只需添加一个条目：name + api_url + api_key + models 列表
+  # models: 直通模型（用户写什么就转发什么）
+  # aliases: 别名模型（用户写别名，网关替换为 upstream_model 后转发）
+  #   → 用户侧写 "gateway" 这样的固定名，管理员在云端控制实际走哪个下游模型
   anthropic_providers:
     - name: "MiniMax"
       api_url: "https://api.minimaxi.com/anthropic"
@@ -469,6 +471,13 @@ ai_gateway:
         - "deepseek-reasoner"
         - "deepseek-v4-flash"
         - "deepseek-v4-pro"
+      # 别名示例：用户配置 ANTHROPIC_MODEL=gateway，云端控制实际走哪个模型
+      # 管理员改 upstream_model 即可切换下游，用户侧无需任何改动
+      aliases:
+        - model: "gateway"
+          upstream_model: "deepseek-v4-pro"
+        - model: "gateway-fast"
+          upstream_model: "deepseek-v4-flash"
   # 计费配置。input/output 单位是每 1000 token 价格；request_cost 用于图片/视频按次计费
   pricing:
     - model: "deepseek-chat"

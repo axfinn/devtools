@@ -358,10 +358,17 @@ type AIGatewayConfig struct {
 
 // AnthropicProviderConfig 定义 Anthropic 协议代理的下游提供商
 type AnthropicProviderConfig struct {
-	Name   string   `yaml:"name"`    // 提供商名称，用于日志
-	APIURL string   `yaml:"api_url"` // 上游 Anthropic 兼容 base URL
-	APIKey string   `yaml:"api_key"` // 上游 API Key
-	Models []string `yaml:"models"`  // 该提供商支持的模型列表
+	Name    string                `yaml:"name"`    // 提供商名称，用于日志
+	APIURL  string                `yaml:"api_url"` // 上游 Anthropic 兼容 base URL
+	APIKey  string                `yaml:"api_key"` // 上游 API Key
+	Models  []string              `yaml:"models"`  // 该提供商支持的模型列表（直通）
+	Aliases []AnthropicModelAlias `yaml:"aliases"` // 模型别名：用户写 alias 名，云端映射到真实模型
+}
+
+// AnthropicModelAlias 模型别名 — 用户侧用 model 名，网关转发时替换为 upstream_model
+type AnthropicModelAlias struct {
+	Model         string `yaml:"model"`          // 用户侧模型名（如 "gateway"）
+	UpstreamModel string `yaml:"upstream_model"` // 上游真实模型名（如 "deepseek-v4-pro"）
 }
 
 type AIGatewayProxyConfig struct {

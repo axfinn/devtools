@@ -614,9 +614,21 @@
         <el-tabs v-model="ccProviderTab">
           <el-tab-pane v-for="p in anthropicDocs.providers" :key="p.name" :label="p.name" :name="p.name">
             <div class="docs-card" style="background: #0f1724; padding: 16px; border-radius: 14px;">
+              <!-- 别名优先展示 -->
+              <div v-if="p.aliases && p.aliases.length > 0" style="margin-bottom: 10px;">
+                <p style="color: #fbbf24; margin: 0 0 6px 0; font-size: 13px;">
+                  <strong>推荐别名（管理员已配置，切换下游无需改配置）：</strong>
+                </p>
+                <div v-for="a in p.aliases" :key="a.model" style="margin-bottom: 2px;">
+                  <el-tag size="small" type="warning" effect="dark">{{ a.model }}</el-tag>
+                  <span style="color: #94a3b8; font-size: 12px; margin: 0 6px;">→</span>
+                  <el-tag size="small" effect="plain">{{ a.upstream_model }}</el-tag>
+                  <span style="color: #64748b; font-size: 11px; margin-left: 6px;">（真实下游）</span>
+                </div>
+              </div>
               <p style="color: #94a3b8; margin: 0 0 10px 0; font-size: 13px;">
                 以下配置使用 <strong style="color: #60a5fa;">{{ p.name }}</strong> 下游，
-                可选模型：<el-tag v-for="m in p.models" :key="m" size="small" effect="plain" style="margin-left: 4px;">{{ m }}</el-tag>
+                可选模型：<el-tag v-for="m in p.user_models || p.models" :key="m" size="small" effect="plain" style="margin-left: 4px;">{{ m }}</el-tag>
               </p>
               <el-tabs>
                 <el-tab-pane label=".claude/settings.json">
@@ -624,18 +636,21 @@
   "env": {
     "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
-    "ANTHROPIC_MODEL": "{{ p.models[0] || 'unknown' }}",
-    "ANTHROPIC_SMALL_FAST_MODEL": "{{ p.models[1] || p.models[0] || '' }}",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.models[0] || '' }}",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.models[0] || '' }}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ p.models[p.models.length - 1] || p.models[0] || '' }}"
+    "ANTHROPIC_MODEL": "{{ (p.aliases && p.aliases[0]) ? p.aliases[0].model : (p.models[0] || 'unknown') }}",
+    "ANTHROPIC_SMALL_FAST_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models[1] || p.models[0] || '') }}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ (p.aliases && p.aliases[0]) ? p.aliases[0].model : (p.models[0] || '') }}",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ (p.aliases && p.aliases[0]) ? p.aliases[0].model : (p.models[0] || '') }}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models[p.models.length - 1] || p.models[0] || '') }}"
   }
 }</pre>
                 </el-tab-pane>
                 <el-tab-pane label="环境变量">
                   <pre class="doc-code">export ANTHROPIC_BASE_URL="https://t.jaxiu.cn/api/anthropic"
-export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"
-export ANTHROPIC_MODEL="{{ p.models[0] || '' }}"
+export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"</pre>
+                  <pre class="doc-code" style="margin-top: 6px;" v-if="p.aliases && p.aliases.length > 0"># 推荐用别名（管理员可控切换下游）
+export ANTHROPIC_MODEL="{{ p.aliases[0].model }}"
+export ANTHROPIC_SMALL_FAST_MODEL="{{ p.aliases[1] ? p.aliases[1].model : p.aliases[0].model }}"</pre>
+                  <pre class="doc-code" style="margin-top: 6px;" v-else>export ANTHROPIC_MODEL="{{ p.models[0] || '' }}"
 export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
                 </el-tab-pane>
               </el-tabs>
@@ -664,25 +679,42 @@ export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
 
         <!-- 提供商及模型总览 -->
         <h4>可用下游及模型</h4>
+        <el-alert v-if="hasAnyAliases" type="warning" :closable="false" style="margin-bottom: 8px;">
+          <template #title>
+            别名模型（黄色标签）由管理员配置，用户写别名即可使用；管理员切换上游模型时用户无需改配置
+          </template>
+        </el-alert>
         <el-table :data="anthropicDocs.providers" size="small" stripe>
           <el-table-column prop="name" label="提供商" width="100">
             <template #default="{ row }">
               <el-tag size="small" :type="row.name === 'MiniMax' ? 'success' : row.name === 'DashScope' ? 'warning' : 'primary'">{{ row.name }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="上游地址" min-width="220">
+          <el-table-column label="模型名（用户侧写这个）" min-width="320">
+            <template #default="{ row }">
+              <!-- 别名模型 -->
+              <el-tag v-for="a in row.aliases" :key="'a-'+a.model" size="small" type="warning" effect="dark" style="margin-right: 4px; margin-bottom: 2px;">
+                {{ a.model }}
+              </el-tag>
+              <!-- 直通模型 -->
+              <el-tag v-for="m in row.models" :key="'m-'+m" size="small" effect="plain" style="margin-right: 4px; margin-bottom: 2px;">{{ m }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="上游实际模型" min-width="220" v-if="hasAnyAliases">
+            <template #default="{ row }">
+              <template v-if="row.aliases && row.aliases.length > 0">
+                <div v-for="a in row.aliases" :key="'up-'+a.model" style="margin-bottom: 2px;">
+                  <code style="font-size: 11px; color: #909399;">{{ a.model }}</code>
+                  <span style="color: #64748b; margin: 0 4px;">→</span>
+                  <code style="font-size: 11px; color: #60a5fa;">{{ a.upstream_model }}</code>
+                </div>
+              </template>
+              <span v-else style="color: #64748b; font-size: 12px;">直通（无别名）</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="上游地址" min-width="180">
             <template #default="{ row }">
               <code style="font-size: 11px; color: #909399;">{{ row.upstream }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column label="可用模型" min-width="320">
-            <template #default="{ row }">
-              <el-tag v-for="m in row.models" :key="m" size="small" effect="plain" style="margin-right: 4px; margin-bottom: 2px;">{{ m }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="旧端点（兼容保留）" width="180">
-            <template #default="{ row }">
-              <code style="font-size: 11px;">{{ row.base_url }}/v1/messages</code>
             </template>
           </el-table-column>
         </el-table>
@@ -1004,7 +1036,7 @@ tasks.forEach(task => {
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox, ElIcon } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
 import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
@@ -1026,6 +1058,11 @@ const docs = ref(null)
 const anthropicDocsVisible = ref(false)
 const anthropicDocs = ref(null)
 const ccProviderTab = ref('MiniMax')
+const hasAnyAliases = computed(() => {
+  const docs = anthropicDocs.value
+  if (!docs || !docs.providers) return false
+  return docs.providers.some(p => p.aliases && p.aliases.length > 0)
+})
 const minimaxDocsVisible = ref(false)
 const minimaxDocs = ref(null)
 const createdPlainKey = ref('')

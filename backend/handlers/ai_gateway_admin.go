@@ -83,12 +83,30 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 			baseURL = "/api/anthropic" // 通用端点
 		}
 		desc := p.Name + " Anthropic 兼容端点"
+		// 合并别名和直通模型为用户可见模型列表
+		userModels := make([]string, 0, len(p.Aliases)+len(p.Models))
+		for _, a := range p.Aliases {
+			userModels = append(userModels, a.Model)
+		}
+		userModels = append(userModels, p.Models...)
+
+		// 构建别名文档
+		aliasDocs := make([]gin.H, 0, len(p.Aliases))
+		for _, a := range p.Aliases {
+			aliasDocs = append(aliasDocs, gin.H{
+				"model":          a.Model,
+				"upstream_model": a.UpstreamModel,
+			})
+		}
+
 		providerDocs = append(providerDocs, gin.H{
 			"name":        p.Name,
 			"base_url":    baseURL,
 			"generic_url": "/api/anthropic",
 			"upstream":    p.APIURL,
 			"models":      p.Models,
+			"aliases":     aliasDocs,
+			"user_models": userModels,
 			"description": desc,
 		})
 	}
@@ -113,12 +131,29 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 	allModels := make([]string, 0)
 	providerModels := make([]gin.H, 0)
 	for _, p := range providers {
+		for _, a := range p.Aliases {
+			allModels = append(allModels, a.Model)
+		}
 		for _, m := range p.Models {
 			allModels = append(allModels, m)
 		}
+		userModels := make([]string, 0, len(p.Aliases)+len(p.Models))
+		for _, a := range p.Aliases {
+			userModels = append(userModels, a.Model)
+		}
+		userModels = append(userModels, p.Models...)
+		aliasList := make([]gin.H, 0, len(p.Aliases))
+		for _, a := range p.Aliases {
+			aliasList = append(aliasList, gin.H{
+				"model":          a.Model,
+				"upstream_model": a.UpstreamModel,
+			})
+		}
 		providerModels = append(providerModels, gin.H{
-			"name":   p.Name,
-			"models": p.Models,
+			"name":        p.Name,
+			"models":      p.Models,
+			"aliases":     aliasList,
+			"user_models": userModels,
 		})
 	}
 

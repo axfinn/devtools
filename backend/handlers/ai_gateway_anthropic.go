@@ -38,8 +38,34 @@ func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProvide
 	}
 }
 
+// resolveModelUpstream 解析模型名 → 上游真实模型名
+// 如果匹配到别名，返回 upstreamModel；否则返回原始 model（直通）
+func resolveModelUpstream(provider *config.AnthropicProviderConfig, model string) string {
+	for _, a := range provider.Aliases {
+		if a.Model == model {
+			return a.UpstreamModel
+		}
+	}
+	return model // 直通
+}
+
+// providerUserModels 返回提供商对用户暴露的所有模型名（含别名）
+func providerUserModels(provider *config.AnthropicProviderConfig) []string {
+	models := make([]string, 0, len(provider.Models)+len(provider.Aliases))
+	for _, a := range provider.Aliases {
+		models = append(models, a.Model)
+	}
+	models = append(models, provider.Models...)
+	return models
+}
+
+// providerAllModels 返回提供商所有模型（含别名），用于 allowedModels
+func (h *AIGatewayHandler) providerAllModels(provider *config.AnthropicProviderConfig) []string {
+	return providerUserModels(provider)
+}
+
 // resolveAnthropicProvider 根据模型名查找匹配的提供商
-// 优先从配置文件查找，未配置则使用内置默认列表
+// 先查别名，再查直通模型。优先从配置文件查找，未配置则使用内置默认列表
 func (h *AIGatewayHandler) resolveAnthropicProvider(model string) (*config.AnthropicProviderConfig, bool) {
 	providers := h.cfg.AIGateway.AnthropicProviders
 	if len(providers) == 0 {
@@ -48,6 +74,13 @@ func (h *AIGatewayHandler) resolveAnthropicProvider(model string) (*config.Anthr
 		providers = h.fillProviderAPIKeys(providers)
 	}
 	for i := range providers {
+		// 先检查别名
+		for _, a := range providers[i].Aliases {
+			if a.Model == model {
+				return &providers[i], true
+			}
+		}
+		// 再检查直通模型
 		for _, m := range providers[i].Models {
 			if m == model {
 				return &providers[i], true
@@ -116,6 +149,7 @@ func (h *AIGatewayHandler) ProxyDeepSeekAnthropic(c *gin.Context) {
 // ProxyAnthropicGeneric 通用 Anthropic 协议代理端点
 // POST /api/anthropic/v1/messages
 // 根据请求中的 model 字段自动路由到匹配的下游提供商
+// 支持模型别名：用户写别名，网关自动替换为上游真实模型名
 func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -141,11 +175,15 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 
 	provider, found := h.resolveAnthropicProvider(model)
 	if !found {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("未找到支持模型 %s 的提供商", model)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("未找到支持模型 %s 的提供商，请查看 /api/ai-gateway/docs/anthropic 获取可用模型列表", model)})
 		return
 	}
 
-	h.proxyAnthropic(c, provider, "/api/anthropic/v1/messages", provider.Models)
+	// 检查是否需要模型名重写（别名 → 上游真实模型名）
+	upstreamModel := resolveModelUpstream(provider, model)
+	allModels := h.providerAllModels(provider)
+
+	h.proxyAnthropicWithRewrite(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel)
 }
 
 // resolveProviderByNameOrModel 根据名称或模型查找提供商，优先匹配配置，否则回退内置
@@ -156,18 +194,22 @@ func (h *AIGatewayHandler) resolveProviderByNameOrModel(name, fallbackModel stri
 			return &providers[i]
 		}
 	}
-	// fallback to builtin list
 	for _, p := range h.builtinAnthropicProviders() {
 		if p.Name == name {
 			return &p
 		}
 	}
-	// last resort: try model lookup
 	p, _ := h.resolveAnthropicProvider(fallbackModel)
 	return p
 }
 
 func (h *AIGatewayHandler) proxyAnthropic(c *gin.Context, provider *config.AnthropicProviderConfig, logPath string, allowedModels []string) {
+	h.proxyAnthropicWithRewrite(c, provider, logPath, allowedModels, "", "")
+}
+
+// proxyAnthropicWithRewrite 转发 Anthropic 请求到上游
+// 如果 upstreamModel 与 userModel 不同，会重写请求体中的 model 字段
+func (h *AIGatewayHandler) proxyAnthropicWithRewrite(c *gin.Context, provider *config.AnthropicProviderConfig, logPath string, allowedModels []string, userModel, upstreamModel string) {
 	key, ok := h.authenticateAdminOrAPIKey(c, "chat")
 	if !ok {
 		return
@@ -208,6 +250,19 @@ func (h *AIGatewayHandler) proxyAnthropic(c *gin.Context, provider *config.Anthr
 	if provider == nil || provider.APIKey == "" {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置上游 API Key"})
 		return
+	}
+
+	// 模型名重写：用户侧别名 → 上游真实模型名
+	rewriteModel := upstreamModel
+	if rewriteModel == "" {
+		rewriteModel = resolveModelUpstream(provider, model)
+	}
+	if rewriteModel != "" && rewriteModel != model {
+		bodyMap["model"] = rewriteModel
+		rewrittenBytes, err := json.Marshal(bodyMap)
+		if err == nil {
+			bodyBytes = rewrittenBytes
+		}
 	}
 
 	start := time.Now()
