@@ -683,14 +683,14 @@
 
                   <!-- Content preview -->
                   <div v-if="m.content" class="meeting-card-body" @click="openMeetingEdit(m)">
-                    <p>{{ m.content.length > 120 ? m.content.slice(0, 120) + '...' : m.content }}</p>
+                    <p>{{ truncateText(m.content, 120) }}</p>
                   </div>
 
                   <!-- Summary + action items row -->
                   <div v-if="m.summary || (m.action_items && m.action_items !== '[]')" class="meeting-card-extras">
                     <div v-if="m.summary" class="meeting-card-summary" @click="openMeetingEdit(m)">
                       <el-tag size="small" type="primary">AI 摘要</el-tag>
-                      <span>{{ m.summary.length > 80 ? m.summary.slice(0, 80) + '...' : m.summary }}</span>
+                      <span>{{ truncateText(m.summary, 80) }}</span>
                     </div>
                     <div v-if="m.action_items && m.action_items !== '[]'" class="meeting-card-todos" @click="openMeetingEdit(m)">
                       <span class="meeting-card-todo-badge">{{ parseJsonArray(m.action_items).length }} 项待办</span>
@@ -1298,6 +1298,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Calendar, ChatDotRound, Clock, Document, EditPen, MagicStick, Microphone, Plus, Refresh, Setting, UserFilled } from '@element-plus/icons-vue'
 
 const API_BASE = '/api/planner'
+
+function truncateText(text, maxLen) {
+  if (!text) return ''
+  const chars = Array.from(text)
+  if (chars.length <= maxLen) return text
+  return chars.slice(0, maxLen).join('') + '...'
+}
 
 function createEmptyBoard() {
   return {
@@ -3310,7 +3317,7 @@ function applyVoiceDraft() {
     quickForm.rawText = finalText
     if (!quickForm.title.trim()) {
       const segments = finalText.split(/[。！!？?\n]/).map(item => item.trim()).filter(Boolean)
-      quickForm.title = segments[0] || finalText.slice(0, 40)
+      quickForm.title = segments[0] || truncateText(finalText, 40).replace(/\.\.\.$/, '')
       if (!quickForm.detail.trim()) {
         quickForm.detail = segments.length > 1 ? segments.slice(1).join('\n') : finalText
       }
