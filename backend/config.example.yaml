@@ -434,6 +434,41 @@ ai_gateway:
     api_url: ""
     # 代理服务 API Key
     api_key: ""
+  # Anthropic 协议下游提供商路由配置
+  # 通用端点 /api/anthropic/v1/messages 根据 model 自动路由到匹配的下游
+  # 不配置时自动使用内置默认值（MiniMax / DashScope / DeepSeek）
+  # 管理员新增下游只需添加一个条目：name + api_url + api_key + models 列表
+  anthropic_providers:
+    - name: "MiniMax"
+      api_url: "https://api.minimaxi.com/anthropic"
+      api_key: ""   # 留空时复用 minimax.api_key
+      models:
+        - "MiniMax-M2.5"
+        - "MiniMax-M2.5-highspeed"
+        - "MiniMax-M2.1"
+        - "MiniMax-M2.1-highspeed"
+        - "MiniMax-M2"
+        - "MiniMax-M2.7"
+    - name: "DashScope"
+      api_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+      api_key: ""   # 留空时复用 dashscope.api_key
+      models:
+        - "qwen3.5-plus"
+        - "qwen3-max-2026-01-23"
+        - "qwen3-coder-next"
+        - "qwen3-coder-plus"
+        - "glm-5"
+        - "glm-4.7"
+        - "kimi-k2.5"
+        - "MiniMax-M2.5"
+    - name: "DeepSeek"
+      api_url: "https://api.deepseek.com/anthropic"
+      api_key: ""   # 留空时复用 deepseek.api_key
+      models:
+        - "deepseek-chat"
+        - "deepseek-reasoner"
+        - "deepseek-v4-flash"
+        - "deepseek-v4-pro"
   # 计费配置。input/output 单位是每 1000 token 价格；request_cost 用于图片/视频按次计费
   pricing:
     - model: "deepseek-chat"

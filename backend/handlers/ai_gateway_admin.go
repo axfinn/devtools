@@ -67,119 +67,126 @@ func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 }
 
 // GetAnthropicDocs 返回 Anthropic 协议接入文档
-
 func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
+	providers := h.allAnthropicProviders()
+
+	// 动态构建 provider 文档列表
+	providerDocs := make([]gin.H, 0, len(providers))
+	providerNameMap := map[string]string{
+		"MiniMax":   "/api/minimax/anthropic",
+		"DashScope": "/api/dashscope/anthropic",
+		"DeepSeek":  "/api/deepseek/anthropic",
+	}
+	for _, p := range providers {
+		baseURL, ok := providerNameMap[p.Name]
+		if !ok {
+			baseURL = "/api/anthropic" // 通用端点
+		}
+		desc := p.Name + " Anthropic 兼容端点"
+		providerDocs = append(providerDocs, gin.H{
+			"name":        p.Name,
+			"base_url":    baseURL,
+			"generic_url": "/api/anthropic",
+			"upstream":    p.APIURL,
+			"models":      p.Models,
+			"description": desc,
+		})
+	}
+
+	// 构建路由文档
+	routes := []gin.H{
+		{"method": "GET", "path": "/api/ai-gateway/docs/anthropic", "description": "获取本文档"},
+		{"method": "POST", "path": "/api/anthropic/v1/messages", "description": "通用 Anthropic 端点（自动路由到匹配的下游）"},
+	}
+	// 保留历史端点信息
+	for _, p := range providers {
+		if baseURL, ok := providerNameMap[p.Name]; ok {
+			routes = append(routes, gin.H{
+				"method":      "POST",
+				"path":        baseURL + "/v1/messages",
+				"description": p.Name + " Anthropic 接口（兼容保留）",
+			})
+		}
+	}
+
+	// 收集所有模型用于 Claude Code 配置示例
+	allModels := make([]string, 0)
+	providerModels := make([]gin.H, 0)
+	for _, p := range providers {
+		for _, m := range p.Models {
+			allModels = append(allModels, m)
+		}
+		providerModels = append(providerModels, gin.H{
+			"name":   p.Name,
+			"models": p.Models,
+		})
+	}
+
+	firstModel := "MiniMax-M2.5"
+	if len(allModels) > 0 {
+		firstModel = allModels[0]
+	}
+	// 尽量选取不同提供商的模型作为 Claude Code 各种角色的示例
+	fastModel := firstModel
+	sonnetModel := firstModel
+	opusModel := firstModel
+	haikuModel := firstModel
+	if len(allModels) > 1 {
+		fastModel = allModels[1%len(allModels)]
+	}
+	if len(allModels) > 2 {
+		sonnetModel = allModels[2%len(allModels)]
+	}
+	if len(allModels) > 3 {
+		haikuModel = allModels[3%len(allModels)]
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"title":   "Anthropic 协议接入文档",
-		"summary": "通过 AI Gateway 使用 Anthropic 兼容协议调用 MiniMax、DashScope 或 DeepSeek 上游，支持标准 Anthropic SDK。",
+		"summary": "通过 AI Gateway 的通用 Anthropic 端点 `/api/anthropic/v1/messages`，根据 model 自动路由到下游提供商。可通过管理后台选择下游，config.yaml 配置固定下游连接信息。",
 		"auth": gin.H{
 			"api_key": "Authorization: Bearer dtk_ai_xxx",
 		},
-		"providers": []gin.H{
-			{
-				"name":        "MiniMax",
-				"base_url":    "/api/minimax/anthropic",
-				"upstream":    "https://api.minimaxi.com/anthropic",
-				"models":      []string{"MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2", "MiniMax-M2.7"},
-				"description": "MiniMax Anthropic 兼容端点",
-			},
-			{
-				"name":        "DashScope",
-				"base_url":    "/api/dashscope/anthropic",
-				"upstream":    "https://coding.dashscope.aliyuncs.com/apps/anthropic",
-				"models":      []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M2.5"},
-				"description": "DashScope Anthropic 兼容端点（阿里云百炼）",
-			},
-			{
-				"name":        "DeepSeek",
-				"base_url":    "/api/deepseek/anthropic",
-				"upstream":    "https://api.deepseek.com/anthropic",
-				"models":      []string{"deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"},
-				"description": "DeepSeek Anthropic 兼容端点",
-			},
-		},
-		"routes": []gin.H{
-			{"method": "GET", "path": "/api/ai-gateway/docs/anthropic", "description": "获取本文档"},
-			{"method": "POST", "path": "/api/minimax/anthropic/v1/messages", "description": "MiniMax Anthropic 接口"},
-			{"method": "POST", "path": "/api/dashscope/anthropic/v1/messages", "description": "DashScope Anthropic 接口"},
-			{"method": "POST", "path": "/api/deepseek/anthropic/v1/messages", "description": "DeepSeek Anthropic 接口"},
-		},
+		"providers": providerDocs,
+		"routes":    routes,
 		"examples": gin.H{
-			"minimax": gin.H{
-				"description": "使用 MiniMax 上游",
+			"generic": gin.H{
+				"description": "使用通用端点（推荐）",
 				"request": gin.H{
-					"model": "MiniMax-M2.5",
-					"messages": []gin.H{
-						{"role": "user", "content": "你好"},
-					},
+					"model":      firstModel,
+					"messages":   []gin.H{{"role": "user", "content": "你好"}},
 					"max_tokens": 1024,
 				},
 				"claude_code_config": gin.H{
 					"language":    "Claude Code",
-					"description": "Claude Code MiniMax 配置示例",
+					"description": "不同角色可用不同下游模型，BASE_URL 统一指向通用端点",
 					"code": `{
-  "skills": {
-    "paths": [
-      "~/.claude/skills"
-    ]
-  },
   "env": {
-    "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/minimax/anthropic",
+    "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
     "API_TIMEOUT_MS": "300000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
-    "ANTHROPIC_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
+    "ANTHROPIC_MODEL": "` + firstModel + `",
+    "ANTHROPIC_SMALL_FAST_MODEL": "` + fastModel + `",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "` + sonnetModel + `",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "` + opusModel + `",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "` + haikuModel + `"
   }
 }`,
-				},
-			},
-			"dashscope": gin.H{
-				"description": "使用 DashScope 上游",
-				"request": gin.H{
-					"model": "qwen3.5-plus",
-					"messages": []gin.H{
-						{"role": "user", "content": "你好"},
 					},
-					"max_tokens": 1024,
-				},
-				"claude_code_config": gin.H{
-					"language":    "Claude Code",
-					"description": "Claude Code DashScope 配置示例",
-					"code": `{
-  "skills": {
-    "paths": [
-      "~/.claude/skills"
-    ]
-  },
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/dashscope/anthropic",
-    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
-    "API_TIMEOUT_MS": "300000",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
-    "ANTHROPIC_MODEL": "qwen3.5-plus",
-    "ANTHROPIC_SMALL_FAST_MODEL": "qwen3-coder-next",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "qwen3.5-plus",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen3-max-2026-01-23",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "qwen3-coder-plus"
-  }
-}`,
-				},
+					"provider_models": providerModels,
 			},
 			"python_sdk": gin.H{
 				"language": "Python",
 				"code": `from anthropic import Anthropic
 
 client = Anthropic(
-    base_url="http://your-devtools:8080/api/minimax/anthropic/v1",
+    base_url="http://your-devtools:8080/api/anthropic/v1",
     api_key="dtk_ai_xxx"  # 你的 AI Gateway API Key
 )
 
 response = client.messages.create(
-    model="MiniMax-M2.5",
+    model="` + firstModel + `",
     max_tokens=1024,
     messages=[{"role": "user", "content": "Hello"}]
 )
@@ -190,13 +197,13 @@ print(response.content[0].text)`,
 				"code": `import { Anthropic } from '@anthropic-ai/sdk';
 
 const client = new Anthropic({
-  baseURL: 'http://your-devtools:8080/api/minimax/anthropic/v1',
+  baseURL: 'http://your-devtools:8080/api/anthropic/v1',
   apiKey: 'dtk_ai_xxx', // 你的 AI Gateway API Key
 });
 
 async function main() {
   const message = await client.messages.create({
-    model: 'MiniMax-M2.5',
+    model: '` + firstModel + `',
     max_tokens: 1024,
     messages: [{ role: 'user', content: 'Hello' }],
   });
@@ -206,12 +213,12 @@ main();`,
 			},
 			"curl": gin.H{
 				"language": "cURL",
-				"code": `curl -X POST http://your-devtools:8080/api/minimax/anthropic/v1/messages \\
+				"code": `curl -X POST http://your-devtools:8080/api/anthropic/v1/messages \\
   -H "Authorization: Bearer dtk_ai_xxx" \\
   -H "Content-Type: application/json" \\
   -H "Anthropic-Version: 2023-06-01" \\
   -d '{
-    "model": "MiniMax-M2.5",
+    "model": "` + firstModel + `",
     "messages": [{"role": "user", "content": "Hello"}],
     "max_tokens": 1024
   }'`,

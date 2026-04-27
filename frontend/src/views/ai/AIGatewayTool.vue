@@ -630,20 +630,13 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <h4 style="margin-top: 16px;">请求示例</h4>
+        <h4 style="margin-top: 16px;">请求示例（通用端点）</h4>
         <el-tabs>
-          <el-tab-pane label="MiniMax">
-            <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.minimax.request, null, 2) }}</pre>
+          <el-tab-pane label="请求体">
+            <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.generic.request, null, 2) }}</pre>
             <div style="margin-top: 12px;">
-              <el-divider>Claude Code 配置 (MiniMax)</el-divider>
-              <pre class="doc-code">{{ anthropicDocs.examples.minimax.claude_code_config.code }}</pre>
-            </div>
-          </el-tab-pane>
-          <el-tab-pane label="DashScope">
-            <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.dashscope.request, null, 2) }}</pre>
-            <div style="margin-top: 12px;">
-              <el-divider>Claude Code 配置 (DashScope)</el-divider>
-              <pre class="doc-code">{{ anthropicDocs.examples.dashscope.claude_code_config.code }}</pre>
+              <el-divider>Claude Code 配置</el-divider>
+              <pre class="doc-code">{{ anthropicDocs.examples.generic.claude_code_config.code }}</pre>
             </div>
           </el-tab-pane>
         </el-tabs>

@@ -351,8 +351,17 @@ type AIGatewayConfig struct {
 	DefaultRateLimitPerHour int                      `yaml:"default_rate_limit_per_hour"`
 	RequestRetentionDays    int                      `yaml:"request_retention_days"`
 	UpstreamTimeoutSeconds  int                      `yaml:"upstream_timeout_seconds"`
-	Proxy                   AIGatewayProxyConfig     `yaml:"proxy"`
-	Pricing                 []AIGatewayPricingConfig `yaml:"pricing"`
+	Proxy                   AIGatewayProxyConfig        `yaml:"proxy"`
+	AnthropicProviders      []AnthropicProviderConfig   `yaml:"anthropic_providers"`
+	Pricing                 []AIGatewayPricingConfig    `yaml:"pricing"`
+}
+
+// AnthropicProviderConfig 定义 Anthropic 协议代理的下游提供商
+type AnthropicProviderConfig struct {
+	Name   string   `yaml:"name"`    // 提供商名称，用于日志
+	APIURL string   `yaml:"api_url"` // 上游 Anthropic 兼容 base URL
+	APIKey string   `yaml:"api_key"` // 上游 API Key
+	Models []string `yaml:"models"`  // 该提供商支持的模型列表
 }
 
 type AIGatewayProxyConfig struct {
