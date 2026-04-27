@@ -143,6 +143,7 @@ func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.An
 			APIURL:       p.APIURL,
 			APIKey:       p.APIKey,
 			DefaultModel: p.DefaultModel,
+			IsDefault:    p.IsDefault,
 		}
 		json.Unmarshal([]byte(p.Models), &cfg.Models)
 		var aliases []config.AnthropicModelAlias

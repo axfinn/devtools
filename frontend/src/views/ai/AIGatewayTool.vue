@@ -699,6 +699,13 @@
             根据 <code>model</code> 自动路由。切换模型无需改 <code>ANTHROPIC_BASE_URL</code>。
           </template>
         </el-alert>
+        <el-alert v-if="anthropicDocs.default_route" type="warning" :closable="false" style="margin-top: 4px;">
+          <template #title>
+            默认线路：<strong>{{ anthropicDocs.default_route.provider }}</strong>，
+            默认模型：<code>{{ anthropicDocs.default_route.default_model }}</code>
+            — Claude Code 只需写这一个模型名，不匹配任何提供商时自动走默认线路
+          </template>
+        </el-alert>
 
         <!-- Claude Code 快速配置（最常用场景） -->
         <h4 style="margin-top: 16px;">Claude Code 本地配置</h4>
@@ -723,7 +730,11 @@
                 </div>
               </div>
               <p style="color: #94a3b8; margin: 0 0 10px 0; font-size: 13px;">
+                <el-tag v-if="p.is_default" size="small" type="danger" effect="dark" style="margin-right: 6px;">默认线路</el-tag>
                 以下配置使用 <strong style="color: #60a5fa;">{{ p.name }}</strong> 下游，
+                默认模型：<code style="color: #fbbf24;">{{ p.default_model || p.models[0] }}</code>
+              </p>
+              <p style="color: #64748b; margin: 0 0 8px 0; font-size: 12px;">
                 可选模型：<el-tag v-for="m in p.user_models || p.models" :key="m" size="small" effect="plain" style="margin-left: 4px;">{{ m }}</el-tag>
               </p>
               <el-tabs>
@@ -732,22 +743,22 @@
   "env": {
     "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
-    "ANTHROPIC_MODEL": "{{ (p.aliases && p.aliases[0]) ? p.aliases[0].model : (p.models[0] || 'unknown') }}",
+    "ANTHROPIC_MODEL": "{{ p.default_model || p.models[0] || '' }}",
     "ANTHROPIC_SMALL_FAST_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models[1] || p.models[0] || '') }}",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ (p.aliases && p.aliases[0]) ? p.aliases[0].model : (p.models[0] || '') }}",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ (p.aliases && p.aliases[0]) ? p.aliases[0].model : (p.models[0] || '') }}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.default_model || p.models[0] || '' }}",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.default_model || p.models[0] || '' }}",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models[p.models.length - 1] || p.models[0] || '') }}"
   }
 }</pre>
                 </el-tab-pane>
                 <el-tab-pane label="环境变量">
                   <pre class="doc-code">export ANTHROPIC_BASE_URL="https://t.jaxiu.cn/api/anthropic"
-export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"</pre>
+export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"
+# 默认模型：{{ p.default_model || p.models[0] || '' }}
+export ANTHROPIC_MODEL="{{ p.default_model || p.models[0] || '' }}"</pre>
                   <pre class="doc-code" style="margin-top: 6px;" v-if="p.aliases && p.aliases.length > 0"># 推荐用别名（管理员可控切换下游）
-export ANTHROPIC_MODEL="{{ p.aliases[0].model }}"
 export ANTHROPIC_SMALL_FAST_MODEL="{{ p.aliases[1] ? p.aliases[1].model : p.aliases[0].model }}"</pre>
-                  <pre class="doc-code" style="margin-top: 6px;" v-else>export ANTHROPIC_MODEL="{{ p.models[0] || '' }}"
-export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
+                  <pre class="doc-code" style="margin-top: 6px;" v-else>export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
                 </el-tab-pane>
               </el-tabs>
             </div>
@@ -756,13 +767,14 @@ export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
           <el-tab-pane label="跨下游混用" name="mixed">
             <div class="docs-card" style="background: #0f1724; padding: 16px; border-radius: 14px;">
               <p style="color: #94a3b8; margin: 0 0 10px 0; font-size: 13px;">
-                <strong style="color: #fbbf24;">高级：</strong>不同角色用不同下游模型——如主力用 DeepSeek，轻量任务走 MiniMax。
+                <strong style="color: #fbbf24;">高级：</strong>不同角色用不同下游模型。
+                主力模型推荐设为 <code style="color: #fbbf24;">{{ anthropicDocs.default_route?.default_model || 'deepseek-v4-pro' }}</code>（默认线路 {{ anthropicDocs.default_route?.provider || 'DeepSeek' }}）。
               </p>
               <pre class="doc-json">{
   "env": {
     "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
-    "ANTHROPIC_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_MODEL": "{{ anthropicDocs.default_route?.default_model || 'deepseek-v4-pro' }}",
     "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.5-highspeed",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-reasoner",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen3-max-2026-01-23",
@@ -781,9 +793,15 @@ export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
           </template>
         </el-alert>
         <el-table :data="anthropicDocs.providers" size="small" stripe>
-          <el-table-column prop="name" label="提供商" width="100">
+          <el-table-column prop="name" label="提供商" width="130">
             <template #default="{ row }">
               <el-tag size="small" :type="row.name === 'MiniMax' ? 'success' : row.name === 'DashScope' ? 'warning' : 'primary'">{{ row.name }}</el-tag>
+              <el-tag v-if="row.is_default" size="small" type="danger" effect="dark" style="margin-left: 4px;">默认</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="默认模型" width="160">
+            <template #default="{ row }">
+              <code style="font-size: 12px; color: #fbbf24;">{{ row.default_model || '未设置' }}</code>
             </template>
           </el-table-column>
           <el-table-column label="模型名（用户侧写这个）" min-width="320">

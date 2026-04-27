@@ -70,6 +70,19 @@ func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 	providers := h.allAnthropicProviders()
 
+	// 确定默认线路，用于文档中标注
+	defaultProvider := h.getDefaultAnthropicProviderConfig()
+	defaultProviderName := ""
+	defaultProviderModel := "deepseek-v4-pro" // fallback
+	if defaultProvider != nil {
+		defaultProviderName = defaultProvider.Name
+		if defaultProvider.DefaultModel != "" {
+			defaultProviderModel = defaultProvider.DefaultModel
+		} else if len(defaultProvider.Models) > 0 {
+			defaultProviderModel = defaultProvider.Models[0]
+		}
+	}
+
 	// 动态构建 provider 文档列表
 	providerDocs := make([]gin.H, 0, len(providers))
 	providerNameMap := map[string]string{
@@ -109,7 +122,9 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 			"models":      p.Models,
 			"aliases":     aliasDocs,
 			"user_models": userModels,
-			"description": desc,
+			"description":   desc,
+			"default_model": p.DefaultModel,
+			"is_default":    p.Name == defaultProviderName,
 		})
 	}
 
@@ -159,10 +174,7 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 		})
 	}
 
-	firstModel := "MiniMax-M2.5"
-	if len(allModels) > 0 {
-		firstModel = allModels[0]
-	}
+	firstModel := defaultProviderModel
 	// 尽量选取不同提供商的模型作为 Claude Code 各种角色的示例
 	fastModel := firstModel
 	sonnetModel := firstModel
@@ -180,7 +192,11 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"title":   "Anthropic 协议接入文档",
-		"summary": "通过 AI Gateway 的通用 Anthropic 端点 `/api/anthropic/v1/messages`，根据 model 自动路由到下游提供商。可通过管理后台选择下游，config.yaml 配置固定下游连接信息。",
+		"summary": "通过 AI Gateway 的通用 Anthropic 端点 `/api/anthropic/v1/messages`，根据 model 自动路由到下游提供商。未匹配的模型由默认线路兜底。",
+		"default_route": gin.H{
+			"provider":      defaultProviderName,
+			"default_model": defaultProviderModel,
+		},
 		"auth": gin.H{
 			"api_key": "Authorization: Bearer dtk_ai_xxx",
 		},
@@ -196,7 +212,7 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 				},
 				"claude_code_config": gin.H{
 					"language":    "Claude Code",
-					"description": "不同角色可用不同下游模型，BASE_URL 统一指向通用端点",
+					"description": "BASE_URL 统一指向通用端点。ANTHROPIC_MODEL 填默认线路的 default_model，不匹配时由默认线路兜底。",
 					"code": `{
   "env": {
     "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/anthropic",

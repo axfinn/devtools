@@ -829,6 +829,12 @@ func (db *DB) InitAnthropicProviders() error {
 	}
 	// Migration: add default_model column for existing tables
 	db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''`)
+	// Backfill: set default_model for builtin providers that were seeded before migration
+	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'MiniMax-M2.5' WHERE name = 'MiniMax' AND default_model = ''`)
+	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'qwen3.5-plus' WHERE name = 'DashScope' AND default_model = ''`)
+	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'deepseek-v4-pro' WHERE name = 'DeepSeek' AND default_model = ''`)
+	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'claude-sonnet-4-6' WHERE name = 'PackyAPI' AND default_model = ''`)
+	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'claude-sonnet-4-6' WHERE name = 'OpenClaudeCode' AND default_model = ''`)
 	// Seed builtin providers if table is empty
 	var count int
 	db.conn.QueryRow(`SELECT COUNT(*) FROM anthropic_providers`).Scan(&count)
@@ -872,7 +878,7 @@ func (db *DB) GetDefaultAnthropicProvider() (*AnthropicProvider, error) {
 }
 
 func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error) {
-	query := `SELECT id, name, api_url, api_key, models, aliases, enabled, is_default, created_at, updated_at FROM anthropic_providers `
+	query := `SELECT id, name, api_url, api_key, models, aliases, enabled, is_default, default_model, created_at, updated_at FROM anthropic_providers `
 	if where != "" {
 		query += where
 	}
@@ -886,7 +892,7 @@ func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error)
 	providers := make([]*AnthropicProvider, 0)
 	for rows.Next() {
 		p := &AnthropicProvider{}
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		providers = append(providers, p)

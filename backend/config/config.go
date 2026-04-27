@@ -364,6 +364,7 @@ type AnthropicProviderConfig struct {
 	Models       []string              `yaml:"models"`       // 该提供商支持的模型列表（直通）
 	Aliases      []AnthropicModelAlias `yaml:"aliases"`      // 模型别名：用户写 alias 名，云端映射到真实模型
 	DefaultModel string                `yaml:"default_model"` // 默认模型：未匹配时使用
+	IsDefault    bool                  `yaml:"is_default"`    // 是否为默认线路
 }
 
 // AnthropicModelAlias 模型别名 — 用户侧用 model 名，网关转发时替换为 upstream_model
