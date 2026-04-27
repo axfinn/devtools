@@ -604,6 +604,7 @@ func (h *AIGatewayHandler) AdminCreateAnthropicProvider(c *gin.Context) {
 		Models             string `json:"models"`
 		Aliases            string `json:"aliases"`
 		IsDefault          bool   `json:"is_default"`
+		DefaultModel       string `json:"default_model"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少必填字段 name / api_url"})
@@ -619,13 +620,14 @@ func (h *AIGatewayHandler) AdminCreateAnthropicProvider(c *gin.Context) {
 		req.Aliases = "[]"
 	}
 	p := &models.AnthropicProvider{
-		Name:      req.Name,
-		APIURL:    req.APIURL,
-		APIKey:    req.APIKey,
-		Models:    req.Models,
-		Aliases:   req.Aliases,
-		Enabled:   true,
-		IsDefault: req.IsDefault,
+		Name:         req.Name,
+		APIURL:       req.APIURL,
+		APIKey:       req.APIKey,
+		Models:       req.Models,
+		Aliases:      req.Aliases,
+		Enabled:      true,
+		IsDefault:    req.IsDefault,
+		DefaultModel: req.DefaultModel,
 	}
 	if err := h.db.CreateAnthropicProvider(p); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "创建失败: " + err.Error()})
@@ -651,6 +653,7 @@ func (h *AIGatewayHandler) AdminUpdateAnthropicProvider(c *gin.Context) {
 		Aliases            string `json:"aliases"`
 		Enabled            *bool  `json:"enabled"`
 		IsDefault          *bool  `json:"is_default"`
+		DefaultModel       string `json:"default_model"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -689,6 +692,9 @@ func (h *AIGatewayHandler) AdminUpdateAnthropicProvider(c *gin.Context) {
 	}
 	if req.IsDefault != nil {
 		existing.IsDefault = *req.IsDefault
+	}
+	if req.DefaultModel != "" {
+		existing.DefaultModel = req.DefaultModel
 	}
 	if err := h.db.UpdateAnthropicProvider(existing); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "更新失败: " + err.Error()})

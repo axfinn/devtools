@@ -800,10 +800,11 @@ type AnthropicProvider struct {
 	APIKey    string `json:"api_key"`
 	Models    string `json:"models"`   // JSON array
 	Aliases   string `json:"aliases"`  // JSON array of {model, upstream_model}
-	Enabled   bool   `json:"enabled"`
-	IsDefault bool   `json:"is_default"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Enabled     bool   `json:"enabled"`
+	IsDefault   bool   `json:"is_default"`
+	DefaultModel string `json:"default_model"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 func (db *DB) InitAnthropicProviders() error {
@@ -817,6 +818,7 @@ func (db *DB) InitAnthropicProviders() error {
 			aliases TEXT NOT NULL DEFAULT '[]',
 			enabled INTEGER NOT NULL DEFAULT 1,
 			is_default INTEGER NOT NULL DEFAULT 0,
+			default_model TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
@@ -825,27 +827,30 @@ func (db *DB) InitAnthropicProviders() error {
 	if err != nil {
 		return err
 	}
+	// Migration: add default_model column for existing tables
+	db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''`)
 	// Seed builtin providers if table is empty
 	var count int
 	db.conn.QueryRow(`SELECT COUNT(*) FROM anthropic_providers`).Scan(&count)
 	if count == 0 {
 		builtins := []struct {
-			Name      string
-			APIURL    string
-			APIKey    string
-			Models    string
-			Aliases   string
-			IsDefault bool
+			Name         string
+			APIURL       string
+			APIKey       string
+			Models       string
+			Aliases      string
+			IsDefault    bool
+			DefaultModel string
 		}{
-			{"MiniMax", "https://api.minimaxi.com/anthropic", "", `["MiniMax-M2.5","MiniMax-M2.5-highspeed","MiniMax-M2.1","MiniMax-M2.1-highspeed","MiniMax-M2","MiniMax-M2.7"]`, "[]", false},
-			{"DashScope", "https://coding.dashscope.aliyuncs.com/apps/anthropic", "", `["qwen3.5-plus","qwen3-max-2026-01-23","qwen3-coder-next","qwen3-coder-plus","glm-5","glm-4.7","kimi-k2.5","MiniMax-M2.5"]`, "[]", false},
-			{"DeepSeek", "https://api.deepseek.com/anthropic", "", `["deepseek-chat","deepseek-reasoner","deepseek-v4-flash","deepseek-v4-pro"]`, "[]", true},
-			{"PackyAPI", "https://www.packyapi.com", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false},
-			{"OpenClaudeCode", "https://www.openclaudecode.cn", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false},
+			{"MiniMax", "https://api.minimaxi.com/anthropic", "", `["MiniMax-M2.5","MiniMax-M2.5-highspeed","MiniMax-M2.1","MiniMax-M2.1-highspeed","MiniMax-M2","MiniMax-M2.7"]`, "[]", false, "MiniMax-M2.5"},
+			{"DashScope", "https://coding.dashscope.aliyuncs.com/apps/anthropic", "", `["qwen3.5-plus","qwen3-max-2026-01-23","qwen3-coder-next","qwen3-coder-plus","glm-5","glm-4.7","kimi-k2.5","MiniMax-M2.5"]`, "[]", false, "qwen3.5-plus"},
+			{"DeepSeek", "https://api.deepseek.com/anthropic", "", `["deepseek-chat","deepseek-reasoner","deepseek-v4-flash","deepseek-v4-pro"]`, "[]", true, "deepseek-v4-pro"},
+			{"PackyAPI", "https://www.packyapi.com", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},
+			{"OpenClaudeCode", "https://www.openclaudecode.cn", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},
 		}
 		for _, b := range builtins {
-			db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, is_default) VALUES (?, ?, ?, ?, ?, ?)`,
-				b.Name, b.APIURL, b.APIKey, b.Models, b.Aliases, b.IsDefault)
+			db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, is_default, default_model) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				b.Name, b.APIURL, b.APIKey, b.Models, b.Aliases, b.IsDefault, b.DefaultModel)
 		}
 	}
 	return nil
@@ -889,11 +894,11 @@ func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error)
 	return providers, nil
 }
 
-var anthropicProviderColumns = `id, name, api_url, api_key, models, aliases, enabled, is_default, created_at, updated_at`
+var anthropicProviderColumns = `id, name, api_url, api_key, models, aliases, enabled, is_default, default_model, created_at, updated_at`
 
 func scanAnthropicProvider(scanner interface{ Scan(dest ...interface{}) error }) (*AnthropicProvider, error) {
 	p := &AnthropicProvider{}
-	err := scanner.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt)
+	err := scanner.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
@@ -909,8 +914,8 @@ func (db *DB) GetAnthropicProviderByName(name string) (*AnthropicProvider, error
 
 // CreateAnthropicProvider 新增
 func (db *DB) CreateAnthropicProvider(p *AnthropicProvider) error {
-	res, err := db.conn.Exec(`INSERT INTO anthropic_providers (name, api_url, api_key, models, aliases, enabled, is_default) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault)
+	res, err := db.conn.Exec(`INSERT INTO anthropic_providers (name, api_url, api_key, models, aliases, enabled, is_default, default_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel)
 	if err != nil {
 		return err
 	}
@@ -921,8 +926,8 @@ func (db *DB) CreateAnthropicProvider(p *AnthropicProvider) error {
 
 // UpdateAnthropicProvider 更新
 func (db *DB) UpdateAnthropicProvider(p *AnthropicProvider) error {
-	_, err := db.conn.Exec(`UPDATE anthropic_providers SET name=?, api_url=?, api_key=?, models=?, aliases=?, enabled=?, is_default=?, updated_at=datetime('now') WHERE id=?`,
-		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.ID)
+	_, err := db.conn.Exec(`UPDATE anthropic_providers SET name=?, api_url=?, api_key=?, models=?, aliases=?, enabled=?, is_default=?, default_model=?, updated_at=datetime('now') WHERE id=?`,
+		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel, p.ID)
 	return err
 }
 

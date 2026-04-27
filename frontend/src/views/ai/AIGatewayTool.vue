@@ -230,9 +230,14 @@
             <el-form-item label="别名映射（每行：用户模型=上游模型）">
               <el-input v-model="aliasesTextProvider" type="textarea" :rows="3" placeholder="gateway=deepseek-v4-pro&#10;fast=deepseek-v4-flash" />
             </el-form-item>
+            <el-form-item label="默认模型（走此线路时使用的模型）">
+              <el-select v-model="providerForm.default_model" filterable allow-create placeholder="选一个默认模型" style="width: 100%;">
+                <el-option v-for="m in parsedProviderModels" :key="m" :label="m" :value="m" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="设为默认线路">
               <el-switch v-model="providerForm.is_default" />
-              <span style="margin-left: 8px; color: #909399; font-size: 12px;">匹配不到模型时使用默认线路</span>
+              <span style="margin-left: 8px; color: #909399; font-size: 12px;">匹配不到模型时使用此下游</span>
             </el-form-item>
           </el-form>
           <template #footer>
@@ -1175,8 +1180,11 @@ const providerForm = ref({
   models: '[]',
   aliases: '[]',
   enabled: true,
-  is_default: false
+  is_default: false,
+  default_model: ''
 })
+
+const parsedProviderModels = computed(() => parseProviderModels(providerForm.value.models))
 
 const parseProviderModels = (models) => {
   if (!models) return []
@@ -1204,7 +1212,7 @@ const loadProviders = async () => {
 
 const openAddProvider = () => {
   editingProvider.value = null
-  providerForm.value = { name: '', api_url: '', api_key: '', models: '[]', aliases: '[]', enabled: true, is_default: false }
+  providerForm.value = { name: '', api_url: '', api_key: '', models: '[]', aliases: '[]', enabled: true, is_default: false, default_model: '' }
   modelsTextProvider.value = ''
   aliasesTextProvider.value = ''
   providerDialogVisible.value = true
@@ -1234,6 +1242,7 @@ const saveProvider = async () => {
     models: JSON.stringify(models),
     aliases: JSON.stringify(aliases),
     is_default: providerForm.value.is_default,
+    default_model: providerForm.value.default_model,
     enabled: providerForm.value.enabled
   }
 

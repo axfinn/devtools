@@ -78,7 +78,7 @@ func (h *AIGatewayHandler) providerAllModels(provider *config.AnthropicProviderC
 	return providerUserModels(provider)
 }
 
-// resolveAnthropicProvider 根据模型名查找匹配的提供商（DB 优先）
+// resolveAnthropicProvider 根据模型名查找匹配的提供商（DB 优先，未匹配走默认线路）
 func (h *AIGatewayHandler) resolveAnthropicProvider(model string) (*config.AnthropicProviderConfig, bool) {
 	providers := h.allAnthropicProviders()
 	for i := range providers {
@@ -93,7 +93,30 @@ func (h *AIGatewayHandler) resolveAnthropicProvider(model string) (*config.Anthr
 			}
 		}
 	}
+	// Fallback: 默认线路
+	if def := h.getDefaultAnthropicProviderConfig(); def != nil {
+		return def, true
+	}
 	return nil, false
+}
+
+// getDefaultAnthropicProviderConfig 获取默认线路（config 格式）
+func (h *AIGatewayHandler) getDefaultAnthropicProviderConfig() *config.AnthropicProviderConfig {
+	// DB 优先
+	if dbDef, err := h.db.GetDefaultAnthropicProvider(); err == nil && dbDef != nil {
+		configs := h.dbAnthropicProvidersToConfig([]*models.AnthropicProvider{dbDef})
+		if len(configs) > 0 {
+			return &configs[0]
+		}
+	}
+	// Builtin fallback: DeepSeek 作为默认
+	builtins := h.builtinAnthropicProviders()
+	for i := range builtins {
+		if builtins[i].Name == "DeepSeek" {
+			return &builtins[i]
+		}
+	}
+	return nil
 }
 
 // allAnthropicProviders 返回所有可用的提供商（DB 优先，否则 config，否则内置）
@@ -116,17 +139,16 @@ func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.An
 	result := make([]config.AnthropicProviderConfig, 0, len(dbProviders))
 	for _, p := range dbProviders {
 		cfg := config.AnthropicProviderConfig{
-			Name:   p.Name,
-			APIURL: p.APIURL,
-			APIKey: p.APIKey,
+			Name:         p.Name,
+			APIURL:       p.APIURL,
+			APIKey:       p.APIKey,
+			DefaultModel: p.DefaultModel,
 		}
 		json.Unmarshal([]byte(p.Models), &cfg.Models)
-		// Aliases 也需要解析，使用 json.Unmarshal
 		var aliases []config.AnthropicModelAlias
 		if err := json.Unmarshal([]byte(p.Aliases), &aliases); err == nil {
 			cfg.Aliases = aliases
 		}
-		// Fallback API key
 		if cfg.APIKey == "" {
 			cfg.APIKey = h.fallbackAPIKeyForProvider(cfg.Name)
 		}
@@ -219,8 +241,14 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 		return
 	}
 
-	// 检查是否需要模型名重写（别名 → 上游真实模型名）
+	// 模型名重写：别名优先 → 未匹配走默认线路的 default_model
 	upstreamModel := resolveModelUpstream(provider, model)
+	if upstreamModel == model && !isModelAllowed(model, provider.Models) {
+		// model 不在此 provider 的模型列表中，说明走了默认线路 — 用 provider 的默认模型
+		if provider.DefaultModel != "" {
+			upstreamModel = provider.DefaultModel
+		}
+	}
 	allModels := h.providerAllModels(provider)
 
 	h.proxyAnthropicWithRewrite(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel)
