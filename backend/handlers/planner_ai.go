@@ -69,18 +69,20 @@ func (h *PlannerHandler) parsePlannerText(text, defaultKind string) ([]plannerAI
 		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	prompt := fmt.Sprintf(`请把下面的中文内容整理成 JSON 数组，每个元素包含字段：
-kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title、detail、notes、priority(low/medium/high)、status(open/in_progress/done/cancelled)、planned_for(YYYY-MM-DD)、remind_at(YYYY-MM-DDTHH:MM，可为空)、cancel_reason(可为空)。
+kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title、detail、notes、priority(low/medium/high)、status(open/in_progress/done/cancelled)、planned_for(YYYY-MM-DD)、remind_at(YYYY-MM-DDTHH:MM，可为空)、cancel_reason(可为空)、raw_text(原文)。
 
 规则：
 1. 只返回 JSON 数组，不要解释。
 2. 默认 kind 为 %s。
-3. 如果是明确时间发生的安排，如会议、复诊、预约、航班、出发，请优先标为 event。
-4. 如果只是先记下来、回头处理、尚未排期，请放到 inbox。
-5. 如果是以后再说、周末、有空再做，请优先放到 someday。
-6. 用户说了明确日期就要写入 planned_for；用户说了明确钟点时间就必须写入 remind_at。
-7. 对 event 来说，只要原文出现具体时间点，remind_at 不要留空。
-8. 如果没有明确日期，planned_for 可以用今天。
-9. 不要编造不存在的信息。
+3. title 要整理成简洁、非口述的表达，去掉"然后"、"就是"、"那个"、"记得提醒我"、"的时候"等口语词。title 长度不超过 30 字。
+4. raw_text 必须填写原文对应段落，不做任何修改。
+5. 如果是明确时间发生的安排，如会议、复诊、预约、航班、出发，请优先标为 event。
+6. 如果只是先记下来、回头处理、尚未排期，请放到 inbox。
+7. 如果是以后再说、周末、有空再做，请优先放到 someday。
+8. 用户说了明确日期就要写入 planned_for；用户说了明确钟点时间就必须写入 remind_at。
+9. 对 event 来说，只要原文出现具体时间点，remind_at 不要留空。
+10. 如果没有明确日期，planned_for 可以用今天。
+11. 不要编造不存在的信息。
 
 原始内容：
 %s`, defaultKind, text)
@@ -88,7 +90,7 @@ kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title
 	reqBody := map[string]interface{}{
 		"model": plannerFirstNonEmpty(h.cfg.MiniMax.Model, "abab6.5s-chat"),
 		"messages": []map[string]string{
-			{"role": "system", "content": "你是一个只负责管理工作事项、生活事项、收件箱和事件的智能整理助手。"},
+			{"role": "system", "content": "你是智能整理助手。当前日期是2026年4月25日，日期必须使用2026年，不要使用训练数据中的旧日期。"},
 			{"role": "user", "content": prompt},
 		},
 		"temperature": 0.2,
@@ -358,6 +360,12 @@ func normalizePlannerAITask(task plannerAITask, defaultKind string) plannerAITas
 	if strings.TrimSpace(task.Title) == "" {
 		task.Title = "待整理事项"
 	}
+	if strings.TrimSpace(task.Intent) == "" {
+		task.Intent = strings.TrimSpace(task.Notes)
+	}
+	if strings.TrimSpace(task.EnergyLevel) == "" {
+		task.EnergyLevel = guessEnergyLevel(strings.Join([]string{task.Title, task.Detail, task.Notes}, " "))
+	}
 	return task
 }
 
@@ -397,15 +405,17 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 			priority = "high"
 		}
 		result = append(result, plannerAITask{
-			Kind:       normalizePlannerKind(kind),
-			EntryType:  entryType,
-			Bucket:     bucket,
-			Title:      item,
-			Detail:     item,
-			Priority:   priority,
-			Status:     plannerStatusOpen,
-			PlannedFor: plannerFirstNonEmpty(schedule.PlannedFor, plannerToday()),
-			RemindAt:   schedule.RemindAt,
+			Kind:        normalizePlannerKind(kind),
+			EntryType:   entryType,
+			Bucket:      bucket,
+			Title:       item,
+			Detail:      item,
+			RawText:     item,
+			Priority:    priority,
+			Status:      plannerStatusOpen,
+			PlannedFor:  plannerFirstNonEmpty(schedule.PlannedFor, plannerToday()),
+			RemindAt:    schedule.RemindAt,
+			EnergyLevel: guessEnergyLevel(item),
 		})
 	}
 	if len(result) == 0 {
@@ -415,6 +425,7 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 			Bucket:     models.PlannerBucketInbox,
 			Title:      strings.TrimSpace(text),
 			Detail:     strings.TrimSpace(text),
+			RawText:    strings.TrimSpace(text),
 			Priority:   "medium",
 			Status:     plannerStatusOpen,
 			PlannedFor: plannerToday(),
@@ -446,4 +457,36 @@ func plannerFirstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func guessEnergyLevel(text string) string {
+	lower := strings.ToLower(text)
+	deepWords := []string{"写", "方案", "设计", "代码", "分析", "报告", "研究", "规划", "文档", "架构", "算法", "review", "评审"}
+	shallowWords := []string{"回", "邮件", "发票", "报销", "填表", "签到", "打卡", "审批", "整理", "同步", "沟通", "周报"}
+	errandWords := []string{"买", "取", "快递", "超市", "药店", "医院", "银行", "接", "送", "寄", "搬", "修", "理发", "加油"}
+	creativeWords := []string{"想", "创意", "brainstorm", "头脑风暴", "构思", "探索", "灵感", "idea", "点子", "方向"}
+
+	score := map[string]int{}
+	for _, w := range deepWords {
+		if strings.Contains(lower, w) { score["deep"]++ }
+	}
+	for _, w := range shallowWords {
+		if strings.Contains(lower, w) { score["shallow"]++ }
+	}
+	for _, w := range errandWords {
+		if strings.Contains(lower, w) { score["errand"]++ }
+	}
+	for _, w := range creativeWords {
+		if strings.Contains(lower, w) { score["creative"]++ }
+	}
+
+	best := ""
+	bestScore := 0
+	for _, level := range []string{"deep", "shallow", "errand", "creative"} {
+		if score[level] > bestScore {
+			best = level
+			bestScore = score[level]
+		}
+	}
+	return best
 }

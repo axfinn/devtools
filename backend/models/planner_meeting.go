@@ -114,15 +114,34 @@ func (db *DB) GetPlannerMeeting(id string) (*PlannerMeetingMinutes, error) {
 	return scanPlannerMeeting(row)
 }
 
-func (db *DB) ListPlannerMeetings(profileID string) ([]*PlannerMeetingMinutes, error) {
-	rows, err := db.conn.Query(`
-		SELECT id, profile_id, title, content, summary, action_items, participants,
-		       recording_url, duration_minutes, meeting_date, meeting_time, tags, status,
-		       created_at, updated_at
-		FROM planner_meeting_minutes
-		WHERE profile_id = ?
-		ORDER BY meeting_date DESC, created_at DESC
-	`, profileID)
+func (db *DB) ListPlannerMeetings(profileID string, q, tag, dateFrom, dateTo string) ([]*PlannerMeetingMinutes, error) {
+	query := `SELECT id, profile_id, title, content, summary, action_items, participants,
+	       recording_url, duration_minutes, meeting_date, meeting_time, tags, status,
+	       created_at, updated_at
+	FROM planner_meeting_minutes
+	WHERE profile_id = ?`
+	args := []interface{}{profileID}
+
+	if strings.TrimSpace(q) != "" {
+		query += ` AND (title LIKE ? OR content LIKE ?)`
+		like := "%" + strings.TrimSpace(q) + "%"
+		args = append(args, like, like)
+	}
+	if strings.TrimSpace(tag) != "" {
+		query += ` AND tags LIKE ?`
+		args = append(args, `%`+strings.TrimSpace(tag)+`%`)
+	}
+	if strings.TrimSpace(dateFrom) != "" {
+		query += ` AND meeting_date >= ?`
+		args = append(args, strings.TrimSpace(dateFrom))
+	}
+	if strings.TrimSpace(dateTo) != "" {
+		query += ` AND meeting_date <= ?`
+		args = append(args, strings.TrimSpace(dateTo))
+	}
+	query += ` ORDER BY meeting_date DESC, created_at DESC`
+
+	rows, err := db.conn.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

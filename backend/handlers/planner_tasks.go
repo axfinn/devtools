@@ -214,7 +214,10 @@ func (h *PlannerHandler) buildPlannerTask(profile *models.PlannerProfile, req cr
 		RepeatInterval:     normalizePlannerRepeatInterval(req.RepeatInterval),
 		RepeatUntil:        parsePlannerDateTime(req.RepeatUntil),
 		NotifyEmail:        strings.TrimSpace(req.NotifyEmail),
+		RawText:            strings.TrimSpace(req.RawText),
 		CancelReason:       strings.TrimSpace(req.CancelReason),
+		Intent:             strings.TrimSpace(req.Intent),
+		EnergyLevel:        normalizePlannerEnergyLevel(req.EnergyLevel),
 	}
 	if task.Title == "" {
 		return nil, fmt.Errorf("标题不能为空")
@@ -369,6 +372,9 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 	}
 	if req.NotifyEmail != nil {
 		task.NotifyEmail = strings.TrimSpace(*req.NotifyEmail)
+	}
+	if req.RawText != nil {
+		task.RawText = strings.TrimSpace(*req.RawText)
 	}
 	if req.RemindAt != nil {
 		task.RemindAt = parsePlannerDateTime(*req.RemindAt)

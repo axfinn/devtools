@@ -53,7 +53,11 @@ func (h *PlannerHandler) ListMeetingMinutes(c *gin.Context) {
 	if !ok {
 		return
 	}
-	meetings, err := h.db.ListPlannerMeetings(profile.ID)
+	q := c.Query("q")
+	tag := c.Query("tag")
+	dateFrom := c.Query("date_from")
+	dateTo := c.Query("date_to")
+	meetings, err := h.db.ListPlannerMeetings(profile.ID, q, tag, dateFrom, dateTo)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取会议纪要失败", "code": 500})
 		return

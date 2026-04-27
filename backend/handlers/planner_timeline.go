@@ -216,6 +216,9 @@ func applyPlannerTimeContext(item *plannerTimelineItem, now time.Time) {
 	}
 	if item.IsToday {
 		item.TimeHint = "今天"
+		if item.EnergyLevel != "" {
+			item.TimeHint = "今天 · " + energyLabel(item.EnergyLevel)
+		}
 		return
 	}
 	if item.DisplayLabel != "" {
@@ -371,4 +374,19 @@ func itemCompletionDate(task *models.PlannerTask, fallback string) string {
 		return fallback
 	}
 	return task.UpdatedAt.Format("2006-01-02")
+}
+
+func energyLabel(level string) string {
+	switch level {
+	case "deep":
+		return "需专注"
+	case "shallow":
+		return "事务性"
+	case "errand":
+		return "需外出"
+	case "creative":
+		return "创意型"
+	default:
+		return ""
+	}
 }

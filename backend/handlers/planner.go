@@ -154,7 +154,10 @@ type createPlannerTaskRequest struct {
 	RepeatUntil    string `json:"repeat_until"`
 	NotifyEmail    string `json:"notify_email"`
 	CancelReason   string `json:"cancel_reason"`
+	RawText        string `json:"raw_text"`
 	PostponeReason string `json:"postpone_reason"`
+	Intent         string `json:"intent"`
+	EnergyLevel    string `json:"energy_level"`
 }
 
 type createPlannerTaskBatchRequest struct {
@@ -177,7 +180,10 @@ type updatePlannerTaskRequest struct {
 	RepeatUntil    *string `json:"repeat_until"`
 	NotifyEmail    *string `json:"notify_email"`
 	CancelReason   *string `json:"cancel_reason"`
+	RawText        *string `json:"raw_text"`
 	PostponeReason *string `json:"postpone_reason"`
+	Intent         *string `json:"intent"`
+	EnergyLevel    *string `json:"energy_level"`
 }
 
 type plannerCommentRequest struct {
@@ -217,6 +223,9 @@ type plannerAITask struct {
 	PlannedFor   string `json:"planned_for"`
 	RemindAt     string `json:"remind_at"`
 	CancelReason string `json:"cancel_reason"`
+	RawText      string `json:"raw_text"`
+	Intent       string `json:"intent"`
+	EnergyLevel  string `json:"energy_level"`
 }
 
 type plannerAICoachResponse struct {
@@ -330,6 +339,21 @@ func normalizePlannerBucket(bucket, entryType string) string {
 		return models.PlannerBucketPlanned
 	}
 	return models.PlannerBucketPlanned
+}
+
+func normalizePlannerEnergyLevel(level string) string {
+	switch strings.TrimSpace(strings.ToLower(level)) {
+	case "deep":
+		return "deep"
+	case "shallow":
+		return "shallow"
+	case "errand":
+		return "errand"
+	case "creative":
+		return "creative"
+	default:
+		return ""
+	}
 }
 
 func normalizePlannerRepeatType(repeatType string) string {

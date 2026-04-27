@@ -248,7 +248,7 @@
             maxlength="80"
             show-word-limit
           />
-          <el-input v-model="quickForm.detail" type="textarea" :rows="3" placeholder="补充上下文、边界条件、备注" />
+          <el-input v-model="quickForm.detail" type="textarea" :rows="2" placeholder="补充说明（可选）" />
           <div class="quick-row">
             <div class="quick-actions quick-actions-primary">
               <el-button :loading="savingQuick" type="primary" @click="createQuickTask">
@@ -264,7 +264,7 @@
 
         <div v-if="!isMobile || quickAdvancedVisible" class="quick-grid quick-grid-advanced">
           <div class="quick-row">
-            <el-select v-model="quickForm.entryType" placeholder="条目类型">
+            <el-select v-model="quickForm.entryType" placeholder="任务/事件">
               <el-option label="任务" value="task" />
               <el-option label="事件" value="event" />
             </el-select>
@@ -312,6 +312,15 @@
             />
           </div>
           <el-input v-model="quickForm.notifyEmail" placeholder="提醒邮箱，默认用档案邮箱" />
+          <div class="quick-row">
+            <el-input v-model="quickForm.intent" placeholder="意图：为什么要做？（可选）" maxlength="80" />
+            <el-select v-model="quickForm.energy_level" placeholder="精力类型（可选）" clearable>
+              <el-option label="需专注" value="deep" />
+              <el-option label="事务性" value="shallow" />
+              <el-option label="需外出" value="errand" />
+              <el-option label="创意型" value="creative" />
+            </el-select>
+          </div>
         </div>
       </section>
 
@@ -472,11 +481,37 @@
           </div>
 
           <div v-else-if="activeView === 'inbox'">
-            <div v-if="board.inbox_items.length === 0" class="timeline-empty">
-              <strong>收件箱是空的</strong>
-              <span>这是好事，说明脑子里悬着的想法不多。</span>
+            <div v-if="triageActive" class="triage-panel">
+              <div class="triage-header">
+                <strong>处理收件箱（{{ triageIndex + 1 }}/{{ board.inbox_items.length }}）</strong>
+                <el-button text @click="triageActive = false">退出处理模式</el-button>
+              </div>
+              <div class="triage-card" v-if="triageCurrent">
+                <h5>{{ triageCurrent.title }}</h5>
+                <p>{{ triageCurrent.detail || '没有更多描述' }}</p>
+                <p v-if="triageCurrent.raw_text && triageCurrent.raw_text !== triageCurrent.title" class="soft-note">原文：{{ triageCurrent.raw_text }}</p>
+                <div class="triage-actions">
+                  <el-button type="primary" @click="triageDecide('planned')">计划去做</el-button>
+                  <el-button plain @click="triageDecide('someday')">放一放</el-button>
+                  <el-button type="danger" plain @click="triageDecide('discard')">不做</el-button>
+                </div>
+              </div>
+              <div v-else class="timeline-empty">
+                <strong>收件箱已清空</strong>
+                <span>所有事项已处理完毕。</span>
+              </div>
             </div>
-            <div v-else class="task-list">
+            <template v-else>
+              <div v-if="board.inbox_items.length === 0" class="timeline-empty">
+                <strong>收件箱是空的</strong>
+                <span>这是好事，说明脑子里悬着的想法不多。</span>
+              </div>
+              <div v-else>
+                <div class="inbox-toolbar">
+                  <el-button type="primary" plain @click="startTriage">逐条处理收件箱</el-button>
+                  <span class="soft-note">{{ board.inbox_items.length }} 条等待分流</span>
+                </div>
+                <div class="task-list">
               <article
                 v-for="task in board.inbox_items"
                 :key="task.id"
@@ -509,6 +544,8 @@
                 </div>
               </article>
             </div>
+          </div>
+            </template>
           </div>
 
           <div v-else-if="activeView === 'someday'">
@@ -559,79 +596,121 @@
                 </el-button>
               </div>
             </div>
-            <div v-if="meetings.length === 0" class="timeline-empty">
-              <strong>还没有会议纪要</strong>
+
+            <!-- Search & Filter -->
+            <div class="meeting-search-bar">
+              <el-input
+                v-model="meetingSearchQuery"
+                placeholder="搜索会议标题或内容…"
+                clearable
+                class="meeting-search-input"
+              />
+              <el-date-picker
+                v-model="meetingDateRange"
+                type="daterange"
+                value-format="YYYY-MM-DD"
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                class="meeting-date-filter"
+              />
+            </div>
+
+            <!-- Loading skeleton -->
+            <div v-if="loadingMeetings" class="task-list">
+              <el-skeleton v-for="n in 3" :key="n" animated class="meeting-skeleton">
+                <template #template>
+                  <el-skeleton-item variant="h3" style="width:50%;margin-bottom:8px" />
+                  <el-skeleton-item variant="text" style="margin-bottom:4px" />
+                  <el-skeleton-item variant="text" style="width:60%" />
+                </template>
+              </el-skeleton>
+            </div>
+
+            <!-- Empty state -->
+            <div v-else-if="groupedMeetings.length === 0" class="timeline-empty">
+              <strong v-if="isMeetingFiltered">{{ meetingSearchQuery || meetingDateRange ? '没有找到匹配的会议纪要' : '还没有会议纪要' }}</strong>
+              <strong v-else>还没有会议纪要</strong>
               <span>记录会议内容和待办，支持录音和 AI 总结。</span>
             </div>
+
+            <!-- Grouped meetings -->
             <div v-else class="task-list">
-              <article
-                v-for="m in meetings"
-                :key="m.id"
-                class="meeting-card"
-                :class="m.status === 'finalized' ? 'meeting-done' : 'meeting-draft'"
-              >
-                <!-- Header: status + tags -->
-                <div class="meeting-card-head">
-                  <div class="meeting-card-badges">
-                    <el-tag v-if="m.status === 'finalized'" size="small" type="success" effect="dark" round>已定稿</el-tag>
-                    <el-tag v-else size="small" type="info" round>草稿</el-tag>
-                    <el-tag
-                      v-for="tag in parseJsonArray(m.tags)"
-                      :key="tag"
-                      size="small"
-                      type="warning"
-                      round
-                    >{{ tag }}</el-tag>
+              <template v-for="group in groupedMeetings" :key="group.month">
+                <div class="meeting-month-divider">
+                  <span class="meeting-month-label">{{ group.month }}</span>
+                  <span class="meeting-month-count">{{ group.items.length }} 条</span>
+                </div>
+                <article
+                  v-for="m in group.items"
+                  :key="m.id"
+                  class="meeting-card"
+                  :class="m.status === 'finalized' ? 'meeting-done' : 'meeting-draft'"
+                >
+                  <!-- Header: status + tags -->
+                  <div class="meeting-card-head">
+                    <div class="meeting-card-badges">
+                      <el-tag v-if="m.status === 'finalized'" size="small" type="success" effect="dark" round>已定稿</el-tag>
+                      <el-tag v-else size="small" type="info" round>草稿</el-tag>
+                      <el-tag
+                        v-for="tag in parseJsonArray(m.tags)"
+                        :key="tag"
+                        size="small"
+                        type="warning"
+                        round
+                      >{{ tag }}</el-tag>
+                    </div>
                   </div>
-                </div>
 
-                <!-- Title -->
-                <h4 class="meeting-card-title" @click="openMeetingEdit(m)">{{ m.title }}</h4>
+                  <!-- Title -->
+                  <h4 class="meeting-card-title" @click="openMeetingEdit(m)">{{ m.title }}</h4>
 
-                <!-- Meta: date, time, duration, participants -->
-                <div class="meeting-card-meta">
-                  <span class="meeting-card-meta-item">
-                    <el-icon><Calendar /></el-icon>
-                    {{ m.meeting_date }}<template v-if="m.meeting_time"> {{ m.meeting_time }}</template>
-                  </span>
-                  <span v-if="m.duration_minutes" class="meeting-card-meta-item">
-                    <el-icon><Clock /></el-icon>
-                    {{ formatDuration(m.duration_minutes) }}
-                  </span>
-                  <span v-if="m.participants && m.participants !== '[]'" class="meeting-card-meta-item">
-                    <el-icon><UserFilled /></el-icon>
-                    {{ parseJsonArray(m.participants).join('、') }}
-                  </span>
-                </div>
-
-                <!-- Content preview -->
-                <div v-if="m.content" class="meeting-card-body" @click="openMeetingEdit(m)">
-                  <p>{{ m.content.length > 120 ? m.content.slice(0, 120) + '...' : m.content }}</p>
-                </div>
-
-                <!-- Summary + action items row -->
-                <div v-if="m.summary || (m.action_items && m.action_items !== '[]')" class="meeting-card-extras">
-                  <div v-if="m.summary" class="meeting-card-summary" @click="openMeetingEdit(m)">
-                    <el-tag size="small" type="primary">AI 摘要</el-tag>
-                    <span>{{ m.summary.length > 80 ? m.summary.slice(0, 80) + '...' : m.summary }}</span>
+                  <!-- Meta: date, time, duration, participants -->
+                  <div class="meeting-card-meta">
+                    <span class="meeting-card-meta-item">
+                      <el-icon><Calendar /></el-icon>
+                      {{ m.meeting_date }}<template v-if="m.meeting_time"> {{ m.meeting_time }}</template>
+                    </span>
+                    <span v-if="m.duration_minutes" class="meeting-card-meta-item">
+                      <el-icon><Clock /></el-icon>
+                      {{ formatDuration(m.duration_minutes) }}
+                    </span>
+                    <span v-if="m.participants && m.participants !== '[]'" class="meeting-card-meta-item">
+                      <el-icon><UserFilled /></el-icon>
+                      {{ parseJsonArray(m.participants).join('、') }}
+                    </span>
                   </div>
-                  <div v-if="m.action_items && m.action_items !== '[]'" class="meeting-card-todos" @click="openMeetingEdit(m)">
-                    <span class="meeting-card-todo-badge">{{ parseJsonArray(m.action_items).length }} 项待办</span>
+
+                  <!-- Content preview -->
+                  <div v-if="m.content" class="meeting-card-body" @click="openMeetingEdit(m)">
+                    <p>{{ m.content.length > 120 ? m.content.slice(0, 120) + '...' : m.content }}</p>
                   </div>
-                </div>
 
-                <!-- Recording player inline -->
-                <div v-if="m.recording_url" class="meeting-card-recording" @click.stop>
-                  <audio :src="m.recording_url" controls class="meeting-card-audio" preload="metadata"></audio>
-                </div>
+                  <!-- Summary + action items row -->
+                  <div v-if="m.summary || (m.action_items && m.action_items !== '[]')" class="meeting-card-extras">
+                    <div v-if="m.summary" class="meeting-card-summary" @click="openMeetingEdit(m)">
+                      <el-tag size="small" type="primary">AI 摘要</el-tag>
+                      <span>{{ m.summary.length > 80 ? m.summary.slice(0, 80) + '...' : m.summary }}</span>
+                    </div>
+                    <div v-if="m.action_items && m.action_items !== '[]'" class="meeting-card-todos" @click="openMeetingEdit(m)">
+                      <span class="meeting-card-todo-badge">{{ parseJsonArray(m.action_items).length }} 项待办</span>
+                    </div>
+                  </div>
 
-                <!-- Actions -->
-                <div class="meeting-card-actions">
-                  <el-button size="small" type="primary" plain @click="openMeetingEdit(m)">编辑</el-button>
-                  <el-button v-if="m.content && !m.summary" size="small" plain :loading="summarizingId === m.id" @click="summarizeMeeting(m)">AI 总结</el-button>
-                  <el-button size="small" plain @click="deleteMeetingConfirm(m)">删除</el-button>
-                </div>
-              </article>
+                  <!-- Recording player inline -->
+                  <div v-if="m.recording_url" class="meeting-card-recording" @click.stop>
+                    <audio :src="m.recording_url" controls class="meeting-card-audio" preload="metadata"></audio>
+                  </div>
+
+                  <!-- Actions -->
+                  <div class="meeting-card-actions">
+                    <el-button size="small" type="primary" plain @click="openMeetingEdit(m)">编辑</el-button>
+                    <el-button v-if="m.content && !m.summary" size="small" plain :loading="summarizingId === m.id" @click="summarizeMeeting(m)">AI 总结</el-button>
+                    <el-button size="small" plain @click="exportMeetingMarkdown(m)">导出</el-button>
+                    <el-button size="small" plain @click="deleteMeetingConfirm(m)">删除</el-button>
+                  </div>
+                </article>
+              </template>
             </div>
           </div>
 
@@ -765,6 +844,19 @@
         <el-input v-model="taskForm.notifyEmail" placeholder="提醒邮箱" />
         <el-input v-model="taskForm.detail" type="textarea" :rows="4" placeholder="详情" />
         <el-input v-model="taskForm.notes" type="textarea" :rows="4" placeholder="备注 / 评论摘要 / 拆解点" />
+        <el-input v-model="taskForm.intent" placeholder="意图/目的（可选）" maxlength="80" show-word-limit style="margin-top:8px" />
+        <el-select v-model="taskForm.energyLevel" placeholder="精力类型（可选）" clearable style="width:100%;margin-top:8px">
+          <el-option label="需高度专注 (Deep)" value="deep" />
+          <el-option label="事务性 (Shallow)" value="shallow" />
+          <el-option label="需外出 (Errand)" value="errand" />
+          <el-option label="创意/思考 (Creative)" value="creative" />
+        </el-select>
+        <div v-if="taskForm.rawText" class="detail-raw-text">
+          <details>
+            <summary style="cursor:pointer;font-size:13px;color:#909399;">原文</summary>
+            <p style="margin:8px 0 0;font-size:13px;color:#909399;white-space:pre-wrap;line-height:1.6;">{{ taskForm.rawText }}</p>
+          </details>
+        </div>
         <el-input
           v-model="taskForm.postponeReason"
           type="textarea"
@@ -879,6 +971,10 @@
             <div>
               <strong>{{ item.title }}</strong>
               <p>{{ item.detail || '无补充描述' }}</p>
+            <details v-if="item.raw_text && item.raw_text !== item.title" style="margin-top:4px;">
+              <summary style="cursor:pointer;font-size:12px;color:#909399;">原文</summary>
+              <p style="margin:4px 0 0;font-size:12px;color:#909399;white-space:pre-wrap;">{{ item.raw_text }}</p>
+            </details>
             </div>
             <div class="task-tags">
               <el-tag size="small">{{ item.kind === 'work' ? '工作' : '生活' }}</el-tag>
@@ -1090,7 +1186,7 @@
       </div>
     </el-drawer>
 
-    <el-drawer v-model="meetingDialogVisible" title="会议纪要" :size="meetingDrawerSize" @closed="resetMeetingForm">
+    <el-drawer v-model="meetingDialogVisible" title="会议纪要" :size="meetingDrawerSize" :before-close="handleMeetingDrawerClose" @closed="resetMeetingForm">
       <div class="drawer-stack">
         <div class="quick-row">
           <el-input v-model="meetingForm.title" placeholder="会议标题（必填）" maxlength="80" show-word-limit style="flex:1" />
@@ -1104,8 +1200,24 @@
           <el-time-picker v-model="meetingForm.meetingTime" value-format="HH:mm" placeholder="时间" style="flex:1" />
           <el-input-number v-model="meetingForm.durationMinutes" :min="0" :max="480" placeholder="时长(分)" style="flex:1" />
         </div>
-        <el-input v-model="meetingForm.participantsText" placeholder="参与人，用逗号分隔" />
-        <el-input v-model="meetingForm.tagsText" placeholder="标签，用逗号分隔（如：产品评审、需求）" />
+        <el-select
+          v-model="meetingParticipantArray"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          placeholder="参与人（输入后回车添加）"
+          style="width:100%"
+        ></el-select>
+        <el-select
+          v-model="meetingTagArray"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          placeholder="标签（输入后回车创建）"
+          style="width:100%"
+        ></el-select>
         <div v-if="meetingVoiceState === 'recording' && meetingInterimText" class="meeting-interim">
           <el-tag size="small" type="danger" effect="dark" class="recording-badge">录音中</el-tag>
           <span class="interim-text">{{ meetingInterimText }}</span>
@@ -1113,7 +1225,7 @@
         <el-input
           v-model="meetingForm.content"
           type="textarea"
-          :rows="14"
+          :autosize="{ minRows: 6, maxRows: 24 }"
           class="meeting-content-input"
           placeholder="会议内容记录…&#10;支持录音实时转写"
         />
@@ -1142,15 +1254,31 @@
         </div>
         <div v-if="meetingForm.actionItems && meetingForm.actionItems !== '[]'" class="meeting-summary-section">
           <div class="panel-heading"><h4>待办事项</h4></div>
-          <div v-for="(item, idx) in parsedActionItems" :key="idx" class="meeting-action-item">
+          <div
+            v-for="(item, idx) in parsedActionItems"
+            :key="idx"
+            class="meeting-action-item"
+            :class="{ 'action-done': item.done }"
+          >
+            <el-checkbox
+              :model-value="!!item.done"
+              @change="toggleActionItem(idx)"
+              size="small"
+            />
             <el-tag size="small" type="primary" class="meeting-action-tag">{{ item.assignee || '未指定' }}</el-tag>
-            <span>{{ item.task }}</span>
+            <span :class="{ 'action-task-done': item.done }">{{ item.task }}</span>
+            <el-button size="small" text type="primary" @click="createTaskFromAction(item)" title="转为事项">
+              转为事项
+            </el-button>
           </div>
         </div>
       </div>
       <template #footer>
         <div class="drawer-actions">
-          <el-button v-if="meetingForm.id" plain @click="deleteMeeting">删除此纪要</el-button>
+          <div>
+            <el-button v-if="meetingForm.id" size="small" plain @click="exportMeetingMarkdown(meetingForm)">导出</el-button>
+            <el-button v-if="meetingForm.id" size="small" plain @click="deleteMeeting">删除此纪要</el-button>
+          </div>
           <div>
             <el-button @click="meetingDialogVisible = false">关闭</el-button>
             <el-button plain @click="startMeetingVoice">
@@ -1236,7 +1364,9 @@ const isStandaloneMode = ref(false)
 const createForm = reactive({
   name: '',
   password: '',
-  notifyEmail: ''
+  notifyEmail: '',
+  intent: '',
+  energy_level: ''
 })
 
 const loginForm = reactive({
@@ -1252,6 +1382,7 @@ const profileForm = reactive({
 const quickForm = reactive({
   title: '',
   detail: '',
+  rawText: '',
   entryType: 'task',
   bucket: 'planned',
   plannedFor: '',
@@ -1260,7 +1391,9 @@ const quickForm = reactive({
   repeatInterval: 1,
   repeatUntil: '',
   priority: 'medium',
-  notifyEmail: ''
+  notifyEmail: '',
+  intent: '',
+  energy_level: ''
 })
 
 const meetingDialogVisible = ref(false)
@@ -1287,6 +1420,17 @@ const meetingForm = reactive({
   status: 'draft'
 })
 const meetingCanSummarize = computed(() => Boolean(meetingForm.id && meetingForm.content.trim()))
+
+const meetingSearchQuery = ref('')
+const triageActive = ref(false)
+const triageIndex = ref(0)
+const triageCurrent = computed(() => {
+  if (!triageActive.value) return null
+  const items = board.value.inbox_items
+  return triageIndex.value < items.length ? items[triageIndex.value] : null
+})
+const meetingDateRange = ref(null)
+const meetingDirty = ref(false)
 
 let meetingAudioUploadPromise = null
 
@@ -1423,6 +1567,53 @@ const parsedActionItems = computed(() => {
   } catch { return [] }
 })
 
+function formatMonthLabel(dateStr) {
+  if (!dateStr) return ''
+  const parts = dateStr.split('-')
+  if (parts.length < 2) return dateStr
+  return parts[0] + '年' + parseInt(parts[1]) + '月'
+}
+
+const groupedMeetings = computed(() => {
+  const filtered = meetings.value.filter(m => {
+    if (meetingSearchQuery.value) {
+      const q = meetingSearchQuery.value.toLowerCase()
+      const titleMatch = (m.title || '').toLowerCase().includes(q)
+      const contentMatch = (m.content || '').toLowerCase().includes(q)
+      if (!titleMatch && !contentMatch) return false
+    }
+    if (meetingDateRange.value) {
+      const md = m.meeting_date || ''
+      if (meetingDateRange.value[0] && md < meetingDateRange.value[0]) return false
+      if (meetingDateRange.value[1] && md > meetingDateRange.value[1]) return false
+    }
+    return true
+  })
+  const groups = {}
+  for (const m of filtered) {
+    const month = (m.meeting_date || '').slice(0, 7)
+    if (!month) continue
+    if (!groups[month]) groups[month] = []
+    groups[month].push(m)
+  }
+  const sorted = Object.keys(groups).sort((a, b) => b.localeCompare(a))
+  return sorted.map(month => ({
+    month: formatMonthLabel(month),
+    items: groups[month]
+  }))
+})
+
+const isMeetingFiltered = computed(() => Boolean(meetingSearchQuery.value || meetingDateRange.value))
+
+const meetingTagArray = computed({
+  get: () => meetingForm.tagsText ? meetingForm.tagsText.split(/[,，、]/).map(s => s.trim()).filter(Boolean) : [],
+  set: (val) => { meetingForm.tagsText = Array.isArray(val) ? val.join(', ') : val }
+})
+const meetingParticipantArray = computed({
+  get: () => meetingForm.participantsText ? meetingForm.participantsText.split(/[,，、]/).map(s => s.trim()).filter(Boolean) : [],
+  set: (val) => { meetingForm.participantsText = Array.isArray(val) ? val.join(', ') : val }
+})
+
 function parseJsonArray(str) {
   try {
     const arr = JSON.parse(str || '[]')
@@ -1447,6 +1638,7 @@ const taskForm = reactive({
   title: '',
   detail: '',
   notes: '',
+  rawText: '',
   plannedFor: '',
   remindAt: '',
   repeatType: 'none',
@@ -1659,6 +1851,7 @@ function syncViewportFlags() {
 function fillTodayDefaults() {
   quickForm.title = ''
   quickForm.detail = ''
+  quickForm.rawText = ''
   quickForm.entryType = 'task'
   quickForm.bucket = 'planned'
   quickForm.plannedFor = new Date().toISOString().slice(0, 10)
@@ -1668,6 +1861,8 @@ function fillTodayDefaults() {
   quickForm.repeatUntil = ''
   quickForm.priority = 'medium'
   quickForm.notifyEmail = profile.notify_email || ''
+  quickForm.intent = ''
+  quickForm.energy_level = ''
   if (isMobile.value) {
     quickAdvancedVisible.value = false
   }
@@ -1910,13 +2105,16 @@ async function createQuickTask() {
         bucket: quickForm.entryType === 'event' ? 'planned' : quickForm.bucket,
         title: quickForm.title,
         detail: quickForm.detail,
+        raw_text: quickForm.rawText,
         planned_for: quickForm.plannedFor,
         remind_at: quickForm.remindAt,
         repeat_type: quickForm.repeatType,
         repeat_interval: quickForm.repeatInterval,
         repeat_until: quickForm.repeatUntil,
         priority: quickForm.priority,
-        notify_email: quickForm.notifyEmail
+        notify_email: quickForm.notifyEmail,
+        intent: quickForm.intent,
+        energy_level: quickForm.energy_level
       })
     })
     ElMessage.success(activeKind.value === 'work' ? '工作事项已记录' : '生活事项已记录')
@@ -1944,7 +2142,10 @@ function openTask(task) {
   taskForm.repeatType = task.repeat_type || 'none'
   taskForm.repeatInterval = task.repeat_interval || 1
   taskForm.repeatUntil = task.repeat_until ? task.repeat_until.slice(0, 16) : ''
+  taskForm.rawText = task.raw_text || ''
   taskForm.notifyEmail = task.notify_email || ''
+  taskForm.intent = task.intent || ''
+  taskForm.energyLevel = task.energy_level || ''
   taskForm.cancelReason = task.cancel_reason || ''
   taskForm.postponeReason = task.last_postpone_reason || ''
   loadTaskCommentsPreview(task.id)
@@ -2001,6 +2202,7 @@ async function saveTask() {
         title: taskForm.title,
         detail: taskForm.detail,
         notes: taskForm.notes,
+        raw_text: taskForm.rawText,
         planned_for: taskForm.plannedFor,
         remind_at: taskForm.remindAt,
         repeat_type: taskForm.repeatType,
@@ -2010,7 +2212,9 @@ async function saveTask() {
         status: taskForm.status,
         notify_email: taskForm.notifyEmail,
         cancel_reason: taskForm.cancelReason,
-        postpone_reason: taskForm.postponeReason
+        postpone_reason: taskForm.postponeReason,
+        intent: taskForm.intent,
+        energy_level: taskForm.energyLevel
       })
     })
     taskDrawerVisible.value = false
@@ -2049,7 +2253,12 @@ async function updateTask(task, payload, successMessage = '') {
       body: JSON.stringify(payload)
     })
     if (successMessage) {
-      ElMessage.success(successMessage)
+      if (payload.status === 'done') {
+        const doneToday = board.value.recovery.done_today || 0
+        ElMessage.success(`又完成一件，今天已完成 ${doneToday + 1} 件事`)
+      } else {
+        ElMessage.success(successMessage)
+      }
     }
     await refreshBoard()
   } catch (error) {
@@ -2350,6 +2559,129 @@ async function summarizeMeeting(m) {
   }
 }
 
+function toggleActionItem(idx) {
+  try {
+    const items = JSON.parse(meetingForm.actionItems || '[]')
+    if (!Array.isArray(items) || idx < 0 || idx >= items.length) return
+    items[idx].done = !items[idx].done
+    meetingForm.actionItems = JSON.stringify(items)
+    if (meetingForm.id) {
+      saveMeeting()
+    }
+  } catch {}
+}
+
+async function createTaskFromAction(item) {
+  try {
+    await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: activeKind.value,
+        entry_type: 'task',
+        bucket: 'planned',
+        title: item.task,
+        detail: `待办来源：会议「${meetingForm.title}」${item.assignee ? '，负责人：' + item.assignee : ''}`,
+        notes: `来自会议纪要 ${meetingForm.meetingDate || ''}`,
+        priority: 'medium',
+        planned_for: new Date().toISOString().slice(0, 10)
+      })
+    })
+    ElMessage.success('已从会议待办创建事项')
+    await refreshBoard()
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
+function exportMeetingMarkdown(m) {
+  const title = m.title || '未命名会议'
+  const date = m.meeting_date || ''
+  const time = m.meeting_time || ''
+  let md = `# ${title}\n\n`
+  md += `**日期**：${date}${time ? ' ' + time : ''}\n`
+  if (m.duration_minutes) {
+    const h = Math.floor(m.duration_minutes / 60)
+    const min = m.duration_minutes % 60
+    md += `**时长**：${h > 0 ? h + '小时' : ''}${min > 0 ? min + '分钟' : ''}\n`
+  }
+  try {
+    const participants = JSON.parse(m.participants || '[]')
+    if (Array.isArray(participants) && participants.length > 0) {
+      md += `**参与人**：${participants.join('、')}\n`
+    }
+  } catch {}
+  try {
+    const tags = JSON.parse(m.tags || '[]')
+    if (Array.isArray(tags) && tags.length > 0) {
+      md += `**标签**：${tags.join('、')}\n`
+    }
+  } catch {}
+  if (m.status === 'finalized') md += '**状态**：已定稿\n'
+  md += '\n---\n\n'
+  if (m.content) {
+    md += `## 会议内容\n\n${m.content}\n\n`
+  }
+  if (m.summary) {
+    md += `## 摘要\n\n${m.summary}\n\n`
+  }
+  if (m.action_items && m.action_items !== '[]') {
+    try {
+      const actions = JSON.parse(m.action_items)
+      if (Array.isArray(actions) && actions.length > 0) {
+        md += '## 待办事项\n\n'
+        for (const a of actions) {
+          const done = a.done ? '[x]' : '[ ]'
+          const assignee = a.assignee ? '(' + a.assignee + ')' : ''
+          md += `- ${done} ${a.task} ${assignee}\n`
+        }
+      }
+    } catch {}
+  }
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = title.replace(/[\\/:*?"<>|]/g, '_') + '.md'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function handleMeetingDrawerClose(done) {
+  if (meetingDirty.value) {
+    try {
+      await ElMessageBox.confirm('有未保存的更改，确定关闭吗？', '未保存的更改', {
+        confirmButtonText: '关闭',
+        cancelButtonText: '取消',
+        type: 'warning'
+      })
+      meetingDirty.value = false
+      done()
+    } catch {
+      done(false)
+    }
+  } else {
+    done()
+  }
+}
+
+watch(meetingDialogVisible, (visible) => {
+  if (visible) {
+    meetingDirty.value = false
+  }
+})
+
+watch(
+  () => [meetingForm.title, meetingForm.content, meetingForm.summary, meetingForm.actionItems,
+         meetingForm.participantsText, meetingForm.tagsText, meetingForm.meetingDate,
+         meetingForm.meetingTime, meetingForm.durationMinutes, meetingForm.status],
+  () => {
+    if (meetingDialogVisible.value && meetingForm.id) {
+      meetingDirty.value = true
+    }
+  },
+  { deep: false }
+)
+
 let meetingRecognition = null
 let meetingMediaRecorder = null
 let meetingMediaStream = null
@@ -2542,6 +2874,7 @@ async function applyAISuggestions() {
           title: item.title,
           detail: item.detail,
           notes: item.notes,
+          raw_text: item.raw_text,
           priority: item.priority,
           status: item.status,
           planned_for: item.planned_for,
@@ -2974,6 +3307,7 @@ function applyVoiceDraft() {
     return
   }
   if (voiceTarget.value === 'quick') {
+    quickForm.rawText = finalText
     if (!quickForm.title.trim()) {
       const segments = finalText.split(/[。！!？?\n]/).map(item => item.trim()).filter(Boolean)
       quickForm.title = segments[0] || finalText.slice(0, 40)
@@ -3914,6 +4248,58 @@ onBeforeUnmount(() => {
   margin-top: 8px;
 }
 
+/* Meeting search bar */
+.meeting-search-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.meeting-search-input {
+  flex: 1;
+}
+.meeting-date-filter {
+  width: 280px;
+}
+
+/* Meeting month divider */
+.meeting-month-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 0 8px;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--border-color, #e4e7ed);
+}
+.meeting-month-divider:first-child {
+  margin-top: 0;
+}
+.meeting-month-label {
+  font-weight: 700;
+  font-size: 1.05em;
+  color: var(--text-primary, #303133);
+}
+.meeting-month-count {
+  font-size: 0.85em;
+  color: var(--text-secondary, #909399);
+}
+
+/* Meeting skeleton */
+.meeting-skeleton {
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--el-fill-color-blank, #fff);
+  margin-bottom: 8px;
+}
+
+/* Action item done state */
+.meeting-action-item.action-done {
+  opacity: 0.6;
+}
+.meeting-action-item .action-task-done {
+  text-decoration: line-through;
+  color: var(--text-secondary, #909399);
+}
+
 .meeting-content-input :deep(.el-textarea__inner) {
   min-height: 320px;
   line-height: 1.7;
@@ -4077,6 +4463,46 @@ onBeforeUnmount(() => {
   .timeline-empty {
     padding: 22px 16px;
   }
+
+  .triage-panel {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .triage-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .triage-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .triage-actions .el-button {
+    width: 100%;
+    margin: 0;
+  }
+
+  .inbox-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inbox-toolbar .el-button {
+    width: 100%;
+  }
+
+  .meeting-action-item {
+    flex-wrap: wrap;
+  }
+
+  .meeting-action-item .el-button {
+    margin-left: 0;
+    margin-top: 4px;
+  }
 }
 
 @media (max-width: 560px) {
@@ -4113,6 +4539,28 @@ onBeforeUnmount(() => {
 
   .task-tags {
     justify-content: flex-start;
+  }
+
+  .triage-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .triage-card {
+    padding: 12px;
+  }
+
+  .triage-card h5 {
+    font-size: 15px;
+  }
+
+  .meeting-action-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .meeting-action-item .el-button {
+    width: 100%;
   }
 }
 
@@ -4256,5 +4704,56 @@ onBeforeUnmount(() => {
     width: 100%;
     margin: 0;
   }
+}
+
+/* Triage panel */
+.triage-panel {
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.triage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.triage-card {
+  background: var(--el-fill-color-light);
+  border-radius: 8px;
+  padding: 16px;
+}
+.triage-card h5 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.triage-card p {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary);
+}
+.triage-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+.inbox-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+/* Meeting action item */
+.meeting-action-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+.meeting-action-item .el-button {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 </style>
