@@ -593,60 +593,137 @@
     </el-dialog>
 
     <!-- Anthropic 协议接入文档对话框 -->
-    <el-dialog v-model="anthropicDocsVisible" width="960px" title="Anthropic 协议接入文档">
+    <el-dialog v-model="anthropicDocsVisible" width="960px" title="Anthropic 协议接入">
       <div v-if="anthropicDocs" class="docs-content">
+        <!-- 核心理念 -->
         <el-alert :title="anthropicDocs.summary" type="info" :closable="false" />
+        <el-alert type="success" :closable="false" style="margin-top: 0;">
+          <template #title>
+            通用端点 <code>/api/anthropic/v1/messages</code> — 一个地址接入所有下游，
+            根据 <code>model</code> 自动路由。切换模型无需改 <code>ANTHROPIC_BASE_URL</code>。
+          </template>
+        </el-alert>
 
-        <h4 style="margin-top: 16px;">支持的提供商</h4>
+        <!-- Claude Code 快速配置（最常用场景） -->
+        <h4 style="margin-top: 16px;">Claude Code 本地配置</h4>
+        <el-alert type="warning" :closable="false" style="margin-top: 4px;">
+          <template #title>
+            BASE_URL 统一用 <code>/api/anthropic</code>，切换模型只需改 MODEL 环境变量，网关按模型名自动路由到对应下游
+          </template>
+        </el-alert>
+        <el-tabs v-model="ccProviderTab">
+          <el-tab-pane v-for="p in anthropicDocs.providers" :key="p.name" :label="p.name" :name="p.name">
+            <div class="docs-card" style="background: #0f1724; padding: 16px; border-radius: 14px;">
+              <p style="color: #94a3b8; margin: 0 0 10px 0; font-size: 13px;">
+                以下配置使用 <strong style="color: #60a5fa;">{{ p.name }}</strong> 下游，
+                可选模型：<el-tag v-for="m in p.models" :key="m" size="small" effect="plain" style="margin-left: 4px;">{{ m }}</el-tag>
+              </p>
+              <el-tabs>
+                <el-tab-pane label=".claude/settings.json">
+                  <pre class="doc-json">{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
+    "ANTHROPIC_MODEL": "{{ p.models[0] || 'unknown' }}",
+    "ANTHROPIC_SMALL_FAST_MODEL": "{{ p.models[1] || p.models[0] || '' }}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.models[0] || '' }}",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.models[0] || '' }}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ p.models[p.models.length - 1] || p.models[0] || '' }}"
+  }
+}</pre>
+                </el-tab-pane>
+                <el-tab-pane label="环境变量">
+                  <pre class="doc-code">export ANTHROPIC_BASE_URL="https://t.jaxiu.cn/api/anthropic"
+export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"
+export ANTHROPIC_MODEL="{{ p.models[0] || '' }}"
+export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
+                </el-tab-pane>
+              </el-tabs>
+            </div>
+          </el-tab-pane>
+          <!-- 混合下游 Tab -->
+          <el-tab-pane label="跨下游混用" name="mixed">
+            <div class="docs-card" style="background: #0f1724; padding: 16px; border-radius: 14px;">
+              <p style="color: #94a3b8; margin: 0 0 10px 0; font-size: 13px;">
+                <strong style="color: #fbbf24;">高级：</strong>不同角色用不同下游模型——如主力用 DeepSeek，轻量任务走 MiniMax。
+              </p>
+              <pre class="doc-json">{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
+    "ANTHROPIC_MODEL": "deepseek-v4-pro",
+    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.5-highspeed",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-reasoner",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen3-max-2026-01-23",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.5"
+  }
+}</pre>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+
+        <!-- 提供商及模型总览 -->
+        <h4>可用下游及模型</h4>
         <el-table :data="anthropicDocs.providers" size="small" stripe>
-          <el-table-column prop="name" label="提供商" width="120">
+          <el-table-column prop="name" label="提供商" width="100">
             <template #default="{ row }">
-              <el-tag size="small" type="success">{{ row.name }}</el-tag>
+              <el-tag size="small" :type="row.name === 'MiniMax' ? 'success' : row.name === 'DashScope' ? 'warning' : 'primary'">{{ row.name }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="base_url" label="DevTools 端点" min-width="200">
-            <template #default="{ row }">
-              <code style="font-size: 12px;">{{ row.base_url }}/v1/messages</code>
-            </template>
-          </el-table-column>
-          <el-table-column prop="upstream" label="上游地址" min-width="220">
+          <el-table-column label="上游地址" min-width="220">
             <template #default="{ row }">
               <code style="font-size: 11px; color: #909399;">{{ row.upstream }}</code>
             </template>
           </el-table-column>
-          <el-table-column label="支持模型" min-width="280">
+          <el-table-column label="可用模型" min-width="320">
             <template #default="{ row }">
-              <el-tag v-for="m in row.models" :key="m" size="small" style="margin-right: 4px; margin-bottom: 2px;">{{ m }}</el-tag>
+              <el-tag v-for="m in row.models" :key="m" size="small" effect="plain" style="margin-right: 4px; margin-bottom: 2px;">{{ m }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="旧端点（兼容保留）" width="180">
+            <template #default="{ row }">
+              <code style="font-size: 11px;">{{ row.base_url }}/v1/messages</code>
             </template>
           </el-table-column>
         </el-table>
 
+        <!-- 模型来源说明 -->
+        <div v-if="anthropicDocs.examples.generic.provider_models" style="margin-top: 0;">
+          <el-collapse>
+            <el-collapse-item title="模型来源详情">
+              <el-table :data="anthropicDocs.examples.generic.provider_models" size="small">
+                <el-table-column prop="name" label="提供商" width="120" />
+                <el-table-column label="模型列表">
+                  <template #default="{ row }">
+                    <el-tag v-for="m in row.models" :key="m" size="small" effect="plain" style="margin-right: 4px; margin-bottom: 2px;">{{ m }}</el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+
         <el-divider />
 
+        <!-- API 路由 -->
         <h4>API 路由</h4>
-        <el-descriptions :column="1" border>
+        <el-descriptions :column="1" border size="small">
           <el-descriptions-item v-for="route in anthropicDocs.routes" :key="route.path" :label="`${route.method} ${route.path}`">
             {{ route.description }}
           </el-descriptions-item>
         </el-descriptions>
 
-        <h4 style="margin-top: 16px;">请求示例（通用端点）</h4>
-        <el-tabs>
-          <el-tab-pane label="请求体">
-            <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.generic.request, null, 2) }}</pre>
-            <div style="margin-top: 12px;">
-              <el-divider>Claude Code 配置</el-divider>
-              <pre class="doc-code">{{ anthropicDocs.examples.generic.claude_code_config.code }}</pre>
-            </div>
-          </el-tab-pane>
-        </el-tabs>
+        <!-- 请求示例 -->
+        <h4>请求示例</h4>
+        <pre class="doc-json">{{ JSON.stringify(anthropicDocs.examples.generic.request, null, 2) }}</pre>
 
-        <h4 style="margin-top: 16px;">SDK 调用示例</h4>
+        <!-- SDK 调用示例 -->
+        <h4>SDK / API 调用</h4>
         <el-tabs>
-          <el-tab-pane label="Python SDK">
+          <el-tab-pane label="Python">
             <pre class="doc-code">{{ anthropicDocs.examples.python_sdk.code }}</pre>
           </el-tab-pane>
-          <el-tab-pane label="JavaScript SDK">
+          <el-tab-pane label="JavaScript">
             <pre class="doc-code">{{ anthropicDocs.examples.javascript_sdk.code }}</pre>
           </el-tab-pane>
           <el-tab-pane label="cURL">
@@ -948,6 +1025,7 @@ const docsVisible = ref(false)
 const docs = ref(null)
 const anthropicDocsVisible = ref(false)
 const anthropicDocs = ref(null)
+const ccProviderTab = ref('MiniMax')
 const minimaxDocsVisible = ref(false)
 const minimaxDocs = ref(null)
 const createdPlainKey = ref('')
@@ -1176,6 +1254,9 @@ const loadAnthropicDocs = async () => {
   const replaced = docStr.replace(/your-devtools:8080/g, window.location.host)
   anthropicDocs.value = JSON.parse(replaced)
   anthropicDocsVisible.value = true
+  if (data.providers && data.providers.length > 0) {
+    ccProviderTab.value = data.providers[0].name
+  }
 }
 
 const loadMinimaxDocs = async () => {
