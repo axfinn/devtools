@@ -46,10 +46,13 @@ type PlannerTask struct {
 	RolloverCount      int        `json:"rollover_count"`
 	LastPostponeReason string     `json:"last_postpone_reason"`
 	LastPostponedAt    *time.Time `json:"last_postponed_at"`
+	Intent             string     `json:"intent"`
+	EnergyLevel        string     `json:"energy_level"`
 	RemindAt           *time.Time `json:"remind_at"`
 	RepeatType         string     `json:"repeat_type"`
 	RepeatInterval     int        `json:"repeat_interval"`
 	RepeatUntil        *time.Time `json:"repeat_until"`
+	RawText            string     `json:"raw_text"`
 	NotifyEmail        string     `json:"notify_email"`
 	LastNotifiedAt     *time.Time `json:"last_notified_at"`
 	CancelReason       string     `json:"cancel_reason"`
@@ -180,6 +183,9 @@ func (db *DB) InitPlanner() error {
 		"ALTER TABLE planner_tasks ADD COLUMN repeat_interval INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE planner_tasks ADD COLUMN repeat_until DATETIME",
 		"ALTER TABLE planner_tasks ADD COLUMN cancel_reason TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN intent TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN energy_level TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN raw_text TEXT DEFAULT ''",
 	}
 	for _, stmt := range migrations {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
@@ -389,14 +395,14 @@ func (db *DB) CreatePlannerTask(task *PlannerTask) error {
 		INSERT INTO planner_tasks (
 			id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
 			planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
-			remind_at, repeat_type, repeat_interval, repeat_until, notify_email, last_notified_at,
-			cancel_reason, completed_at, created_at, updated_at
+			intent, energy_level, remind_at, repeat_type, repeat_interval, repeat_until, notify_email, last_notified_at,
+			cancel_reason, completed_at, created_at, updated_at, raw_text
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, task.ID, task.ProfileID, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status,
 		task.Priority, task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason,
-		task.LastPostponedAt, task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil,
-		task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CreatedAt, task.UpdatedAt)
+		task.LastPostponedAt, task.Intent, task.EnergyLevel, task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil,
+		task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CreatedAt, task.UpdatedAt, task.RawText)
 	return err
 }
 
@@ -412,10 +418,10 @@ func (db *DB) CreatePlannerTasks(tasks []*PlannerTask) error {
 		INSERT INTO planner_tasks (
 			id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
 			planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
-			remind_at, repeat_type, repeat_interval, repeat_until, notify_email, last_notified_at,
-			cancel_reason, completed_at, created_at, updated_at
+			intent, energy_level, remind_at, repeat_type, repeat_interval, repeat_until, notify_email, last_notified_at,
+			cancel_reason, completed_at, created_at, updated_at, raw_text
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -431,9 +437,9 @@ func (db *DB) CreatePlannerTasks(tasks []*PlannerTask) error {
 		if _, err := stmt.Exec(
 			task.ID, task.ProfileID, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status,
 			task.Priority, task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason,
-			task.LastPostponedAt, task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil,
+			task.LastPostponedAt, task.Intent, task.EnergyLevel, task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil,
 			task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CreatedAt,
-			task.UpdatedAt,
+			task.UpdatedAt, task.RawText,
 		); err != nil {
 			tx.Rollback()
 			return err
@@ -450,8 +456,8 @@ func (db *DB) GetPlannerTask(id string) (*PlannerTask, error) {
 const plannerTaskSelectSQL = `
 	SELECT id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
 	       planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
-	       remind_at, repeat_type, repeat_interval, repeat_until, notify_email, last_notified_at,
-	       cancel_reason, completed_at, created_at, updated_at
+	       intent, energy_level, remind_at, repeat_type, repeat_interval, repeat_until, notify_email,
+	       last_notified_at, cancel_reason, completed_at, created_at, updated_at, raw_text
 	FROM planner_tasks
 `
 
@@ -462,6 +468,9 @@ type plannerTaskScanner interface {
 func scanPlannerTask(scanner plannerTaskScanner) (*PlannerTask, error) {
 	task := &PlannerTask{}
 	var lastPostponedAt sql.NullTime
+	var intent sql.NullString
+	var energyLevel sql.NullString
+	var rawText sql.NullString
 	var remindAt sql.NullTime
 	var repeatUntil sql.NullTime
 	var lastNotifiedAt sql.NullTime
@@ -482,6 +491,8 @@ func scanPlannerTask(scanner plannerTaskScanner) (*PlannerTask, error) {
 		&task.RolloverCount,
 		&task.LastPostponeReason,
 		&lastPostponedAt,
+		&intent,
+		&energyLevel,
 		&remindAt,
 		&task.RepeatType,
 		&task.RepeatInterval,
@@ -492,11 +503,27 @@ func scanPlannerTask(scanner plannerTaskScanner) (*PlannerTask, error) {
 		&completedAt,
 		&task.CreatedAt,
 		&task.UpdatedAt,
+		&rawText,
 	); err != nil {
 		return nil, err
 	}
 	if lastPostponedAt.Valid {
 		task.LastPostponedAt = &lastPostponedAt.Time
+	}
+	if intent.Valid {
+		task.Intent = intent.String
+	} else {
+		task.Intent = ""
+	}
+	if energyLevel.Valid {
+		task.EnergyLevel = energyLevel.String
+	} else {
+		task.EnergyLevel = ""
+	}
+	if rawText.Valid {
+		task.RawText = rawText.String
+	} else {
+		task.RawText = ""
 	}
 	if remindAt.Valid {
 		task.RemindAt = &remindAt.Time
@@ -576,13 +603,15 @@ func (db *DB) UpdatePlannerTask(task *PlannerTask) error {
 			UPDATE planner_tasks
 			SET kind = ?, entry_type = ?, bucket = ?, title = ?, detail = ?, notes = ?, status = ?, priority = ?,
 			    planned_for = ?, original_planned_for = ?, rollover_count = ?, last_postpone_reason = ?, last_postponed_at = ?,
+			    intent = ?, energy_level = ?,
 			    remind_at = ?, repeat_type = ?, repeat_interval = ?, repeat_until = ?, notify_email = ?,
-			    last_notified_at = ?, cancel_reason = ?, completed_at = ?, updated_at = ?
+			    last_notified_at = ?, cancel_reason = ?, completed_at = ?, raw_text = ?, updated_at = ?
 			WHERE id = ?
 		`, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status, task.Priority,
 		task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason, task.LastPostponedAt,
+		task.Intent, task.EnergyLevel,
 		task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil, task.NotifyEmail,
-		task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.UpdatedAt,
+		task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.RawText, task.UpdatedAt,
 		task.ID)
 	return err
 }
