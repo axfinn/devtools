@@ -20,12 +20,14 @@
       </div>
     </div>
 
-    <el-row :gutter="18">
-      <el-col :lg="10" :md="24">
-        <el-card>
-          <template #header>
-            <span>签发 API Key</span>
-          </template>
+    <el-tabs v-model="mainTab" type="border-card" class="main-tabs">
+      <el-tab-pane label="密钥管理" name="keys">
+        <el-row :gutter="18">
+          <el-col :lg="10" :md="24">
+            <el-card>
+              <template #header>
+                <span>签发 API Key</span>
+              </template>
           <el-form label-position="top">
             <el-form-item label="名称">
               <el-input v-model="form.name" placeholder="如 marketing-service" />
@@ -156,371 +158,460 @@
           </el-table>
         </el-card>
       </el-col>
-    </el-row>
+        </el-row>
 
-    <!-- MiniMax Token Plan 任务管理 -->
-    <el-card class="minimax-tasks-card" v-if="superAdminPassword">
-      <template #header>
-        <div class="card-header">
-          <span>MiniMax 媒体任务</span>
-          <el-button text @click="loadMinimaxTasks">刷新</el-button>
-        </div>
-      </template>
-      <el-table :data="minimaxTasks" v-loading="loadingMinimaxTasks" stripe size="small" max-height="400">
-        <el-table-column prop="task_id" label="任务ID" width="180">
-          <template #default="{ row }">
-            <el-button text type="primary" size="small" @click="viewMinimaxTask(row)">{{ row.task_id }}</el-button>
+        <!-- Anthropic 下游提供商管理 -->
+        <el-card class="anthropic-providers-card" v-if="superAdminPassword">
+          <template #header>
+            <div class="card-header">
+              <span>Anthropic 下游管理</span>
+              <el-button type="primary" size="small" @click="openAddProvider">新增下游</el-button>
+            </div>
           </template>
-        </el-table-column>
-        <el-table-column prop="model" label="模型" width="140">
-          <template #default="{ row }">
-            <el-tag size="small" type="success">{{ row.model }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'succeeded' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'running' ? 'warning' : 'info'">
-              {{ row.status === 'succeeded' ? '成功' : row.status === 'failed' ? '失败' : row.status === 'running' ? '进行中' : '等待' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" width="170">
-          <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="100">
-          <template #default="{ row }">
-            <el-button text type="primary" size="small" @click="viewMinimaxTask(row)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+          <el-table :data="anthropicProviders" v-loading="loadingProviders" stripe size="small">
+            <el-table-column prop="name" label="名称" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.is_default ? 'success' : ''">{{ row.name }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="api_url" label="API URL" min-width="200">
+              <template #default="{ row }">
+                <code style="font-size: 11px;">{{ row.api_url }}</code>
+              </template>
+            </el-table-column>
+            <el-table-column label="模型" min-width="200">
+              <template #default="{ row }">
+                <el-tag v-for="m in parseProviderModels(row.models)" :key="m" size="small" effect="plain" style="margin: 1px 2px;">{{ m }}</el-tag>
+                <span v-if="parseProviderModels(row.models).length === 0" style="color: #909399; font-size: 12px;">无</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="别名" min-width="140">
+              <template #default="{ row }">
+                <el-tag v-for="a in parseProviderAliases(row.aliases)" :key="a.model" size="small" type="warning" effect="dark" style="margin: 1px 2px;">
+                  {{ a.model }}→{{ a.upstream_model }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }">
+                <el-switch v-model="row.enabled" size="small" @change="toggleProvider(row)" />
+              </template>
+            </el-table-column>
+            <el-table-column prop="is_default" label="默认" width="70">
+              <template #default="{ row }">
+                <el-tag v-if="row.is_default" size="small" type="success">默认</el-tag>
+                <el-button v-else text size="small" @click="setDefaultProvider(row)">设默认</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button text size="small" @click="openEditProvider(row)">编辑</el-button>
+                <el-button text size="small" type="danger" @click="deleteProvider(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
 
-    <!-- Voice Cloning 音色克隆调试模块 -->
-    <el-card class="voice-cloning-card" v-if="superAdminPassword">
-      <template #header>
-        <div class="card-header">
-          <span>Voice Cloning 音色克隆（旧版兼容）</span>
-          <el-tabs v-model="voiceCloningTab" class="voice-cloning-tabs">
-            <el-tab-pane label="上传音色" name="upload" />
-            <el-tab-pane label="音色列表" name="list" />
-            <el-tab-pane label="音色测试" name="tts" />
+        <!-- Provider 编辑对话框 -->
+        <el-dialog v-model="providerDialogVisible" :title="editingProvider ? '编辑下游' : '新增下游'" width="600px">
+          <el-form label-position="top">
+            <el-form-item label="名称">
+              <el-input v-model="providerForm.name" placeholder="如 MiniMax、DeepSeek" />
+            </el-form-item>
+            <el-form-item label="API URL">
+              <el-input v-model="providerForm.api_url" placeholder="https://api.example.com/anthropic" />
+            </el-form-item>
+            <el-form-item label="API Key（可选，留空使用默认）">
+              <el-input v-model="providerForm.api_key" type="password" show-password placeholder="sk-xxx" />
+            </el-form-item>
+            <el-form-item label="模型列表（每行一个）">
+              <el-input v-model="modelsTextProvider" type="textarea" :rows="4" placeholder="deepseek-chat&#10;deepseek-reasoner" />
+            </el-form-item>
+            <el-form-item label="别名映射（每行：用户模型=上游模型）">
+              <el-input v-model="aliasesTextProvider" type="textarea" :rows="3" placeholder="gateway=deepseek-v4-pro&#10;fast=deepseek-v4-flash" />
+            </el-form-item>
+            <el-form-item label="设为默认线路">
+              <el-switch v-model="providerForm.is_default" />
+              <span style="margin-left: 8px; color: #909399; font-size: 12px;">匹配不到模型时使用默认线路</span>
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="providerDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="savingProvider" @click="saveProvider">保存</el-button>
+          </template>
+        </el-dialog>
+      </el-tab-pane>
+
+      <el-tab-pane label="模型测试" name="test">
+        <el-card class="test-card">
+          <template #header>
+            <div class="card-header">
+              <span>模型快速测试</span>
+              <div class="card-header">
+                <el-input
+                  v-model="testPrompt"
+                  placeholder="自定义测试问题（可选）"
+                  style="width: 280px"
+                />
+                <el-button @click="loadCatalog">刷新模型</el-button>
+                <el-button type="primary" :loading="testingAll" @click="testAllModels">全部测试</el-button>
+              </div>
+            </div>
+          </template>
+
+          <el-table :data="catalogChat" v-loading="loadingCatalog" stripe size="small">
+            <el-table-column prop="model" label="模型" min-width="200" />
+            <el-table-column prop="brand" label="品牌" width="80">
+              <template #default="{ row }">{{ row.brand || row.provider }}</template>
+            </el-table-column>
+            <el-table-column prop="description" label="能力" min-width="200" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag
+                  :type="testResults[row.model]?.status === 'ok' ? 'success' : testResults[row.model]?.status === 'err' ? 'danger' : testResults[row.model]?.status === 'running' ? 'warning' : 'info'"
+                  size="small"
+                >
+                  {{ testResults[row.model]?.status === 'ok' ? '✓ 成功' : testResults[row.model]?.status === 'err' ? '✗ 失败' : testResults[row.model]?.status === 'running' ? '测试中' : '待测' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="耗时" width="90">
+              <template #default="{ row }">
+                <span v-if="testResults[row.model]?.latency">{{ testResults[row.model].latency }}ms</span>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Tokens" width="80">
+              <template #default="{ row }">{{ testResults[row.model]?.tokens ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="回复" min-width="260">
+              <template #default="{ row }">
+                <span v-if="testResults[row.model]?.status === 'err'" class="test-err">{{ testResults[row.model].error }}</span>
+                <span v-else class="test-reply">{{ testResults[row.model]?.reply || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  text
+                  type="primary"
+                  size="small"
+                  :loading="testResults[row.model]?.status === 'running'"
+                  @click="testModel(row.model)"
+                >测试</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="媒体工具" name="media">
+        <!-- MiniMax Token Plan 任务管理 -->
+        <el-card class="minimax-tasks-card" v-if="superAdminPassword">
+          <template #header>
+            <div class="card-header">
+              <span>MiniMax 媒体任务</span>
+              <el-button text @click="loadMinimaxTasks">刷新</el-button>
+            </div>
+          </template>
+          <el-table :data="minimaxTasks" v-loading="loadingMinimaxTasks" stripe size="small" max-height="400">
+            <el-table-column prop="task_id" label="任务ID" width="180">
+              <template #default="{ row }">
+                <el-button text type="primary" size="small" @click="viewMinimaxTask(row)">{{ row.task_id }}</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column prop="model" label="模型" width="140">
+              <template #default="{ row }">
+                <el-tag size="small" type="success">{{ row.model }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.status === 'succeeded' ? 'success' : row.status === 'failed' ? 'danger' : row.status === 'running' ? 'warning' : 'info'">
+                  {{ row.status === 'succeeded' ? '成功' : row.status === 'failed' ? '失败' : row.status === 'running' ? '进行中' : '等待' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="created_at" label="创建时间" width="170">
+              <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="100">
+              <template #default="{ row }">
+                <el-button text type="primary" size="small" @click="viewMinimaxTask(row)">详情</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+
+        <!-- Voice Cloning 音色克隆调试模块 -->
+        <el-card class="voice-cloning-card" v-if="superAdminPassword">
+          <template #header>
+            <div class="card-header">
+              <span>Voice Cloning 音色克隆（旧版兼容）</span>
+              <el-tabs v-model="voiceCloningTab" class="voice-cloning-tabs">
+                <el-tab-pane label="上传音色" name="upload" />
+                <el-tab-pane label="音色列表" name="list" />
+                <el-tab-pane label="音色测试" name="tts" />
+              </el-tabs>
+              <el-button text @click="loadVoiceClones">刷新</el-button>
+            </div>
+          </template>
+
+          <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 16px;">
+            <template #title>
+              这是历史兼容入口。新的 MiniMax Speech 官方接口测试请优先使用下方的 MiniMax Speech 面板。
+            </template>
+          </el-alert>
+
+          <!-- 上传音色 -->
+          <div v-show="voiceCloningTab === 'upload'" class="voice-upload-section">
+            <el-form label-position="top">
+              <el-form-item label="音色名称">
+                <el-input v-model="uploadVoiceName" placeholder="如'我的音色'" style="max-width: 300px;" />
+              </el-form-item>
+              <el-form-item label="音频来源">
+                <el-radio-group v-model="voiceSourceType">
+                  <el-radio value="file">文件上传</el-radio>
+                  <el-radio value="mic">麦克风录制</el-radio>
+                </el-radio-group>
+              </el-form-item>
+              <!-- 文件上传模式 -->
+              <el-form-item v-show="voiceSourceType === 'file'" label="音频文件（支持 wav/mp3/m4a，最大 10MB）">
+                <input type="file" accept="audio/*" @change="handleAudioFileChange" />
+              </el-form-item>
+              <!-- 麦克风录制模式 -->
+              <el-form-item v-show="voiceSourceType === 'mic'" label="麦克风录制">
+                <div class="mic-recorder">
+                  <div class="mic-recorder-controls">
+                    <el-button
+                      v-if="!isRecording && !recordedAudioUrl"
+                      type="danger"
+                      @click="startRecording"
+                    >
+                      开始录制
+                    </el-button>
+                    <el-button
+                      v-if="isRecording"
+                      type="danger"
+                      @click="stopRecording"
+                    >
+                      停止录制
+                    </el-button>
+                  </div>
+                  <div v-if="isRecording" class="recording-status">
+                    <span class="recording-dot"></span>
+                    <span>录制中... {{ formatDuration(recordingDuration) }}</span>
+                  </div>
+                  <div v-if="recordedAudioUrl && !isRecording" class="recording-preview">
+                    <audio :src="recordedAudioUrl" controls style="width: 300px;" />
+                    <div class="recording-actions">
+                      <el-button size="small" @click="playRecording">试听</el-button>
+                      <el-button size="small" type="warning" @click="clearRecording">重新录制</el-button>
+                    </div>
+                    <div class="recording-info">
+                      <el-tag size="small" type="info">录制时长: {{ formatDuration(recordingDuration) }}</el-tag>
+                    </div>
+                  </div>
+                  <div v-if="!isRecording && !recordedAudioUrl" class="recording-hint">
+                    <el-alert type="info" :closable="false" show-icon>
+                      <template #title>
+                        点击"开始录制"后请对准麦克风说话，建议录制 30 秒以上以获得更好的效果。
+                        最大录制时长 5 分钟。
+                      </template>
+                    </el-alert>
+                  </div>
+                </div>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" :loading="uploadingVoice" @click="uploadVoiceClone">上传复刻</el-button>
+              </el-form-item>
+            </el-form>
+            <el-alert type="info" :closable="false" style="margin-top: 12px;">
+              <template #title>
+                上传音频复刻音色后，可以通过音色 ID 使用该音色进行 TTS 语音合成。
+                推荐使用 30秒以上的清晰语音音频以获得更好的效果。
+              </template>
+            </el-alert>
+          </div>
+
+          <!-- 音色列表 -->
+          <div v-show="voiceCloningTab === 'list'" class="voice-list-section">
+            <el-table :data="voiceClones" v-loading="loadingVoiceClones" stripe size="small" max-height="400">
+              <el-table-column prop="voice_id" label="Voice ID" min-width="160">
+                <template #default="{ row }">
+                  <code style="font-size: 12px;">{{ row.voice_id }}</code>
+                </template>
+              </el-table-column>
+              <el-table-column prop="name" label="名称" min-width="120" />
+              <el-table-column prop="status" label="状态" width="100">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">
+                    {{ row.status === 'active' ? '可用' : row.status }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="created_at" label="创建时间" width="170">
+                <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="100">
+                <template #default="{ row }">
+                  <el-button text type="danger" size="small" @click="deleteVoiceClone(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-if="!loadingVoiceClones && voiceClones.length === 0" description="暂无音色，请上传音频复刻" />
+          </div>
+
+          <!-- 音色测试 TTS -->
+          <div v-show="voiceCloningTab === 'tts'" class="voice-tts-section">
+            <el-form label-position="top">
+              <el-form-item label="选择音色">
+                <el-select v-model="selectedVoice" placeholder="请选择音色" value-key="voice_id" style="width: 300px;">
+                  <el-option v-for="clone in voiceClones" :key="clone.voice_id" :label="`${clone.name} (${clone.voice_id})`" :value="clone" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="模型">
+                <el-select v-model="ttsModel" style="width: 200px;">
+                  <el-option label="speech-2.8-hd" value="speech-2.8-hd" />
+                  <el-option label="speech-2.8-turbo" value="speech-2.8-turbo" />
+                  <el-option label="speech-02-hd" value="speech-02-hd" />
+                  <el-option label="speech-02-turbo" value="speech-02-turbo" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="合成文本">
+                <el-input v-model="ttsText" type="textarea" :rows="4" placeholder="请输入要合成的文本" style="max-width: 500px;" />
+              </el-form-item>
+              <el-form-item label="语速">
+                <el-slider v-model="ttsSpeed" :min="0.5" :max="2.0" :step="0.1" show-stops style="width: 200px;" />
+                <span style="margin-left: 12px;">{{ ttsSpeed }}x</span>
+              </el-form-item>
+              <el-form-item label="音频格式">
+                <el-select v-model="ttsAudioFormat" style="width: 120px;">
+                  <el-option label="mp3" value="mp3" />
+                  <el-option label="wav" value="wav" />
+                  <el-option label="pcm" value="pcm" />
+                </el-select>
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" :loading="testingTTS" @click="testVoiceTTS">合成语音</el-button>
+              </el-form-item>
+            </el-form>
+            <!-- TTS 结果预览 -->
+            <div v-if="ttsResultUrl" class="tts-result">
+              <h4>合成结果</h4>
+              <audio :src="ttsResultUrl" controls style="width: 100%; max-width: 500px;" />
+            </div>
+          </div>
+        </el-card>
+
+        <AIGatewaySpeechPanel
+          :super-admin-password="superAdminPassword"
+          :prefill-api-key="createdPlainKey"
+        />
+      </el-tab-pane>
+
+      <el-tab-pane label="接入文档" name="docs">
+        <el-card class="docs-card">
+          <template #header>
+            <div class="card-header">
+              <span>接入文档</span>
+              <el-button text @click="loadDocs">刷新文档</el-button>
+            </div>
+          </template>
+
+          <div class="docs-grid">
+            <div class="docs-panel">
+              <h4>接入方式</h4>
+              <p class="docs-text">
+                业务方使用平台签发的 API Key 直接调用统一网关。文本能力走
+                `/api/ai-gateway/v1/chat/completions`，图片和视频走
+                `/api/ai-gateway/v1/media/generations`，所有请求都会进入统一记账、限流和审计。
+              </p>
+              <el-descriptions :column="1" border>
+                <el-descriptions-item label="鉴权 Header">Authorization: Bearer &lt;API_KEY&gt;</el-descriptions-item>
+                <el-descriptions-item label="文本接口">POST /api/ai-gateway/v1/chat/completions</el-descriptions-item>
+                <el-descriptions-item label="媒体接口">POST /api/ai-gateway/v1/media/generations</el-descriptions-item>
+                <el-descriptions-item label="任务查询">GET /api/ai-gateway/v1/media/tasks/:id</el-descriptions-item>
+                <el-descriptions-item label="接口总文档">GET /api/ai-gateway/docs</el-descriptions-item>
+              </el-descriptions>
+            </div>
+
+            <div class="docs-panel">
+              <h4>返回与计费</h4>
+              <ul class="docs-list">
+                <li>文本接口会回传上游结果，并附带 `usage_summary`，包含输入、输出、总 Tokens 和费用。</li>
+                <li>媒体接口返回统一任务对象，支持轮询查看状态、结果地址和失败原因。</li>
+                <li>每个 API Key 都会累计请求数、Token、费用，并支持预算上限、告警阈值、日报和月报。</li>
+              </ul>
+            </div>
+          </div>
+
+          <el-tabs class="docs-tabs">
+            <el-tab-pane label="快速开始">
+              <div class="docs-panel-stack">
+                <h4>接入步骤</h4>
+                <ol class="docs-steps">
+                  <li>在当前页面生成 API Key，并确认允许的模型、作用域、限流和预算。</li>
+                  <li>业务服务端保存 API Key，不要暴露到浏览器前端。</li>
+                  <li>调用聊天接口或媒体接口，Header 带上 `Authorization: Bearer &lt;API_KEY&gt;`。</li>
+                  <li>读取响应中的 `usage_summary`、任务状态和错误信息，接入你自己的日志系统。</li>
+                  <li>在本页查看请求明细、累计 Token、费用、预算告警和日报月报。</li>
+                </ol>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="字段说明">
+              <el-table :data="gatewayFieldDocs" size="small" stripe>
+                <el-table-column prop="field" label="字段" width="220" />
+                <el-table-column prop="required" label="必填" width="80" />
+                <el-table-column prop="description" label="说明" min-width="260" />
+                <el-table-column prop="example" label="示例" min-width="220" />
+              </el-table>
+            </el-tab-pane>
+            <el-tab-pane label="cURL">
+              <pre class="doc-json">{{ gatewayCurlExample }}</pre>
+            </el-tab-pane>
+            <el-tab-pane label="JavaScript">
+              <pre class="doc-json">{{ gatewayJsExample }}</pre>
+            </el-tab-pane>
+            <el-tab-pane label="Python">
+              <pre class="doc-json">{{ gatewayPythonExample }}</pre>
+            </el-tab-pane>
+            <el-tab-pane label="媒体示例">
+              <pre class="doc-json">{{ gatewayMediaExample }}</pre>
+            </el-tab-pane>
+            <el-tab-pane label="响应示例">
+              <pre class="doc-json">{{ gatewayResponseExample }}</pre>
+            </el-tab-pane>
+            <el-tab-pane label="错误码">
+              <el-table :data="gatewayErrorDocs" size="small" stripe>
+                <el-table-column prop="code" label="状态码" width="100" />
+                <el-table-column prop="scene" label="场景" width="180" />
+                <el-table-column prop="meaning" label="含义" min-width="220" />
+                <el-table-column prop="fix" label="处理建议" min-width="260" />
+              </el-table>
+            </el-tab-pane>
+            <el-tab-pane label="常见问题">
+              <div class="faq-list">
+                <div v-for="item in gatewayFaqs" :key="item.q" class="faq-item">
+                  <h4>{{ item.q }}</h4>
+                  <p>{{ item.a }}</p>
+                </div>
+              </div>
+            </el-tab-pane>
           </el-tabs>
-          <el-button text @click="loadVoiceClones">刷新</el-button>
-        </div>
-      </template>
 
-      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 16px;">
-        <template #title>
-          这是历史兼容入口。新的 MiniMax Speech 官方接口测试请优先使用下方的 MiniMax Speech 面板。
-        </template>
-      </el-alert>
-
-      <!-- 上传音色 -->
-      <div v-show="voiceCloningTab === 'upload'" class="voice-upload-section">
-        <el-form label-position="top">
-          <el-form-item label="音色名称">
-            <el-input v-model="uploadVoiceName" placeholder="如'我的音色'" style="max-width: 300px;" />
-          </el-form-item>
-          <el-form-item label="音频来源">
-            <el-radio-group v-model="voiceSourceType">
-              <el-radio value="file">文件上传</el-radio>
-              <el-radio value="mic">麦克风录制</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          <!-- 文件上传模式 -->
-          <el-form-item v-show="voiceSourceType === 'file'" label="音频文件（支持 wav/mp3/m4a，最大 10MB）">
-            <input type="file" accept="audio/*" @change="handleAudioFileChange" />
-          </el-form-item>
-          <!-- 麦克风录制模式 -->
-          <el-form-item v-show="voiceSourceType === 'mic'" label="麦克风录制">
-            <div class="mic-recorder">
-              <div class="mic-recorder-controls">
-                <el-button
-                  v-if="!isRecording && !recordedAudioUrl"
-                  type="danger"
-                  @click="startRecording"
-                >
-                  开始录制
-                </el-button>
-                <el-button
-                  v-if="isRecording"
-                  type="danger"
-                  @click="stopRecording"
-                >
-                  停止录制
-                </el-button>
-              </div>
-              <div v-if="isRecording" class="recording-status">
-                <span class="recording-dot"></span>
-                <span>录制中... {{ formatDuration(recordingDuration) }}</span>
-              </div>
-              <div v-if="recordedAudioUrl && !isRecording" class="recording-preview">
-                <audio :src="recordedAudioUrl" controls style="width: 300px;" />
-                <div class="recording-actions">
-                  <el-button size="small" @click="playRecording">试听</el-button>
-                  <el-button size="small" type="warning" @click="clearRecording">重新录制</el-button>
-                </div>
-                <div class="recording-info">
-                  <el-tag size="small" type="info">录制时长: {{ formatDuration(recordingDuration) }}</el-tag>
-                </div>
-              </div>
-              <div v-if="!isRecording && !recordedAudioUrl" class="recording-hint">
-                <el-alert type="info" :closable="false" show-icon>
-                  <template #title>
-                    点击"开始录制"后请对准麦克风说话，建议录制 30 秒以上以获得更好的效果。
-                    最大录制时长 5 分钟。
-                  </template>
-                </el-alert>
-              </div>
-            </div>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="uploadingVoice" @click="uploadVoiceClone">上传复刻</el-button>
-          </el-form-item>
-        </el-form>
-        <el-alert type="info" :closable="false" style="margin-top: 12px;">
-          <template #title>
-            上传音频复刻音色后，可以通过音色 ID 使用该音色进行 TTS 语音合成。
-            推荐使用 30秒以上的清晰语音音频以获得更好的效果。
-          </template>
-        </el-alert>
-      </div>
-
-      <!-- 音色列表 -->
-      <div v-show="voiceCloningTab === 'list'" class="voice-list-section">
-        <el-table :data="voiceClones" v-loading="loadingVoiceClones" stripe size="small" max-height="400">
-          <el-table-column prop="voice_id" label="Voice ID" min-width="160">
-            <template #default="{ row }">
-              <code style="font-size: 12px;">{{ row.voice_id }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column prop="name" label="名称" min-width="120" />
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">
-                {{ row.status === 'active' ? '可用' : row.status }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="created_at" label="创建时间" width="170">
-            <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="100">
-            <template #default="{ row }">
-              <el-button text type="danger" size="small" @click="deleteVoiceClone(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-if="!loadingVoiceClones && voiceClones.length === 0" description="暂无音色，请上传音频复刻" />
-      </div>
-
-      <!-- 音色测试 TTS -->
-      <div v-show="voiceCloningTab === 'tts'" class="voice-tts-section">
-        <el-form label-position="top">
-          <el-form-item label="选择音色">
-            <el-select v-model="selectedVoice" placeholder="请选择音色" value-key="voice_id" style="width: 300px;">
-              <el-option v-for="clone in voiceClones" :key="clone.voice_id" :label="`${clone.name} (${clone.voice_id})`" :value="clone" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="模型">
-            <el-select v-model="ttsModel" style="width: 200px;">
-              <el-option label="speech-2.8-hd" value="speech-2.8-hd" />
-              <el-option label="speech-2.8-turbo" value="speech-2.8-turbo" />
-              <el-option label="speech-02-hd" value="speech-02-hd" />
-              <el-option label="speech-02-turbo" value="speech-02-turbo" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="合成文本">
-            <el-input v-model="ttsText" type="textarea" :rows="4" placeholder="请输入要合成的文本" style="max-width: 500px;" />
-          </el-form-item>
-          <el-form-item label="语速">
-            <el-slider v-model="ttsSpeed" :min="0.5" :max="2.0" :step="0.1" show-stops style="width: 200px;" />
-            <span style="margin-left: 12px;">{{ ttsSpeed }}x</span>
-          </el-form-item>
-          <el-form-item label="音频格式">
-            <el-select v-model="ttsAudioFormat" style="width: 120px;">
-              <el-option label="mp3" value="mp3" />
-              <el-option label="wav" value="wav" />
-              <el-option label="pcm" value="pcm" />
-            </el-select>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="testingTTS" @click="testVoiceTTS">合成语音</el-button>
-          </el-form-item>
-        </el-form>
-        <!-- TTS 结果预览 -->
-        <div v-if="ttsResultUrl" class="tts-result">
-          <h4>合成结果</h4>
-          <audio :src="ttsResultUrl" controls style="width: 100%; max-width: 500px;" />
-        </div>
-      </div>
-    </el-card>
-
-    <AIGatewaySpeechPanel
-      :super-admin-password="superAdminPassword"
-      :prefill-api-key="createdPlainKey"
-    />
-
-    <!-- 模型快速测试 -->
-    <el-card class="test-card">
-      <template #header>
-        <div class="card-header">
-          <span>模型快速测试</span>
-          <div class="card-header">
-            <el-input
-              v-model="testPrompt"
-              placeholder="自定义测试问题（可选）"
-              style="width: 280px"
-            />
-            <el-button @click="loadCatalog">刷新模型</el-button>
-            <el-button type="primary" :loading="testingAll" @click="testAllModels">全部测试</el-button>
+          <div v-if="docs" class="docs-api-list">
+            <h4>接口清单</h4>
+            <el-descriptions :column="1" border>
+              <el-descriptions-item v-for="route in docs.routes" :key="route.path" :label="`${route.method} ${route.path}`">
+                {{ route.description }}
+              </el-descriptions-item>
+            </el-descriptions>
           </div>
-        </div>
-      </template>
+        </el-card>
+      </el-tab-pane>
+    </el-tabs>
 
-      <el-table :data="catalogChat" v-loading="loadingCatalog" stripe size="small">
-        <el-table-column prop="model" label="模型" min-width="200" />
-        <el-table-column prop="brand" label="品牌" width="80">
-          <template #default="{ row }">{{ row.brand || row.provider }}</template>
-        </el-table-column>
-        <el-table-column prop="description" label="能力" min-width="200" />
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag
-              :type="testResults[row.model]?.status === 'ok' ? 'success' : testResults[row.model]?.status === 'err' ? 'danger' : testResults[row.model]?.status === 'running' ? 'warning' : 'info'"
-              size="small"
-            >
-              {{ testResults[row.model]?.status === 'ok' ? '✓ 成功' : testResults[row.model]?.status === 'err' ? '✗ 失败' : testResults[row.model]?.status === 'running' ? '测试中' : '待测' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="耗时" width="90">
-          <template #default="{ row }">
-            <span v-if="testResults[row.model]?.latency">{{ testResults[row.model].latency }}ms</span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Tokens" width="80">
-          <template #default="{ row }">{{ testResults[row.model]?.tokens ?? '-' }}</template>
-        </el-table-column>
-        <el-table-column label="回复" min-width="260">
-          <template #default="{ row }">
-            <span v-if="testResults[row.model]?.status === 'err'" class="test-err">{{ testResults[row.model].error }}</span>
-            <span v-else class="test-reply">{{ testResults[row.model]?.reply || '-' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="80" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              text
-              type="primary"
-              size="small"
-              :loading="testResults[row.model]?.status === 'running'"
-              @click="testModel(row.model)"
-            >测试</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <el-card class="docs-card">
-      <template #header>
-        <div class="card-header">
-          <span>接入文档</span>
-          <el-button text @click="loadDocs">刷新文档</el-button>
-        </div>
-      </template>
-
-      <div class="docs-grid">
-        <div class="docs-panel">
-          <h4>接入方式</h4>
-          <p class="docs-text">
-            业务方使用平台签发的 API Key 直接调用统一网关。文本能力走
-            `/api/ai-gateway/v1/chat/completions`，图片和视频走
-            `/api/ai-gateway/v1/media/generations`，所有请求都会进入统一记账、限流和审计。
-          </p>
-          <el-descriptions :column="1" border>
-            <el-descriptions-item label="鉴权 Header">Authorization: Bearer &lt;API_KEY&gt;</el-descriptions-item>
-            <el-descriptions-item label="文本接口">POST /api/ai-gateway/v1/chat/completions</el-descriptions-item>
-            <el-descriptions-item label="媒体接口">POST /api/ai-gateway/v1/media/generations</el-descriptions-item>
-            <el-descriptions-item label="任务查询">GET /api/ai-gateway/v1/media/tasks/:id</el-descriptions-item>
-            <el-descriptions-item label="接口总文档">GET /api/ai-gateway/docs</el-descriptions-item>
-          </el-descriptions>
-        </div>
-
-        <div class="docs-panel">
-          <h4>返回与计费</h4>
-          <ul class="docs-list">
-            <li>文本接口会回传上游结果，并附带 `usage_summary`，包含输入、输出、总 Tokens 和费用。</li>
-            <li>媒体接口返回统一任务对象，支持轮询查看状态、结果地址和失败原因。</li>
-            <li>每个 API Key 都会累计请求数、Token、费用，并支持预算上限、告警阈值、日报和月报。</li>
-          </ul>
-        </div>
-      </div>
-
-      <el-tabs class="docs-tabs">
-        <el-tab-pane label="快速开始">
-          <div class="docs-panel-stack">
-            <h4>接入步骤</h4>
-            <ol class="docs-steps">
-              <li>在当前页面生成 API Key，并确认允许的模型、作用域、限流和预算。</li>
-              <li>业务服务端保存 API Key，不要暴露到浏览器前端。</li>
-              <li>调用聊天接口或媒体接口，Header 带上 `Authorization: Bearer &lt;API_KEY&gt;`。</li>
-              <li>读取响应中的 `usage_summary`、任务状态和错误信息，接入你自己的日志系统。</li>
-              <li>在本页查看请求明细、累计 Token、费用、预算告警和日报月报。</li>
-            </ol>
-          </div>
-        </el-tab-pane>
-        <el-tab-pane label="字段说明">
-          <el-table :data="gatewayFieldDocs" size="small" stripe>
-            <el-table-column prop="field" label="字段" width="220" />
-            <el-table-column prop="required" label="必填" width="80" />
-            <el-table-column prop="description" label="说明" min-width="260" />
-            <el-table-column prop="example" label="示例" min-width="220" />
-          </el-table>
-        </el-tab-pane>
-        <el-tab-pane label="cURL">
-          <pre class="doc-json">{{ gatewayCurlExample }}</pre>
-        </el-tab-pane>
-        <el-tab-pane label="JavaScript">
-          <pre class="doc-json">{{ gatewayJsExample }}</pre>
-        </el-tab-pane>
-        <el-tab-pane label="Python">
-          <pre class="doc-json">{{ gatewayPythonExample }}</pre>
-        </el-tab-pane>
-        <el-tab-pane label="媒体示例">
-          <pre class="doc-json">{{ gatewayMediaExample }}</pre>
-        </el-tab-pane>
-        <el-tab-pane label="响应示例">
-          <pre class="doc-json">{{ gatewayResponseExample }}</pre>
-        </el-tab-pane>
-        <el-tab-pane label="错误码">
-          <el-table :data="gatewayErrorDocs" size="small" stripe>
-            <el-table-column prop="code" label="状态码" width="100" />
-            <el-table-column prop="scene" label="场景" width="180" />
-            <el-table-column prop="meaning" label="含义" min-width="220" />
-            <el-table-column prop="fix" label="处理建议" min-width="260" />
-          </el-table>
-        </el-tab-pane>
-        <el-tab-pane label="常见问题">
-          <div class="faq-list">
-            <div v-for="item in gatewayFaqs" :key="item.q" class="faq-item">
-              <h4>{{ item.q }}</h4>
-              <p>{{ item.a }}</p>
-            </div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
-
-      <div v-if="docs" class="docs-api-list">
-        <h4>接口清单</h4>
-        <el-descriptions :column="1" border>
-          <el-descriptions-item v-for="route in docs.routes" :key="route.path" :label="`${route.method} ${route.path}`">
-            {{ route.description }}
-          </el-descriptions-item>
-        </el-descriptions>
-      </div>
-    </el-card>
 
     <el-dialog v-model="detailVisible" width="920px" title="Key 详情">
       <div v-if="currentKey">
@@ -1044,6 +1135,7 @@ import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
 const API_BASE = '/api/ai-gateway'
 const PASSWORD_KEY = 'ai_gateway_super_admin_password'
 
+const mainTab = ref('keys')
 const superAdminPassword = ref(sessionStorage.getItem(PASSWORD_KEY) || '')
 const creating = ref(false)
 const loadingKeys = ref(false)
@@ -1067,6 +1159,156 @@ const minimaxDocsVisible = ref(false)
 const minimaxDocs = ref(null)
 const createdPlainKey = ref('')
 const modelsText = ref('')
+
+// Anthropic provider management
+const anthropicProviders = ref([])
+const loadingProviders = ref(false)
+const providerDialogVisible = ref(false)
+const editingProvider = ref(null)
+const savingProvider = ref(false)
+const modelsTextProvider = ref('')
+const aliasesTextProvider = ref('')
+const providerForm = ref({
+  name: '',
+  api_url: '',
+  api_key: '',
+  models: '[]',
+  aliases: '[]',
+  enabled: true,
+  is_default: false
+})
+
+const parseProviderModels = (models) => {
+  if (!models) return []
+  if (Array.isArray(models)) return models
+  try { return JSON.parse(models) } catch { return [] }
+}
+const parseProviderAliases = (aliases) => {
+  if (!aliases) return []
+  if (Array.isArray(aliases)) return aliases
+  try { return JSON.parse(aliases) } catch { return [] }
+}
+
+const loadProviders = async () => {
+  loadingProviders.value = true
+  try {
+    const res = await fetch(`${API_BASE}/admin/anthropic/providers`, {
+      headers: { 'X-Super-Admin-Password': superAdminPassword.value }
+    })
+    const data = await res.json()
+    if (res.ok) anthropicProviders.value = data.providers || []
+  } finally {
+    loadingProviders.value = false
+  }
+}
+
+const openAddProvider = () => {
+  editingProvider.value = null
+  providerForm.value = { name: '', api_url: '', api_key: '', models: '[]', aliases: '[]', enabled: true, is_default: false }
+  modelsTextProvider.value = ''
+  aliasesTextProvider.value = ''
+  providerDialogVisible.value = true
+}
+
+const openEditProvider = (row) => {
+  editingProvider.value = row
+  providerForm.value = { ...row }
+  modelsTextProvider.value = parseProviderModels(row.models).join('\n')
+  aliasesTextProvider.value = parseProviderAliases(row.aliases).map(a => a.model + '=' + a.upstream_model).join('\n')
+  providerDialogVisible.value = true
+}
+
+const saveProvider = async () => {
+  const models = modelsTextProvider.value.split('\n').map(s => s.trim()).filter(Boolean)
+  const aliasLines = aliasesTextProvider.value.split('\n').map(s => s.trim()).filter(Boolean)
+  const aliases = aliasLines.map(line => {
+    const [model, upstream] = line.split('=')
+    return { model: model?.trim(), upstream_model: upstream?.trim() }
+  }).filter(a => a.model && a.upstream_model)
+
+  const body = {
+    super_admin_password: superAdminPassword.value,
+    name: providerForm.value.name,
+    api_url: providerForm.value.api_url,
+    api_key: providerForm.value.api_key,
+    models: JSON.stringify(models),
+    aliases: JSON.stringify(aliases),
+    is_default: providerForm.value.is_default,
+    enabled: providerForm.value.enabled
+  }
+
+  savingProvider.value = true
+  try {
+    const isEdit = editingProvider.value && editingProvider.value.id
+    const url = isEdit
+      ? `${API_BASE}/admin/anthropic/providers/${editingProvider.value.id}`
+      : `${API_BASE}/admin/anthropic/providers`
+    const method = isEdit ? 'PUT' : 'POST'
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '保存失败')
+    ElMessage.success(isEdit ? '已更新' : '已创建')
+    providerDialogVisible.value = false
+    loadProviders()
+  } catch (err) {
+    ElMessage.error(err.message)
+  } finally {
+    savingProvider.value = false
+  }
+}
+
+const toggleProvider = async (row) => {
+  try {
+    await fetch(`${API_BASE}/admin/anthropic/providers/${row.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        super_admin_password: superAdminPassword.value,
+        enabled: row.enabled
+      })
+    })
+  } catch (err) {
+    row.enabled = !row.enabled
+    ElMessage.error('操作失败')
+  }
+}
+
+const setDefaultProvider = async (row) => {
+  try {
+    const res = await fetch(`${API_BASE}/admin/anthropic/providers/${row.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        super_admin_password: superAdminPassword.value,
+        is_default: true
+      })
+    })
+    if (!res.ok) throw new Error('设置失败')
+    ElMessage.success(`${row.name} 已设为默认线路`)
+    loadProviders()
+  } catch (err) {
+    ElMessage.error(err.message)
+  }
+}
+
+const deleteProvider = async (row) => {
+  await ElMessageBox.confirm(`确认删除下游 "${row.name}" ?`, '提示', { type: 'warning' })
+  try {
+    const res = await fetch(`${API_BASE}/admin/anthropic/providers/${row.id}?super_admin_password=${encodeURIComponent(superAdminPassword.value)}`, {
+      method: 'DELETE'
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '删除失败')
+    ElMessage.success('已删除')
+    loadProviders()
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error(err.message)
+  }
+}
 
 const form = ref({
   name: '',
@@ -1176,8 +1418,9 @@ const init = async () => {
     return
   }
   sessionStorage.setItem(PASSWORD_KEY, superAdminPassword.value)
+  mainTab.value = 'keys'
   await loadKeys()
-  await Promise.all([loadReports(), loadAlerts(), loadMinimaxTasks()])
+  await Promise.all([loadReports(), loadAlerts(), loadMinimaxTasks(), loadCatalog(), loadProviders()])
 }
 
 const createKey = async () => {
@@ -1751,6 +1994,21 @@ onMounted(() => {
   gap: 10px;
 }
 
+.main-tabs {
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.main-tabs :deep(.el-tabs__content) {
+  padding: 18px 18px 8px;
+}
+
+.main-tabs :deep(.el-tab-pane) {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .card-header,
 .plain-key-box {
   display: flex;
@@ -1840,7 +2098,8 @@ onMounted(() => {
   line-height: 1.8;
 }
 
-.test-card {
+.test-card,
+.anthropic-providers-card {
   border-radius: 22px;
 }
 

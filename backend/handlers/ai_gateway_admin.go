@@ -576,6 +576,150 @@ func (h *AIGatewayHandler) AdminTestModel(c *gin.Context) {
 	})
 }
 
+// AdminListAnthropicProviders 列出所有 Anthropic 下游提供商
+// GET /api/ai-gateway/admin/anthropic/providers
+func (h *AIGatewayHandler) AdminListAnthropicProviders(c *gin.Context) {
+	if !h.requireSuperAdmin(c, "") {
+		return
+	}
+	providers, err := h.db.ListAnthropicProviders()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取提供商列表失败"})
+		return
+	}
+	if providers == nil {
+		providers = []*models.AnthropicProvider{}
+	}
+	c.JSON(http.StatusOK, gin.H{"providers": providers})
+}
+
+// AdminCreateAnthropicProvider 新增 Anthropic 下游提供商
+// POST /api/ai-gateway/admin/anthropic/providers
+func (h *AIGatewayHandler) AdminCreateAnthropicProvider(c *gin.Context) {
+	var req struct {
+		SuperAdminPassword string `json:"super_admin_password"`
+		Name               string `json:"name" binding:"required"`
+		APIURL             string `json:"api_url" binding:"required"`
+		APIKey             string `json:"api_key"`
+		Models             string `json:"models"`
+		Aliases            string `json:"aliases"`
+		IsDefault          bool   `json:"is_default"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少必填字段 name / api_url"})
+		return
+	}
+	if !h.requireSuperAdmin(c, req.SuperAdminPassword) {
+		return
+	}
+	if req.Models == "" {
+		req.Models = "[]"
+	}
+	if req.Aliases == "" {
+		req.Aliases = "[]"
+	}
+	p := &models.AnthropicProvider{
+		Name:      req.Name,
+		APIURL:    req.APIURL,
+		APIKey:    req.APIKey,
+		Models:    req.Models,
+		Aliases:   req.Aliases,
+		Enabled:   true,
+		IsDefault: req.IsDefault,
+	}
+	if err := h.db.CreateAnthropicProvider(p); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "创建失败: " + err.Error()})
+		return
+	}
+	// 如果设为默认，更新其他 provider 为非默认
+	if p.IsDefault {
+		h.db.SetDefaultAnthropicProvider(p.ID)
+	}
+	c.JSON(http.StatusCreated, gin.H{"provider": p})
+}
+
+// AdminUpdateAnthropicProvider 更新 Anthropic 下游提供商
+// PUT /api/ai-gateway/admin/anthropic/providers/:id
+func (h *AIGatewayHandler) AdminUpdateAnthropicProvider(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		SuperAdminPassword string `json:"super_admin_password"`
+		Name               string `json:"name"`
+		APIURL             string `json:"api_url"`
+		APIKey             string `json:"api_key"`
+		Models             string `json:"models"`
+		Aliases            string `json:"aliases"`
+		Enabled            *bool  `json:"enabled"`
+		IsDefault          *bool  `json:"is_default"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
+		return
+	}
+	if !h.requireSuperAdmin(c, req.SuperAdminPassword) {
+		return
+	}
+	pid := int64(0)
+	if _, err := fmt.Sscanf(id, "%d", &pid); err != nil || pid <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 ID"})
+		return
+	}
+	existing, err := h.db.GetAnthropicProviderByID(pid)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "提供商不存在"})
+		return
+	}
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.APIURL != "" {
+		existing.APIURL = req.APIURL
+	}
+	if req.APIKey != "" {
+		existing.APIKey = req.APIKey
+	}
+	if req.Models != "" {
+		existing.Models = req.Models
+	}
+	if req.Aliases != "" {
+		existing.Aliases = req.Aliases
+	}
+	if req.Enabled != nil {
+		existing.Enabled = *req.Enabled
+	}
+	if req.IsDefault != nil {
+		existing.IsDefault = *req.IsDefault
+	}
+	if err := h.db.UpdateAnthropicProvider(existing); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "更新失败: " + err.Error()})
+		return
+	}
+	// 如果设为默认，更新其他 provider 为非默认
+	if existing.IsDefault {
+		h.db.SetDefaultAnthropicProvider(existing.ID)
+	}
+	c.JSON(http.StatusOK, gin.H{"provider": existing})
+}
+
+// AdminDeleteAnthropicProvider 删除 Anthropic 下游提供商
+// DELETE /api/ai-gateway/admin/anthropic/providers/:id
+func (h *AIGatewayHandler) AdminDeleteAnthropicProvider(c *gin.Context) {
+	id := c.Param("id")
+	if !h.requireSuperAdmin(c, c.Query("super_admin_password")) {
+		return
+	}
+	pid := int64(0)
+	if _, err := fmt.Sscanf(id, "%d", &pid); err != nil || pid <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 ID"})
+		return
+	}
+	if err := h.db.DeleteAnthropicProvider(pid); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func (h *AIGatewayHandler) AdminAlerts(c *gin.Context) {
 	if !h.requireSuperAdmin(c, "") {
 		return

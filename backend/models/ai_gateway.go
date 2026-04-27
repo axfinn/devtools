@@ -9,6 +9,7 @@ import (
 func init() {
 	RegisterInit("AI Gateway(llm_tasks)", (*DB).InitLLMTasks)
 	RegisterInit("AI Gateway(ai_api_keys)", (*DB).InitAIGateway)
+	RegisterInit("AI Gateway(anthropic_providers)", (*DB).InitAnthropicProviders)
 	RegisterInit("MiniMax Media(media_tasks)", (*DB).InitMiniMaxMediaTasks)
 	RegisterInit("语音克隆(voice_clones)", (*DB).InitVoiceClones)
 }
@@ -788,5 +789,161 @@ func (db *DB) ListVoiceClones(apiKeyID string, limit, offset int) ([]*VoiceClone
 // UpdateVoiceCloneStatus 更新音色克隆状态
 func (db *DB) UpdateVoiceCloneStatus(id uint, status string) error {
 	_, err := db.conn.Exec(`UPDATE voice_clones SET status = ? WHERE id = ?`, status, id)
+	return err
+}
+
+// AnthropicProvider DB 存储的 Anthropic 下游提供商
+type AnthropicProvider struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	APIURL    string `json:"api_url"`
+	APIKey    string `json:"api_key"`
+	Models    string `json:"models"`   // JSON array
+	Aliases   string `json:"aliases"`  // JSON array of {model, upstream_model}
+	Enabled   bool   `json:"enabled"`
+	IsDefault bool   `json:"is_default"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+func (db *DB) InitAnthropicProviders() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS anthropic_providers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL UNIQUE,
+			api_url TEXT NOT NULL,
+			api_key TEXT NOT NULL DEFAULT '',
+			models TEXT NOT NULL DEFAULT '[]',
+			aliases TEXT NOT NULL DEFAULT '[]',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			is_default INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE INDEX IF NOT EXISTS idx_anthropic_providers_name ON anthropic_providers(name);
+	`)
+	if err != nil {
+		return err
+	}
+	// Seed builtin providers if table is empty
+	var count int
+	db.conn.QueryRow(`SELECT COUNT(*) FROM anthropic_providers`).Scan(&count)
+	if count == 0 {
+		builtins := []struct {
+			Name      string
+			APIURL    string
+			APIKey    string
+			Models    string
+			Aliases   string
+			IsDefault bool
+		}{
+			{"MiniMax", "https://api.minimaxi.com/anthropic", "", `["MiniMax-M2.5","MiniMax-M2.5-highspeed","MiniMax-M2.1","MiniMax-M2.1-highspeed","MiniMax-M2","MiniMax-M2.7"]`, "[]", false},
+			{"DashScope", "https://coding.dashscope.aliyuncs.com/apps/anthropic", "", `["qwen3.5-plus","qwen3-max-2026-01-23","qwen3-coder-next","qwen3-coder-plus","glm-5","glm-4.7","kimi-k2.5","MiniMax-M2.5"]`, "[]", false},
+			{"DeepSeek", "https://api.deepseek.com/anthropic", "", `["deepseek-chat","deepseek-reasoner","deepseek-v4-flash","deepseek-v4-pro"]`, "[]", true},
+			{"PackyAPI", "https://www.packyapi.com", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false},
+			{"OpenClaudeCode", "https://www.openclaudecode.cn", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false},
+		}
+		for _, b := range builtins {
+			db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, is_default) VALUES (?, ?, ?, ?, ?, ?)`,
+				b.Name, b.APIURL, b.APIKey, b.Models, b.Aliases, b.IsDefault)
+		}
+	}
+	return nil
+}
+
+// ListAnthropicProviders 列出所有 providers
+func (db *DB) ListAnthropicProviders() ([]*AnthropicProvider, error) {
+	return db.listAnthropicProviders("")
+}
+
+// ListEnabledAnthropicProviders 列出启用的 providers
+func (db *DB) ListEnabledAnthropicProviders() ([]*AnthropicProvider, error) {
+	return db.listAnthropicProviders("WHERE enabled = 1")
+}
+
+// GetDefaultAnthropicProvider 获取默认线路
+func (db *DB) GetDefaultAnthropicProvider() (*AnthropicProvider, error) {
+	return scanAnthropicProvider(db.conn.QueryRow(`SELECT `+anthropicProviderColumns+` FROM anthropic_providers WHERE enabled = 1 AND is_default = 1 LIMIT 1`))
+}
+
+func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error) {
+	query := `SELECT id, name, api_url, api_key, models, aliases, enabled, is_default, created_at, updated_at FROM anthropic_providers `
+	if where != "" {
+		query += where
+	}
+	query += ` ORDER BY id ASC`
+	rows, err := db.conn.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	providers := make([]*AnthropicProvider, 0)
+	for rows.Next() {
+		p := &AnthropicProvider{}
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		providers = append(providers, p)
+	}
+	return providers, nil
+}
+
+var anthropicProviderColumns = `id, name, api_url, api_key, models, aliases, enabled, is_default, created_at, updated_at`
+
+func scanAnthropicProvider(scanner interface{ Scan(dest ...interface{}) error }) (*AnthropicProvider, error) {
+	p := &AnthropicProvider{}
+	err := scanner.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.CreatedAt, &p.UpdatedAt)
+	return p, err
+}
+
+// GetAnthropicProviderByID 按 ID 获取
+func (db *DB) GetAnthropicProviderByID(id int64) (*AnthropicProvider, error) {
+	return scanAnthropicProvider(db.conn.QueryRow(`SELECT `+anthropicProviderColumns+` FROM anthropic_providers WHERE id = ?`, id))
+}
+
+// GetAnthropicProviderByName 按名称获取（用于路由查找）
+func (db *DB) GetAnthropicProviderByName(name string) (*AnthropicProvider, error) {
+	return scanAnthropicProvider(db.conn.QueryRow(`SELECT `+anthropicProviderColumns+` FROM anthropic_providers WHERE name = ? AND enabled = 1`, name))
+}
+
+// CreateAnthropicProvider 新增
+func (db *DB) CreateAnthropicProvider(p *AnthropicProvider) error {
+	res, err := db.conn.Exec(`INSERT INTO anthropic_providers (name, api_url, api_key, models, aliases, enabled, is_default) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault)
+	if err != nil {
+		return err
+	}
+	id, _ := res.LastInsertId()
+	p.ID = id
+	return nil
+}
+
+// UpdateAnthropicProvider 更新
+func (db *DB) UpdateAnthropicProvider(p *AnthropicProvider) error {
+	_, err := db.conn.Exec(`UPDATE anthropic_providers SET name=?, api_url=?, api_key=?, models=?, aliases=?, enabled=?, is_default=?, updated_at=datetime('now') WHERE id=?`,
+		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.ID)
+	return err
+}
+
+// SetDefaultAnthropicProvider 设置默认线路（先清除所有，再设置指定）
+func (db *DB) SetDefaultAnthropicProvider(id int64) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE anthropic_providers SET is_default = 0`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE anthropic_providers SET is_default = 1, updated_at = datetime('now') WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteAnthropicProvider 删除
+func (db *DB) DeleteAnthropicProvider(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM anthropic_providers WHERE id = ?`, id)
 	return err
 }

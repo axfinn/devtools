@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/models"
 
 	"github.com/gin-gonic/gin"
 )
@@ -77,23 +78,15 @@ func (h *AIGatewayHandler) providerAllModels(provider *config.AnthropicProviderC
 	return providerUserModels(provider)
 }
 
-// resolveAnthropicProvider 根据模型名查找匹配的提供商
-// 先查别名，再查直通模型。优先从配置文件查找，未配置则使用内置默认列表
+// resolveAnthropicProvider 根据模型名查找匹配的提供商（DB 优先）
 func (h *AIGatewayHandler) resolveAnthropicProvider(model string) (*config.AnthropicProviderConfig, bool) {
-	providers := h.cfg.AIGateway.AnthropicProviders
-	if len(providers) == 0 {
-		providers = h.builtinAnthropicProviders()
-	} else {
-		providers = h.fillProviderAPIKeys(providers)
-	}
+	providers := h.allAnthropicProviders()
 	for i := range providers {
-		// 先检查别名
 		for _, a := range providers[i].Aliases {
 			if a.Model == model {
 				return &providers[i], true
 			}
 		}
-		// 再检查直通模型
 		for _, m := range providers[i].Models {
 			if m == model {
 				return &providers[i], true
@@ -103,13 +96,43 @@ func (h *AIGatewayHandler) resolveAnthropicProvider(model string) (*config.Anthr
 	return nil, false
 }
 
-// allAnthropicProviders 返回所有可用的提供商（配置优先，否则内置）
-// 自动填充空的 APIKey 字段（从对应 provider 的配置 fallback）
+// allAnthropicProviders 返回所有可用的提供商（DB 优先，否则 config，否则内置）
 func (h *AIGatewayHandler) allAnthropicProviders() []config.AnthropicProviderConfig {
+	// 1. DB 存储优先
+	dbProviders, err := h.db.ListEnabledAnthropicProviders()
+	if err == nil && len(dbProviders) > 0 {
+		return h.dbAnthropicProvidersToConfig(dbProviders)
+	}
+	// 2. config.yaml 配置
 	if len(h.cfg.AIGateway.AnthropicProviders) > 0 {
 		return h.fillProviderAPIKeys(h.cfg.AIGateway.AnthropicProviders)
 	}
+	// 3. 内置默认
 	return h.builtinAnthropicProviders()
+}
+
+// dbAnthropicProvidersToConfig 将 DB 模型转换为 config 结构
+func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.AnthropicProvider) []config.AnthropicProviderConfig {
+	result := make([]config.AnthropicProviderConfig, 0, len(dbProviders))
+	for _, p := range dbProviders {
+		cfg := config.AnthropicProviderConfig{
+			Name:   p.Name,
+			APIURL: p.APIURL,
+			APIKey: p.APIKey,
+		}
+		json.Unmarshal([]byte(p.Models), &cfg.Models)
+		// Aliases 也需要解析，使用 json.Unmarshal
+		var aliases []config.AnthropicModelAlias
+		if err := json.Unmarshal([]byte(p.Aliases), &aliases); err == nil {
+			cfg.Aliases = aliases
+		}
+		// Fallback API key
+		if cfg.APIKey == "" {
+			cfg.APIKey = h.fallbackAPIKeyForProvider(cfg.Name)
+		}
+		result = append(result, cfg)
+	}
+	return result
 }
 
 // fillProviderAPIKeys 为 api_key 为空的 provider 填充 fallback API Key
