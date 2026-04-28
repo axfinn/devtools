@@ -481,7 +481,8 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 // proxyAnthropicStream 流式代理 Anthropic 请求（SSE 透传）
 // 对于 DeepSeek，过滤掉 type="thinking" 的内容块事件
 func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config.AnthropicProviderConfig, upstreamURL string, bodyBytes []byte) (int, error) {
-	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+	// 使用 c.Request.Context()：客户端断开时自动取消 upstream 请求
+	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err
@@ -504,7 +505,8 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		}
 	}
 
-	resp, err := h.noProxyClient.Do(req)
+	// 使用 streamClient（无超时），避免 http.Client.Timeout 在长流时强制断开
+	resp, err := h.streamClient.Do(req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err

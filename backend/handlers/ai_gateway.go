@@ -9,12 +9,13 @@ import (
 )
 
 type AIGatewayHandler struct {
-	db            *models.DB
-	cfg           *config.Config
-	bailian       *BailianHandler
-	imageHandler  *ImageUnderstandingHandler
-	client        *http.Client // 带代理，用于 OpenAI 兼容接口
-	noProxyClient *http.Client // 不走代理，用于 MiniMax 等外部 API
+	db             *models.DB
+	cfg            *config.Config
+	bailian        *BailianHandler
+	imageHandler   *ImageUnderstandingHandler
+	client         *http.Client // 带代理，用于 OpenAI 兼容接口
+	noProxyClient  *http.Client // 不走代理，用于 MiniMax 等外部 API（非流式，90s 超时）
+	streamClient   *http.Client // 不走代理，用于 SSE 流式请求（无超时，依赖 context 取消）
 }
 
 type usageSummary struct {
@@ -174,6 +175,9 @@ type TTSRequest struct {
 }
 
 func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler, imageHandler *ImageUnderstandingHandler) *AIGatewayHandler {
+	noProxyTransport := &http.Transport{
+		Proxy: nil, // 不使用任何代理
+	}
 	return &AIGatewayHandler{
 		db:           db,
 		cfg:          cfg,
@@ -181,10 +185,14 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		imageHandler: imageHandler,
 		client:       &http.Client{Timeout: 90 * time.Second},
 		noProxyClient: &http.Client{
-			Timeout: 90 * time.Second,
-			Transport: &http.Transport{
-				Proxy: nil, // 不使用任何代理
-			},
+			Timeout:   90 * time.Second,
+			Transport: noProxyTransport,
+		},
+		// 流式请求不设 Timeout：http.Client.Timeout 包含读取 body 的时间，
+		// 对 SSE 长流会在 90s 后强制断开。改用 context 取消（客户端断开时自动传播）。
+		streamClient: &http.Client{
+			Timeout:   0,
+			Transport: noProxyTransport,
 		},
 	}
 }
