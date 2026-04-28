@@ -3,6 +3,7 @@ package handlers
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -466,8 +467,10 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 // proxyAnthropicStream 流式代理 Anthropic 请求（SSE 透传）
 // 对于 DeepSeek，过滤掉 type="thinking" 的内容块事件
 func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config.AnthropicProviderConfig, upstreamURL string, bodyBytes []byte) (int, error) {
-	// 使用 c.Request.Context()：客户端断开时自动取消 upstream 请求
-	req, err := http.NewRequestWithContext(c.Request.Context(), "POST", upstreamURL, bytes.NewReader(bodyBytes))
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err
@@ -529,6 +532,7 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
+				cancel() // 客户端断开，取消上游请求
 				return http.StatusOK, writeErr
 			}
 			flusher.Flush()
