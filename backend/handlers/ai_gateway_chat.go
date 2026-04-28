@@ -14,7 +14,6 @@ import (
 	"devtools/models"
 	"devtools/utils"
 
-	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
 )
 
@@ -491,8 +490,6 @@ func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	// 声明支持 gzip + brotli，网关层负责解压后再透传
-	req.Header.Set("Accept-Encoding", "gzip, br, identity")
 	// 透传必要的 headers（过滤掉代理相关和可能导致 HTTP/2 问题的 headers）
 	skipHeaders := map[string]bool{
 		"Content-Type":      true,
@@ -522,13 +519,7 @@ func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body
 		return nil, "", err
 	}
 	defer resp.Body.Close()
-
-	// 解压响应体（gzip 由 Transport 自动处理，brotli 需手动解压）
-	var reader io.Reader = resp.Body
-	if resp.Header.Get("Content-Encoding") == "br" {
-		reader = brotli.NewReader(resp.Body)
-	}
-	respBody, _ := io.ReadAll(reader)
+	respBody, _ := io.ReadAll(resp.Body)
 	contentType := resp.Header.Get("Content-Type")
 	if resp.StatusCode >= 400 {
 		return respBody, contentType, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))

@@ -484,8 +484,6 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
 	req.Header.Set("Accept", "text/event-stream")
-	// 强制禁用 Brotli：Go Transport 不支持 br 解压，上游若返回 br 编码会导致解析失败
-	req.Header.Set("Accept-Encoding", "gzip, identity")
 
 	// 透传客户端的 Anthropic 相关头
 	for key, values := range c.Request.Header {

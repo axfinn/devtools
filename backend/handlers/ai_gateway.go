@@ -176,7 +176,11 @@ type TTSRequest struct {
 
 func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler, imageHandler *ImageUnderstandingHandler) *AIGatewayHandler {
 	noProxyTransport := &http.Transport{
-		Proxy: nil, // 不使用任何代理
+		Proxy: nil,
+		// DisableCompression=true：不发 Accept-Encoding，上游返回原始未压缩数据。
+		// 避免上游返回 Brotli（br）时 Go 标准库无法解压导致 JSON 解析失败。
+		// gzip 解压由各调用点按需处理，或直接透传给客户端。
+		DisableCompression: true,
 	}
 	return &AIGatewayHandler{
 		db:           db,
