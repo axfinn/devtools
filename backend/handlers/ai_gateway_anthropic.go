@@ -531,9 +531,31 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
 	}
 
-	// 先发一个 SSE 心跳，防止 upstream 慢时客户端因无数据而超时
+	// 先发一个 SSE 心跳，让客户端立即知道连接已建立
 	c.Writer.Write([]byte(": heartbeat\n\n"))
 	flusher.Flush()
+
+	// 持续心跳 goroutine：每 20s 发一次 SSE 注释，防止 thinking 阶段无数据时
+	// 中间代理（nginx/CDN）或客户端因空闲超时断开连接
+	heartbeatDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := c.Writer.Write([]byte(": heartbeat\n\n")); err != nil {
+					return
+				}
+				flusher.Flush()
+			case <-ctx.Done():
+				return
+			case <-heartbeatDone:
+				return
+			}
+		}
+	}()
+	defer close(heartbeatDone)
 
 	buf := make([]byte, 1024)
 	for {
