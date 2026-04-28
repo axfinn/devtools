@@ -30,7 +30,7 @@ func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProvide
 			Name:   "MiniMax",
 			APIURL: "https://api.minimaxi.com/anthropic",
 			APIKey: h.cfg.MiniMax.APIKey,
-			Models: []string{"MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2", "MiniMax-M2.7"},
+			Models: []string{"MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2", "MiniMax-M2.7"},
 		},
 		{
 			Name:   "DashScope",
@@ -57,6 +57,27 @@ func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProvide
 			Models: []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-sonnet-4-5"},
 		},
 	}
+}
+
+// ProxyAnthropicModels 返回可用模型列表
+// GET /api/anthropic/v1/models
+func (h *AIGatewayHandler) ProxyAnthropicModels(c *gin.Context) {
+	providers := h.allAnthropicProviders()
+	seen := map[string]bool{"gateway": true}
+	type modelInfo struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	models := []modelInfo{{ID: "gateway", Type: "model"}}
+	for _, p := range providers {
+		for _, m := range p.Models {
+			if !seen[m] {
+				seen[m] = true
+				models = append(models, modelInfo{ID: m, Type: "model"})
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"data": models})
 }
 
 // resolveModelUpstream 解析模型名 → 上游真实模型名
@@ -211,7 +232,7 @@ func (h *AIGatewayHandler) fallbackAPIKeyForProvider(name string) string {
 // POST /api/minimax/anthropic/v1/messages
 func (h *AIGatewayHandler) ProxyMinimaxAnthropic(c *gin.Context) {
 	p := h.resolveProviderByNameOrModel("MiniMax", "MiniMax-M2.5")
-	h.proxyAnthropic(c, p, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.5", "MiniMax-M2.5-highspeed", "MiniMax-M2.1", "MiniMax-M2.1-highspeed", "MiniMax-M2", "MiniMax-M2.7"})
+	h.proxyAnthropic(c, p, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2", "MiniMax-M2.7"})
 }
 
 // ProxyDashScopeAnthropic 转发 Anthropic 协议格式的请求到 DashScope Anthropic 兼容端点

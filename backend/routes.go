@@ -530,6 +530,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 
 	// Anthropic 协议代理 — 通用端点（根据 model 自动路由到配置的下游提供商）
 	api.POST("/anthropic/v1/messages", h.aiGatewayHandler.ProxyAnthropicGeneric)
+	api.GET("/anthropic/v1/models", h.aiGatewayHandler.ProxyAnthropicModels)
 
 	// MiniMax Anthropic 协议代理
 	api.POST("/minimax/anthropic/v1/messages", h.aiGatewayHandler.ProxyMinimaxAnthropic)
