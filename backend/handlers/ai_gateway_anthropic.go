@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +17,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// modelFieldRe 匹配 JSON body 中 "model": "..." 字段
+// 用于保留原始 JSON 格式替换 model 名，避免第三方代理检测到 body 被篡改
+var modelFieldRe = regexp.MustCompile(`"model"\s*:\s*"[^"]*"`)
 
 // builtinAnthropicProviders 返回默认内置的 Anthropic 提供商列表
 // 当 config 中未配置 anthropic_providers 时使用
@@ -278,13 +283,12 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 		}
 	}
 
-	// 5. 重写 body 中的 model
+	// 5. 重写 body 中的 model（正则替换，保留原始 JSON 格式）
+	// json.Marshal 会改变字段序和数字精度，导致 OpenClaudeCode/PackyAPI
+	// 等校验 body 完整性的上游拒绝请求。
 	if upstreamModel != model {
-		bodyMap["model"] = upstreamModel
-		rewrittenBytes, err := json.Marshal(bodyMap)
-		if err == nil {
-			bodyBytes = rewrittenBytes
-		}
+		bodyBytes = rewriteModelField(bodyBytes, upstreamModel)
+		bodyMap["model"] = upstreamModel // 保持 bodyMap 同步，后续 checkModel 用
 	}
 
 	allModels := h.allModelsAcrossProviders()
@@ -398,11 +402,8 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		rewriteModel = resolveModelUpstream(provider, model)
 	}
 	if rewriteModel != "" && rewriteModel != model {
+		bodyBytes = rewriteModelField(bodyBytes, rewriteModel)
 		bodyMap["model"] = rewriteModel
-		rewrittenBytes, err := json.Marshal(bodyMap)
-		if err == nil {
-			bodyBytes = rewrittenBytes
-		}
 	}
 
 	start := time.Now()
@@ -706,6 +707,13 @@ func (h *AIGatewayHandler) allModelsAcrossProviders() []string {
 		}
 	}
 	return models
+}
+
+// rewriteModelField 用正则替换 JSON body 中的 "model": "..." 字段值
+// 保留原始 JSON 格式（空白、字段序、数字精度），避免 json.Unmarshal+Marshal
+// 导致的 body 变化被 OpenClaudeCode/PackyAPI 等上游检测为篡改。
+func rewriteModelField(body []byte, newModel string) []byte {
+	return modelFieldRe.ReplaceAll(body, []byte(`"model":"`+newModel+`"`))
 }
 
 // stripThinkingBlocks 从 Anthropic 响应 JSON 中移除 type="thinking" 的内容块
