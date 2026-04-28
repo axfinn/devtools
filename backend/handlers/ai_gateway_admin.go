@@ -592,7 +592,7 @@ func (h *AIGatewayHandler) AdminListLogs(c *gin.Context) {
 	if !h.requireSuperAdmin(c, "") {
 		return
 	}
-	logs, err := h.db.ListAIAPIRequestLogs(c.Query("api_key_id"), boundedInt(c.Query("limit"), 50, 1, 200), 0)
+	logs, err := h.db.ListAIAPIRequestLogs(c.Query("api_key_id"), boundedInt(c.Query("limit"), 30, 1, 200), 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取请求日志失败", "code": 500})
 		return

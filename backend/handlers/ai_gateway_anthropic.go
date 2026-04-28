@@ -448,7 +448,13 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 	// 流式请求：直接透传 SSE，不解包
 	if isStreaming, _ := bodyMap["stream"].(bool); isStreaming {
 		statusCode, streamErr := h.proxyAnthropicStream(c, provider, upstreamURL, bodyBytes)
-		h.logAPIRequest(key, model, "anthropic", logPath, "chat", statusCode, streamErr == nil, safeError(streamErr), string(bodyBytes), "[stream]", c.ClientIP(), time.Since(start), usageSummary{})
+		// context.Canceled = 客户端主动断开，属于正常中断，不计为失败
+		streamSuccess := streamErr == nil || streamErr == context.Canceled
+		streamErrMsg := safeError(streamErr)
+		if streamErr == context.Canceled {
+			streamErrMsg = ""
+		}
+		h.logAPIRequest(key, model, "anthropic", logPath, "chat", statusCode, streamSuccess, streamErrMsg, string(bodyBytes), "[stream]", c.ClientIP(), time.Since(start), usageSummary{})
 		return
 	}
 
@@ -478,6 +484,8 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
 	req.Header.Set("Accept", "text/event-stream")
+	// 强制禁用 Brotli：Go Transport 不支持 br 解压，上游若返回 br 编码会导致解析失败
+	req.Header.Set("Accept-Encoding", "gzip, identity")
 
 	// 透传客户端的 Anthropic 相关头
 	for key, values := range c.Request.Header {
@@ -485,7 +493,7 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		switch ck {
 		case "Content-Type", "Authorization", "Content-Length", "Host",
 			"Connection", "Transfer-Encoding", "Te", "Trailer",
-			"Keep-Alive", "Proxy-Connection", "Upgrade":
+			"Keep-Alive", "Proxy-Connection", "Upgrade", "Accept-Encoding":
 			continue
 		}
 		for _, v := range values {
@@ -533,12 +541,16 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		if n > 0 {
 			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
 				cancel() // 客户端断开，取消上游请求
-				return http.StatusOK, writeErr
+				return http.StatusOK, context.Canceled
 			}
 			flusher.Flush()
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
+				// 上游读取错误：若是 context 取消（客户端断开），统一返回 context.Canceled
+				if c.Request.Context().Err() != nil {
+					return http.StatusOK, context.Canceled
+				}
 				return http.StatusOK, readErr
 			}
 			break
