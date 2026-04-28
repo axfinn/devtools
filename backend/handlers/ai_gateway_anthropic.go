@@ -162,6 +162,18 @@ func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.An
 		}
 		result = append(result, cfg)
 	}
+	// OpenClaudeCode 优先级高于 PackyAPI：当两者都匹配同一模型时，首选 OpenClaudeCode
+	for i := 0; i < len(result); i++ {
+		if result[i].Name == "PackyAPI" {
+			for j := i + 1; j < len(result); j++ {
+				if result[j].Name == "OpenClaudeCode" {
+					result[i], result[j] = result[j], result[i]
+					break
+				}
+			}
+			break
+		}
+	}
 	return result
 }
 
