@@ -422,14 +422,6 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		return
 	}
 
-	// DeepSeek 返回 type="thinking" 块要求客户端原样回传，但 DeepSeek 自己
-	// 又不认这些块，多轮对话直接 400。仅对 DeepSeek 剥离。
-	// 真 Anthropic（PackyAPI/OpenClaudeCode）的 extended thinking 必须保留，
-	// 否则丢失思考上下文，多轮对话功能降级。
-	if provider != nil && provider.Name == "DeepSeek" {
-		raw = stripThinkingBlocks(raw)
-	}
-
 	h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusOK, true, "", string(bodyBytes), string(raw), c.ClientIP(), time.Since(start), usageSummary{})
 
 	c.Data(http.StatusOK, "application/json", raw)
@@ -489,14 +481,9 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
 	}
 
-	reader := io.Reader(resp.Body)
-	if provider.Name == "DeepSeek" {
-		reader = newSSEThinkingFilter(resp.Body)
-	}
-
 	buf := make([]byte, 1024)
 	for {
-		n, readErr := reader.Read(buf)
+		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
 				return http.StatusOK, writeErr
