@@ -413,9 +413,13 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		return
 	}
 
-	// 剥离 thinking 块：下游（如 DeepSeek）返回的 thinking 内容需要客户端原样回传，
-	// 但 Anthropic 客户端不识此格式，导致后续请求 400 错误。这里直接过滤掉。
-	raw = stripThinkingBlocks(raw)
+	// DeepSeek 返回 type="thinking" 块要求客户端原样回传，但 DeepSeek 自己
+	// 又不认这些块，多轮对话直接 400。仅对 DeepSeek 剥离。
+	// 真 Anthropic（PackyAPI/OpenClaudeCode）的 extended thinking 必须保留，
+	// 否则丢失思考上下文，多轮对话功能降级。
+	if provider != nil && provider.Name == "DeepSeek" {
+		raw = stripThinkingBlocks(raw)
+	}
 
 	h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusOK, true, "", string(bodyBytes), string(raw), c.ClientIP(), time.Since(start), usageSummary{})
 
