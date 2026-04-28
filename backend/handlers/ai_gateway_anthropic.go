@@ -40,15 +40,15 @@ func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProvide
 			Models: []string{"deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-pro"},
 		},
 		{
-			Name:   "PackyAPI",
-			APIURL: "https://www.packyapi.com",
-			APIKey: os.Getenv("ANTHROPIC_PACKYAPI_API_KEY"),
-			Models: []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-sonnet-4-5"},
-		},
-		{
 			Name:   "OpenClaudeCode",
 			APIURL: "https://www.openclaudecode.cn",
 			APIKey: os.Getenv("ANTHROPIC_OPENCLOUDECODE_API_KEY"),
+			Models: []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-sonnet-4-5"},
+		},
+		{
+			Name:   "PackyAPI",
+			APIURL: "https://www.packyapi.com",
+			APIKey: os.Getenv("ANTHROPIC_PACKYAPI_API_KEY"),
 			Models: []string{"claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-sonnet-4-5"},
 		},
 	}
