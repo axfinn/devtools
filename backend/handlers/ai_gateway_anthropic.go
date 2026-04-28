@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -406,6 +408,13 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 	start := time.Now()
 	upstreamURL := strings.TrimRight(provider.APIURL, "/") + "/v1/messages"
 
+	// 流式请求：直接透传 SSE，不解包
+	if isStreaming, _ := bodyMap["stream"].(bool); isStreaming {
+		statusCode, streamErr := h.proxyAnthropicStream(c, provider, upstreamURL, bodyBytes)
+		h.logAPIRequest(key, model, "anthropic", logPath, "chat", statusCode, streamErr == nil, safeError(streamErr), string(bodyBytes), "[stream]", c.ClientIP(), time.Since(start), usageSummary{})
+		return
+	}
+
 	raw, err := h.doRawRequest(upstreamURL, provider.APIKey, "POST", bodyBytes, c.Request.Header)
 	if err != nil {
 		h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
@@ -424,6 +433,209 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 	h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusOK, true, "", string(bodyBytes), string(raw), c.ClientIP(), time.Since(start), usageSummary{})
 
 	c.Data(http.StatusOK, "application/json", raw)
+}
+
+// proxyAnthropicStream 流式代理 Anthropic 请求（SSE 透传）
+// 对于 DeepSeek，过滤掉 type="thinking" 的内容块事件
+func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config.AnthropicProviderConfig, upstreamURL string, bodyBytes []byte) (int, error) {
+	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return http.StatusBadGateway, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	req.Header.Set("Accept", "text/event-stream")
+
+	// 透传客户端的 Anthropic 相关头
+	for key, values := range c.Request.Header {
+		ck := http.CanonicalHeaderKey(key)
+		switch ck {
+		case "Content-Type", "Authorization", "Content-Length", "Host",
+			"Connection", "Transfer-Encoding", "Te", "Trailer",
+			"Keep-Alive", "Proxy-Connection", "Upgrade":
+			continue
+		}
+		for _, v := range values {
+			req.Header.Add(key, v)
+		}
+	}
+
+	resp, err := h.noProxyClient.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return http.StatusBadGateway, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(resp.Body)
+		c.Data(resp.StatusCode, "application/json", errBody)
+		return resp.StatusCode, fmt.Errorf("upstream error %d", resp.StatusCode)
+	}
+
+	// 透传上游响应头
+	for key, values := range resp.Header {
+		for _, v := range values {
+			c.Writer.Header().Add(key, v)
+		}
+	}
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.WriteHeader(http.StatusOK)
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
+	}
+
+	reader := io.Reader(resp.Body)
+	if provider.Name == "DeepSeek" {
+		reader = newSSEThinkingFilter(resp.Body)
+	}
+
+	buf := make([]byte, 1024)
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
+				return http.StatusOK, writeErr
+			}
+			flusher.Flush()
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				return http.StatusOK, readErr
+			}
+			break
+		}
+	}
+	return http.StatusOK, nil
+}
+
+// sseThinkingFilter 过滤 DeepSeek SSE 流中的 type="thinking" 内容块
+// 以 SSE event 为单位（空行分隔），若事件属于 thinking 块则整体丢弃
+type sseThinkingFilter struct {
+	src         io.Reader
+	scanner     *bufio.Scanner
+	skipIndices map[int]bool  // 被标记为 thinking 的 content_block index
+	pending     []byte         // 已过滤、待输出的数据
+}
+
+func newSSEThinkingFilter(src io.Reader) io.Reader {
+	f := &sseThinkingFilter{
+		src:         src,
+		scanner:     bufio.NewScanner(src),
+		skipIndices: make(map[int]bool),
+	}
+	return f
+}
+
+func (f *sseThinkingFilter) Read(p []byte) (int, error) {
+	// 如果还有待输出数据，直接返回
+	if len(f.pending) > 0 {
+		n := copy(p, f.pending)
+		f.pending = f.pending[n:]
+		return n, nil
+	}
+
+	if !f.scanner.Scan() {
+		return 0, io.EOF
+	}
+
+	// 累积一个完整 SSE event（遇空行为止）
+	var lines []string
+	line := f.scanner.Text()
+	lines = append(lines, line)
+
+	// 收集当前 event 的所有行
+	for f.scanner.Scan() {
+		next := f.scanner.Text()
+		if next == "" {
+			// 空行 = event 结束
+			lines = append(lines, "")
+			break
+		}
+		lines = append(lines, next)
+	}
+
+	// 判断该 event 是否属于 thinking 块
+	f.updateSkipState(lines)
+
+	if f.shouldSkip(lines) {
+		// 跳过这个 event，继续读下一个
+		return f.Read(p)
+	}
+
+	// 输出这个 event
+	var buf bytes.Buffer
+	for _, l := range lines {
+		buf.WriteString(l + "\n")
+	}
+	f.pending = buf.Bytes()
+	if len(f.pending) == 0 {
+		return f.Read(p)
+	}
+	n := copy(p, f.pending)
+	f.pending = f.pending[n:]
+	return n, nil
+}
+
+func (f *sseThinkingFilter) updateSkipState(lines []string) {
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		jsonStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		var event map[string]interface{}
+		if json.Unmarshal([]byte(jsonStr), &event) != nil {
+			continue
+		}
+		typ, _ := event["type"].(string)
+		idx := eventIndex(event)
+
+		switch typ {
+		case "content_block_start":
+			if cb, _ := event["content_block"].(map[string]interface{}); cb != nil {
+				if blockType, _ := cb["type"].(string); blockType == "thinking" {
+					f.skipIndices[idx] = true
+				}
+			}
+		case "content_block_stop":
+			delete(f.skipIndices, idx)
+		}
+	}
+}
+
+func (f *sseThinkingFilter) shouldSkip(lines []string) bool {
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		jsonStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		var event map[string]interface{}
+		if json.Unmarshal([]byte(jsonStr), &event) != nil {
+			continue
+		}
+		if f.skipIndices[eventIndex(event)] {
+			return true
+		}
+	}
+	return false
+}
+
+func eventIndex(event map[string]interface{}) int {
+	if idx, ok := event["index"].(float64); ok {
+		return int(idx)
+	}
+	return -1
+}
+
+func safeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // testAnthropicModel 直连 Anthropic 上游测试模型可用性（AdminTestModel 调用）

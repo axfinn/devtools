@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 )
 
@@ -121,5 +123,93 @@ func TestStripThinkingBlocks_InvalidJSON(t *testing.T) {
 	output := stripThinkingBlocks(input)
 	if string(output) != "not json at all" {
 		t.Error("invalid JSON should be returned as-is")
+	}
+}
+
+// ========== SSE 流式 thinking 过滤测试 ==========
+
+func makeSSEEvent(event, data string) string {
+	var parts []string
+	if event != "" {
+		parts = append(parts, "event: "+event)
+	}
+	if data != "" {
+		parts = append(parts, "data: "+data)
+	}
+	return strings.Join(parts, "\n") + "\n\n"
+}
+
+func readAllSSE(r io.Reader) string {
+	var buf strings.Builder
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestSSEThinkingFilter_StripsThinkingBlocks(t *testing.T) {
+	input := makeSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_1","model":"deepseek-reasoner"}}`) +
+		makeSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"让我思考..."}}`) +
+		makeSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"继续..."}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`) +
+		makeSSEEvent("content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`) +
+		makeSSEEvent("content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"答案是42"}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":1}`) +
+		makeSSEEvent("message_stop", `{"type":"message_stop"}`)
+
+	filter := newSSEThinkingFilter(strings.NewReader(input))
+	output := readAllSSE(filter)
+
+	// thinking 事件应被过滤
+	if strings.Contains(output, "thinking") {
+		t.Errorf("thinking event should be filtered, got: %s", output)
+	}
+	// text 事件应保留
+	if !strings.Contains(output, "答案是42") {
+		t.Errorf("text event should be preserved, got: %s", output)
+	}
+	// message_start 和 message_stop 应保留
+	if !strings.Contains(output, "message_start") || !strings.Contains(output, "message_stop") {
+		t.Errorf("message_start/stop should be preserved, got: %s", output)
+	}
+}
+
+func TestSSEThinkingFilter_NoThinkingBlocks(t *testing.T) {
+	input := makeSSEEvent("message_start", `{"type":"message_start","message":{"id":"msg_2"}}`) +
+		makeSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`) +
+		makeSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`) +
+		makeSSEEvent("message_stop", `{"type":"message_stop"}`)
+
+	filter := newSSEThinkingFilter(strings.NewReader(input))
+	output := readAllSSE(filter)
+
+	if !strings.Contains(output, "text_delta") || !strings.Contains(output, "hello") {
+		t.Errorf("all non-thinking events should be preserved, output: %s", output)
+	}
+	if !strings.Contains(output, "message_stop") {
+		t.Errorf("message_stop should be preserved")
+	}
+}
+
+func TestSSEThinkingFilter_MultipleThinkingBlocks(t *testing.T) {
+	// 两个 thinking 块，中间夹一个 text 块
+	input := makeSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"思路1"}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`) +
+		makeSSEEvent("content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`) +
+		makeSSEEvent("content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"结果1"}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":1}`) +
+		makeSSEEvent("content_block_start", `{"type":"content_block_start","index":2,"content_block":{"type":"thinking","thinking":"思路2"}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":2}`) +
+		makeSSEEvent("content_block_start", `{"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}`) +
+		makeSSEEvent("content_block_delta", `{"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"结果2"}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":3}`)
+
+	filter := newSSEThinkingFilter(strings.NewReader(input))
+	output := readAllSSE(filter)
+
+	if strings.Contains(output, "thinking") {
+		t.Errorf("all thinking events should be filtered")
+	}
+	if !strings.Contains(output, "结果1") || !strings.Contains(output, "结果2") {
+		t.Errorf("all text events should be preserved")
 	}
 }
