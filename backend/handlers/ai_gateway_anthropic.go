@@ -512,12 +512,17 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	}
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
 	}
+
+	// 先发一个 SSE 心跳，防止 upstream 慢时客户端因无数据而超时
+	c.Writer.Write([]byte(": heartbeat\n\n"))
+	flusher.Flush()
 
 	buf := make([]byte, 1024)
 	for {

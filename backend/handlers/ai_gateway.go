@@ -183,7 +183,7 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		cfg:          cfg,
 		bailian:      bailian,
 		imageHandler: imageHandler,
-		client:       &http.Client{Timeout: 90 * time.Second},
+		client:       &http.Client{Timeout: 600 * time.Second},
 		noProxyClient: &http.Client{
 			Timeout:   90 * time.Second,
 			Transport: noProxyTransport,
