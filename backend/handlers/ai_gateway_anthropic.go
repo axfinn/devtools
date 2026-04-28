@@ -22,6 +22,20 @@ import (
 // 用于保留原始 JSON 格式替换 model 名，避免第三方代理检测到 body 被篡改
 var modelFieldRe = regexp.MustCompile(`"model"\s*:\s*"[^"]*"`)
 
+	// claudeCodeIdentityRe 匹配 Claude Code 的身份声明白（JSON 原文）
+	// 非 Anthropic 原生下游（MiniMax/DeepSeek/DashScope）需要剥离，
+	// 否则模型会照 system prompt 声称自己是 "Claude"
+	var claudeCodeIdentityRe = regexp.MustCompile(`{"type":"text","text":"You are Claude Code[^"]*"},?`)
+
+	// stripClaudeCodeIdentity 为非 Anthropic 原生下游剥离 Claude Code 身份声明
+	func stripClaudeCodeIdentity(body []byte, providerName string) []byte {
+		switch providerName {
+		case "MiniMax", "DeepSeek", "DashScope":
+			return claudeCodeIdentityRe.ReplaceAll(body, nil)
+		}
+		return body
+	}
+
 // builtinAnthropicProviders 返回默认内置的 Anthropic 提供商列表
 // 当 config 中未配置 anthropic_providers 时使用
 func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProviderConfig {
@@ -323,6 +337,9 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 		bodyBytes = rewriteModelField(bodyBytes, upstreamModel)
 		bodyMap["model"] = upstreamModel // 保持 bodyMap 同步，后续 checkModel 用
 	}
+
+		// 5.5 非 Anthropic 原生下游：剥离 Claude Code 身份声明
+		bodyBytes = stripClaudeCodeIdentity(bodyBytes, provider.Name)
 
 	allModels := h.allModelsAcrossProviders()
 
