@@ -263,7 +263,7 @@ func (db *DB) GetAIAPIKeyByID(id string) (*AIAPIKey, error) {
 		SELECT id, name, key_prefix, key_hash, status, allowed_models, allowed_scopes,
 			rate_limit_per_hour, total_requests, total_input_tokens, total_output_tokens,
 			total_tokens, total_cost, billing_currency, budget_limit, alert_threshold,
-			last_used_at, expires_at, created_at, updated_at, creator_ip, notes
+			last_used_at, expires_at, created_at, updated_at, creator_ip, notes, anthropic_provider_id
 		FROM ai_api_keys
 		WHERE id = ?`, id)
 }
@@ -273,7 +273,7 @@ func (db *DB) GetAIAPIKeysByPrefix(prefix string) ([]*AIAPIKey, error) {
 		SELECT id, name, key_prefix, key_hash, status, allowed_models, allowed_scopes,
 			rate_limit_per_hour, total_requests, total_input_tokens, total_output_tokens,
 			total_tokens, total_cost, billing_currency, budget_limit, alert_threshold,
-			last_used_at, expires_at, created_at, updated_at, creator_ip, notes
+			last_used_at, expires_at, created_at, updated_at, creator_ip, notes, anthropic_provider_id
 		FROM ai_api_keys
 		WHERE key_prefix = ?
 		ORDER BY created_at DESC`, prefix)
@@ -297,7 +297,7 @@ func (db *DB) ListAIAPIKeys(limit, offset int) ([]*AIAPIKey, error) {
 		SELECT id, name, key_prefix, key_hash, status, allowed_models, allowed_scopes,
 			rate_limit_per_hour, total_requests, total_input_tokens, total_output_tokens,
 			total_tokens, total_cost, billing_currency, budget_limit, alert_threshold,
-			last_used_at, expires_at, created_at, updated_at, creator_ip, notes
+			last_used_at, expires_at, created_at, updated_at, creator_ip, notes, anthropic_provider_id
 		FROM ai_api_keys
 		ORDER BY created_at DESC
 		LIMIT ? OFFSET ?`, limit, offset)

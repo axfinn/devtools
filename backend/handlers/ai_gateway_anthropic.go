@@ -288,7 +288,8 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 	allModels := h.allModelsAcrossProviders()
 
 	// 6. 转发（传 preAuthKey 跳过内部认证）
-	h.proxyAnthropicWithBody(c, provider, "/api/anthropic/v1/messages", allModels, upstreamModel, upstreamModel, bodyBytes, bodyMap, authKey)
+	// userModel 用原始模型名，这样 key 的 allowed_models 可以用 "gateway" 等占位名
+	h.proxyAnthropicWithBody(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel, bodyBytes, bodyMap, authKey)
 }
 
 // resolveProviderByNameOrModel 根据名称或模型查找提供商，优先匹配配置，否则回退内置
@@ -374,7 +375,13 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		return
 	}
 
-	if key != nil && !h.ensureModelAllowed(c, key, model) {
+	// Key 的 allowed_models 用原始 userModel 校验，
+	// 这样 key 写 "gateway" 也能通过，无需关心上游真实模型名
+	checkModel := model
+	if userModel != "" {
+		checkModel = userModel
+	}
+	if key != nil && !h.ensureModelAllowed(c, key, checkModel) {
 		return
 	}
 
