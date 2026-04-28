@@ -56,6 +56,12 @@
             <el-form-item label="备注">
               <el-input v-model="form.notes" type="textarea" :rows="3" />
             </el-form-item>
+            <el-form-item label="下游线路（Anthropic）">
+              <el-select v-model="form.anthropic_provider_id" placeholder="默认（走全局默认线路）" clearable style="width: 100%;">
+                <el-option :value="0" label="默认（走全局默认线路）" />
+                <el-option v-for="p in anthropicProviders" :key="p.id" :value="p.id" :label="p.name + ' — ' + (p.default_model || p.models[0] || '')" />
+              </el-select>
+            </el-form-item>
             <el-button type="primary" :loading="creating" @click="createKey">生成 Key</el-button>
           </el-form>
 
@@ -86,7 +92,13 @@
           </template>
 
           <el-table :data="keys" v-loading="loadingKeys" stripe>
-            <el-table-column prop="name" label="名称" min-width="160" />
+            <el-table-column prop="name" label="名称" min-width="130" />
+            <el-table-column label="下游线路" width="120">
+              <template #default="{ row }">
+                <el-tag v-if="row.anthropic_provider_id && getProviderName(row.anthropic_provider_id)" size="small" type="warning">{{ getProviderName(row.anthropic_provider_id) }}</el-tag>
+                <span v-else style="color: #909399; font-size: 12px;">默认</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="key_prefix" label="前缀" min-width="140" />
             <el-table-column prop="status" label="状态" width="90" />
             <el-table-column prop="total_requests" label="总请求" width="90" />
@@ -97,9 +109,10 @@
             <el-table-column label="过期时间" width="180">
               <template #default="{ row }">{{ formatTime(row.expires_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="180">
+            <el-table-column label="操作" width="240">
               <template #default="{ row }">
                 <el-button text @click="viewKey(row)">详情</el-button>
+                <el-button text type="warning" @click="openEditKey(row)">编辑</el-button>
                 <el-button v-if="row.status === 'active'" text type="danger" @click="revokeKey(row)">吊销</el-button>
               </template>
             </el-table-column>
@@ -653,6 +666,28 @@
         </div>
       </div>
     </el-dialog>
+    <!-- 编辑 API Key -->
+    <el-dialog v-model="editKeyVisible" title="编辑 API Key" width="520px">
+      <el-form label-position="top" v-if="editKeyForm">
+        <el-form-item label="名称">
+          <el-input v-model="editKeyForm.name" />
+        </el-form-item>
+        <el-form-item label="下游线路（Anthropic）">
+          <el-select v-model="editKeyForm.anthropic_provider_id" placeholder="默认（走全局默认线路）" style="width: 100%;">
+            <el-option :value="0" label="默认（走全局默认线路）" />
+            <el-option v-for="p in anthropicProviders" :key="p.id" :value="p.id" :label="p.name + ' — ' + (p.default_model || p.models?.[0] || '')" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="editKeyForm.notes" type="textarea" :rows="3" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editKeyVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingKey" @click="saveEditKey">保存</el-button>
+      </template>
+    </el-dialog>
+
 
     <el-dialog v-model="docsVisible" width="920px" title="AI Gateway 接入文档">
       <div v-if="docs" class="docs-content">
@@ -703,18 +738,58 @@
           <template #title>
             默认线路：<strong>{{ anthropicDocs.default_route.provider }}</strong>，
             默认模型：<code>{{ anthropicDocs.default_route.default_model }}</code>
-            — Claude Code 只需写这一个模型名，不匹配任何提供商时自动走默认线路
+            — 写 <code>gateway</code> 或任意不存在的模型名即可走默认线路，
+            管理员切换默认线路后<b>客户端配置无需改动</b>
           </template>
         </el-alert>
 
         <!-- Claude Code 快速配置（最常用场景） -->
         <h4 style="margin-top: 16px;">Claude Code 本地配置</h4>
-        <el-alert type="warning" :closable="false" style="margin-top: 4px;">
+        <el-alert type="success" :closable="false" style="margin-top: 4px;">
           <template #title>
-            BASE_URL 统一用 <code>/api/anthropic</code>，切换模型只需改 MODEL 环境变量，网关按模型名自动路由到对应下游
+            <strong>推荐：</strong>MODEL 写 <code>gateway</code>，服务端全权接管路由。
+            想切下游？管理员在后台点一下就行，所有客户端自动切换。
           </template>
         </el-alert>
         <el-tabs v-model="ccProviderTab">
+          <!-- 零配置 Tab：写 gateway 即可，服务端接管 -->
+          <el-tab-pane label="零配置（推荐）" name="zero">
+            <div class="docs-card" style="background: #0f1724; padding: 16px; border-radius: 14px; border: 1px solid #fbbf24;">
+              <p style="color: #fbbf24; margin: 0 0 6px 0; font-size: 14px;">
+                <strong>MODEL 写 <code>gateway</code>，服务端全权接管路由</strong>
+              </p>
+              <p style="color: #94a3b8; margin: 0 0 10px 0; font-size: 13px;">
+                当前默认线路 <strong style="color: #60a5fa;">{{ anthropicDocs.default_route?.provider }}</strong>，
+                上游模型 <code style="color: #fbbf24;">{{ anthropicDocs.default_route?.default_model }}</code>。
+                管理员切换默认线路后，你的配置<b>完全不用动</b>。
+              </p>
+              <el-tabs>
+                <el-tab-pane label=".claude/settings.json">
+                  <pre class="doc-json">{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
+    "API_TIMEOUT_MS": "300000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    "ANTHROPIC_MODEL": "gateway",
+    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.5-highspeed",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-reasoner",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen3-max-2026-01-23",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.5"
+  }
+}</pre>
+                </el-tab-pane>
+                <el-tab-pane label="环境变量">
+                  <pre class="doc-code">export ANTHROPIC_BASE_URL="https://t.jaxiu.cn/api/anthropic"
+export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"
+# 写 gateway 或任意不存在的模型名，走默认线路
+export ANTHROPIC_MODEL="gateway"
+# 轻量任务走高速模型
+export ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M2.5-highspeed"</pre>
+                </el-tab-pane>
+              </el-tabs>
+            </div>
+          </el-tab-pane>
           <el-tab-pane v-for="p in anthropicDocs.providers" :key="p.name" :label="p.name" :name="p.name">
             <div class="docs-card" style="background: #0f1724; padding: 16px; border-radius: 14px;">
               <!-- 别名优先展示 -->
@@ -1168,6 +1243,9 @@ const currentLogs = ref([])
 const reports = ref([])
 const alerts = ref([])
 const detailVisible = ref(false)
+const editKeyVisible = ref(false)
+const editKeyForm = ref(null)
+const savingKey = ref(false)
 const docsVisible = ref(false)
 const docs = ref(null)
 const anthropicDocsVisible = ref(false)
@@ -1344,7 +1422,8 @@ const form = ref({
   rate_limit_per_hour: 1000,
   budget_limit: 0,
   alert_threshold: 0.8,
-  notes: ''
+  notes: '',
+  anthropic_provider_id: 0
 })
 const reportGroupBy = ref('day')
 const reportDays = ref(30)
@@ -1542,6 +1621,45 @@ const revokeKey = async (row) => {
   }
   ElMessage.success('已吊销')
   loadKeys()
+}
+
+const getProviderName = (id) => {
+  const p = anthropicProviders.value.find(x => x.id === id)
+  return p ? p.name : ''
+}
+
+let editingKeyId = null
+const openEditKey = (row) => {
+  editingKeyId = row.id
+  editKeyForm.value = {
+    name: row.name,
+    anthropic_provider_id: row.anthropic_provider_id || 0,
+    notes: row.notes || ''
+  }
+  editKeyVisible.value = true
+}
+
+const saveEditKey = async () => {
+  savingKey.value = true
+  try {
+    const res = await fetch(`${API_BASE}/admin/keys/${editingKeyId}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify({
+        ...editKeyForm.value,
+        super_admin_password: superAdminPassword.value
+      })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '更新失败')
+    ElMessage.success('已更新')
+    editKeyVisible.value = false
+    loadKeys()
+  } catch (err) {
+    ElMessage.error(err.message || '更新失败')
+  } finally {
+    savingKey.value = false
+  }
 }
 
 const loadDocs = async (showDialog = true) => {

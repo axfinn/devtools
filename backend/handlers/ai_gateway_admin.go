@@ -192,10 +192,11 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"title":   "Anthropic 协议接入文档",
-		"summary": "通过 AI Gateway 的通用 Anthropic 端点 `/api/anthropic/v1/messages`，根据 model 自动路由到下游提供商。未匹配的模型由默认线路兜底。",
+		"summary": "通过 AI Gateway 的通用 Anthropic 端点 `/api/anthropic/v1/messages`，根据 model 自动路由到下游提供商。未匹配的模型由默认线路兜底——客户端写任意占位名即可，切换下游无需改配置。",
 		"default_route": gin.H{
 			"provider":      defaultProviderName,
 			"default_model": defaultProviderModel,
+			"tip":           "客户端写任意不存在的模型名（如 gateway、auto）即可走默认线路，管理员切换默认线路后客户端配置无需改动",
 		},
 		"auth": gin.H{
 			"api_key": "Authorization: Bearer dtk_ai_xxx",
@@ -203,8 +204,33 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 		"providers": providerDocs,
 		"routes":    routes,
 		"examples": gin.H{
+			"zero_config": gin.H{
+				"description": "零配置方案（推荐）：写占位模型名，服务端接管路由，切换下游无需改客户端",
+				"request": gin.H{
+					"model":      "gateway",
+					"messages":   []gin.H{{"role": "user", "content": "你好"}},
+					"max_tokens": 1024,
+				},
+				"claude_code_config": gin.H{
+					"language":    "Claude Code",
+					"description": "ANTHROPIC_MODEL 写 gateway 或任意不存在的模型名，服务端自动走默认线路。管理员切换默认线路后客户端无需改动。",
+					"code": `{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/anthropic",
+    "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
+    "API_TIMEOUT_MS": "300000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+    "ANTHROPIC_MODEL": "gateway",
+    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.5-highspeed",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-reasoner",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "qwen3-max-2026-01-23",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.5"
+  }
+}`,
+				},
+			},
 			"generic": gin.H{
-				"description": "使用通用端点（推荐）",
+				"description": "显式指定模型（精确路由到指定下游）",
 				"request": gin.H{
 					"model":      firstModel,
 					"messages":   []gin.H{{"role": "user", "content": "你好"}},
@@ -212,7 +238,7 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 				},
 				"claude_code_config": gin.H{
 					"language":    "Claude Code",
-					"description": "BASE_URL 统一指向通用端点。ANTHROPIC_MODEL 填默认线路的 default_model，不匹配时由默认线路兜底。",
+					"description": "直接写 ` + defaultProviderName + ` 的真实模型名，精确路由到该下游。",
 					"code": `{
   "env": {
     "ANTHROPIC_BASE_URL": "https://your-devtools:8080/api/anthropic",
@@ -226,8 +252,8 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "` + haikuModel + `"
   }
 }`,
-					},
-					"provider_models": providerModels,
+				},
+				"provider_models": providerModels,
 			},
 			"python_sdk": gin.H{
 				"language": "Python",
@@ -440,8 +466,9 @@ func (h *AIGatewayHandler) AdminCreateKey(c *gin.Context) {
 		BudgetLimit:      req.BudgetLimit,
 		AlertThreshold:   alertThreshold,
 		ExpiresAt:        &expiresAt,
-		CreatorIP:        c.ClientIP(),
-		Notes:            req.Notes,
+		CreatorIP:           c.ClientIP(),
+		Notes:               req.Notes,
+		AnthropicProviderID: req.AnthropicProviderID,
 	}
 	if err := h.db.CreateAIAPIKey(key); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存 API Key 失败", "code": 500})
@@ -452,6 +479,64 @@ func (h *AIGatewayHandler) AdminCreateKey(c *gin.Context) {
 		"plain_key": plainKey,
 		"warning":   "明文 API Key 只会返回这一次，请立即保存。",
 	})
+}
+
+func (h *AIGatewayHandler) AdminUpdateKey(c *gin.Context) {
+	var req UpdateAIAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整", "code": 400})
+		return
+	}
+	if !h.requireSuperAdmin(c, req.SuperAdminPassword) {
+		return
+	}
+
+	keyID := c.Param("id")
+	if keyID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 key ID"})
+		return
+	}
+
+	key, err := h.db.GetAIAPIKeyByID(keyID)
+	if err != nil || key == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "API Key 不存在"})
+		return
+	}
+
+	if req.Name != "" {
+		key.Name = req.Name
+	}
+	if len(req.AllowedModels) > 0 {
+		key.AllowedModels = models.MustJSONString(req.AllowedModels)
+	}
+	if len(req.AllowedScopes) > 0 {
+		key.AllowedScopes = models.MustJSONString(req.AllowedScopes)
+	}
+	if req.RateLimitPerHour > 0 {
+		key.RateLimitPerHour = req.RateLimitPerHour
+	}
+	if req.BudgetLimit >= 0 {
+		key.BudgetLimit = req.BudgetLimit
+	}
+	if req.AlertThreshold > 0 && req.AlertThreshold <= 1 {
+		key.AlertThreshold = req.AlertThreshold
+	}
+	if req.Notes != "" {
+		key.Notes = req.Notes
+	}
+	if req.AnthropicProviderID >= 0 {
+		key.AnthropicProviderID = req.AnthropicProviderID
+	}
+	if req.ExpiresDays > 0 {
+		expiresAt := time.Now().Add(time.Duration(req.ExpiresDays) * 24 * time.Hour)
+		key.ExpiresAt = &expiresAt
+	}
+
+	if err := h.db.UpdateAIAPIKey(key); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新 API Key 失败"})
+		return
+	}
+	c.JSON(http.StatusOK, key)
 }
 
 func (h *AIGatewayHandler) AdminListKeys(c *gin.Context) {

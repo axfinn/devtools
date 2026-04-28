@@ -501,6 +501,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		aigw.POST("/admin/keys", h.aiGatewayHandler.AdminCreateKey)
 		aigw.GET("/admin/keys", h.aiGatewayHandler.AdminListKeys)
 		aigw.GET("/admin/keys/:id", h.aiGatewayHandler.AdminGetKey)
+		aigw.PUT("/admin/keys/:id", h.aiGatewayHandler.AdminUpdateKey)
 		aigw.POST("/admin/keys/:id/revoke", h.aiGatewayHandler.AdminRevokeKey)
 		aigw.GET("/admin/logs", h.aiGatewayHandler.AdminListLogs)
 		aigw.GET("/admin/reports", h.aiGatewayHandler.AdminReports)

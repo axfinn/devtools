@@ -36,7 +36,8 @@ type AIAPIKey struct {
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 	CreatorIP         string     `json:"creator_ip"`
-	Notes             string     `json:"notes"`
+	Notes                string     `json:"notes"`
+	AnthropicProviderID  int        `json:"anthropic_provider_id"` // 0=全局默认，非0=强制走指定 Anthropic 提供商
 }
 
 type AIAPIRequestLog struct {
@@ -161,7 +162,8 @@ func (db *DB) InitAIGateway() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			creator_ip TEXT DEFAULT '',
-			notes TEXT DEFAULT ''
+			notes TEXT DEFAULT '',
+				anthropic_provider_id INTEGER NOT NULL DEFAULT 0
 		);
 	`)
 	if err != nil {
@@ -221,6 +223,7 @@ func (db *DB) InitAIGateway() error {
 		`ALTER TABLE ai_api_request_logs ADD COLUMN total_tokens INTEGER DEFAULT 0`,
 		`ALTER TABLE ai_api_request_logs ADD COLUMN estimated_cost REAL DEFAULT 0`,
 		`ALTER TABLE ai_api_request_logs ADD COLUMN currency TEXT DEFAULT 'CNY'`,
+		`ALTER TABLE ai_api_keys ADD COLUMN anthropic_provider_id INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, stmt := range alterStatements {
 		_, _ = db.conn.Exec(stmt)
@@ -245,12 +248,12 @@ func (db *DB) CreateAIAPIKey(key *AIAPIKey) error {
 			id, name, key_prefix, key_hash, status, allowed_models, allowed_scopes,
 			rate_limit_per_hour, total_requests, total_input_tokens, total_output_tokens,
 			total_tokens, total_cost, billing_currency, budget_limit, alert_threshold,
-			last_used_at, expires_at, created_at, updated_at, creator_ip, notes
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			last_used_at, expires_at, created_at, updated_at, creator_ip, notes, anthropic_provider_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		key.ID, key.Name, key.KeyPrefix, key.KeyHash, key.Status, key.AllowedModels,
 		key.AllowedScopes, key.RateLimitPerHour, key.TotalRequests, key.TotalInputTokens,
 		key.TotalOutputTokens, key.TotalTokens, key.TotalCost, key.BillingCurrency, key.BudgetLimit, key.AlertThreshold,
-		key.LastUsedAt, key.ExpiresAt, key.CreatedAt, key.UpdatedAt, key.CreatorIP, key.Notes,
+		key.LastUsedAt, key.ExpiresAt, key.CreatedAt, key.UpdatedAt, key.CreatorIP, key.Notes, key.AnthropicProviderID,
 	)
 	return err
 }
@@ -327,11 +330,13 @@ func (db *DB) UpdateAIAPIKey(key *AIAPIKey) error {
 	_, err := db.conn.Exec(`
 		UPDATE ai_api_keys
 		SET name = ?, status = ?, allowed_models = ?, allowed_scopes = ?, rate_limit_per_hour = ?,
+				anthropic_provider_id = ?,
 			total_requests = ?, total_input_tokens = ?, total_output_tokens = ?, total_tokens = ?,
 			total_cost = ?, billing_currency = ?, budget_limit = ?, alert_threshold = ?,
 			last_used_at = ?, expires_at = ?, updated_at = ?, notes = ?
 		WHERE id = ?`,
 		key.Name, key.Status, key.AllowedModels, key.AllowedScopes, key.RateLimitPerHour,
+		key.AnthropicProviderID,
 		key.TotalRequests, key.TotalInputTokens, key.TotalOutputTokens, key.TotalTokens,
 		key.TotalCost, key.BillingCurrency, key.BudgetLimit, key.AlertThreshold, key.LastUsedAt, key.ExpiresAt, key.UpdatedAt, key.Notes, key.ID,
 	)
@@ -514,7 +519,7 @@ func scanAIAPIKeyScanner(scanner interface {
 		&item.ID, &item.Name, &item.KeyPrefix, &item.KeyHash, &item.Status, &item.AllowedModels,
 		&item.AllowedScopes, &item.RateLimitPerHour, &item.TotalRequests, &item.TotalInputTokens,
 		&item.TotalOutputTokens, &item.TotalTokens, &item.TotalCost, &item.BillingCurrency, &item.BudgetLimit, &item.AlertThreshold,
-		&lastUsedAt, &expiresAt, &item.CreatedAt, &item.UpdatedAt, &item.CreatorIP, &item.Notes,
+		&lastUsedAt, &expiresAt, &item.CreatedAt, &item.UpdatedAt, &item.CreatorIP, &item.Notes, &item.AnthropicProviderID,
 	)
 	if err != nil {
 		return nil, err

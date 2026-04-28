@@ -212,8 +212,15 @@ func (h *AIGatewayHandler) ProxyDeepSeekAnthropic(c *gin.Context) {
 // ProxyAnthropicGeneric 通用 Anthropic 协议代理端点
 // POST /api/anthropic/v1/messages
 // 根据请求中的 model 字段自动路由到匹配的下游提供商
-// 支持模型别名：用户写别名，网关自动替换为上游真实模型名
+// 如果 API Key 配置了 anthropic_provider_id，则强制走指定提供商
 func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
+	// 1. 先认证，获取 API Key（可能为 nil = admin）
+	authKey, authOK := h.authenticateAdminOrAPIKey(c, "chat")
+	if !authOK {
+		return
+	}
+
+	// 2. 读取请求体
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
@@ -236,23 +243,52 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 		return
 	}
 
-	provider, found := h.resolveAnthropicProvider(model)
-	if !found {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("未找到支持模型 %s 的提供商，请查看 /api/ai-gateway/docs/anthropic 获取可用模型列表", model)})
-		return
+	// 3. 确定下游提供商：Key 级别配置优先
+	var provider *config.AnthropicProviderConfig
+	if authKey != nil && authKey.AnthropicProviderID > 0 {
+		// Key 指定了提供商 → 直接使用
+		dbProvider, err := h.db.GetAnthropicProviderByID(int64(authKey.AnthropicProviderID))
+		if err != nil || dbProvider == nil || !dbProvider.Enabled {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "API Key 配置的下游提供商不可用，请联系管理员"})
+			return
+		}
+		configs := h.dbAnthropicProvidersToConfig([]*models.AnthropicProvider{dbProvider})
+		if len(configs) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "API Key 配置的下游提供商不可用"})
+			return
+		}
+		provider = &configs[0]
+	} else {
+		// 无 Key 级别配置 → 按模型名路由
+		var found bool
+		provider, found = h.resolveAnthropicProvider(model)
+		if !found {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("未找到支持模型 %s 的提供商，请查看 /api/ai-gateway/docs/anthropic 获取可用模型列表", model)})
+			return
+		}
 	}
 
-	// 模型名重写：别名优先 → 未匹配走默认线路的 default_model
+	// 4. 模型名重写
 	upstreamModel := resolveModelUpstream(provider, model)
 	if upstreamModel == model && !isModelAllowed(model, provider.Models) {
-		// model 不在此 provider 的模型列表中，说明走了默认线路 — 用 provider 的默认模型
 		if provider.DefaultModel != "" {
 			upstreamModel = provider.DefaultModel
 		}
 	}
-	allModels := h.providerAllModels(provider)
 
-	h.proxyAnthropicWithRewrite(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel)
+	// 5. 重写 body 中的 model
+	if upstreamModel != model {
+		bodyMap["model"] = upstreamModel
+		rewrittenBytes, err := json.Marshal(bodyMap)
+		if err == nil {
+			bodyBytes = rewrittenBytes
+		}
+	}
+
+	allModels := h.allModelsAcrossProviders()
+
+	// 6. 转发（传 preAuthKey 跳过内部认证）
+	h.proxyAnthropicWithBody(c, provider, "/api/anthropic/v1/messages", allModels, upstreamModel, upstreamModel, bodyBytes, bodyMap, authKey)
 }
 
 // resolveProviderByNameOrModel 根据名称或模型查找提供商，优先匹配配置，否则回退内置
@@ -279,26 +315,52 @@ func (h *AIGatewayHandler) proxyAnthropic(c *gin.Context, provider *config.Anthr
 // proxyAnthropicWithRewrite 转发 Anthropic 请求到上游
 // 如果 upstreamModel 与 userModel 不同，会重写请求体中的 model 字段
 func (h *AIGatewayHandler) proxyAnthropicWithRewrite(c *gin.Context, provider *config.AnthropicProviderConfig, logPath string, allowedModels []string, userModel, upstreamModel string) {
-	key, ok := h.authenticateAdminOrAPIKey(c, "chat")
+	h.proxyAnthropicWithBody(c, provider, logPath, allowedModels, userModel, upstreamModel, nil, nil, nil)
+}
+
+// proxyAnthropicWithBody 与 proxyAnthropicWithRewrite 相同，但接受预读的 body 数据
+// preReadBody/preReadMap 非 nil 时跳过 c.Request.Body 的读取
+// preAuthKey 非 nil 时跳过认证，直接使用该 key（nil key = admin，非 nil key = 受限 key）
+func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *config.AnthropicProviderConfig, logPath string, allowedModels []string, userModel, upstreamModel string, preReadBody []byte, preReadMap map[string]interface{}, preAuthKey *models.AIAPIKey) {
+	var key *models.AIAPIKey
+	var ok bool
+	if preAuthKey != nil {
+		// 已认证的 API Key
+		key = preAuthKey
+		ok = true
+	} else if preReadBody != nil {
+		// preReadBody 非 nil 但 preAuthKey 为 nil → 由调用方提前认证
+		// 此时不做认证，直接放行（调用方在外部已处理 auth）
+		ok = true
+	} else {
+		key, ok = h.authenticateAdminOrAPIKey(c, "chat")
+	}
 	if !ok {
 		return
 	}
 
-	bodyBytes, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
-		return
-	}
-
-	if len(bodyBytes) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体为空"})
-		return
-	}
-
+	var bodyBytes []byte
 	var bodyMap map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &bodyMap); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体 JSON 格式错误"})
-		return
+
+	if preReadBody != nil {
+		bodyBytes = preReadBody
+		bodyMap = preReadMap
+	} else {
+		var err error
+		bodyBytes, err = io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败"})
+			return
+		}
+		if len(bodyBytes) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体为空"})
+			return
+		}
+		bodyMap = make(map[string]interface{})
+		if err := json.Unmarshal(bodyBytes, &bodyMap); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体 JSON 格式错误"})
+			return
+		}
 	}
 
 	model, _ := bodyMap["model"].(string)
@@ -343,6 +405,10 @@ func (h *AIGatewayHandler) proxyAnthropicWithRewrite(c *gin.Context, provider *c
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 剥离 thinking 块：下游（如 DeepSeek）返回的 thinking 内容需要客户端原样回传，
+	// 但 Anthropic 客户端不识此格式，导致后续请求 400 错误。这里直接过滤掉。
+	raw = stripThinkingBlocks(raw)
 
 	h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusOK, true, "", string(bodyBytes), string(raw), c.ClientIP(), time.Since(start), usageSummary{})
 
@@ -415,6 +481,54 @@ func (h *AIGatewayHandler) testAnthropicModel(c *gin.Context, model, prompt stri
 		"reply":          string(raw),
 		"latency":        latency,
 	})
+}
+
+// allModelsAcrossProviders 返回所有提供商的所有模型（含别名），用于通用端点校验
+func (h *AIGatewayHandler) allModelsAcrossProviders() []string {
+	providers := h.allAnthropicProviders()
+	models := make([]string, 0)
+	for i := range providers {
+		for _, a := range providers[i].Aliases {
+			models = append(models, a.Model)
+		}
+		for _, m := range providers[i].Models {
+			models = append(models, m)
+		}
+	}
+	return models
+}
+
+// stripThinkingBlocks 从 Anthropic 响应 JSON 中移除 type="thinking" 的内容块
+// 某些下游（DeepSeek）返回 thinking 块要求客户端原样回传，但标准 Anthropic 客户端
+// 不识此格式，导致后续多轮对话 400 错误。直接在网关层剥离。
+func stripThinkingBlocks(raw []byte) []byte {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return raw // 非 JSON 或格式异常，原样返回
+	}
+	content, ok := resp["content"].([]interface{})
+	if !ok || len(content) == 0 {
+		return raw
+	}
+	filtered := make([]interface{}, 0, len(content))
+	hasThinking := false
+	for _, block := range content {
+		b, ok := block.(map[string]interface{})
+		if ok && b["type"] == "thinking" {
+			hasThinking = true
+			continue
+		}
+		filtered = append(filtered, block)
+	}
+	if !hasThinking {
+		return raw
+	}
+	resp["content"] = filtered
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func isModelAllowed(model string, allowed []string) bool {

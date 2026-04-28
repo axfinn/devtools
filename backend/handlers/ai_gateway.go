@@ -34,7 +34,21 @@ type CreateAIAPIKeyRequest struct {
 	RateLimitPerHour   int      `json:"rate_limit_per_hour"`
 	BudgetLimit        float64  `json:"budget_limit"`
 	AlertThreshold     float64  `json:"alert_threshold"`
-	Notes              string   `json:"notes"`
+	Notes               string `json:"notes"`
+	AnthropicProviderID int    `json:"anthropic_provider_id"` // 0=默认，非0=指定下游
+}
+
+type UpdateAIAPIKeyRequest struct {
+	SuperAdminPassword  string   `json:"super_admin_password"`
+	Name                string   `json:"name"`
+	AllowedModels       []string `json:"allowed_models"`
+	AllowedScopes       []string `json:"allowed_scopes"`
+	ExpiresDays         int      `json:"expires_days"` // >0 表示从当前时间延长
+	RateLimitPerHour    int      `json:"rate_limit_per_hour"`
+	BudgetLimit         float64  `json:"budget_limit"`
+	AlertThreshold      float64  `json:"alert_threshold"`
+	Notes               string   `json:"notes"`
+	AnthropicProviderID int      `json:"anthropic_provider_id"`
 }
 
 type ChatCompletionRequest struct {
