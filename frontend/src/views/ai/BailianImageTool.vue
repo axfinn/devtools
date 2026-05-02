@@ -499,7 +499,7 @@ import { Lock } from '@element-plus/icons-vue'
 const API_BASE = '/api'
 const PASSWORD_KEY = 'bailian_admin_password'
 
-const adminPassword = ref(sessionStorage.getItem(PASSWORD_KEY) || '')
+const adminPassword = ref(localStorage.getItem(PASSWORD_KEY) || '')
 const authed = ref(false)
 const models = ref([])
 const tasks = ref([])
@@ -661,14 +661,14 @@ const savePassword = async () => {
     ElMessage.error('请输入管理密码')
     return
   }
-  sessionStorage.setItem(PASSWORD_KEY, adminPassword.value)
+  localStorage.setItem(PASSWORD_KEY, adminPassword.value)
   try {
     await loadModels()
     authed.value = true
     ElMessage.success('管理密码已保存')
     loadTasks()
   } catch (err) {
-    sessionStorage.removeItem(PASSWORD_KEY)
+    localStorage.removeItem(PASSWORD_KEY)
   }
 }
 

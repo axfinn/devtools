@@ -265,7 +265,7 @@ func (h *AIGatewayHandler) ProxyMinimaxTokenPlan(c *gin.Context) {
 // handleSyncTokenPlanRequest 处理同步 Token Plan 请求（TTS）
 
 func (h *AIGatewayHandler) handleSyncTokenPlanRequest(c *gin.Context, key *models.AIAPIKey, model, apiKey, upstreamURL string, bodyBytes []byte, bodyMap map[string]interface{}, start time.Time) {
-	respBody, respContentType, err := h.doRawRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
+	respBody, respContentType, err := h.doMediaRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, c.Request.Header)
 	if err != nil {
 		h.logAPIRequest(key, model, "minimax-token-plan", "/api/minimax/token-plan/v1/generations", "media", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -332,7 +332,7 @@ func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, ups
 	_ = h.db.UpdateMiniMaxMediaTask(task)
 
 	start := time.Now()
-	respBody, respContentType, err := h.doRawRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, nil)
+	respBody, respContentType, err := h.doMediaRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, nil)
 
 	if err != nil {
 		task.Status = "failed"

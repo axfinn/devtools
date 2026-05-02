@@ -55,7 +55,8 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
 	hermesHandler := handlers.NewHermesHandler(cfg.Hermes)
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
-	gameHandler := handlers.NewGameHandler(cfg.MiniMax)
+	gameHandler := handlers.NewGameHandler()
+	voiceMemoHandler := handlers.NewVoiceMemoHandler(db, plannerHandler, envOrDefault("ASR_SERVICE_URL", "http://asr-service:9000"))
 
 	return &routeHandlers{
 		pasteHandler:              pasteHandler,
@@ -87,6 +88,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		hermesHandler:             hermesHandler,
 		edgeTTSHandler:            edgeTTSHandler,
 		gameHandler:               gameHandler,
+		voiceMemoHandler:          voiceMemoHandler,
 	}, nil
 }
 

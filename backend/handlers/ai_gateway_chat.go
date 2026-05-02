@@ -484,6 +484,17 @@ func (h *AIGatewayHandler) doRawRequest(url, apiKey, method string, body []byte,
 // doRawRequestWithResp 转发原始请求到上游，返回响应体、Content-Type 和错误
 
 func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body []byte, headers http.Header) ([]byte, string, error) {
+	return h.doRequestWithClient(h.noProxyClient, url, apiKey, method, body, headers)
+}
+
+// doMediaRequestWithResp 使用启用压缩的 mediaClient 发送请求。
+// MiniMax 图片/视频/音乐/TTS 端点要求 Accept-Encoding 头，否则会断连（EOF）。
+
+func (h *AIGatewayHandler) doMediaRequestWithResp(url, apiKey, method string, body []byte, headers http.Header) ([]byte, string, error) {
+	return h.doRequestWithClient(h.mediaClient, url, apiKey, method, body, headers)
+}
+
+func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey, method string, body []byte, headers http.Header) ([]byte, string, error) {
 	req, err := http.NewRequest(method, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", err
@@ -514,7 +525,7 @@ func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body
 			req.Header.Add(key, v)
 		}
 	}
-	resp, err := h.noProxyClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}

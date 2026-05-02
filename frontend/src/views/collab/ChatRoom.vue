@@ -460,7 +460,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onActivated, onDeactivated, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElImageViewer, ElMessageBox } from 'element-plus'
 import { API_BASE, WS_BASE } from '../../api'
 import QRCode from 'qrcode'
@@ -519,6 +519,7 @@ const recordingDuration = ref(0)
 let audioRecorder = null
 let audioChunks = []
 let recordingTimer = null
+let reconnectTimer = null
 
 // 录视频相关
 const isRecordingVideo = ref(false)
@@ -698,7 +699,7 @@ const confirmJoin = async () => {
     sessionStorage.setItem('chat_room_id', data.room.id)
     sessionStorage.setItem('chat_nickname', finalNickname)
     if (joinForm.value.password) {
-      sessionStorage.setItem('chat_room_password', joinForm.value.password)
+      localStorage.setItem('chat_room_password', joinForm.value.password)
     }
     // 更新 URL，方便刷新恢复
     const newHash = `#/chat?roomId=${data.room.id}`
@@ -783,8 +784,10 @@ const connectWebSocket = () => {
     if (currentRoom.value) {
       reconnectAttempts.value++
       if (reconnectAttempts.value < MAX_RECONNECT_ATTEMPTS) {
+        if (reconnectTimer) clearTimeout(reconnectTimer)
         const delay = Math.min(3000 * reconnectAttempts.value, 15000)
-        setTimeout(() => {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
           if (currentRoom.value) {
             connectWebSocket()
           }
@@ -1494,7 +1497,7 @@ const leaveRoom = () => {
   stopTTSAudio()
   sessionStorage.removeItem('chat_room_id')
   sessionStorage.removeItem('chat_nickname')
-  sessionStorage.removeItem('chat_room_password')
+  localStorage.removeItem('chat_room_password')
   window.history.replaceState(null, '', '#/chat')
   currentRoom.value = null
   messages.value = []
@@ -1567,8 +1570,7 @@ const verifyAdminPassword = async () => {
     showAdminPasswordDialog.value = false
     showAdminPanel.value = true
 
-    // 保存密码到 sessionStorage
-    sessionStorage.setItem('chat_admin_password', adminPassword.value)
+    localStorage.setItem('chat_admin_password', adminPassword.value)
   } catch (error) {
     ElMessage.error(error.message)
   } finally {
@@ -1578,7 +1580,7 @@ const verifyAdminPassword = async () => {
 
 // 加载管理员房间列表
 const loadAdminRooms = async () => {
-  const password = adminPassword.value || sessionStorage.getItem('chat_admin_password')
+  const password = adminPassword.value || localStorage.getItem('chat_admin_password')
   if (!password) {
     ElMessage.error('请先登录')
     showAdminPanel.value = false
@@ -1602,7 +1604,7 @@ const loadAdminRooms = async () => {
     ElMessage.error(error.message)
     // 如果密码错误，清除缓存并要求重新登录
     if (error.message.includes('密码')) {
-      sessionStorage.removeItem('chat_admin_password')
+      localStorage.removeItem('chat_admin_password')
       adminPassword.value = ''
       showAdminPanel.value = false
       showAdminPasswordDialog.value = true
@@ -1631,7 +1633,7 @@ const confirmDeleteRoom = (room) => {
 
 // 删除房间
 const deleteRoom = async (roomId) => {
-  const password = adminPassword.value || sessionStorage.getItem('chat_admin_password')
+  const password = adminPassword.value || localStorage.getItem('chat_admin_password')
   if (!password) {
     ElMessage.error('请先登录')
     return
@@ -1678,10 +1680,10 @@ onMounted(async () => {
   const urlRoomId = urlParams.get('roomId')
   const savedRoomId = sessionStorage.getItem('chat_room_id')
   const savedNickname = sessionStorage.getItem('chat_nickname')
-  const savedRoomPassword = sessionStorage.getItem('chat_room_password') || ''
+  const savedRoomPassword = localStorage.getItem('chat_room_password') || ''
 
   // 检查是否有保存的管理员密码
-  const savedPassword = sessionStorage.getItem('chat_admin_password')
+  const savedPassword = localStorage.getItem('chat_admin_password')
   if (savedPassword) adminPassword.value = savedPassword
 
   // 刷新恢复：URL roomId 与 session 一致，或无 URL roomId 但有 session
@@ -1712,7 +1714,7 @@ onMounted(async () => {
     // 恢复失败，清掉 session
     sessionStorage.removeItem('chat_room_id')
     sessionStorage.removeItem('chat_nickname')
-    sessionStorage.removeItem('chat_room_password')
+    localStorage.removeItem('chat_room_password')
   }
 
   // 扫码进房（无 session 或恢复失败）
@@ -1730,10 +1732,29 @@ onUnmounted(() => {
   closeCamera()
   stopScreenRecording()
   stopTTSAudio()
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+  if (recordingTimer) { clearInterval(recordingTimer); recordingTimer = null }
   if (ws) {
     ws.close()
     ws = null
   }
+})
+
+onDeactivated(() => {
+  // keep-alive 缓存时暂停资源消耗
+  stopTTSAudio()
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+  if (recordingTimer) { clearInterval(recordingTimer); recordingTimer = null }
+  ttsQueue.length = 0
+  ttsPlaying = false
+})
+
+onActivated(() => {
+  if (currentRoom.value && (!ws || ws.readyState !== WebSocket.OPEN)) {
+    reconnectAttempts.value = 0
+    connectWebSocket()
+  }
+  nextTick(() => scrollToBottom())
 })
 </script>
 
@@ -1742,6 +1763,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: calc(100vh - 40px); /* main-content padding 20px * 2 */
+  height: calc(100dvh - 40px);
   padding: 20px;
   box-sizing: border-box;
 }

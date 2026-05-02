@@ -7,12 +7,9 @@
           <el-tag :type="saveStatus === 'saving' ? 'warning' : 'success'" size="small">
             {{ saveStatus === 'saving' ? '保存中...' : '已保存' }}
           </el-tag>
+          <el-tag type="info" size="small">永久档案</el-tag>
           <el-button @click="logoutProfile">
             退出并切换档案
-          </el-button>
-          <el-button type="warning" @click="showExtendDialog = true">
-            <el-icon><Timer /></el-icon>
-            延期
           </el-button>
           <el-button type="danger" @click="confirmDelete">
             <el-icon><Delete /></el-icon>
@@ -68,16 +65,18 @@
 
         <!-- 周期统计 -->
         <div class="balance-card income">
-          <div class="balance-label">{{ periodLabel }}收入</div>
-          <div class="balance-value">{{ formatMoney(stats.total_income) }}</div>
+          <div class="balance-label">{{ recordRangeLabel }}收入</div>
+          <div class="balance-value">{{ formatMoney(recordMonthSummary.income) }}</div>
         </div>
         <div class="balance-card expense">
-          <div class="balance-label">{{ periodLabel }}支出</div>
-          <div class="balance-value">{{ formatMoney(stats.total_expense) }}</div>
+          <div class="balance-label">{{ recordRangeLabel }}支出</div>
+          <div class="balance-value">{{ formatMoney(recordMonthSummary.expense) }}</div>
         </div>
         <div class="balance-card balance">
-          <div class="balance-label">{{ periodLabel }}结余</div>
-          <div class="balance-value" :class="{ negative: stats.balance < 0 }">{{ formatMoney(stats.balance) }}</div>
+          <div class="balance-label">{{ recordRangeLabel }}结余</div>
+          <div class="balance-value" :class="{ negative: recordMonthSummary.income - recordMonthSummary.expense < 0 }">
+            {{ formatMoney(recordMonthSummary.income - recordMonthSummary.expense) }}
+          </div>
         </div>
       </div>
 
@@ -89,9 +88,23 @@
         </div>
       </transition>
 
-      <el-tabs v-model="activeTab" type="border-card" @tab-change="onTabChange">
+      <!-- Custom Tab Bar - Desktop & Mobile -->
+      <div class="custom-tab-bar">
+        <button
+          v-for="tab in tabItems"
+          :key="tab.name"
+          class="tab-pill"
+          :class="{ active: activeTab === tab.name }"
+          @click="switchTab(tab.name)"
+        >
+          <span class="tab-pill-icon">{{ tab.icon }}</span>
+          <span class="tab-pill-label">{{ tab.label }}</span>
+        </button>
+      </div>
+
+      <div class="tab-content-wrapper">
         <!-- Record Tab -->
-        <el-tab-pane label="记账" name="record">
+        <div v-show="activeTab === 'record'" class="tab-pane">
           <div class="record-section">
             <!-- 快捷记账区 -->
             <div class="quick-entry">
@@ -168,6 +181,24 @@
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
+              </div>
+
+              <div class="datetime-row">
+                <el-date-picker
+                  v-model="txForm.date"
+                  type="date"
+                  format="YYYY-MM-DD"
+                  value-format="YYYY-MM-DD"
+                  class="datetime-field"
+                />
+                <el-time-picker
+                  v-model="txForm.time"
+                  format="HH:mm"
+                  value-format="HH:mm"
+                  placeholder="时间"
+                  class="datetime-field"
+                />
+                <span class="datetime-hint">默认上海时间</span>
               </div>
 
               <!-- 操作按钮 -->
@@ -319,14 +350,22 @@
             <!-- Transaction list -->
             <div class="tx-list">
               <div class="tx-list-header">
-                <span>交易记录</span>
+                <div>
+                  <span>交易记录</span>
+                  <div class="tx-list-subtitle">
+                    {{ recordRangeLabel }}共 {{ transactions.length }} 条，当前筛出 {{ filteredTransactions.length }} 条
+                  </div>
+                </div>
                 <div class="tx-header-actions">
-                  <el-button-group size="small">
-                    <el-button :type="periodFilter === 'today' ? 'primary' : 'default'" @click="setPeriod('today')">今天</el-button>
-                    <el-button :type="periodFilter === 'yesterday' ? 'primary' : 'default'" @click="setPeriod('yesterday')">昨天</el-button>
-                    <el-button :type="periodFilter === 'week' ? 'primary' : 'default'" @click="setPeriod('week')">本周</el-button>
-                    <el-button :type="periodFilter === 'month' ? 'primary' : 'default'" @click="setPeriod('month')">本月</el-button>
-                  </el-button-group>
+                  <div class="record-month-nav">
+                    <el-button size="small" @click="shiftRecordMonth(-1)">
+                      <el-icon><ArrowLeft /></el-icon>
+                    </el-button>
+                    <span class="record-month-label">{{ recordRangeLabel }}</span>
+                    <el-button size="small" @click="shiftRecordMonth(1)">
+                      <el-icon><ArrowRight /></el-icon>
+                    </el-button>
+                  </div>
                   <el-button size="small" @click="exportData">
                     <el-icon><Download /></el-icon>
                     导出
@@ -342,20 +381,77 @@
                       导入
                     </el-button>
                   </el-upload>
+                  <el-button size="small" @click="resetRecordFilters">
+                    <el-icon><Refresh /></el-icon>
+                    重置筛选
+                  </el-button>
                 </div>
               </div>
-              <el-table :data="transactions" stripe style="width: 100%;" max-height="400" v-loading="loadingTxs">
-                <el-table-column prop="date" label="日期" width="100" />
-                <el-table-column prop="account_name" label="账户" width="80">
+
+              <div class="record-summary-grid">
+                <div class="record-summary-card">
+                  <div class="summary-label">筛选后支出</div>
+                  <div class="summary-value expense">¥{{ recordSummary.expense.toFixed(2) }}</div>
+                </div>
+                <div class="record-summary-card">
+                  <div class="summary-label">筛选后收入</div>
+                  <div class="summary-value income">¥{{ recordSummary.income.toFixed(2) }}</div>
+                </div>
+                <div class="record-summary-card">
+                  <div class="summary-label">最大支出分类</div>
+                  <div class="summary-text">{{ recordSummary.topCategory || '暂无' }}</div>
+                </div>
+                <div class="record-summary-card">
+                  <div class="summary-label">最高单笔支出</div>
+                  <div class="summary-text">{{ recordSummary.maxExpense ? `${recordSummary.maxExpense.category_name || '未分类'} · ${formatMoney(recordSummary.maxExpense.amount)}` : '暂无' }}</div>
+                </div>
+              </div>
+
+              <div class="record-filters">
+                <el-input
+                  v-model="recordKeyword"
+                  clearable
+                  placeholder="搜索备注 / 细项 / 标签"
+                  class="record-filter-item record-filter-keyword"
+                >
+                  <template #prefix><el-icon><Search /></el-icon></template>
+                </el-input>
+                <el-select v-model="recordTypeFilter" clearable placeholder="类型" class="record-filter-item">
+                  <el-option label="支出" value="expense" />
+                  <el-option label="收入" value="income" />
+                </el-select>
+                <el-select v-model="recordAccountFilter" clearable placeholder="账户" class="record-filter-item">
+                  <el-option v-for="acc in accounts" :key="acc.id" :label="acc.name" :value="acc.id" />
+                </el-select>
+                <el-select v-model="recordCategoryFilter" clearable placeholder="分类" class="record-filter-item">
+                  <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
+                </el-select>
+              </div>
+
+              <el-table :data="pagedTransactions" stripe style="width: 100%;" max-height="520" v-loading="loadingTxs">
+                <el-table-column prop="date" label="日期" width="132">
+                  <template #default="{ row }">
+                    <div class="tx-date-cell">
+                      <div>{{ row.date }}</div>
+                      <div class="tx-date-time">{{ getTransactionTime(row) || '全天' }}</div>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="account_name" label="账户" width="110">
                   <template #default="{ row }">
                     <el-tag size="small" :style="{ borderColor: getAccountColor(row.account_id) }">
                       {{ row.account_name }}
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="category_name" label="分类" width="80">
+                <el-table-column prop="category_name" label="分类" width="120">
                   <template #default="{ row }">
-                    <span :style="{ color: row.category_color }">{{ row.category_name }}</span>
+                    <div class="tx-category-cell">
+                      <span :style="{ color: row.category_color }">{{ row.category_name }}</span>
+                      <span class="tx-subcategory" v-if="getTransactionSubLabel(row) && getTransactionSubLabel(row) !== row.category_name">
+                        {{ getTransactionSubLabel(row) }}
+                      </span>
+                    </div>
                   </template>
                 </el-table-column>
                 <el-table-column prop="type" label="类型" width="60">
@@ -372,17 +468,37 @@
                     </span>
                   </template>
                 </el-table-column>
-                <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip>
+                <el-table-column prop="remark" label="备注 / 明细" min-width="260" show-overflow-tooltip>
                   <template #default="{ row }">
-                    <span v-if="row.voice_text" :title="row.voice_text">
-                      <el-icon><Microphone /></el-icon>
-                      {{ row.remark || '语音记账' }}
-                    </span>
-                    <span v-else>{{ row.remark }}</span>
+                    <div class="tx-remark-cell">
+                      <div class="tx-remark-title">
+                        <span v-if="row.voice_text" :title="row.voice_text" class="tx-voice-remark">
+                          <el-icon><Microphone /></el-icon>
+                          {{ getTransactionMainRemark(row) || '语音记账' }}
+                        </span>
+                        <span v-else>{{ getTransactionMainRemark(row) || '未填写备注' }}</span>
+                      </div>
+                      <div v-if="getTransactionDetailRemark(row)" class="tx-remark-detail">
+                        {{ getTransactionDetailRemark(row) }}
+                      </div>
+                      <div v-if="getTransactionMetaChips(row).length > 0" class="tx-meta-chips">
+                        <el-tag
+                          v-for="chip in getTransactionMetaChips(row)"
+                          :key="chip"
+                          size="small"
+                          effect="plain"
+                        >
+                          {{ chip }}
+                        </el-tag>
+                      </div>
+                    </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="120" fixed="right">
+                <el-table-column label="操作" width="150" fixed="right">
                   <template #default="{ row }">
+                    <el-button link type="info" size="small" @click="openTransactionDetail(row)" title="详情">
+                      <el-icon><View /></el-icon>
+                    </el-button>
                     <el-button link type="success" size="small" @click="duplicateTransaction(row)" title="复账">
                       <el-icon><CopyDocument /></el-icon>
                     </el-button>
@@ -395,85 +511,336 @@
                   </template>
                 </el-table-column>
               </el-table>
+
+              <!-- Mobile card view -->
+              <div class="mobile-tx-cards" v-if="pagedTransactions.length > 0">
+                <div
+                  v-for="tx in pagedTransactions"
+                  :key="tx.id"
+                  class="mobile-tx-card"
+                  @click="openTransactionDetail(tx)"
+                >
+                  <div class="mtc-left">
+                    <span class="mtc-cat-dot" :style="{ background: tx.category_color || '#909399' }"></span>
+                  </div>
+                  <div class="mtc-center">
+                    <div class="mtc-title">{{ getTransactionMainRemark(tx) || tx.category_name || '未分类' }}</div>
+                    <div class="mtc-meta">
+                      <span class="mtc-cat-tag" :style="{ color: tx.category_color }">{{ tx.category_name }}</span>
+                      <span class="mtc-sep">·</span>
+                      <span>{{ tx.account_name }}</span>
+                      <span class="mtc-sep">·</span>
+                      <span>{{ tx.date }} {{ getTransactionTime(tx) || '' }}</span>
+                    </div>
+                  </div>
+                  <div class="mtc-right">
+                    <span :class="tx.type === 'income' ? 'text-income' : 'text-expense'">
+                      {{ tx.type === 'income' ? '+' : '-' }}{{ formatMoney(tx.amount) }}
+                    </span>
+                    <div class="mtc-actions" @click.stop>
+                      <el-button link size="small" @click="openEditDialog(tx)"><el-icon><Edit /></el-icon></el-button>
+                      <el-button link size="small" type="danger" @click="deleteTransaction(tx.id)"><el-icon><Delete /></el-icon></el-button>
+                    </div>
+                  </div>
+                </div>
+                <el-empty v-if="pagedTransactions.length === 0" description="暂无记录" :image-size="60" />
+              </div>
+
+              <div class="tx-pagination">
+                <el-pagination
+                  v-model:current-page="recordPage"
+                  v-model:page-size="recordPageSize"
+                  background
+                  layout="total, sizes, prev, pager, next"
+                  :total="filteredTransactions.length"
+                  :page-sizes="[20, 50, 100, 200]"
+                />
+              </div>
             </div>
           </div>
-        </el-tab-pane>
+        </div>
+
+        <!-- History Tab -->
+        <div v-show="activeTab === 'history'" class="tab-pane">
+          <div class="history-section">
+            <div class="history-toolbar">
+              <el-select v-model="historyMonth" placeholder="选择月份" class="history-toolbar-item">
+                <el-option v-for="item in historyMonthOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+              <el-select v-model="historyTypeFilter" clearable placeholder="类型" class="history-toolbar-item">
+                <el-option label="支出" value="expense" />
+                <el-option label="收入" value="income" />
+              </el-select>
+              <el-select v-model="historyCategoryFilter" clearable placeholder="分类" class="history-toolbar-item">
+                <el-option v-for="cat in historyCategoryOptions" :key="cat.id" :label="cat.name" :value="cat.id" />
+              </el-select>
+              <el-input v-model="historyKeyword" clearable placeholder="搜索备注 / 细项" class="history-toolbar-item history-keyword">
+                <template #prefix><el-icon><Search /></el-icon></template>
+              </el-input>
+            </div>
+
+            <div class="history-summary">
+              <div>筛选后记录 {{ filteredHistoryTransactions.length }} 条</div>
+              <div>支出 {{ formatMoney(historySummary.expense) }}</div>
+              <div>收入 {{ formatMoney(historySummary.income) }}</div>
+            </div>
+
+            <div v-if="historyGroups.length === 0" class="history-empty">
+              <el-empty description="当前条件下没有历史记录" />
+            </div>
+            <div v-else class="history-groups">
+              <div v-for="group in historyGroups" :key="group.date" class="history-day-card">
+                <div class="history-day-header">
+                  <div>
+                    <strong>{{ group.date }}</strong>
+                    <span class="history-day-count">{{ group.items.length }} 笔</span>
+                  </div>
+                  <div class="history-day-amounts">
+                    <span class="text-expense" v-if="group.expense > 0">支 {{ formatMoney(group.expense) }}</span>
+                    <span class="text-income" v-if="group.income > 0">收 {{ formatMoney(group.income) }}</span>
+                  </div>
+                </div>
+                <div class="history-item-list">
+                  <button
+                    v-for="item in group.items"
+                    :key="item.id"
+                    class="history-item"
+                    type="button"
+                    @click="openTransactionDetail(item)"
+                  >
+                    <div class="history-item-main">
+                      <span class="history-item-category" :style="{ color: item.category_color }">{{ item.category_name || '未分类' }}</span>
+                      <span class="history-item-sub">{{ getHistoryItemSummary(item) }}</span>
+                    </div>
+                    <div class="history-item-side">
+                      <span class="history-item-time">{{ getTransactionTime(item) || '全天' }}</span>
+                      <span :class="item.type === 'income' ? 'text-income' : 'text-expense'">
+                        {{ item.type === 'income' ? '+' : '-' }}{{ formatMoney(item.amount) }}
+                      </span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- Stats Tab -->
-        <el-tab-pane label="统计" name="stats">
+        <div v-show="activeTab === 'stats'" class="tab-pane">
           <div class="stats-section">
-            <el-radio-group v-model="statsPeriod" @change="loadStats" size="small" style="margin-bottom: 20px;">
-              <el-radio-button label="week">本周</el-radio-button>
-              <el-radio-button label="month">本月</el-radio-button>
-              <el-radio-button label="year">本年</el-radio-button>
-            </el-radio-group>
+            <div class="stats-hero">
+              <div>
+                <div class="stats-kicker">统计哲学</div>
+                <h3>钱从哪来，花到哪去，什么时候失控</h3>
+                <p>{{ statsRangeLabel }} 内的数据会先讲清现金流，再解释结构和异常，所有图表都会跟随下面筛选条件同步变化。</p>
+              </div>
+              <div class="stats-hero-chips">
+                <span class="stats-hero-chip">筛选后 {{ filteredStatsTransactions.length }} 条</span>
+                <span class="stats-hero-chip">活跃日 {{ statsOverview.activeDays }}</span>
+                <span class="stats-hero-chip">重点分类 {{ statsOverview.topCategory?.name || '暂无' }}</span>
+              </div>
+            </div>
 
-            <!-- 统计汇总 -->
-            <el-row :gutter="20" style="margin-bottom: 20px;">
-              <el-col :span="8">
-                <el-card shadow="hover">
-                  <div class="stat-card">
-                    <div class="stat-label">收入</div>
-                    <div class="stat-value income">¥{{ stats.total_income?.toFixed(2) || '0.00' }}</div>
-                  </div>
-                </el-card>
-              </el-col>
-              <el-col :span="8">
-                <el-card shadow="hover">
-                  <div class="stat-card">
-                    <div class="stat-label">支出</div>
-                    <div class="stat-value expense">¥{{ stats.total_expense?.toFixed(2) || '0.00' }}</div>
-                  </div>
-                </el-card>
-              </el-col>
-              <el-col :span="8">
-                <el-card shadow="hover">
-                  <div class="stat-card">
-                    <div class="stat-label">结余</div>
-                    <div class="stat-value" :class="stats.balance >= 0 ? 'income' : 'expense'">¥{{ stats.balance?.toFixed(2) || '0.00' }}</div>
-                  </div>
-                </el-card>
-              </el-col>
-            </el-row>
+            <div class="stats-control-row">
+              <el-radio-group v-model="statsPeriod" @change="loadStats" size="small">
+                <el-radio-button label="month">月视图</el-radio-button>
+                <el-radio-button label="year">年视图</el-radio-button>
+                <el-radio-button label="custom">自定义</el-radio-button>
+              </el-radio-group>
+              <div v-if="statsPeriod === 'month'" class="stats-month-nav">
+                <el-button size="small" @click="shiftStatsMonth(-1)">
+                  <el-icon><ArrowLeft /></el-icon>
+                </el-button>
+                <span class="stats-month-label">{{ statsRangeLabel }}</span>
+                <el-button size="small" @click="shiftStatsMonth(1)">
+                  <el-icon><ArrowRight /></el-icon>
+                </el-button>
+              </div>
+              <el-date-picker
+                v-if="statsPeriod === 'custom'"
+                v-model="statsCustomRange"
+                type="daterange"
+                unlink-panels
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                value-format="YYYY-MM-DD"
+                class="stats-range-picker"
+                @change="loadStats"
+              />
+            </div>
 
-            <!-- 支出分类图表 -->
-            <el-row :gutter="20">
-              <el-col :span="12">
-                <div class="chart-card">
-                  <h4>支出分类</h4>
-                  <template v-if="stats.transaction_count > 0">
-                    <div ref="categoryChartRef" style="height: 300px;"></div>
-                  </template>
-                  <el-empty v-else description="暂无支出记录" :image-size="80" />
-                </div>
-              </el-col>
-              <el-col :span="12">
-                <div class="chart-card">
-                  <h4>月度趋势</h4>
-                  <template v-if="Object.keys(stats.by_month || {}).length > 0">
-                    <div ref="monthChartRef" style="height: 300px;"></div>
-                  </template>
-                  <el-empty v-else description="暂无月度数据" :image-size="80" />
-                </div>
-              </el-col>
-            </el-row>
+            <div class="stats-detail-filters">
+              <el-select v-model="statsDetailTypeFilter" clearable placeholder="类型" class="stats-filter-item">
+                <el-option label="支出" value="expense" />
+                <el-option label="收入" value="income" />
+              </el-select>
+              <el-select v-model="statsDetailAccountFilter" clearable placeholder="账户" class="stats-filter-item">
+                <el-option v-for="acc in accounts" :key="acc.id" :label="acc.name" :value="acc.id" />
+              </el-select>
+              <el-select v-model="statsDetailCategoryFilter" clearable placeholder="分类" class="stats-filter-item">
+                <el-option v-for="cat in statsFilterCategoryOptions" :key="cat.id" :label="cat.name" :value="cat.id" />
+              </el-select>
+              <el-input
+                v-model="statsDetailKeyword"
+                clearable
+                placeholder="筛选备注 / 子类 / 细项"
+                class="stats-filter-item stats-filter-keyword"
+              >
+                <template #prefix><el-icon><Search /></el-icon></template>
+              </el-input>
+            </div>
 
-            <el-row :gutter="20" style="margin-top: 20px;">
-              <el-col :span="24">
-                <div class="chart-card">
-                  <h4>账户分布</h4>
-                  <template v-if="Object.keys(stats.by_account || {}).length > 0">
-                    <div ref="accountChartRef" style="height: 250px;"></div>
-                  </template>
-                  <el-empty v-else description="暂无账户数据" :image-size="80" />
+            <div class="stats-overview-grid">
+              <div class="stats-overview-card">
+                <div class="stats-overview-label">收入</div>
+                <div class="stats-overview-value text-income">{{ formatMoney(statsOverview.income) }}</div>
+              </div>
+              <div class="stats-overview-card">
+                <div class="stats-overview-label">支出</div>
+                <div class="stats-overview-value text-expense">{{ formatMoney(statsOverview.expense) }}</div>
+              </div>
+              <div class="stats-overview-card">
+                <div class="stats-overview-label">结余</div>
+                <div class="stats-overview-value" :class="statsOverview.balance >= 0 ? 'text-income' : 'text-expense'">{{ formatMoney(statsOverview.balance) }}</div>
+              </div>
+              <div class="stats-overview-card">
+                <div class="stats-overview-label">储蓄率</div>
+                <div class="stats-overview-value">{{ `${(statsOverview.savingsRate * 100).toFixed(1)}%` }}</div>
+              </div>
+              <div class="stats-overview-card">
+                <div class="stats-overview-label">活跃天数</div>
+                <div class="stats-overview-value">{{ statsOverview.activeDays }}</div>
+              </div>
+              <div class="stats-overview-card">
+                <div class="stats-overview-label">日均支出</div>
+                <div class="stats-overview-value">{{ formatMoney(statsOverview.avgPerDay) }}</div>
+              </div>
+            </div>
+
+            <div class="stats-insight-panel">
+              <div class="stats-insight-header">
+                <div>
+                  <h4>解读摘要</h4>
+                  <p>先看结构，再看节奏，最后盯住最大波动。</p>
                 </div>
-              </el-col>
-            </el-row>
+                <div class="stats-insight-badge">
+                  最大单笔
+                  <strong>{{ statsDetailSummary.maxExpense ? formatMoney(statsDetailSummary.maxExpense.amount) : '暂无' }}</strong>
+                </div>
+              </div>
+              <ul v-if="statsInsightList.length > 0" class="stats-insight-list">
+                <li v-for="item in statsInsightList" :key="item">{{ item }}</li>
+              </ul>
+              <el-empty v-else description="当前筛选下还没有足够数据形成洞察" :image-size="70" />
+            </div>
+
+            <div class="stats-chart-grid">
+              <div class="chart-card">
+                <div class="deep-table-header">
+                  <h4>支出结构</h4>
+                  <span>看钱主要被哪些分类吃掉</span>
+                </div>
+                <template v-if="statsCategoryRows.length > 0">
+                  <div ref="categoryChartRef" style="height: 320px;"></div>
+                </template>
+                <el-empty v-else description="暂无支出结构数据" :image-size="80" />
+              </div>
+              <div class="chart-card">
+                <div class="deep-table-header">
+                  <h4>时间节奏</h4>
+                  <span>看收入、支出与净流的变化</span>
+                </div>
+                <template v-if="statsTrendRows.length > 0">
+                  <div ref="monthChartRef" style="height: 320px;"></div>
+                </template>
+                <el-empty v-else description="暂无时间趋势数据" :image-size="80" />
+              </div>
+            </div>
+
+            <div class="chart-card" style="margin-top: 20px;">
+              <div class="deep-table-header">
+                <h4>账户流向</h4>
+                <span>账户不是分类，而是现金流经过的通道</span>
+              </div>
+              <template v-if="statsAccountRows.length > 0">
+                <div ref="accountChartRef" style="height: 280px;"></div>
+              </template>
+              <el-empty v-else description="暂无账户流向数据" :image-size="80" />
+            </div>
+
+            <div class="stats-table-grid">
+              <div class="chart-card">
+                <div class="deep-table-header">
+                  <h4>分类结构</h4>
+                  <span>按分类聚合后的主要支出</span>
+                </div>
+                <el-table :data="statsCategoryRows.slice(0, 10)" size="small" max-height="360" v-loading="statsDetailLoading">
+                  <el-table-column prop="name" label="分类" min-width="120" />
+                  <el-table-column prop="count" label="笔数" width="80" />
+                  <el-table-column prop="amount" label="金额" width="120">
+                    <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="share" label="占比" width="90">
+                    <template #default="{ row }">{{ row.share.toFixed(1) }}%</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+
+              <div class="chart-card">
+                <div class="deep-table-header">
+                  <h4>子类 / 细项聚合</h4>
+                  <span>{{ filteredStatsTransactions.length }} 条明细内聚合</span>
+                </div>
+                <el-table :data="statsSubcategoryRows" size="small" max-height="360" v-loading="statsDetailLoading">
+                  <el-table-column prop="name" label="细项 / 子类" min-width="160" />
+                  <el-table-column prop="count" label="笔数" width="80" />
+                  <el-table-column prop="amount" label="金额" width="120">
+                    <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+
+              <div class="chart-card">
+                <div class="deep-table-header">
+                  <h4>重点日期</h4>
+                  <span>高支出日期优先排查</span>
+                </div>
+                <el-table :data="statsDayRows" size="small" max-height="360" v-loading="statsDetailLoading">
+                  <el-table-column prop="name" label="日期" width="120" />
+                  <el-table-column prop="count" label="笔数" width="80" />
+                  <el-table-column prop="amount" label="支出" width="120">
+                    <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+
+              <div class="chart-card">
+                <div class="deep-table-header">
+                  <h4>高额支出</h4>
+                  <span>先看最有破坏力的单笔</span>
+                </div>
+                <el-table :data="statsTopTransactions" size="small" max-height="360" v-loading="statsDetailLoading">
+                  <el-table-column prop="date" label="日期" width="110" />
+                  <el-table-column label="内容" min-width="180">
+                    <template #default="{ row }">
+                      <div class="tx-category-cell">
+                        <strong>{{ row.category_name || '未分类' }}</strong>
+                        <span class="tx-subcategory">{{ getHistoryItemSummary(row) }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="amount" label="金额" width="120">
+                    <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </div>
           </div>
-        </el-tab-pane>
+        </div>
 
         <!-- Calendar Tab -->
-        <el-tab-pane label="日历" name="calendar">
+        <div v-show="activeTab === 'calendar'" class="tab-pane">
           <div class="calendar-section">
             <div class="calendar-header">
               <el-button size="small" @click="prevMonth">
@@ -507,10 +874,10 @@
               </div>
             </div>
           </div>
-        </el-tab-pane>
+        </div>
 
         <!-- Backup Tab -->
-        <el-tab-pane label="备份" name="backup">
+        <div v-show="activeTab === 'backup'" class="tab-pane">
           <div class="backup-section">
             <el-alert
               title="数据备份"
@@ -538,7 +905,7 @@
               :closable="false"
               style="margin-bottom: 20px;"
             >
-              导入备份数据将覆盖现有数据，请谨慎操作
+              导入会向当前档案追加数据；建议在空白档案中恢复或导入
             </el-alert>
 
             <el-upload
@@ -552,24 +919,76 @@
                 导入备份数据
               </el-button>
             </el-upload>
+
+            <el-divider />
+
+            <el-alert
+              title="从 NFS 分享导入"
+              type="info"
+              :closable="false"
+              style="margin-bottom: 20px;"
+            >
+              支持粘贴 NFS 分享链接导入 CSV / JSON 账单，例如 `https://t.jaxiu.cn/nfs/a852f4ae`
+            </el-alert>
+
+            <div class="space-y-3" style="max-width: 560px;">
+              <el-input
+                v-model="nfsImportLink"
+                placeholder="输入 NFS 分享链接"
+                clearable
+              />
+              <el-input
+                v-model="nfsImportPassword"
+                type="password"
+                placeholder="如果分享设了访问密码，在这里填写"
+                show-password
+                clearable
+              />
+              <el-button type="primary" size="large" @click="importFromNFSShare" :loading="importingFromNFS">
+                从 NFS 分享导入
+              </el-button>
+            </div>
           </div>
-        </el-tab-pane>
+        </div>
 
         <!-- AI Analyze Tab -->
-        <el-tab-pane label="AI 解读" name="analyze">
+        <div v-show="activeTab === 'analyze'" class="tab-pane">
           <div class="analyze-section">
             <el-radio-group v-model="analyzePeriod" size="small" style="margin-bottom: 20px;">
               <el-radio-button label="week">本周</el-radio-button>
               <el-radio-button label="month">本月</el-radio-button>
               <el-radio-button label="year">本年</el-radio-button>
+              <el-radio-button label="custom">自定义</el-radio-button>
             </el-radio-group>
+            <div v-if="analyzePeriod === 'custom'" style="margin-bottom: 20px;">
+              <el-date-picker
+                v-model="analyzeCustomRange"
+                type="daterange"
+                unlink-panels
+                range-separator="至"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                value-format="YYYY-MM-DD"
+                style="width: 100%; max-width: 420px;"
+              />
+            </div>
+
+            <div class="ai-focus-row">
+              <span class="ai-focus-label">分析重点</span>
+              <el-radio-group v-model="analysisFocus" size="small">
+                <el-radio-button label="overview">总览</el-radio-button>
+                <el-radio-button label="savings">节流</el-radio-button>
+                <el-radio-button label="anomaly">异常</el-radio-button>
+                <el-radio-button label="category">分类结构</el-radio-button>
+              </el-radio-group>
+            </div>
 
             <div style="margin-bottom: 20px;">
               <el-button type="primary" @click="runAnalyze" :loading="analyzing">
                 <el-icon><MagicStick /></el-icon>
-                开始 AI 分析
+                提交 AI 分析
               </el-button>
-              <el-button @click="analysisResult = ''" v-if="analysisResult">
+              <el-button @click="clearAnalyzeState" v-if="analysisResult || analysisStatus">
                 清空结果
               </el-button>
             </div>
@@ -577,8 +996,24 @@
             <!-- 分析结果展示 -->
             <div v-if="analyzing" class="loading-state">
               <el-icon class="is-loading" :size="40"><MagicStick /></el-icon>
-              <p>AI 正在分析您的消费数据...</p>
+              <p>AI 任务已提交，正在异步生成分析结果...</p>
             </div>
+
+            <el-alert
+              v-else-if="analysisStatus === 'running' || analysisStatus === 'queued'"
+              title="AI 解读任务正在后台执行，页面会自动刷新结果。"
+              type="info"
+              :closable="false"
+              style="margin-bottom: 20px;"
+            />
+
+            <el-alert
+              v-else-if="analysisStatus === 'failed'"
+              title="AI 解读失败，请稍后重试。"
+              type="error"
+              :closable="false"
+              style="margin-bottom: 20px;"
+            />
 
             <el-empty v-else-if="!analysisResult" description="点击上方按钮获取 AI 消费分析" />
 
@@ -592,10 +1027,10 @@
               </div>
             </div>
           </div>
-        </el-tab-pane>
+        </div>
 
         <!-- Settings Tab -->
-        <el-tab-pane label="账户/分类" name="settings">
+        <div v-show="activeTab === 'settings'" class="tab-pane">
           <div class="settings-section">
             <el-row :gutter="20">
               <el-col :span="12">
@@ -653,8 +1088,8 @@
               </el-col>
             </el-row>
           </div>
-        </el-tab-pane>
-      </el-tabs>
+        </div>
+      </div>
 
       <!-- Add Account Dialog -->
       <el-dialog v-model="showAddAccount" title="添加账户" width="400px">
@@ -706,17 +1141,6 @@
         </template>
       </el-dialog>
 
-      <!-- Extend Dialog -->
-      <el-dialog v-model="showExtendDialog" title="延期档案" width="300px">
-        <p>确定要延期档案吗？</p>
-        <el-input-number v-model="extendDays" :min="30" :max="730" />
-        <span> 天</span>
-        <template #footer>
-          <el-button @click="showExtendDialog = false">取消</el-button>
-          <el-button type="primary" @click="extendProfile">确定</el-button>
-        </template>
-      </el-dialog>
-
       <!-- Edit Transaction Dialog -->
       <el-dialog v-model="showEditDialog" title="修改记账" width="450px">
         <el-form :model="editForm" label-width="70px">
@@ -748,6 +1172,15 @@
           <el-form-item label="日期">
             <el-date-picker v-model="editForm.date" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" style="width: 100%;" />
           </el-form-item>
+          <el-form-item label="时间">
+            <el-time-picker
+              v-model="editForm.time"
+              format="HH:mm"
+              value-format="HH:mm"
+              placeholder="记录时间"
+              style="width: 100%;"
+            />
+          </el-form-item>
           <el-form-item label="备注">
             <el-input v-model="editForm.remark" placeholder="备注" />
           </el-form-item>
@@ -757,23 +1190,118 @@
           <el-button type="primary" @click="saveEditTransaction" :loading="savingEdit">保存</el-button>
         </template>
       </el-dialog>
+
+      <el-dialog v-model="showTransactionDetailDialog" title="交易详情" width="520px">
+        <template v-if="selectedTransaction">
+          <div class="tx-detail-panel">
+            <div class="tx-detail-row">
+              <span class="tx-detail-label">日期</span>
+              <span>{{ selectedTransaction.date }} {{ getTransactionTime(selectedTransaction) || '' }}</span>
+            </div>
+            <div class="tx-detail-row">
+              <span class="tx-detail-label">类型</span>
+              <el-tag :type="selectedTransaction.type === 'income' ? 'success' : 'danger'" size="small">
+                {{ selectedTransaction.type === 'income' ? '收入' : '支出' }}
+              </el-tag>
+            </div>
+            <div class="tx-detail-row">
+              <span class="tx-detail-label">账户</span>
+              <span>{{ selectedTransaction.account_name || '未设置' }}</span>
+            </div>
+            <div class="tx-detail-row">
+              <span class="tx-detail-label">分类</span>
+              <span>{{ selectedTransaction.category_name || '未分类' }}</span>
+            </div>
+            <div class="tx-detail-row">
+              <span class="tx-detail-label">细项</span>
+              <span>{{ getTransactionSubLabel(selectedTransaction) || '无' }}</span>
+            </div>
+            <div class="tx-detail-row">
+              <span class="tx-detail-label">金额</span>
+              <strong>{{ formatMoney(selectedTransaction.amount) }}</strong>
+            </div>
+            <div class="tx-detail-row align-start">
+              <span class="tx-detail-label">备注</span>
+              <div class="tx-detail-content">
+                <div>{{ getTransactionMainRemark(selectedTransaction) || '未填写备注' }}</div>
+                <div v-if="getTransactionDetailRemark(selectedTransaction)" class="tx-detail-muted">
+                  {{ getTransactionDetailRemark(selectedTransaction) }}
+                </div>
+              </div>
+            </div>
+            <div class="tx-detail-row align-start" v-if="getTransactionMetaChips(selectedTransaction).length > 0">
+              <span class="tx-detail-label">标签</span>
+              <div class="tx-meta-chips">
+                <el-tag
+                  v-for="chip in getTransactionMetaChips(selectedTransaction)"
+                  :key="chip"
+                  size="small"
+                  effect="plain"
+                >
+                  {{ chip }}
+                </el-tag>
+              </div>
+            </div>
+            <div class="tx-detail-row align-start" v-if="selectedTransaction.voice_text">
+              <span class="tx-detail-label">语音原文</span>
+              <div class="tx-detail-content tx-detail-muted">{{ selectedTransaction.voice_text }}</div>
+            </div>
+          </div>
+        </template>
+      </el-dialog>
     </template>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getECharts } from '../../utils/vendor-loaders'
 
 const API_BASE = '/api'
+const expenseSessionKeys = {
+  profileId: 'expense_profile_id',
+  password: 'expense_user_password',
+  creatorKey: 'expense_creator_key'
+}
+
+function saveExpenseSession() {
+  sessionStorage.setItem(expenseSessionKeys.profileId, profileId.value)
+  sessionStorage.setItem(expenseSessionKeys.password, password.value)
+  if (creatorKey.value) {
+    sessionStorage.setItem(expenseSessionKeys.creatorKey, creatorKey.value)
+  } else {
+    sessionStorage.removeItem(expenseSessionKeys.creatorKey)
+  }
+}
+
+function clearExpenseSession() {
+  Object.values(expenseSessionKeys).forEach(key => {
+    sessionStorage.removeItem(key)
+    localStorage.removeItem(key)
+  })
+  localStorage.removeItem('expense_password')
+}
 
 // 带密码认证的请求封装
 async function expenseFetch(url, options = {}) {
   const headers = {
-    'Content-Type': 'application/json',
     'X-Password': password.value,
     ...options.headers
+  }
+  if (!headers['Content-Type'] && options.body && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json'
+  }
+  return fetch(url, { ...options, headers })
+}
+
+async function expenseCreatorFetch(url, options = {}) {
+  const headers = {
+    'X-Creator-Key': creatorKey.value,
+    ...options.headers
+  }
+  if (!headers['Content-Type'] && options.body && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json'
   }
   return fetch(url, { ...options, headers })
 }
@@ -794,17 +1322,40 @@ const loading = ref(false)
 const accounts = ref([])
 const categories = ref([])
 const transactions = ref([])
+const calendarTransactions = ref([])
 const stats = ref({ total_income: 0, total_expense: 0, balance: 0, by_category: {}, by_account: {}, by_month: {} })
 
 // UI State
 const activeTab = ref('record')
-const periodFilter = ref('')
+
+const tabItems = [
+  { name: 'record', label: '记账', icon: '📝' },
+  { name: 'history', label: '历史', icon: '📋' },
+  { name: 'stats', label: '统计', icon: '📊' },
+  { name: 'calendar', label: '日历', icon: '📅' },
+  { name: 'backup', label: '备份', icon: '💾' },
+  { name: 'analyze', label: 'AI', icon: '🤖' },
+  { name: 'settings', label: '设置', icon: '⚙' }
+]
+
+async function switchTab(tabName) {
+  if (activeTab.value === tabName) return
+  activeTab.value = tabName
+  await onTabChange(tabName)
+}
+const recordMonthCursor = ref(getShanghaiCurrentMonthCursor())
 const statsPeriod = ref('month')
+const statsMonthCursor = ref(getShanghaiCurrentMonthCursor())
 const analyzePeriod = ref('month')
+const statsCustomRange = ref([])
+const analyzeCustomRange = ref([])
 const loadingTxs = ref(false)
 const addingTx = ref(false)
 const analyzing = ref(false)
 const analysisResult = ref('')
+const analysisJobId = ref('')
+const analysisStatus = ref('')
+let analysisPollTimer = null
 
 // Charts
 const categoryChartRef = ref(null)
@@ -820,7 +1371,8 @@ const txForm = ref({
   category_id: '',
   type: 'expense',
   amount: 0,
-  date: new Date().toISOString().split('T')[0],
+  date: '',
+  time: '',
   remark: ''
 })
 
@@ -840,6 +1392,8 @@ const editForm = ref({
   account_id: '',
   category_id: '',
   date: '',
+  time: '',
+  tags: '',
   remark: ''
 })
 
@@ -878,15 +1432,9 @@ const showSuccessAnimation = ref(false)
 // Today's stats
 const todayStats = ref({ income: 0, expense: 0 })
 
-// Period label
-const periodLabel = computed(() => {
-  const labels = { week: '本周', month: '本月', year: '本年' }
-  return labels[statsPeriod.value] || '本月'
-})
-
 // Calendar state
-const calendarYear = ref(new Date().getFullYear())
-const calendarMonth = ref(new Date().getMonth())
+const calendarYear = ref(getShanghaiCalendarAnchor().year)
+const calendarMonth = ref(getShanghaiCalendarAnchor().month)
 const calendarDays = ref([])
 const dayTransactions = ref([])
 const showDayDialog = ref(false)
@@ -894,6 +1442,33 @@ const selectedDay = ref('')
 
 // Backup state
 const backingUp = ref(false)
+const importingFromNFS = ref(false)
+const nfsImportLink = ref('')
+const nfsImportPassword = ref('')
+const historyTransactions = ref([])
+const historyMonth = ref('')
+const historyKeyword = ref('')
+const historyTypeFilter = ref('')
+const historyCategoryFilter = ref('')
+const recordKeyword = ref('')
+const recordTypeFilter = ref('')
+const recordAccountFilter = ref('')
+const recordCategoryFilter = ref('')
+const recordPage = ref(1)
+const recordPageSize = ref(50)
+const statsDetailTransactions = ref([])
+const statsDetailLoading = ref(false)
+const statsDetailKeyword = ref('')
+const statsDetailTypeFilter = ref('')
+const statsDetailAccountFilter = ref('')
+const statsDetailCategoryFilter = ref('')
+const analysisFocus = ref('overview')
+const showTransactionDetailDialog = ref(false)
+const selectedTransaction = ref(null)
+const recordLoaded = ref(false)
+const historyLoaded = ref(false)
+const statsLoaded = ref(false)
+const calendarLoaded = ref(false)
 
 // Computed
 const categorizedCategories = computed(() => {
@@ -935,11 +1510,344 @@ const incomeCategories = computed(() => {
 const recentRemarks = computed(() => {
   const remarkSet = new Set()
   transactions.value.forEach(t => {
-    if (t.remark && t.remark.length > 0 && t.remark.length < 20) {
-      remarkSet.add(t.remark)
+    const title = getTransactionMainRemark(t)
+    if (title && title.length > 0 && title.length < 20) {
+      remarkSet.add(title)
     }
   })
   return Array.from(remarkSet).slice(0, 8)
+})
+
+const filteredTransactions = computed(() => {
+  const keyword = recordKeyword.value.trim().toLowerCase()
+  return transactions.value.filter(row => {
+    if (recordTypeFilter.value && row.type !== recordTypeFilter.value) return false
+    if (recordAccountFilter.value && row.account_id !== recordAccountFilter.value) return false
+    if (recordCategoryFilter.value && row.category_id !== recordCategoryFilter.value) return false
+    if (keyword) {
+      const haystack = [
+        row.category_name,
+        row.account_name,
+        row.remark,
+        row.tags,
+        row.voice_text,
+        getTransactionSubLabel(row)
+      ].join(' ').toLowerCase()
+      if (!haystack.includes(keyword)) return false
+    }
+    return true
+  })
+})
+
+const pagedTransactions = computed(() => {
+  const start = (recordPage.value - 1) * recordPageSize.value
+  return filteredTransactions.value.slice(start, start + recordPageSize.value)
+})
+
+const recordMonthSummary = computed(() => summarizeTransactions(transactions.value))
+
+const recordSummary = computed(() => {
+  return summarizeTransactions(filteredTransactions.value)
+})
+
+function summarizeTransactions(rows) {
+  let income = 0
+  let expense = 0
+  const byCategory = new Map()
+  let maxExpense = null
+  rows.forEach(row => {
+    if (row.type === 'income') {
+      income += Number(row.amount) || 0
+      return
+    }
+    const amount = Number(row.amount) || 0
+    expense += amount
+    byCategory.set(row.category_name || '未分类', (byCategory.get(row.category_name || '未分类') || 0) + amount)
+    if (!maxExpense || amount > maxExpense.amount) {
+      maxExpense = row
+    }
+  })
+  let topCategory = ''
+  let topAmount = 0
+  byCategory.forEach((amount, name) => {
+    if (amount > topAmount) {
+      topAmount = amount
+      topCategory = name
+    }
+  })
+  return { income, expense, topCategory, maxExpense }
+}
+
+const calendarTotalsByDate = computed(() => {
+  const totals = new Map()
+  calendarTransactions.value.forEach(tx => {
+    const current = totals.get(tx.date) || { income: 0, expense: 0 }
+    if (tx.type === 'income') {
+      current.income += Number(tx.amount) || 0
+    } else {
+      current.expense += Number(tx.amount) || 0
+    }
+    totals.set(tx.date, current)
+  })
+  return totals
+})
+
+const filteredStatsTransactions = computed(() => {
+  const keyword = statsDetailKeyword.value.trim().toLowerCase()
+  return statsDetailTransactions.value.filter(row => {
+    if (statsDetailTypeFilter.value && row.type !== statsDetailTypeFilter.value) return false
+    if (statsDetailAccountFilter.value && row.account_id !== statsDetailAccountFilter.value) return false
+    if (statsDetailCategoryFilter.value && row.category_id !== statsDetailCategoryFilter.value) return false
+    if (keyword) {
+      const haystack = [
+        row.category_name,
+        row.account_name,
+        row.remark,
+        row.tags,
+        row.voice_text,
+        getTransactionSubLabel(row)
+      ].join(' ').toLowerCase()
+      if (!haystack.includes(keyword)) return false
+    }
+    return true
+  })
+})
+
+const historyCategoryOptions = computed(() => {
+  if (!historyTypeFilter.value) {
+    return categories.value
+  }
+  return categories.value.filter(cat => cat.type === historyTypeFilter.value)
+})
+
+const recordRangeLabel = computed(() => `${recordMonthCursor.value.replace('-', ' 年 ')} 月`)
+
+const statsDetailSummary = computed(() => {
+  let expense = 0
+  let income = 0
+  let expenseCount = 0
+  let maxExpense = null
+  filteredStatsTransactions.value.forEach(row => {
+    const amount = Number(row.amount) || 0
+    if (row.type === 'income') {
+      income += amount
+      return
+    }
+    expense += amount
+    expenseCount++
+    if (!maxExpense || amount > maxExpense.amount) {
+      maxExpense = row
+    }
+  })
+  return {
+    expense,
+    income,
+    avgExpense: expenseCount > 0 ? expense / expenseCount : 0,
+    maxExpense
+  }
+})
+
+const statsSubcategoryRows = computed(() => aggregateRows(filteredStatsTransactions.value, row => getTransactionSubLabel(row), 'expense'))
+const statsDayRows = computed(() => aggregateRows(filteredStatsTransactions.value, row => row.date, 'expense'))
+const historyMonthOptions = computed(() => {
+  const seen = new Set()
+  return historyTransactions.value
+    .map(row => String(row.date || '').slice(0, 7))
+    .filter(value => {
+      if (!value || seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
+    .sort((a, b) => b.localeCompare(a))
+    .map(value => ({
+      value,
+      label: value.replace('-', ' 年 ') + ' 月'
+    }))
+})
+
+const filteredHistoryTransactions = computed(() => {
+  const keyword = historyKeyword.value.trim().toLowerCase()
+  return historyTransactions.value.filter(row => {
+    if (historyMonth.value && !String(row.date || '').startsWith(historyMonth.value)) return false
+    if (historyTypeFilter.value && row.type !== historyTypeFilter.value) return false
+    if (historyCategoryFilter.value && row.category_id !== historyCategoryFilter.value) return false
+    if (keyword) {
+      const haystack = [
+        row.category_name,
+        row.account_name,
+        row.remark,
+        row.tags,
+        row.voice_text,
+        getTransactionSubLabel(row)
+      ].join(' ').toLowerCase()
+      if (!haystack.includes(keyword)) return false
+    }
+    return true
+  })
+})
+
+const historySummary = computed(() => {
+  return filteredHistoryTransactions.value.reduce((summary, row) => {
+    const amount = Number(row.amount) || 0
+    if (row.type === 'income') {
+      summary.income += amount
+    } else {
+      summary.expense += amount
+    }
+    return summary
+  }, { income: 0, expense: 0 })
+})
+
+const historyGroups = computed(() => {
+  const bucket = new Map()
+  filteredHistoryTransactions.value.forEach(row => {
+    const key = row.date || '未设置日期'
+    const current = bucket.get(key) || { date: key, expense: 0, income: 0, items: [] }
+    if (row.type === 'income') {
+      current.income += Number(row.amount) || 0
+    } else {
+      current.expense += Number(row.amount) || 0
+    }
+    current.items.push(row)
+    bucket.set(key, current)
+  })
+
+  return Array.from(bucket.values())
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+    .map(group => ({
+      ...group,
+      items: group.items.slice().sort((a, b) => {
+        const timeA = getTransactionTime(a) || '00:00'
+        const timeB = getTransactionTime(b) || '00:00'
+        if (timeA === timeB) return (Number(b.amount) || 0) - (Number(a.amount) || 0)
+        return timeB.localeCompare(timeA)
+      })
+    }))
+})
+
+const statsRangeLabel = computed(() => {
+  const labels = { month: `${statsMonthCursor.value.replace('-', ' 年 ')} 月`, year: '本年', custom: '自定义时间段' }
+  if (statsPeriod.value === 'custom' && statsCustomRange.value?.length === 2) {
+    return `${statsCustomRange.value[0]} 至 ${statsCustomRange.value[1]}`
+  }
+  return labels[statsPeriod.value] || '当前时间段'
+})
+
+const statsFilterCategoryOptions = computed(() => {
+  if (!statsDetailTypeFilter.value) {
+    return categories.value
+  }
+  return categories.value.filter(cat => cat.type === statsDetailTypeFilter.value)
+})
+
+const statsCategoryRows = computed(() => {
+  const totalExpense = statsDetailSummary.value.expense || 0
+  return aggregateRows(filteredStatsTransactions.value, row => row.category_name || '未分类', 'expense')
+    .map(row => ({
+      ...row,
+      share: totalExpense > 0 ? (row.amount / totalExpense) * 100 : 0
+    }))
+})
+
+const statsTrendRows = computed(() => {
+  const bucket = new Map()
+  filteredStatsTransactions.value.forEach(row => {
+    const key = statsPeriod.value === 'year'
+      ? String(row.date || '').slice(0, 7)
+      : String(row.date || '')
+    if (!key) return
+    const current = bucket.get(key) || { name: key, income: 0, expense: 0, count: 0, net: 0 }
+    const amount = Number(row.amount) || 0
+    if (row.type === 'income') {
+      current.income += amount
+    } else {
+      current.expense += amount
+    }
+    current.count += 1
+    current.net = current.income - current.expense
+    bucket.set(key, current)
+  })
+
+  return Array.from(bucket.values()).sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const statsAccountRows = computed(() => {
+  const bucket = new Map()
+  filteredStatsTransactions.value.forEach(row => {
+    const key = row.account_name || '未设置账户'
+    const current = bucket.get(key) || { name: key, income: 0, expense: 0, net: 0, count: 0 }
+    const amount = Number(row.amount) || 0
+    if (row.type === 'income') {
+      current.income += amount
+    } else {
+      current.expense += amount
+    }
+    current.count += 1
+    current.net = current.income - current.expense
+    bucket.set(key, current)
+  })
+
+  return Array.from(bucket.values()).sort((a, b) => {
+    const flowA = Math.max(a.expense, a.income)
+    const flowB = Math.max(b.expense, b.income)
+    if (flowB === flowA) return b.count - a.count
+    return flowB - flowA
+  })
+})
+
+const statsTopTransactions = computed(() => {
+  return filteredStatsTransactions.value
+    .filter(row => row.type === 'expense')
+    .slice()
+    .sort((a, b) => {
+      const amountDiff = (Number(b.amount) || 0) - (Number(a.amount) || 0)
+      if (amountDiff !== 0) return amountDiff
+      return String(b.date || '').localeCompare(String(a.date || ''))
+    })
+    .slice(0, 8)
+})
+
+const statsOverview = computed(() => {
+  const activeDays = new Set(filteredStatsTransactions.value.map(row => row.date).filter(Boolean)).size
+  const totalDays = Math.max(activeDays, 1)
+  const savingsRate = statsDetailSummary.value.income > 0
+    ? (statsDetailSummary.value.income - statsDetailSummary.value.expense) / statsDetailSummary.value.income
+    : 0
+  return {
+    income: statsDetailSummary.value.income,
+    expense: statsDetailSummary.value.expense,
+    balance: statsDetailSummary.value.income - statsDetailSummary.value.expense,
+    activeDays,
+    avgPerDay: statsDetailSummary.value.expense / totalDays,
+    savingsRate,
+    topCategory: statsCategoryRows.value[0] || null,
+    topDay: statsDayRows.value[0] || null
+  }
+})
+
+const statsInsightList = computed(() => {
+  const insights = []
+
+  if (statsCategoryRows.value[0]) {
+    const top = statsCategoryRows.value[0]
+    insights.push(`最大支出重心在「${top.name}」，占筛选后支出的 ${top.share.toFixed(1)}%。`)
+  }
+
+  if (statsOverview.value.topDay) {
+    insights.push(`支出峰值出现在 ${statsOverview.value.topDay.name}，当天共 ${statsOverview.value.topDay.count} 笔，支出 ${formatMoney(statsOverview.value.topDay.amount)}。`)
+  }
+
+  if (statsDetailSummary.value.maxExpense) {
+    const tx = statsDetailSummary.value.maxExpense
+    insights.push(`最大单笔是 ${tx.date} 的「${tx.category_name || '未分类'}」，金额 ${formatMoney(tx.amount)}。`)
+  }
+
+  if (statsSubcategoryRows.value[0]) {
+    const sub = statsSubcategoryRows.value[0]
+    insights.push(`最常出现的细项是「${sub.name}」，累计 ${sub.count} 笔，金额 ${formatMoney(sub.amount)}。`)
+  }
+
+  return insights.slice(0, 4)
 })
 
 // Generate calendar days
@@ -951,8 +1859,7 @@ function generateCalendarDays() {
   const startDay = firstDay.getDay()
   const daysInMonth = lastDay.getDate()
 
-  const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
+  const todayStr = getShanghaiTodayDate()
 
   const days = []
 
@@ -975,9 +1882,9 @@ function generateCalendarDays() {
   // Current month days
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    const dayData = transactions.value.filter(t => t.date === dateStr)
-    const income = dayData.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0)
-    const expense = dayData.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0)
+    const dayData = calendarTotalsByDate.value.get(dateStr) || { income: 0, expense: 0 }
+    const income = dayData.income
+    const expense = dayData.expense
 
     days.push({
       date: d,
@@ -1014,6 +1921,9 @@ function prevMonth() {
     calendarMonth.value--
   }
   generateCalendarDays()
+  if (profileId.value && password.value && activeTab.value === 'calendar') {
+    void loadCalendarTransactions()
+  }
 }
 
 function nextMonth() {
@@ -1024,18 +1934,24 @@ function nextMonth() {
     calendarMonth.value++
   }
   generateCalendarDays()
+  if (profileId.value && password.value && activeTab.value === 'calendar') {
+    void loadCalendarTransactions()
+  }
 }
 
 function goToToday() {
-  const today = new Date()
-  calendarYear.value = today.getFullYear()
-  calendarMonth.value = today.getMonth()
+  const today = getShanghaiCalendarAnchor()
+  calendarYear.value = today.year
+  calendarMonth.value = today.month
   generateCalendarDays()
+  if (profileId.value && password.value && activeTab.value === 'calendar') {
+    void loadCalendarTransactions()
+  }
 }
 
 function showDayDetail(day) {
   selectedDay.value = day.fullDate
-  dayTransactions.value = transactions.value.filter(t => t.date === day.fullDate)
+  dayTransactions.value = calendarTransactions.value.filter(t => t.date === day.fullDate)
   showDayDialog.value = true
 }
 
@@ -1046,7 +1962,9 @@ function duplicateTransaction(row) {
   txForm.value.type = row.type
   txForm.value.amount = row.amount
   txForm.value.remark = row.remark || ''
-  txForm.value.date = new Date().toISOString().split('T')[0]
+  const now = getShanghaiNowParts()
+  txForm.value.date = now.date
+  txForm.value.time = now.time
 
   // Switch to record tab
   activeTab.value = 'record'
@@ -1068,7 +1986,7 @@ async function backupData(format = 'json') {
     const transactionsRes = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions`)
     const transactionsData = await transactionsRes.json()
 
-    const dateStr = new Date().toISOString().split('T')[0]
+    const dateStr = getShanghaiTodayDate()
 
     if (format === 'csv') {
       // Export as CSV
@@ -1129,73 +2047,7 @@ async function handleRestore(file) {
   reader.onload = async (e) => {
     try {
       const data = JSON.parse(e.target.result)
-
-      if (!data.version || !data.accounts || !data.categories || !data.transactions) {
-        ElMessage.warning('无效的备份文件')
-        return
-      }
-
-      await ElMessageBox.confirm(
-        '导入备份将覆盖现有数据，确定继续吗？',
-        '警告',
-        { type: 'warning' }
-      )
-
-      // Restore accounts
-      for (const acc of data.accounts) {
-        await fetch(`${API_BASE}/expense/${profileId.value}/accounts?password=${encodeURIComponent(password.value)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: acc.name,
-            type: acc.type,
-            balance: acc.balance,
-            color: acc.color,
-            icon: acc.icon
-          })
-        })
-      }
-
-      // Restore categories
-      for (const cat of data.categories) {
-        await fetch(`${API_BASE}/expense/${profileId.value}/categories?password=${encodeURIComponent(password.value)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: cat.name,
-            type: cat.type,
-            color: cat.color,
-            icon: cat.icon
-          })
-        })
-      }
-
-      // Restore transactions
-      let imported = 0
-      for (const tx of data.transactions) {
-        // Find matching account and category by name
-        const acc = accounts.value.find(a => a.name === tx.account_name)
-        const cat = categories.value.find(c => c.name === tx.category_name)
-
-        if (acc && cat) {
-          await fetch(`${API_BASE}/expense/${profileId.value}/transactions?password=${encodeURIComponent(password.value)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              account_id: acc.id,
-              category_id: cat.id,
-              amount: tx.amount,
-              type: tx.type,
-              date: tx.date,
-              remark: tx.remark
-            })
-          })
-          imported++
-        }
-      }
-
-      await loadData()
-
+      const imported = await restoreBackupData(data)
       ElMessage.success(`导入成功，共恢复 ${imported} 条记录`)
     } catch (err) {
       console.error('Restore error:', err)
@@ -1206,9 +2058,334 @@ async function handleRestore(file) {
   return false
 }
 
+async function restoreBackupData(data) {
+  if (!data.version || !data.accounts || !data.categories || !data.transactions) {
+    throw new Error('invalid backup data')
+  }
+
+  await ElMessageBox.confirm(
+    '导入备份会向当前档案追加数据。建议在空白档案中恢复，确定继续吗？',
+    '警告',
+    { type: 'warning' }
+  )
+
+  const accountMap = new Map(accounts.value.map(acc => [acc.name, acc]))
+  for (const acc of data.accounts) {
+    if (accountMap.has(acc.name)) {
+      continue
+    }
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/accounts`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: acc.name,
+        type: acc.type,
+        balance: acc.balance,
+        color: acc.color,
+        icon: acc.icon
+      })
+    })
+    if (res.ok) {
+      const created = await res.json()
+      accountMap.set(created.name, created)
+    }
+  }
+
+  const categoryMap = new Map(categories.value.map(cat => [`${cat.type}:${cat.name}`, cat]))
+  for (const cat of data.categories) {
+    const key = `${cat.type}:${cat.name}`
+    if (categoryMap.has(key)) {
+      continue
+    }
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/categories`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: cat.name,
+        type: cat.type,
+        color: cat.color,
+        icon: cat.icon
+      })
+    })
+    if (res.ok) {
+      const created = await res.json()
+      categoryMap.set(`${created.type}:${created.name}`, created)
+    }
+  }
+
+  let imported = 0
+  for (const tx of data.transactions) {
+    const acc = accountMap.get(tx.account_name)
+    const cat = categoryMap.get(`${tx.type}:${tx.category_name}`)
+
+    if (acc && cat) {
+      const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions`, {
+        method: 'POST',
+        body: JSON.stringify({
+          account_id: acc.id,
+          category_id: cat.id,
+          amount: tx.amount,
+          type: tx.type,
+          date: tx.date,
+          remark: tx.remark,
+          tags: tx.tags || '',
+          voice_text: tx.voice_text || ''
+        })
+      })
+      if (res.ok) {
+        imported++
+      }
+    }
+  }
+
+  await loadData()
+  return imported
+}
+
 // Methods
 function formatMoney(amount) {
   return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(amount)
+}
+
+function getShanghaiNowParts() {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+  const parts = Object.fromEntries(formatter.formatToParts(new Date()).map(part => [part.type, part.value]))
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`
+  }
+}
+
+function formatDateParts(year, month, day) {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function getShanghaiDateParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  })
+  const parts = Object.fromEntries(formatter.formatToParts(date).map(part => [part.type, part.value]))
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    monthCursor: `${parts.year}-${parts.month}`
+  }
+}
+
+function getShanghaiCurrentMonthCursor() {
+  return getShanghaiDateParts().monthCursor
+}
+
+function getShanghaiTodayDate() {
+  return getShanghaiDateParts().date
+}
+
+function getShanghaiCalendarAnchor() {
+  const parts = getShanghaiDateParts()
+  return {
+    year: parts.year,
+    month: parts.month - 1
+  }
+}
+
+function resetTxDateTime() {
+  const now = getShanghaiNowParts()
+  txForm.value.date = now.date
+  txForm.value.time = now.time
+}
+
+function splitTransactionRemark(row) {
+  const raw = String(row?.remark || '').trim()
+  if (!raw) {
+    return { title: '', detail: '' }
+  }
+  const parts = raw.split(/\s*\/\s*/)
+  if (parts.length <= 1) {
+    return { title: raw, detail: '' }
+  }
+  return {
+    title: parts[0].trim(),
+    detail: parts.slice(1).join(' / ').trim()
+  }
+}
+
+function parseTransactionTags(tags) {
+  const meta = {}
+  String(tags || '').split(',').forEach(item => {
+    const trimmed = item.trim()
+    if (!trimmed) return
+    const idx = trimmed.indexOf(':')
+    if (idx === -1) return
+    const key = trimmed.slice(0, idx)
+    const value = trimmed.slice(idx + 1)
+    if (key && value) {
+      meta[key] = value
+    }
+  })
+  return meta
+}
+
+function upsertTransactionTag(tags, key, value) {
+  const entries = String(tags || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .filter(item => !item.startsWith(`${key}:`))
+
+  if (value) {
+    entries.push(`${key}:${value}`)
+  }
+
+  return entries.join(',')
+}
+
+function buildTransactionPayload(formLike) {
+  return {
+    account_id: formLike.account_id,
+    category_id: formLike.category_id,
+    type: formLike.type,
+    amount: formLike.amount,
+    date: formLike.date,
+    remark: formLike.remark || '',
+    tags: upsertTransactionTag(formLike.tags || '', 'time', formLike.time || '')
+  }
+}
+
+function getTransactionMainRemark(row) {
+  return splitTransactionRemark(row).title
+}
+
+function getTransactionDetailRemark(row) {
+  return splitTransactionRemark(row).detail
+}
+
+function getTransactionTime(row) {
+  return parseTransactionTags(row?.tags).time || ''
+}
+
+function getTransactionSubLabel(row) {
+  const detail = getTransactionDetailRemark(row)
+  if (detail) return detail
+  const title = getTransactionMainRemark(row)
+  if (title) return title
+  return row?.category_name || ''
+}
+
+function getHistoryItemSummary(row) {
+  const parts = []
+  if (row?.account_name) {
+    parts.push(row.account_name)
+  }
+  const detail = getTransactionDetailRemark(row) || getTransactionMainRemark(row)
+  if (detail && detail !== row?.category_name) {
+    parts.push(detail)
+  }
+  return parts.join(' · ') || '无备注'
+}
+
+function getTransactionMetaChips(row) {
+  const meta = parseTransactionTags(row?.tags)
+  const chips = []
+  if (meta.book) chips.push(`账本 ${meta.book}`)
+  if (meta.reimburse) chips.push(`报销 ${meta.reimburse}`)
+  if (meta.budget) chips.push(`预算 ${meta.budget}`)
+  return chips
+}
+
+function aggregateRows(rows, labelGetter, type = '') {
+  const bucket = new Map()
+  rows.forEach(row => {
+    if (type && row.type !== type) return
+    const name = String(labelGetter(row) || '未标注').trim() || '未标注'
+    const current = bucket.get(name) || { name, amount: 0, count: 0 }
+    current.amount += Number(row.amount) || 0
+    current.count += 1
+    bucket.set(name, current)
+  })
+  return Array.from(bucket.values())
+    .sort((a, b) => {
+      if (b.amount === a.amount) return b.count - a.count
+      return b.amount - a.amount
+    })
+    .slice(0, 15)
+}
+
+function resetRecordFilters() {
+  recordKeyword.value = ''
+  recordTypeFilter.value = ''
+  recordAccountFilter.value = ''
+  recordCategoryFilter.value = ''
+  recordPage.value = 1
+}
+
+function openTransactionDetail(row) {
+  selectedTransaction.value = row
+  showTransactionDetailDialog.value = true
+}
+
+function resolvePeriodRange(period, customRange = []) {
+  const today = getShanghaiDateParts()
+  if (period === 'custom') {
+    const custom = getCustomRangeParams(customRange)
+    return custom ? { startDate: custom.start_date, endDate: custom.end_date } : null
+  }
+  if (period === 'year') {
+    return { startDate: `${today.year}-01-01`, endDate: today.date }
+  }
+  return getMonthCursorRange()
+}
+
+function getMonthDateRange(year, month) {
+  const normalized = new Date(year, month, 1)
+  const normalizedYear = normalized.getFullYear()
+  const normalizedMonth = normalized.getMonth() + 1
+  const endDay = new Date(normalizedYear, normalizedMonth, 0).getDate()
+  return {
+    startDate: formatDateParts(normalizedYear, normalizedMonth, 1),
+    endDate: formatDateParts(normalizedYear, normalizedMonth, endDay)
+  }
+}
+
+function getMonthCursorRange(cursor = statsMonthCursor.value) {
+  const [year, month] = String(cursor || '').split('-').map(Number)
+  if (!year || !month) {
+    const current = getShanghaiCalendarAnchor()
+    return getMonthDateRange(current.year, current.month)
+  }
+  return getMonthDateRange(year, month - 1)
+}
+
+resetTxDateTime()
+
+function shiftRecordMonth(step) {
+  const [year, month] = String(recordMonthCursor.value || '').split('-').map(Number)
+  const fallback = getShanghaiCalendarAnchor()
+  const next = new Date(year || fallback.year, (month || fallback.month + 1) - 1 + step, 1)
+  recordMonthCursor.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
+  if (profileId.value && password.value && activeTab.value === 'record') {
+    void ensureTabData('record', { force: true })
+  }
+}
+
+function shiftStatsMonth(step) {
+  const [year, month] = String(statsMonthCursor.value || '').split('-').map(Number)
+  const fallback = getShanghaiCalendarAnchor()
+  const next = new Date(year || fallback.year, (month || fallback.month + 1) - 1 + step, 1)
+  statsMonthCursor.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`
+  if (profileId.value && password.value && activeTab.value === 'stats') {
+    void loadStats()
+  }
 }
 
 // Voice input methods - 参考血糖模块
@@ -1385,7 +2562,7 @@ async function parseAndSubmitVoice(text) {
       remark: data.remark || text,
       voice_text: text, // 保存原始语音输入
       account_id: accountId,
-      date: new Date().toISOString().split('T')[0]
+      ...getShanghaiNowParts()
     }
 
     // 查找分类
@@ -1407,7 +2584,10 @@ async function parseAndSubmitVoice(text) {
     // 3. 提交记账
     const submitRes = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions`, {
       method: 'POST',
-      body: JSON.stringify(txData)
+      body: JSON.stringify({
+        ...buildTransactionPayload(txData),
+        voice_text: txData.voice_text
+      })
     })
 
     if (!submitRes.ok) {
@@ -1422,7 +2602,7 @@ async function parseAndSubmitVoice(text) {
     voiceRecordMessage.value = `记账成功！${data.amount}元 (${data.category || '支出'})`
 
     // 刷新数据
-    await Promise.all([loadTransactions(), loadAccounts(), loadStats(), loadTodayStats()])
+    await refreshLoadedViews()
 
     // 3秒后清除状态
     setTimeout(() => {
@@ -1639,9 +2819,14 @@ function quickAddTransaction() {
   addTransaction()
 }
 
-function setPeriod(period) {
-  periodFilter.value = period
-  loadTransactions()
+function getCustomRangeParams(range) {
+  if (!Array.isArray(range) || range.length !== 2 || !range[0] || !range[1]) {
+    return null
+  }
+  return {
+    start_date: range[0],
+    end_date: range[1]
+  }
 }
 
 function exportData() {
@@ -1669,7 +2854,7 @@ function exportData() {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `记账_${new Date().toISOString().split('T')[0]}.csv`
+  link.download = `记账_${getShanghaiTodayDate()}.csv`
   link.click()
   URL.revokeObjectURL(url)
 
@@ -1680,83 +2865,11 @@ async function handleImport(file) {
   const reader = new FileReader()
   reader.onload = async (e) => {
     try {
-      const text = e.target.result
-      const lines = text.split('\n').filter(line => line.trim())
-
-      if (lines.length < 2) {
-        ElMessage.warning('文件内容为空')
-        return
-      }
-
-      let imported = 0
-      let skipped = 0
-
-      // Skip header, parse data
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim()
-        if (!line) continue
-
-        // Simple CSV parsing
-        const parts = parseCSVLine(line)
-        if (parts.length < 5) {
-          skipped++
-          continue
-        }
-
-        const [date, typeStr, categoryName, accountName, amountStr, remark] = parts
-        const amount = Math.abs(parseFloat(amountStr))
-        if (isNaN(amount) || amount <= 0) {
-          skipped++
-          continue
-        }
-
-        const type = typeStr.includes('收入') || typeStr.includes('收') ? 'income' : 'expense'
-
-        // Find category
-        const category = categories.value.find(c =>
-          c.name === categoryName || c.name.includes(categoryName)
-        )
-        if (!category) {
-          skipped++
-          continue
-        }
-
-        // Find account
-        const account = accounts.value.find(a =>
-          a.name === accountName || a.name.includes(accountName)
-        )
-        if (!account) {
-          skipped++
-          continue
-        }
-
-        // Create transaction
-        const res = await fetch(`${API_BASE}/expense/${profileId.value}/transactions?password=${encodeURIComponent(password.value)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            account_id: account.id,
-            category_id: category.id,
-            amount,
-            type,
-            date: date || new Date().toISOString().split('T')[0],
-            remark: remark || ''
-          })
-        })
-
-        if (res.ok) {
-          imported++
-        } else {
-          skipped++
-        }
-      }
-
-      await Promise.all([loadTransactions(), loadAccounts(), loadStats()])
-
-      if (imported > 0) {
-        ElMessage.success(`成功导入 ${imported} 条记录${skipped > 0 ? `，跳过 ${skipped} 条` : ''}`)
+      const result = await importCSVText(e.target.result)
+      if (result.imported > 0) {
+        ElMessage.success(`成功导入 ${result.imported} 条记录${result.skipped > 0 ? `，跳过 ${result.skipped} 条` : ''}`)
       } else {
-        ElMessage.warning(`未成功导入记录，跳过 ${skipped} 条`)
+        ElMessage.warning(`未成功导入记录，跳过 ${result.skipped} 条`)
       }
     } catch (err) {
       console.error('Import error:', err)
@@ -1765,6 +2878,135 @@ async function handleImport(file) {
   }
   reader.readAsText(file)
   return false // Prevent default upload
+}
+
+async function importCSVText(text) {
+  const lines = String(text || '').split('\n').filter(line => line.trim())
+  if (lines.length < 2) {
+    throw new Error('empty csv')
+  }
+
+  let imported = 0
+  let skipped = 0
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+
+    const parts = parseCSVLine(line)
+    if (parts.length < 5) {
+      skipped++
+      continue
+    }
+
+    const [date, typeStr, categoryName, accountName, amountStr, remark] = parts
+    const amount = Math.abs(parseFloat(amountStr))
+    if (isNaN(amount) || amount <= 0) {
+      skipped++
+      continue
+    }
+
+    const type = typeStr.includes('收入') || typeStr.includes('收') ? 'income' : 'expense'
+
+    const category = categories.value.find(c =>
+      c.type === type && (c.name === categoryName || c.name.includes(categoryName))
+    )
+    if (!category) {
+      skipped++
+      continue
+    }
+
+    const account = accounts.value.find(a =>
+      a.name === accountName || a.name.includes(accountName)
+    )
+    if (!account) {
+      skipped++
+      continue
+    }
+
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        account_id: account.id,
+        category_id: category.id,
+        amount,
+        type,
+        date: date || getShanghaiTodayDate(),
+        remark: remark || ''
+      })
+    })
+
+    if (res.ok) {
+      imported++
+    } else {
+      skipped++
+    }
+  }
+
+  await refreshLoadedViews({ includeCategories: true })
+  return { imported, skipped }
+}
+
+function parseNFSShareId(link) {
+  try {
+    const url = new URL(link, location.origin)
+    const match = url.pathname.match(/\/nfs\/([a-f0-9]{8})$/i)
+    return match ? match[1] : ''
+  } catch (err) {
+    return ''
+  }
+}
+
+async function importFromNFSShare() {
+  if (!profileId.value || !password.value) {
+    ElMessage.warning('请先加载记账档案')
+    return
+  }
+
+  const shareId = parseNFSShareId(nfsImportLink.value.trim())
+  if (!shareId) {
+    ElMessage.warning('请输入有效的 NFS 分享链接')
+    return
+  }
+
+  importingFromNFS.value = true
+  try {
+    const pwdQuery = nfsImportPassword.value ? `?password=${encodeURIComponent(nfsImportPassword.value)}` : ''
+
+    const infoRes = await fetch(`/api/nfsshare/${shareId}/info`)
+    if (!infoRes.ok) {
+      throw new Error('无法读取分享信息')
+    }
+    const info = await infoRes.json()
+
+    const fileRes = await fetch(`/api/nfsshare/${shareId}${pwdQuery}`)
+    if (!fileRes.ok) {
+      const errText = await fileRes.text()
+      throw new Error(errText || '下载分享文件失败')
+    }
+
+    const content = await fileRes.text()
+    const fileName = String(info.name || '').toLowerCase()
+
+    if (fileName.endsWith('.json')) {
+      const imported = await restoreBackupData(JSON.parse(content))
+      ElMessage.success(`NFS 导入成功，共恢复 ${imported} 条记录`)
+    } else if (fileName.endsWith('.csv')) {
+      const result = await importCSVText(content)
+      if (result.imported > 0) {
+        ElMessage.success(`NFS 导入成功：${result.imported} 条${result.skipped > 0 ? `，跳过 ${result.skipped} 条` : ''}`)
+      } else {
+        ElMessage.warning(`NFS 文件已读取，但未成功导入记录，跳过 ${result.skipped} 条`)
+      }
+    } else {
+      throw new Error(`暂不支持导入该文件类型：${info.name || '未知文件'}`)
+    }
+  } catch (err) {
+    console.error('NFS import error:', err)
+    ElMessage.error(err.message || 'NFS 导入失败')
+  } finally {
+    importingFromNFS.value = false
+  }
 }
 
 function parseCSVLine(line) {
@@ -1811,9 +3053,8 @@ async function createProfile() {
       profileId.value = data.id
       creatorKey.value = data.creator_key
       password.value = createForm.value.password
-      localStorage.setItem('expense_profile_id', data.id)
-      localStorage.setItem('expense_password', data.creator_key)
-      localStorage.setItem('expense_user_password', createForm.value.password)
+      resetTxDateTime()
+      saveExpenseSession()
       await loadData()
       ElMessage.success('档案创建成功')
     } else {
@@ -1844,8 +3085,8 @@ async function loadProfile() {
     if (res.ok) {
       profileId.value = data.id
       password.value = loadForm.value.password
-      localStorage.setItem('expense_profile_id', data.id)
-      localStorage.setItem('expense_user_password', loadForm.value.password)
+      resetTxDateTime()
+      saveExpenseSession()
       await loadData()
       ElMessage.success('登录成功')
     } else {
@@ -1865,19 +3106,98 @@ function logoutProfile() {
   loadForm.value.password = ''
   createForm.value.password = ''
   activeTab.value = 'record'
-  localStorage.removeItem('expense_profile_id')
-  localStorage.removeItem('expense_user_password')
+  clearExpenseSession()
   ElMessage.success('已退出当前档案')
 }
 
 async function loadData() {
+  resetTabLoadState()
+  await loadInitialData()
+  if (activeTab.value !== 'record') {
+    await ensureTabData(activeTab.value, { force: true })
+  }
+}
+
+function resetTabLoadState() {
+  recordLoaded.value = false
+  historyLoaded.value = false
+  statsLoaded.value = false
+  calendarLoaded.value = false
+}
+
+async function loadInitialData() {
+  if (!profileId.value || !password.value) {
+    return
+  }
+
   await Promise.all([
     loadAccounts(),
     loadCategories(),
-    loadTransactions(),
-    loadStats(),
     loadTodayStats()
   ])
+
+  await ensureTabData('record', { force: true })
+}
+
+async function ensureTabData(tabName = activeTab.value, { force = false } = {}) {
+  if (!profileId.value || !password.value) {
+    return
+  }
+
+  if (tabName === 'record') {
+    if (force || !recordLoaded.value) {
+      await loadTransactions()
+      recordLoaded.value = true
+    }
+    return
+  }
+
+  if (tabName === 'history') {
+    if (force || !historyLoaded.value) {
+      await loadHistoryTransactions()
+      historyLoaded.value = true
+    }
+    return
+  }
+
+  if (tabName === 'stats') {
+    if (force || !statsLoaded.value) {
+      await loadStats()
+      statsLoaded.value = true
+    }
+    return
+  }
+
+  if (tabName === 'calendar') {
+    if (force || !calendarLoaded.value) {
+      await loadCalendarTransactions()
+      calendarLoaded.value = true
+    }
+    return
+  }
+}
+
+async function refreshLoadedViews({ includeCategories = false } = {}) {
+  const tasks = [
+    loadAccounts(),
+    loadTodayStats(),
+    ensureTabData('record', { force: true })
+  ]
+
+  if (includeCategories) {
+    tasks.push(loadCategories())
+  }
+  if (historyLoaded.value) {
+    tasks.push(ensureTabData('history', { force: true }))
+  }
+  if (statsLoaded.value) {
+    tasks.push(ensureTabData('stats', { force: true }))
+  }
+  if (calendarLoaded.value) {
+    tasks.push(ensureTabData('calendar', { force: true }))
+  }
+
+  await Promise.all(tasks)
 }
 
 async function loadAccounts() {
@@ -1913,38 +3233,12 @@ async function loadCategories() {
 async function loadTransactions() {
   loadingTxs.value = true
   try {
-    let url = `${API_BASE}/expense/${profileId.value}/transactions`
-    if (periodFilter.value) {
-      const now = new Date()
-      const today = now.toISOString().split('T')[0]
-      let startDate = ''
-      let endDate = ''
-
-      if (periodFilter.value === 'today') {
-        startDate = today
-        endDate = today
-      } else if (periodFilter.value === 'yesterday') {
-        const yesterday = new Date(now - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-        startDate = yesterday
-        endDate = yesterday
-      } else if (periodFilter.value === 'week') {
-        startDate = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      } else if (periodFilter.value === 'month') {
-        startDate = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      } else if (periodFilter.value === 'year') {
-        startDate = new Date(now - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      }
-
-      if (startDate) {
-        url += `?start_date=${startDate}`
-      }
-      if (endDate) {
-        url += `&end_date=${endDate}`
-      }
-    }
+    const range = getMonthCursorRange(recordMonthCursor.value)
+    const url = `${API_BASE}/expense/${profileId.value}/transactions?start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`
     const res = await expenseFetch(url)
     if (res.ok) {
       transactions.value = await res.json()
+      recordPage.value = 1
     }
   } catch (e) {
     console.error('Failed to load transactions:', e)
@@ -1953,17 +3247,73 @@ async function loadTransactions() {
   }
 }
 
+async function loadHistoryTransactions() {
+  if (!profileId.value || !password.value) {
+    historyTransactions.value = []
+    historyMonth.value = ''
+    return
+  }
+
+  try {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions`)
+    if (res.ok) {
+      const data = await res.json()
+      historyTransactions.value = Array.isArray(data)
+        ? data.slice().sort((a, b) => {
+            if (a.date === b.date) {
+              return (getTransactionTime(b) || '').localeCompare(getTransactionTime(a) || '')
+            }
+            return String(b.date || '').localeCompare(String(a.date || ''))
+          })
+        : []
+    }
+  } catch (e) {
+    console.error('Failed to load history transactions:', e)
+  }
+}
+
+async function loadCalendarTransactions() {
+  if (!profileId.value || !password.value) {
+    calendarTransactions.value = []
+    generateCalendarDays()
+    return
+  }
+
+  const range = getMonthDateRange(calendarYear.value, calendarMonth.value)
+  try {
+    const url = `${API_BASE}/expense/${profileId.value}/transactions?start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`
+    const res = await expenseFetch(url)
+    if (res.ok) {
+      calendarTransactions.value = await res.json()
+      generateCalendarDays()
+    }
+  } catch (e) {
+    console.error('Failed to load calendar transactions:', e)
+  }
+}
+
 async function loadStats() {
   try {
-    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/stats?period=${statsPeriod.value}`)
+    let url = `${API_BASE}/expense/${profileId.value}/stats?period=${statsPeriod.value}`
+    if (statsPeriod.value === 'month') {
+      const range = getMonthCursorRange(statsMonthCursor.value)
+      url = `${API_BASE}/expense/${profileId.value}/stats?period=custom&start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`
+    } else if (statsPeriod.value === 'custom') {
+      const customRange = getCustomRangeParams(statsCustomRange.value)
+      if (!customRange) {
+        stats.value = { total_income: 0, total_expense: 0, balance: 0, by_category: {}, by_account: {}, by_month: {}, transaction_count: 0 }
+        statsDetailTransactions.value = []
+        return
+      }
+      url += `&start_date=${encodeURIComponent(customRange.start_date)}&end_date=${encodeURIComponent(customRange.end_date)}`
+    }
+    const res = await expenseFetch(url)
     if (res.ok) {
       const data = await res.json()
       stats.value = data
+      await loadStatsDetailTransactions()
       await nextTick()
-      // 延迟一点确保DOM完全渲染
-      setTimeout(() => {
-        void renderCharts()
-      }, 100)
+      void renderCharts()
     } else {
       console.error('Stats API error:', res.status, await res.text())
     }
@@ -1972,10 +3322,33 @@ async function loadStats() {
   }
 }
 
+async function loadStatsDetailTransactions() {
+  if (!profileId.value || !password.value) {
+    return
+  }
+  const range = resolvePeriodRange(statsPeriod.value, statsCustomRange.value)
+  if (!range) {
+    statsDetailTransactions.value = []
+    return
+  }
+
+  statsDetailLoading.value = true
+  try {
+    const url = `${API_BASE}/expense/${profileId.value}/transactions?start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`
+    const res = await expenseFetch(url)
+    if (res.ok) {
+      statsDetailTransactions.value = await res.json()
+    }
+  } catch (e) {
+    console.error('Failed to load stats detail transactions:', e)
+  } finally {
+    statsDetailLoading.value = false
+  }
+}
+
 // Load today's stats
 async function loadTodayStats() {
   try {
-    const today = new Date().toISOString().split('T')[0]
     const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/stats?period=today`)
     if (res.ok) {
       const data = await res.json()
@@ -1994,7 +3367,7 @@ function triggerSuccessAnimation() {
 }
 
 async function addTransaction() {
-  if (!txForm.value.account_id || !txForm.value.category_id || !txForm.value.amount) {
+  if (!txForm.value.account_id || !txForm.value.category_id || !txForm.value.amount || !txForm.value.date) {
     ElMessage.warning('请填写完整信息')
     return
   }
@@ -2003,14 +3376,15 @@ async function addTransaction() {
   try {
     const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions`, {
       method: 'POST',
-      body: JSON.stringify(txForm.value)
+      body: JSON.stringify(buildTransactionPayload(txForm.value))
     })
 
     if (res.ok) {
       triggerSuccessAnimation()
       txForm.value.amount = 0
       txForm.value.remark = ''
-      await Promise.all([loadTransactions(), loadAccounts(), loadStats(), loadTodayStats()])
+      resetTxDateTime()
+      await refreshLoadedViews()
     } else {
       const data = await res.json()
       ElMessage.error(data.error || '记账失败')
@@ -2025,12 +3399,12 @@ async function addTransaction() {
 async function deleteTransaction(id) {
   try {
     await ElMessageBox.confirm('确定要删除这条记录吗？', '提示', { type: 'warning' })
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}/transactions/${id}?password=${encodeURIComponent(password.value)}`, {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions/${id}`, {
       method: 'DELETE'
     })
     if (res.ok) {
       ElMessage.success('删除成功')
-      await Promise.all([loadTransactions(), loadAccounts(), loadStats()])
+      await refreshLoadedViews()
     }
   } catch (e) {
     if (e !== 'cancel') {
@@ -2047,29 +3421,30 @@ function openEditDialog(row) {
     account_id: row.account_id,
     category_id: row.category_id,
     date: row.date,
+    time: getTransactionTime(row) || '',
+    tags: row.tags || '',
     remark: row.remark || ''
   }
   showEditDialog.value = true
 }
 
 async function saveEditTransaction() {
-  if (!editForm.value.amount || editForm.value.amount <= 0) {
+  if (!editForm.value.amount || editForm.value.amount <= 0 || !editForm.value.date) {
     ElMessage.warning('请输入金额')
     return
   }
 
   savingEdit.value = true
   try {
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}/transactions/${editingTxId.value}?password=${encodeURIComponent(password.value)}`, {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/transactions/${editingTxId.value}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editForm.value)
+      body: JSON.stringify(buildTransactionPayload(editForm.value))
     })
 
     if (res.ok) {
       ElMessage.success('修改成功')
       showEditDialog.value = false
-      await Promise.all([loadTransactions(), loadAccounts(), loadStats()])
+      await refreshLoadedViews()
     } else {
       const data = await res.json()
       ElMessage.error(data.error || '修改失败')
@@ -2083,9 +3458,8 @@ async function saveEditTransaction() {
 
 async function addAccount() {
   try {
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}/accounts?password=${encodeURIComponent(password.value)}`, {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/accounts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(accountForm.value)
     })
     if (res.ok) {
@@ -2102,7 +3476,7 @@ async function addAccount() {
 async function deleteAccount(id) {
   try {
     await ElMessageBox.confirm('确定要删除这个账户吗？', '提示', { type: 'warning' })
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}/accounts/${id}?password=${encodeURIComponent(password.value)}`, {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/accounts/${id}`, {
       method: 'DELETE'
     })
     if (res.ok) {
@@ -2118,9 +3492,8 @@ async function deleteAccount(id) {
 
 async function addCategory() {
   try {
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}/categories?password=${encodeURIComponent(password.value)}`, {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/categories`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(categoryForm.value)
     })
     if (res.ok) {
@@ -2137,7 +3510,7 @@ async function addCategory() {
 async function deleteCategory(id) {
   try {
     await ElMessageBox.confirm('确定要删除这个分类吗？', '提示', { type: 'warning' })
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}/categories/${id}?password=${encodeURIComponent(password.value)}`, {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/categories/${id}`, {
       method: 'DELETE'
     })
     if (res.ok) {
@@ -2153,7 +3526,7 @@ async function deleteCategory(id) {
 
 async function extendProfile() {
   try {
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}/extend?creator_key=${encodeURIComponent(creatorKey.value)}&days=${extendDays.value}`, {
+    const res = await expenseCreatorFetch(`${API_BASE}/expense/${profileId.value}/extend?days=${extendDays.value}`, {
       method: 'PUT'
     })
     if (res.ok) {
@@ -2168,14 +3541,12 @@ async function extendProfile() {
 async function confirmDelete() {
   try {
     await ElMessageBox.confirm('确定要删除档案吗？此操作不可恢复！', '警告', { type: 'error' })
-    const res = await fetch(`${API_BASE}/expense/${profileId.value}?creator_key=${encodeURIComponent(creatorKey.value)}`, {
+    const res = await expenseCreatorFetch(`${API_BASE}/expense/${profileId.value}`, {
       method: 'DELETE'
     })
     if (res.ok) {
       ElMessage.success('删除成功')
-      localStorage.removeItem('expense_profile_id')
-      localStorage.removeItem('expense_password')
-      localStorage.removeItem('expense_user_password')
+      clearExpenseSession()
       profileId.value = ''
       creatorKey.value = ''
       password.value = ''
@@ -2195,21 +3566,33 @@ async function runAnalyze() {
 
   analyzing.value = true
   analysisResult.value = ''
+  analysisStatus.value = ''
+  stopAnalyzePolling()
   try {
+    const payload = { period: analyzePeriod.value, focus: analysisFocus.value }
+    if (analyzePeriod.value === 'custom') {
+      const customRange = getCustomRangeParams(analyzeCustomRange.value)
+      if (!customRange) {
+        ElMessage.warning('请选择完整的开始和结束日期')
+        return
+      }
+      payload.start_date = customRange.start_date
+      payload.end_date = customRange.end_date
+    }
+
     const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/analyze`, {
       method: 'POST',
-      body: JSON.stringify({ period: analyzePeriod.value })
+      body: JSON.stringify(payload)
     })
-
-    const text = await res.text()
-
     if (res.ok) {
-      const data = JSON.parse(text)
-      analysisResult.value = data.analysis
-      if (!data.ai_enabled) {
-        ElMessage.info('未配置 DeepSeek API，使用基础分析')
+      const data = await res.json()
+      analysisJobId.value = data.job_id || ''
+      analysisStatus.value = data.status || 'queued'
+      if (analysisJobId.value) {
+        startAnalyzePolling()
       }
     } else {
+      const text = await res.text()
       try {
         const data = JSON.parse(text)
         ElMessage.error(data.error || '分析失败，状态码: ' + res.status)
@@ -2225,98 +3608,182 @@ async function runAnalyze() {
   }
 }
 
+function stopAnalyzePolling() {
+  if (analysisPollTimer) {
+    clearTimeout(analysisPollTimer)
+    analysisPollTimer = null
+  }
+}
+
+function clearAnalyzeState() {
+  stopAnalyzePolling()
+  analysisJobId.value = ''
+  analysisStatus.value = ''
+  analysisResult.value = ''
+}
+
+function startAnalyzePolling() {
+  stopAnalyzePolling()
+  void pollAnalyzeResult()
+}
+
+async function pollAnalyzeResult() {
+  if (!analysisJobId.value || !profileId.value) {
+    return
+  }
+
+  try {
+    const res = await expenseFetch(`${API_BASE}/expense/${profileId.value}/analyze/${analysisJobId.value}`)
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error || '获取分析任务失败')
+    }
+
+    analysisStatus.value = data.status || ''
+    if (data.status === 'completed') {
+      analysisResult.value = data.analysis || ''
+      if (!data.ai_enabled) {
+        ElMessage.info('AI 未启用或暂时不可用，已返回基础分析')
+      }
+      stopAnalyzePolling()
+      return
+    }
+
+    if (data.status === 'failed') {
+      stopAnalyzePolling()
+      ElMessage.error(data.error || 'AI 分析失败')
+      return
+    }
+
+    analysisPollTimer = setTimeout(() => {
+      void pollAnalyzeResult()
+    }, 2000)
+  } catch (e) {
+    stopAnalyzePolling()
+    ElMessage.error(e.message || '获取 AI 分析结果失败')
+  }
+}
+
 // Tab 切换处理
-function onTabChange(tabName) {
-  if (tabName === 'stats') {
-    // 切换到统计tab时重新加载和渲染图表
-    loadStats()
-  } else if (tabName === 'analyze') {
-    // 切换到AI解读tab时，可以自动运行分析（可选）
-    // runAnalyze()
+async function onTabChange(tabName) {
+  if (profileId.value && password.value) {
+    await ensureTabData(tabName)
   }
 }
 
 async function renderCharts() {
-  // 确保DOM已渲染
-  if (!stats.value) {
+  if (activeTab.value !== 'stats') {
     return
   }
 
   const echarts = await getECharts()
 
-  // 支出分类饼图
   if (categoryChartRef.value) {
-    const byCategory = stats.value.by_category || {}
-    const categoryKeys = Object.keys(byCategory)
-    // 先销毁旧图表
     if (categoryChart) {
       categoryChart.dispose()
       categoryChart = null
     }
 
-    if (categoryKeys.length > 0) {
-      const categoryData = categoryKeys.map(name => ({ name, value: byCategory[name] }))
+    if (statsCategoryRows.value.length > 0) {
+      const categoryData = statsCategoryRows.value.slice(0, 8)
       categoryChart = echarts.init(categoryChartRef.value)
       categoryChart.setOption({
-        tooltip: { trigger: 'item', formatter: '{b}: ¥{c} ({d}%)' },
-        legend: { top: 'bottom' },
-        series: [{
-          type: 'pie',
-          radius: ['40%', '70%'],
-          data: categoryData,
-          label: { show: true, formatter: '{b}: ¥{c}' }
-        }]
-      }, true) // true = notMerge，完全替换
-    }
-  }
-
-  // 月度趋势柱状图
-  if (monthChartRef.value) {
-    const byMonth = stats.value.by_month || {}
-    const monthKeys = Object.keys(byMonth)
-    if (monthChart) {
-      monthChart.dispose()
-      monthChart = null
-    }
-
-    if (monthKeys.length > 0) {
-      const monthData = monthKeys.map(month => ({ month, value: byMonth[month] }))
-      monthData.sort((a, b) => a.month.localeCompare(b.month))
-
-      monthChart = echarts.init(monthChartRef.value)
-      monthChart.setOption({
-        tooltip: { trigger: 'axis', formatter: '{b}: ¥{c}' },
-        xAxis: { type: 'category', data: monthData.map(d => d.month) },
-        yAxis: { type: 'value' },
+        grid: { left: 70, right: 20, top: 20, bottom: 20 },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: params => {
+            const item = params?.[0]
+            return item ? `${item.name}<br/>支出 ${formatMoney(item.value)}` : ''
+          }
+        },
+        xAxis: { type: 'value', axisLabel: { formatter: value => `¥${value}` } },
+        yAxis: { type: 'category', data: categoryData.map(item => item.name), inverse: true },
         series: [{
           type: 'bar',
-          data: monthData.map(d => d.value),
-          itemStyle: { color: '#F56C6C' }
+          data: categoryData.map(item => Number(item.amount.toFixed(2))),
+          barWidth: 18,
+          itemStyle: {
+            color: '#f97316',
+            borderRadius: [0, 10, 10, 0]
+          },
+          label: {
+            show: true,
+            position: 'right',
+            formatter: params => `${statsCategoryRows.value[params.dataIndex]?.share.toFixed(1) || '0.0'}%`
+          }
         }]
       }, true)
     }
   }
 
-  // 账户分布饼图
+  if (monthChartRef.value) {
+    if (monthChart) {
+      monthChart.dispose()
+      monthChart = null
+    }
+
+    if (statsTrendRows.value.length > 0) {
+      monthChart = echarts.init(monthChartRef.value)
+      monthChart.setOption({
+        tooltip: { trigger: 'axis' },
+        legend: { top: 0 },
+        grid: { left: 45, right: 20, top: 40, bottom: 30 },
+        xAxis: { type: 'category', data: statsTrendRows.value.map(item => item.name) },
+        yAxis: { type: 'value' },
+        series: [{
+          name: '支出',
+          type: 'bar',
+          data: statsTrendRows.value.map(item => Number(item.expense.toFixed(2))),
+          itemStyle: { color: '#ef4444', borderRadius: [6, 6, 0, 0] }
+        }, {
+          name: '收入',
+          type: 'bar',
+          data: statsTrendRows.value.map(item => Number(item.income.toFixed(2))),
+          itemStyle: { color: '#22c55e', borderRadius: [6, 6, 0, 0] }
+        }, {
+          name: '净流',
+          type: 'line',
+          smooth: true,
+          data: statsTrendRows.value.map(item => Number(item.net.toFixed(2))),
+          itemStyle: { color: '#2563eb' },
+          lineStyle: { width: 3 }
+        }]
+      }, true)
+    }
+  }
+
   if (accountChartRef.value) {
-    const byAccount = stats.value.by_account || {}
-    const accountKeys = Object.keys(byAccount)
     if (accountChart) {
       accountChart.dispose()
       accountChart = null
     }
 
-    if (accountKeys.length > 0) {
-      const accountData = accountKeys.map(name => ({ name, value: byAccount[name] }))
+    if (statsAccountRows.value.length > 0) {
+      const rows = statsAccountRows.value.slice(0, 8)
       accountChart = echarts.init(accountChartRef.value)
       accountChart.setOption({
-        tooltip: { trigger: 'item', formatter: '{b}: ¥{c} ({d}%)' },
-        legend: { top: 'bottom' },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+        legend: { top: 0 },
+        grid: { left: 50, right: 20, top: 40, bottom: 30 },
+        xAxis: { type: 'category', data: rows.map(item => item.name) },
+        yAxis: { type: 'value' },
         series: [{
-          type: 'pie',
-          radius: '60%',
-          data: accountData,
-          label: { show: true, formatter: '{b}: ¥{c}' }
+          name: '支出',
+          type: 'bar',
+          data: rows.map(item => Number(item.expense.toFixed(2))),
+          itemStyle: { color: '#fb7185', borderRadius: [6, 6, 0, 0] }
+        }, {
+          name: '收入',
+          type: 'bar',
+          data: rows.map(item => Number(item.income.toFixed(2))),
+          itemStyle: { color: '#4ade80', borderRadius: [6, 6, 0, 0] }
+        }, {
+          name: '净流',
+          type: 'line',
+          smooth: true,
+          data: rows.map(item => Number(item.net.toFixed(2))),
+          itemStyle: { color: '#0f766e' }
         }]
       }, true)
     }
@@ -2325,15 +3792,24 @@ async function renderCharts() {
 
 // Check for saved profile
 onMounted(() => {
-  const savedProfileId = localStorage.getItem('expense_profile_id')
-  const savedPassword = localStorage.getItem('expense_user_password')
+  const savedProfileId = sessionStorage.getItem(expenseSessionKeys.profileId)
+  const savedPassword = sessionStorage.getItem(expenseSessionKeys.password)
+  const savedCreatorKey = sessionStorage.getItem(expenseSessionKeys.creatorKey)
+  localStorage.removeItem(expenseSessionKeys.profileId)
+  localStorage.removeItem(expenseSessionKeys.password)
+  localStorage.removeItem(expenseSessionKeys.creatorKey)
+  localStorage.removeItem('expense_password')
 
   if (savedProfileId && savedPassword) {
     profileId.value = savedProfileId
     password.value = savedPassword
-    creatorKey.value = localStorage.getItem('expense_password') || ''
+    creatorKey.value = savedCreatorKey || ''
     loadData()
   }
+})
+
+onUnmounted(() => {
+  stopAnalyzePolling()
 })
 
 // Watch for type change - auto select first category
@@ -2350,6 +3826,41 @@ watch(() => accounts.value, (newAccounts) => {
     txForm.value.account_id = newAccounts[0].id
   }
 }, { immediate: true })
+
+watch([recordKeyword, recordTypeFilter, recordAccountFilter, recordCategoryFilter], () => {
+  recordPage.value = 1
+})
+
+watch(historyMonthOptions, (options) => {
+  const values = options.map(item => item.value)
+  if (values.length === 0) {
+    historyMonth.value = ''
+    return
+  }
+  if (!historyMonth.value || !values.includes(historyMonth.value)) {
+    historyMonth.value = values[0]
+  }
+}, { immediate: true })
+
+watch(historyTypeFilter, () => {
+  if (historyCategoryFilter.value && !historyCategoryOptions.value.find(cat => cat.id === historyCategoryFilter.value)) {
+    historyCategoryFilter.value = ''
+  }
+})
+
+watch(statsDetailTypeFilter, () => {
+  if (statsDetailCategoryFilter.value && !statsFilterCategoryOptions.value.find(cat => cat.id === statsDetailCategoryFilter.value)) {
+    statsDetailCategoryFilter.value = ''
+  }
+})
+
+watch([statsDetailKeyword, statsDetailTypeFilter, statsDetailAccountFilter, statsDetailCategoryFilter], () => {
+  if (activeTab.value === 'stats' && statsLoaded.value) {
+    nextTick(() => {
+      void renderCharts()
+    })
+  }
+})
 
 // Watch for window resize
 watch(() => activeTab.value, (newTab) => {
@@ -2381,6 +3892,67 @@ watch(() => activeTab.value, (newTab) => {
 .tool-header h2 {
   margin: 0;
 }
+
+/* ====== Custom Tab Bar ====== */
+.custom-tab-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 16px;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.custom-tab-bar::-webkit-scrollbar {
+  display: none;
+}
+.tab-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.tab-pill:hover {
+  background: #eff6ff;
+  color: #3b82f6;
+}
+.tab-pill.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+  box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+}
+.tab-pill-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+.tab-pill-label {
+  font-size: 13px;
+}
+
+.tab-content-wrapper {
+  min-height: 200px;
+}
+
+/* ====== Balance Overview ====== */
 
 .actions {
   display: flex;
@@ -2650,6 +4222,24 @@ watch(() => activeTab.value, (newTab) => {
   margin-bottom: 12px;
 }
 
+.datetime-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.datetime-field {
+  width: 180px;
+  max-width: 100%;
+}
+
+.datetime-hint {
+  font-size: 12px;
+  color: #64748b;
+}
+
 .remark-tags {
   display: flex;
   flex-wrap: wrap;
@@ -2912,10 +4502,114 @@ watch(() => activeTab.value, (newTab) => {
   gap: 10px;
 }
 
+.tx-list-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #909399;
+}
+
 .tx-header-actions {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.record-month-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.record-month-label {
+  min-width: 88px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.record-summary-grid,
+.stats-deep-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.record-summary-card,
+.stats-deep-card {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.summary-label,
+.stats-deep-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 8px;
+}
+
+.summary-value,
+.stats-deep-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #303133;
+}
+
+.summary-text,
+.stats-deep-text {
+  font-size: 14px;
+  color: #303133;
+  line-height: 1.6;
+}
+
+.record-filters,
+.stats-detail-filters {
+  display: grid;
+  grid-template-columns: 2fr repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.tx-date-cell,
+.tx-category-cell,
+.tx-remark-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tx-date-time,
+.tx-subcategory,
+.tx-remark-detail {
+  font-size: 12px;
+  color: #909399;
+}
+
+.tx-voice-remark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tx-meta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tx-pagination {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .text-income {
@@ -2928,15 +4622,314 @@ watch(() => activeTab.value, (newTab) => {
   font-weight: bold;
 }
 
+.history-section {
+  padding: 10px 0;
+}
+
+.history-toolbar {
+  display: grid;
+  grid-template-columns: 180px repeat(2, minmax(0, 1fr)) 2fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.history-toolbar-item {
+  width: 100%;
+}
+
+.history-summary {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.history-summary > div {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 13px;
+}
+
+.history-empty {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px dashed #dbeafe;
+  padding: 28px 16px;
+}
+
+.history-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.history-day-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+
+.history-day-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.history-day-count {
+  margin-left: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.history-day-amounts {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.history-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-item {
+  width: 100%;
+  border: 0;
+  background: #fff;
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  box-shadow: inset 0 0 0 1px #e5e7eb;
+}
+
+.history-item:hover {
+  transform: translateY(-1px);
+  background: #f8fbff;
+  box-shadow: inset 0 0 0 1px #bfdbfe, 0 10px 24px rgba(59, 130, 246, 0.08);
+}
+
+.history-item-main,
+.history-item-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.history-item-side {
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.history-item-category {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.history-item-sub,
+.history-item-time {
+  color: #64748b;
+  font-size: 12px;
+}
+
 .stats-section {
   padding: 10px 0;
+}
+
+.stats-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #fff7ed 0%, #eff6ff 100%);
+  border: 1px solid #fed7aa;
+  margin-bottom: 18px;
+}
+
+.stats-kicker {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c2410c;
+  margin-bottom: 8px;
+}
+
+.stats-hero h3 {
+  margin: 0 0 8px;
+  font-size: 24px;
+  line-height: 1.2;
+  color: #0f172a;
+}
+
+.stats-hero p {
+  margin: 0;
+  max-width: 640px;
+  color: #475569;
+  line-height: 1.7;
+}
+
+.stats-hero-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-content: flex-start;
+  justify-content: flex-end;
+}
+
+.stats-hero-chip {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #cbd5e1;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.stats-control-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.stats-range-picker {
+  width: 100%;
+  max-width: 420px;
+}
+
+.stats-month-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid #cbd5e1;
+}
+
+.stats-month-label {
+  min-width: 100px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.stats-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.stats-overview-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+}
+
+.stats-overview-label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.stats-overview-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.stats-insight-panel {
+  background: #fff;
+  border: 1px solid #dbeafe;
+  border-radius: 20px;
+  padding: 20px;
+  margin-bottom: 18px;
+}
+
+.stats-insight-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.stats-insight-header h4 {
+  margin: 0 0 6px;
+}
+
+.stats-insight-header p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.stats-insight-badge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.stats-insight-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #334155;
+  line-height: 1.8;
+}
+
+.stats-chart-grid,
+.stats-table-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.deep-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.deep-table-header span {
+  font-size: 12px;
+  color: #909399;
 }
 
 .chart-card {
   background: #fff;
   padding: 20px;
-  border-radius: 8px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
 }
 
 .chart-card h4 {
@@ -2968,6 +4961,19 @@ watch(() => activeTab.value, (newTab) => {
 
 .analyze-section {
   padding: 10px 0;
+}
+
+.ai-focus-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.ai-focus-label {
+  color: #606266;
+  font-size: 14px;
 }
 
 .loading-state {
@@ -3036,6 +5042,40 @@ watch(() => activeTab.value, (newTab) => {
   margin: 0;
 }
 
+.tx-detail-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tx-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 10px;
+}
+
+.tx-detail-row.align-start {
+  align-items: flex-start;
+}
+
+.tx-detail-label {
+  min-width: 72px;
+  color: #909399;
+}
+
+.tx-detail-content {
+  flex: 1;
+  text-align: right;
+}
+
+.tx-detail-muted {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 /* Calendar */
 .calendar-section {
   padding: 10px 0;
@@ -3054,6 +5094,502 @@ watch(() => activeTab.value, (newTab) => {
   margin: 0 15px;
 }
 
+/* ====== Mobile Transaction Cards ====== */
+.mobile-tx-cards {
+  display: none;
+}
+.mobile-tx-card {
+  display: flex;
+  gap: 12px;
+  padding: 14px;
+  background: #fff;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+  align-items: center;
+}
+.mobile-tx-card:hover {
+  border-color: #bfdbfe;
+  box-shadow: 0 4px 12px rgba(59,130,246,0.08);
+}
+.mtc-left {
+  flex-shrink: 0;
+}
+.mtc-cat-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.mtc-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mtc-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mtc-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #64748b;
+  flex-wrap: wrap;
+}
+.mtc-cat-tag {
+  font-weight: 600;
+}
+.mtc-sep {
+  color: #cbd5e1;
+}
+.mtc-right {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.mtc-actions {
+  display: flex;
+  gap: 2px;
+}
+
+/* ================================================
+   MOBILE OPTIMIZATION — three breakpoint tiers
+   ================================================ */
+
+/* --- Tier 1: ≤900px — tablets and small desktops --- */
+@media (max-width: 900px) {
+  .tool-container {
+    padding: 12px 10px;
+  }
+  .tool-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .tool-header .actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Balance */
+  .balance-overview {
+    grid-template-columns: 1fr 1fr;
+  }
+  .today-stats {
+    grid-column: span 2;
+  }
+
+  /* Tab bar - compact */
+  .custom-tab-bar {
+    padding: 6px 8px;
+    gap: 4px;
+    border-radius: 12px;
+  }
+  .tab-pill {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .tab-pill-icon {
+    font-size: 14px;
+  }
+
+  /* Record filters & summary */
+  .record-summary-grid,
+  .stats-deep-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .record-filters,
+  .stats-detail-filters,
+  .history-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* Amount row */
+  .amount-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .amount-input-wrapper {
+    justify-content: center;
+  }
+
+  /* Category grid - 3 cols on tablet */
+  .category-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Stats overview - 3 cols on tablet */
+  .stats-overview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* Stats charts - single column */
+  .stats-chart-grid,
+  .stats-table-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Settings */
+  .settings-section .el-row .el-col {
+    flex: 0 0 100%;
+    max-width: 100%;
+    margin-bottom: 16px;
+  }
+
+  /* Calendar */
+  .calendar-day {
+    min-height: 48px;
+    padding: 6px 2px;
+  }
+  .day-number {
+    font-size: 12px;
+  }
+  .day-amount {
+    font-size: 10px;
+  }
+
+  /* Charts */
+  .chart-card .stats-insight-header {
+    flex-direction: column;
+  }
+
+  /* AI section */
+  .ai-focus-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Show mobile cards, hide table */
+  .mobile-tx-cards {
+    display: block;
+  }
+  .record-section .el-table,
+  .tx-pagination .el-pagination {
+    /* Still show pagination controls */
+  }
+  .record-section .el-table {
+    display: none;
+  }
+
+  /* Date picker */
+  .datetime-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .datetime-field {
+    width: 100%;
+  }
+  .action-row {
+    flex-wrap: wrap;
+  }
+  .action-row .el-button {
+    flex: 1;
+    min-width: 100px;
+  }
+}
+
+/* --- Tier 2: ≤640px — phones in landscape / large phones --- */
+@media (max-width: 640px) {
+  .tool-container {
+    padding: 8px 6px;
+  }
+
+  /* Balance */
+  .balance-overview {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .today-stats {
+    grid-column: span 2;
+  }
+  .balance-card {
+    padding: 10px;
+  }
+  .balance-value {
+    font-size: 18px;
+  }
+
+  /* Tab bar — ultra compact */
+  .custom-tab-bar {
+    padding: 4px 6px;
+    gap: 3px;
+    border-radius: 10px;
+  }
+  .tab-pill {
+    padding: 6px 8px;
+    gap: 3px;
+    font-size: 11px;
+    border-radius: 8px;
+  }
+  .tab-pill-icon {
+    font-size: 13px;
+  }
+
+  /* All filters & summaries — full width */
+  .record-summary-grid,
+  .stats-deep-grid,
+  .record-filters,
+  .stats-detail-filters,
+  .history-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  /* Quick entry */
+  .quick-entry {
+    padding: 12px;
+  }
+  .amount-input {
+    font-size: 28px;
+  }
+  .currency {
+    font-size: 22px;
+  }
+  .type-toggle button {
+    padding: 6px 14px;
+    font-size: 13px;
+  }
+
+  /* Category grid — 3 cols for phones */
+  .category-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .category-btn {
+    padding: 10px 6px;
+    border-radius: 10px;
+  }
+  .cat-icon {
+    font-size: 20px;
+  }
+  .cat-name {
+    font-size: 11px;
+  }
+
+  /* Stats overview — 2 cols */
+  .stats-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .stats-overview-card {
+    padding: 12px;
+  }
+  .stats-overview-value {
+    font-size: 18px;
+  }
+
+  /* Stats hero */
+  .stats-hero {
+    flex-direction: column;
+    padding: 14px;
+  }
+  .stats-hero h3 {
+    font-size: 18px;
+  }
+  .stats-hero-chips {
+    justify-content: flex-start;
+  }
+  .stats-control-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* History */
+  .history-day-card {
+    padding: 12px;
+  }
+  .history-item {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .history-item-category {
+    font-size: 14px;
+  }
+  .history-day-header,
+  .history-item {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .history-item-side {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  /* Pagination — compact */
+  .tx-pagination {
+    justify-content: center;
+  }
+  .tx-pagination :deep(.el-pagination) {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+  }
+  .tx-pagination :deep(.el-pagination__sizes) {
+    display: none;
+  }
+
+  /* Dialogs */
+  .tx-detail-row {
+    flex-direction: column;
+  }
+  .tx-detail-content {
+    text-align: left;
+  }
+
+  /* Charts */
+  .chart-card {
+    padding: 12px;
+  }
+
+  /* Backup */
+  .backup-section .el-button {
+    width: 100%;
+    margin: 5px 0;
+  }
+
+  /* Voice panel */
+  .voice-panel {
+    padding: 14px;
+  }
+  .voice-tabs button {
+    padding: 8px;
+    font-size: 13px;
+  }
+  .voice-wave {
+    width: 90px;
+    height: 90px;
+  }
+
+  /* Record list header */
+  .tx-list-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .tx-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* Calendar */
+  .calendar-grid {
+    gap: 1px;
+  }
+  .calendar-weekday {
+    padding: 6px 2px;
+    font-size: 10px;
+  }
+  .calendar-day {
+    min-height: 42px;
+    padding: 4px 1px;
+  }
+  .day-number {
+    font-size: 11px;
+    margin-bottom: 2px;
+  }
+  .day-amount {
+    font-size: 9px;
+  }
+
+  /* Amount row */
+  .amount-row {
+    margin-bottom: 12px;
+  }
+}
+
+/* --- Tier 3: ≤400px — small phones (iPhone SE, etc.) --- */
+@media (max-width: 400px) {
+  .tool-container {
+    padding: 6px 4px;
+  }
+
+  .balance-overview {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .today-stats {
+    grid-column: span 1;
+  }
+
+  /* Tab bar — icon-only mode */
+  .tab-pill-label {
+    display: none;
+  }
+  .tab-pill {
+    padding: 8px 10px;
+  }
+  .tab-pill-icon {
+    font-size: 16px;
+  }
+
+  /* Category grid — tighter */
+  .category-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5px;
+  }
+  .category-btn {
+    padding: 8px 4px;
+  }
+  .cat-icon {
+    font-size: 18px;
+    margin-bottom: 2px;
+  }
+  .cat-name {
+    font-size: 10px;
+  }
+
+  /* Stats overview — single column */
+  .stats-overview-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .quick-entry {
+    padding: 10px;
+  }
+  .amount-input {
+    font-size: 24px;
+  }
+  .action-row .submit-btn {
+    font-size: 14px;
+    height: 40px;
+  }
+
+  /* Mobile tx card tighter */
+  .mobile-tx-card {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .mtc-title {
+    font-size: 14px;
+  }
+  .mtc-right {
+    font-size: 14px;
+  }
+
+  .history-day-card {
+    padding: 10px;
+  }
+}
+
+/* Calendar (global) */
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -3114,7 +5650,7 @@ watch(() => activeTab.value, (newTab) => {
   color: #67C23A;
 }
 
-/* Backup */
+/* Backup (global) */
 .backup-section {
   padding: 10px 0;
   text-align: center;
@@ -3122,23 +5658,5 @@ watch(() => activeTab.value, (newTab) => {
 
 .backup-section .el-button {
   margin: 10px;
-}
-
-@media (max-width: 768px) {
-  .balance-overview {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .today-stats {
-    grid-column: span 2;
-  }
-
-  .quick-add-form :deep(.el-form-item) {
-    margin-bottom: 10px;
-  }
-
-  .el-col {
-    margin-bottom: 20px;
-  }
 }
 </style>

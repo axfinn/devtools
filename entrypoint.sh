@@ -7,17 +7,33 @@ HOST_CODEX_HOME=/tmp/host-codex
 CONFIG_SRC_DIR=/app/config-src
 CONFIG_TARGET_PATH=${CONFIG_PATH:-/app/config.yaml}
 
+refresh_clawtest() {
+    if git -C "${CLAWTEST_DIR}" ls-remote --heads origin main >/dev/null 2>&1; then
+        echo "[entrypoint] Refreshing clawtest..."
+        if git -C "${CLAWTEST_DIR}" pull --depth=1 origin main >/dev/null 2>&1; then
+            echo "[entrypoint] clawtest updated"
+        else
+            echo "[entrypoint] clawtest refresh skipped; pull failed"
+        fi
+    else
+        echo "[entrypoint] clawtest refresh skipped; remote unavailable"
+    fi
+}
+
+clone_clawtest() {
+    echo "[entrypoint] Bootstrapping clawtest..."
+    if git clone --depth=1 https://github.com/axfinn/clawtest.git "${CLAWTEST_DIR}" >/dev/null 2>&1; then
+        echo "[entrypoint] clawtest cloned"
+    else
+        echo "[entrypoint] clawtest bootstrap skipped; remote unavailable"
+    fi
+}
+
 # 1. 更新 clawtest（在 data volume 里，重建镜像不丢失）
 if [ -d "${CLAWTEST_DIR}/.git" ]; then
-    echo "[entrypoint] Pulling latest clawtest..."
-    git -C "${CLAWTEST_DIR}" pull --depth=1 origin main 2>&1 && \
-        echo "[entrypoint] clawtest updated" || \
-        echo "[entrypoint] git pull failed, using cached version"
+    refresh_clawtest
 else
-    echo "[entrypoint] Cloning clawtest..."
-    git clone --depth=1 https://github.com/axfinn/clawtest.git "${CLAWTEST_DIR}" 2>&1 && \
-        echo "[entrypoint] clawtest cloned" || \
-        echo "[entrypoint] git clone failed, autodev unavailable"
+    clone_clawtest
 fi
 
 if [ -f "${CLAWTEST_DIR}/autodev/autodev" ]; then

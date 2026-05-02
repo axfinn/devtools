@@ -136,11 +136,11 @@ const deletingId = ref(null)
 const addForm = ref({ type: 'tcp', port: null, target: '', remark: '' })
 
 function adminPassword() {
-  return sessionStorage.getItem(SESSION_KEY) || ''
+  return localStorage.getItem(SESSION_KEY) || ''
 }
 
 function logout() {
-  sessionStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SESSION_KEY)
   isAdmin.value = false
   passwordInput.value = ''
 }
@@ -154,7 +154,7 @@ async function login() {
     if (data.error) {
       ElMessage.error('密码错误或 NPS 未配置')
     } else {
-      sessionStorage.setItem(SESSION_KEY, passwordInput.value)
+      localStorage.setItem(SESSION_KEY, passwordInput.value)
       isAdmin.value = true
       applyStatus(data)
       loadTunnels()
@@ -263,7 +263,7 @@ async function confirmDelete(row) {
 }
 
 onMounted(() => {
-  const saved = sessionStorage.getItem(SESSION_KEY)
+  const saved = localStorage.getItem(SESSION_KEY)
   if (!saved) return
   fetch(`/api/nps/status?admin_password=${encodeURIComponent(saved)}`)
     .then(r => r.json())
@@ -273,7 +273,7 @@ onMounted(() => {
         applyStatus(data)
         loadTunnels()
       } else {
-        sessionStorage.removeItem(SESSION_KEY)
+        localStorage.removeItem(SESSION_KEY)
       }
     })
     .catch(() => {})

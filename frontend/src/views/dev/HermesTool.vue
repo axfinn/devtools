@@ -159,7 +159,7 @@ const answer = ref('')
 const usage = ref(null)
 
 function adminPassword() {
-  return sessionStorage.getItem(SESSION_KEY) || ''
+  return localStorage.getItem(SESSION_KEY) || ''
 }
 
 async function request(path, options = {}) {
@@ -189,7 +189,7 @@ async function login() {
     if (!response.ok || data.error) {
       throw new Error(data.error || '密码错误')
     }
-    sessionStorage.setItem(SESSION_KEY, passwordInput.value)
+    localStorage.setItem(SESSION_KEY, passwordInput.value)
     authenticated.value = true
     await refreshAll()
     ElMessage.success('Hermes 模块已接入')
@@ -201,7 +201,7 @@ async function login() {
 }
 
 function logout() {
-  sessionStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SESSION_KEY)
   authenticated.value = false
   passwordInput.value = ''
   status.value = null

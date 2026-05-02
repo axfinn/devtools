@@ -14,7 +14,8 @@ type AIGatewayHandler struct {
 	bailian        *BailianHandler
 	imageHandler   *ImageUnderstandingHandler
 	client         *http.Client // 带代理，用于 OpenAI 兼容接口
-	noProxyClient  *http.Client // 不走代理，用于 MiniMax 等外部 API（非流式，90s 超时）
+	noProxyClient  *http.Client // 不走代理，禁用压缩（用于 Chat/Anthropic 避免 Brotli）
+	mediaClient    *http.Client // 不走代理，启用压缩（用于 MiniMax 媒体 API：图片/视频/音乐/TTS）
 	streamClient   *http.Client // 不走代理，用于 SSE 流式请求（无超时，依赖 context 取消）
 }
 
@@ -182,6 +183,12 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		// gzip 解压由各调用点按需处理，或直接透传给客户端。
 		DisableCompression: true,
 	}
+	// mediaTransport 启用压缩：MiniMax 图片/视频/音乐/TTS 端点要求 Accept-Encoding，
+	// 否则会直接断开连接（EOF）。这些端点不返回 Brotli，安全启用。
+	mediaTransport := &http.Transport{
+		Proxy:             nil,
+		DisableCompression: false,
+	}
 	return &AIGatewayHandler{
 		db:           db,
 		cfg:          cfg,
@@ -191,6 +198,10 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		noProxyClient: &http.Client{
 			Timeout:   90 * time.Second,
 			Transport: noProxyTransport,
+		},
+		mediaClient: &http.Client{
+			Timeout:   90 * time.Second,
+			Transport: mediaTransport,
 		},
 		// 流式请求不设 Timeout：http.Client.Timeout 包含读取 body 的时间，
 		// 对 SSE 长流会在 90s 后强制断开。改用 context 取消（客户端断开时自动传播）。

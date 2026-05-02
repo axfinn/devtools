@@ -24,16 +24,16 @@ type ExpenseProfile struct {
 
 // ExpenseAccount 账户表
 type ExpenseAccount struct {
-	ID           string    `json:"id"`
-	ProfileID    string    `json:"profile_id"`
-	Name         string    `json:"name"`
-	Type         string    `json:"type"` // cash, bank, alipay, wechat, credit
-	Balance      float64   `json:"balance"`
-	Color        string    `json:"color"`
-	Icon         string    `json:"icon"`
-	Sort         int       `json:"sort"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID        string    `json:"id"`
+	ProfileID string    `json:"profile_id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"` // cash, bank, alipay, wechat, credit
+	Balance   float64   `json:"balance"`
+	Color     string    `json:"color"`
+	Icon      string    `json:"icon"`
+	Sort      int       `json:"sort"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ExpenseCategory 分类表
@@ -51,18 +51,25 @@ type ExpenseCategory struct {
 
 // ExpenseTransaction 记账记录表
 type ExpenseTransaction struct {
-	ID         string     `json:"id"`
-	ProfileID  string     `json:"profile_id"`
-	AccountID  string     `json:"account_id"`
-	CategoryID string     `json:"category_id"`
-	Amount     float64    `json:"amount"`
-	Type       string     `json:"type"` // income, expense
-	Date       string     `json:"date"` // YYYY-MM-DD
-	Remark     string     `json:"remark"`
-	Tags       string     `json:"tags"` // comma-separated
-	VoiceText  string     `json:"voice_text"` // 原始语音文字
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID         string    `json:"id"`
+	ProfileID  string    `json:"profile_id"`
+	AccountID  string    `json:"account_id"`
+	CategoryID string    `json:"category_id"`
+	Amount     float64   `json:"amount"`
+	Type       string    `json:"type"` // income, expense
+	Date       string    `json:"date"` // YYYY-MM-DD
+	Remark     string    `json:"remark"`
+	Tags       string    `json:"tags"`       // comma-separated
+	VoiceText  string    `json:"voice_text"` // 原始语音文字
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type ExpenseTransactionDetail struct {
+	ExpenseTransaction
+	AccountName   string `json:"account_name"`
+	CategoryName  string `json:"category_name"`
+	CategoryColor string `json:"category_color"`
 }
 
 func (db *DB) InitExpense() error {
@@ -151,9 +158,12 @@ func (db *DB) InitExpense() error {
 	db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_expense_categories_profile ON expense_categories(profile_id)")
 	db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_expense_transactions_profile ON expense_transactions(profile_id)")
 	db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_expense_transactions_date ON expense_transactions(date)")
+	db.conn.Exec("CREATE INDEX IF NOT EXISTS idx_expense_transactions_profile_date ON expense_transactions(profile_id, date)")
 
 	// 添加 voice_text 列（如果不存在）
 	db.conn.Exec("ALTER TABLE expense_transactions ADD COLUMN voice_text TEXT DEFAULT ''")
+	// 记账档案改为永久保存，历史档案统一取消过期时间
+	db.conn.Exec("UPDATE expense_profiles SET expires_at = NULL WHERE expires_at IS NOT NULL")
 
 	return nil
 }
@@ -287,6 +297,16 @@ func (db *DB) GetExpenseAccount(id string) (*ExpenseAccount, error) {
 	return a, err
 }
 
+func (db *DB) GetExpenseAccountForProfile(profileID, id string) (*ExpenseAccount, error) {
+	a := &ExpenseAccount{}
+	err := db.conn.QueryRow(`
+		SELECT id, profile_id, name, type, balance, color, icon, sort, created_at, updated_at
+		FROM expense_accounts WHERE id = ? AND profile_id = ?
+	`, id, profileID).Scan(&a.ID, &a.ProfileID, &a.Name, &a.Type, &a.Balance,
+		&a.Color, &a.Icon, &a.Sort, &a.CreatedAt, &a.UpdatedAt)
+	return a, err
+}
+
 func (db *DB) UpdateExpenseAccount(account *ExpenseAccount) error {
 	account.UpdatedAt = time.Now()
 	_, err := db.conn.Exec(`
@@ -357,6 +377,16 @@ func (db *DB) GetExpenseCategory(id string) (*ExpenseCategory, error) {
 	return c, err
 }
 
+func (db *DB) GetExpenseCategoryForProfile(profileID, id string) (*ExpenseCategory, error) {
+	c := &ExpenseCategory{}
+	err := db.conn.QueryRow(`
+		SELECT id, profile_id, name, type, icon, color, sort, created_at, updated_at
+		FROM expense_categories WHERE id = ? AND profile_id = ?
+	`, id, profileID).Scan(&c.ID, &c.ProfileID, &c.Name, &c.Type,
+		&c.Icon, &c.Color, &c.Sort, &c.CreatedAt, &c.UpdatedAt)
+	return c, err
+}
+
 func (db *DB) UpdateExpenseCategory(category *ExpenseCategory) error {
 	category.UpdatedAt = time.Now()
 	_, err := db.conn.Exec(`
@@ -420,13 +450,97 @@ func (db *DB) GetExpenseTransactions(profileID string, startDate, endDate string
 	return txs, nil
 }
 
+func (db *DB) GetExpenseTransactionsDetailed(profileID string, startDate, endDate string, limit int) ([]*ExpenseTransactionDetail, error) {
+	var rows *sql.Rows
+	var err error
+
+	baseQuery := `
+		SELECT
+			t.id,
+			t.profile_id,
+			t.account_id,
+			t.category_id,
+			t.amount,
+			t.type,
+			t.date,
+			t.remark,
+			t.tags,
+			COALESCE(t.voice_text, '') as voice_text,
+			t.created_at,
+			t.updated_at,
+			COALESCE(a.name, '') as account_name,
+			COALESCE(c.name, '') as category_name,
+			COALESCE(c.color, '') as category_color
+		FROM expense_transactions t
+		LEFT JOIN expense_accounts a ON t.account_id = a.id AND a.profile_id = t.profile_id
+		LEFT JOIN expense_categories c ON t.category_id = c.id AND c.profile_id = t.profile_id
+		WHERE t.profile_id = ?
+	`
+
+	query := baseQuery
+	args := []any{profileID}
+
+	if startDate != "" && endDate != "" {
+		query += ` AND t.date >= ? AND t.date <= ?`
+		args = append(args, startDate, endDate)
+	}
+
+	query += ` ORDER BY t.date DESC, t.created_at DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err = db.conn.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txs []*ExpenseTransactionDetail
+	for rows.Next() {
+		t := &ExpenseTransactionDetail{}
+		if err := rows.Scan(
+			&t.ID,
+			&t.ProfileID,
+			&t.AccountID,
+			&t.CategoryID,
+			&t.Amount,
+			&t.Type,
+			&t.Date,
+			&t.Remark,
+			&t.Tags,
+			&t.VoiceText,
+			&t.CreatedAt,
+			&t.UpdatedAt,
+			&t.AccountName,
+			&t.CategoryName,
+			&t.CategoryColor,
+		); err != nil {
+			continue
+		}
+		txs = append(txs, t)
+	}
+	return txs, nil
+}
+
 func (db *DB) GetExpenseTransaction(id string) (*ExpenseTransaction, error) {
 	t := &ExpenseTransaction{}
 	err := db.conn.QueryRow(`
-		SELECT id, profile_id, account_id, category_id, amount, type, date, remark, tags, created_at, updated_at
+		SELECT id, profile_id, account_id, category_id, amount, type, date, remark, tags, COALESCE(voice_text,''), created_at, updated_at
 		FROM expense_transactions WHERE id = ?
 	`, id).Scan(&t.ID, &t.ProfileID, &t.AccountID, &t.CategoryID, &t.Amount, &t.Type,
-		&t.Date, &t.Remark, &t.Tags, &t.CreatedAt, &t.UpdatedAt)
+		&t.Date, &t.Remark, &t.Tags, &t.VoiceText, &t.CreatedAt, &t.UpdatedAt)
+	return t, err
+}
+
+func (db *DB) GetExpenseTransactionForProfile(profileID, id string) (*ExpenseTransaction, error) {
+	t := &ExpenseTransaction{}
+	err := db.conn.QueryRow(`
+		SELECT id, profile_id, account_id, category_id, amount, type, date, remark, tags, COALESCE(voice_text,''), created_at, updated_at
+		FROM expense_transactions WHERE id = ? AND profile_id = ?
+	`, id, profileID).Scan(&t.ID, &t.ProfileID, &t.AccountID, &t.CategoryID, &t.Amount, &t.Type,
+		&t.Date, &t.Remark, &t.Tags, &t.VoiceText, &t.CreatedAt, &t.UpdatedAt)
 	return t, err
 }
 
@@ -448,12 +562,12 @@ func (db *DB) DeleteExpenseTransaction(id string) error {
 // Statistics
 
 type ExpenseStats struct {
-	TotalIncome   float64                `json:"total_income"`
-	TotalExpense  float64                `json:"total_expense"`
-	Balance       float64                `json:"balance"`
-	ByCategory    map[string]float64     `json:"by_category"`
-	ByAccount     map[string]float64    `json:"by_account"`
-	ByMonth       map[string]float64    `json:"by_month"`
+	TotalIncome      float64            `json:"total_income"`
+	TotalExpense     float64            `json:"total_expense"`
+	Balance          float64            `json:"balance"`
+	ByCategory       map[string]float64 `json:"by_category"`
+	ByAccount        map[string]float64 `json:"by_account"`
+	ByMonth          map[string]float64 `json:"by_month"`
 	TransactionCount int                `json:"transaction_count"`
 }
 
@@ -485,7 +599,13 @@ func (db *DB) GetExpenseStats(profileID, period string) (*ExpenseStats, error) {
 		startDate = fmt.Sprintf("%d-%02d-01", now.Year(), now.Month())
 	}
 
-	endDate := today
+	return db.GetExpenseStatsByRange(profileID, startDate, today)
+}
+
+func (db *DB) GetExpenseStatsByRange(profileID, startDate, endDate string) (*ExpenseStats, error) {
+	if startDate == "" || endDate == "" {
+		return nil, fmt.Errorf("invalid expense stats range")
+	}
 
 	stats := &ExpenseStats{
 		ByCategory: make(map[string]float64),
@@ -513,12 +633,12 @@ func (db *DB) GetExpenseStats(profileID, period string) (*ExpenseStats, error) {
 
 	stats.Balance = stats.TotalIncome - stats.TotalExpense
 
-	// By category (include both income and expense)
+	// By category (expenses only, matches the frontend chart label)
 	rows, err := db.conn.Query(`
 		SELECT COALESCE(c.name, '未分类'), COALESCE(SUM(t.amount), 0) as total
 		FROM expense_transactions t
 		LEFT JOIN expense_categories c ON t.category_id = c.id
-		WHERE t.profile_id = ? AND t.date >= ? AND t.date <= ?
+		WHERE t.profile_id = ? AND t.type = 'expense' AND t.date >= ? AND t.date <= ?
 		GROUP BY t.category_id, c.name
 	`, profileID, startDate, endDate)
 	if err == nil && rows != nil {
@@ -585,12 +705,5 @@ func (db *DB) GetExpenseStats(profileID, period string) (*ExpenseStats, error) {
 
 // CleanExpiredExpenseProfiles 清理过期的档案
 func (db *DB) CleanExpiredExpenseProfiles() (int64, error) {
-	result, err := db.conn.Exec(`
-		DELETE FROM expense_profiles
-		WHERE expires_at IS NOT NULL AND expires_at < ?
-	`, time.Now())
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	return 0, nil
 }

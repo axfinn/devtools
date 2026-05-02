@@ -894,7 +894,7 @@ func (h *AIGatewayHandler) performMiniMaxRequest(apiKey, method, endpoint string
 	if body != nil && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := h.noProxyClient.Do(req)
+	resp, err := h.mediaClient.Do(req)
 	if err != nil {
 		return nil, 0, nil, err
 	}
@@ -917,7 +917,7 @@ func (h *AIGatewayHandler) proxyMiniMaxBinary(c *gin.Context, apiKey, method, en
 	}
 	req.Header = cloneHeaders(incoming)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	resp, err := h.noProxyClient.Do(req)
+	resp, err := h.mediaClient.Do(req)
 	if err != nil {
 		return 0, err
 	}

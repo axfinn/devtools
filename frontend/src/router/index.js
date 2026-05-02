@@ -473,6 +473,42 @@ const toolRoutes = [
       description: '管理导航模块显隐'
     }
   },
+	  {
+	    path: '/voice-inbox',
+	    name: 'VoiceInbox',
+	    component: () => import('../views/life/VoiceInboxTool.vue'),
+	    meta: {
+	      title: '语音收件箱',
+	      icon: 'Headset',
+	      category: 'life',
+	      shortcut: true,
+	      shortcutPriority: 100,
+	      description: '语音备忘录，自动转写为文字'
+	    }
+	  },
+	  {
+	    path: '/counter',
+	    name: 'Counter',
+	    component: () => import('../views/life/CounterTool.vue'),
+	    meta: {
+	      title: '敲击计数器',
+	      icon: 'Timer',
+	      category: 'life',
+	      shortcut: true,
+	      description: '多形象、多主题、带音效反馈的沉浸式计数器'
+	    }
+	  },
+	  {
+	    path: '/gallery',
+	    name: 'MediaGallery',
+	    component: () => import('../views/share/MediaGallery.vue'),
+	    meta: {
+	      title: '媒体画廊',
+	      icon: 'PictureFilled',
+	      category: 'ai',
+	      description: 'AI 生成的音乐、视频、图片作品画廊'
+	    }
+	  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',

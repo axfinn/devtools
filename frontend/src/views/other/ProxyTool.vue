@@ -551,7 +551,7 @@ function onFrameLoad(tab, e) {
 }
 
 function adminPassword() {
-  return sessionStorage.getItem(SESSION_KEY) || ''
+  return localStorage.getItem(SESSION_KEY) || ''
 }
 
 function parseSourceURLs() {
@@ -627,7 +627,7 @@ function login() {
       if (data.error) {
         ElMessage.error('密码错误')
       } else {
-        sessionStorage.setItem(SESSION_KEY, passwordInput.value)
+        localStorage.setItem(SESSION_KEY, passwordInput.value)
         isAdmin.value = true
         applyStatus(data)
         fetchCustomDomains()
@@ -637,15 +637,15 @@ function login() {
     .finally(() => { loginLoading.value = false })
 }
 
-// 页面加载时，如果 sessionStorage 有密码，自动恢复状态
+// 页面加载时，如果 localStorage 有密码，自动恢复状态
 onMounted(() => {
-  const saved = sessionStorage.getItem(SESSION_KEY)
+  const saved = localStorage.getItem(SESSION_KEY)
   if (!saved) return
   fetch(`/api/proxy/status?admin_password=${encodeURIComponent(saved)}`)
     .then(r => r.json())
     .then(data => {
       if (data.error) {
-        sessionStorage.removeItem(SESSION_KEY)
+        localStorage.removeItem(SESSION_KEY)
       } else {
         isAdmin.value = true
         applyStatus(data)
@@ -690,7 +690,7 @@ async function removeCustomDomain(domain) {
 }
 
 function logout() {
-  sessionStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SESSION_KEY)
   isAdmin.value = false
   passwordInput.value = ''
 }

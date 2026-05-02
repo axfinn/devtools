@@ -1234,7 +1234,7 @@ const API_BASE = '/api/ai-gateway'
 const PASSWORD_KEY = 'ai_gateway_super_admin_password'
 
 const mainTab = ref('keys')
-const superAdminPassword = ref(sessionStorage.getItem(PASSWORD_KEY) || '')
+const superAdminPassword = ref(localStorage.getItem(PASSWORD_KEY) || '')
 const creating = ref(false)
 const loadingKeys = ref(false)
 const keys = ref([])
@@ -1523,7 +1523,7 @@ const init = async () => {
     ElMessage.error('请输入超级管理员密码')
     return
   }
-  sessionStorage.setItem(PASSWORD_KEY, superAdminPassword.value)
+  localStorage.setItem(PASSWORD_KEY, superAdminPassword.value)
   mainTab.value = 'keys'
   await loadKeys()
   await Promise.all([loadReports(), loadAlerts(), loadMinimaxTasks(), loadCatalog(), loadProviders()])

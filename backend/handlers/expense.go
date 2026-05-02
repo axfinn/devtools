@@ -9,8 +9,10 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"devtools/config"
@@ -28,6 +30,19 @@ type ExpenseHandler struct {
 	ipWindow       time.Duration
 	cfg            *config.Config
 }
+
+type ExpenseAnalyzeJob struct {
+	ID        string    `json:"id"`
+	ProfileID string    `json:"-"`
+	Status    string    `json:"status"`
+	Analysis  string    `json:"analysis"`
+	AIEnabled bool      `json:"ai_enabled"`
+	Error     string    `json:"error,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+var expenseAnalyzeJobs sync.Map
 
 func NewExpenseHandler(db *models.DB, cfg *config.Config) *ExpenseHandler {
 	expenseCfg := cfg.Expense
@@ -62,6 +77,13 @@ func getPassword(c *gin.Context) string {
 	return c.Query("password")
 }
 
+func getCreatorKey(c *gin.Context) string {
+	if key := c.GetHeader("X-Creator-Key"); key != "" {
+		return key
+	}
+	return c.Query("creator_key")
+}
+
 // Request/Response types
 
 type CreateExpenseRequest struct {
@@ -94,12 +116,12 @@ type CreateAccountRequest struct {
 }
 
 type UpdateAccountRequest struct {
-	Name    string  `json:"name"`
-	Type    string  `json:"type"`
-	Balance float64 `json:"balance"`
-	Color   string  `json:"color"`
-	Icon    string  `json:"icon"`
-	Sort    int     `json:"sort"`
+	Name    *string  `json:"name"`
+	Type    *string  `json:"type"`
+	Balance *float64 `json:"balance"`
+	Color   *string  `json:"color"`
+	Icon    *string  `json:"icon"`
+	Sort    *int     `json:"sort"`
 }
 
 type CreateCategoryRequest struct {
@@ -111,11 +133,11 @@ type CreateCategoryRequest struct {
 }
 
 type UpdateCategoryRequest struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Icon  string `json:"icon"`
-	Color string `json:"color"`
-	Sort  int    `json:"sort"`
+	Name  *string `json:"name"`
+	Type  *string `json:"type"`
+	Icon  *string `json:"icon"`
+	Color *string `json:"color"`
+	Sort  *int    `json:"sort"`
 }
 
 type CreateTransactionRequest struct {
@@ -126,20 +148,24 @@ type CreateTransactionRequest struct {
 	Date       string  `json:"date" binding:"required"` // YYYY-MM-DD
 	Remark     string  `json:"remark"`
 	Tags       string  `json:"tags"`
+	VoiceText  string  `json:"voice_text"`
 }
 
 type UpdateTransactionRequest struct {
-	AccountID  string  `json:"account_id"`
-	CategoryID string  `json:"category_id"`
-	Amount     float64 `json:"amount"`
-	Type       string  `json:"type"`
-	Date       string  `json:"date"`
-	Remark     string  `json:"remark"`
-	Tags       string  `json:"tags"`
+	AccountID  *string  `json:"account_id"`
+	CategoryID *string  `json:"category_id"`
+	Amount     *float64 `json:"amount"`
+	Type       *string  `json:"type"`
+	Date       *string  `json:"date"`
+	Remark     *string  `json:"remark"`
+	Tags       *string  `json:"tags"`
 }
 
 type AnalyzeRequest struct {
-	Period string `json:"period"` // week, month, year
+	Period    string `json:"period"`     // week, month, year, custom
+	StartDate string `json:"start_date"` // YYYY-MM-DD
+	EndDate   string `json:"end_date"`   // YYYY-MM-DD
+	Focus     string `json:"focus"`      // overview, savings, anomaly, category
 }
 
 type VoiceParseRequest struct {
@@ -152,6 +178,41 @@ type VoiceParseResponse struct {
 	Type       string  `json:"type"` // income, expense
 	Remark     string  `json:"remark"`
 	Confidence float64 `json:"confidence"`
+}
+
+func validateExpenseDate(value string) bool {
+	if value == "" {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", value)
+	return err == nil
+}
+
+func validateExpenseType(value string) bool {
+	return value == "income" || value == "expense"
+}
+
+func resolveExpenseRange(period, startDate, endDate string) (string, string, string, error) {
+	if period == "custom" {
+		if !validateExpenseDate(startDate) || !validateExpenseDate(endDate) {
+			return "", "", "", fmt.Errorf("请选择有效的开始和结束日期")
+		}
+		if startDate > endDate {
+			return "", "", "", fmt.Errorf("开始日期不能晚于结束日期")
+		}
+		return startDate, endDate, fmt.Sprintf("%s 至 %s", startDate, endDate), nil
+	}
+
+	resolvedStart, resolvedEnd := calculateDateRange(period)
+	periodLabel := map[string]string{
+		"week":  "本周",
+		"month": "本月",
+		"year":  "本年",
+	}[period]
+	if periodLabel == "" {
+		periodLabel = "本月"
+	}
+	return resolvedStart, resolvedEnd, periodLabel, nil
 }
 
 // Handlers
@@ -173,12 +234,8 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 	existing, _ := h.db.GetExpenseProfileByPasswordIndex(pwIndex)
 
 	if existing != nil {
-		if existing.ExpiresAt != nil && time.Now().After(*existing.ExpiresAt) {
-			h.db.DeleteExpenseProfile(existing.ID)
-		} else {
-			c.JSON(http.StatusConflict, gin.H{"error": "该密码已被使用，请直接登录或使用其他密码", "code": 409})
-			return
-		}
+		c.JSON(http.StatusConflict, gin.H{"error": "该密码已被使用，请直接登录或使用其他密码", "code": 409})
+		return
 	}
 
 	ip := c.ClientIP()
@@ -194,13 +251,11 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 	hashedCreatorKey, _ := utils.HashPassword(creatorKey)
 	hashedPassword, _ := utils.HashPassword(req.Password)
 
-	exp := time.Now().Add(time.Duration(h.defaultExpDays) * 24 * time.Hour)
-
 	profile := &models.ExpenseProfile{
 		Password:      hashedPassword,
 		PasswordIndex: pwIndex,
 		CreatorKey:    hashedCreatorKey,
-		ExpiresAt:     &exp,
+		ExpiresAt:     nil,
 		CreatorIP:     ip,
 	}
 
@@ -287,13 +342,6 @@ func (h *ExpenseHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Check expiration
-	if profile.ExpiresAt != nil && time.Now().After(*profile.ExpiresAt) {
-		h.db.DeleteExpenseProfile(profile.ID)
-		c.JSON(http.StatusGone, gin.H{"error": "该档案已过期", "code": 410})
-		return
-	}
-
 	c.JSON(http.StatusOK, ExpenseProfileResponse{
 		ID:        profile.ID,
 		ExpiresAt: profile.ExpiresAt,
@@ -311,12 +359,6 @@ func (h *ExpenseHandler) Get(c *gin.Context) {
 		return
 	}
 
-	if profile.ExpiresAt != nil && time.Now().After(*profile.ExpiresAt) {
-		h.db.DeleteExpenseProfile(profile.ID)
-		c.JSON(http.StatusGone, gin.H{"error": "该档案已过期", "code": 410})
-		return
-	}
-
 	if password == "" || !utils.VerifyPassword(password, profile.Password) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误", "code": 401})
 		return
@@ -331,7 +373,7 @@ func (h *ExpenseHandler) Get(c *gin.Context) {
 
 func (h *ExpenseHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	creatorKey := c.Query("creator_key")
+	creatorKey := getCreatorKey(c)
 
 	profile, err := h.db.GetExpenseProfile(id)
 	if err != nil {
@@ -350,7 +392,7 @@ func (h *ExpenseHandler) Delete(c *gin.Context) {
 
 func (h *ExpenseHandler) Extend(c *gin.Context) {
 	id := c.Param("id")
-	creatorKey := c.Query("creator_key")
+	creatorKey := getCreatorKey(c)
 	days := c.DefaultQuery("days", "365")
 
 	profile, err := h.db.GetExpenseProfile(id)
@@ -370,13 +412,12 @@ func (h *ExpenseHandler) Extend(c *gin.Context) {
 		daysInt = 730
 	}
 
-	newExpires := time.Now().Add(time.Duration(daysInt) * 24 * time.Hour)
-	if err := h.db.ExtendExpenseProfile(id, &newExpires); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "延期失败", "code": 500})
+	if err := h.db.ExtendExpenseProfile(id, nil); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "设置永久档案失败", "code": 500})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "expires_at": newExpires})
+	c.JSON(http.StatusOK, gin.H{"success": true, "expires_at": nil, "is_permanent": true})
 }
 
 // Account handlers
@@ -472,7 +513,7 @@ func (h *ExpenseHandler) UpdateAccount(c *gin.Context) {
 		return
 	}
 
-	account, err := h.db.GetExpenseAccount(accountID)
+	account, err := h.db.GetExpenseAccountForProfile(profileID, accountID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该账户", "code": 404})
 		return
@@ -484,23 +525,23 @@ func (h *ExpenseHandler) UpdateAccount(c *gin.Context) {
 		return
 	}
 
-	if req.Name != "" {
-		account.Name = req.Name
+	if req.Name != nil {
+		account.Name = strings.TrimSpace(*req.Name)
 	}
-	if req.Type != "" {
-		account.Type = req.Type
+	if req.Type != nil && *req.Type != "" {
+		account.Type = *req.Type
 	}
-	if req.Balance != 0 {
-		account.Balance = req.Balance
+	if req.Balance != nil {
+		account.Balance = *req.Balance
 	}
-	if req.Color != "" {
-		account.Color = req.Color
+	if req.Color != nil && *req.Color != "" {
+		account.Color = *req.Color
 	}
-	if req.Icon != "" {
-		account.Icon = req.Icon
+	if req.Icon != nil && *req.Icon != "" {
+		account.Icon = *req.Icon
 	}
-	if req.Sort != 0 {
-		account.Sort = req.Sort
+	if req.Sort != nil {
+		account.Sort = *req.Sort
 	}
 
 	if err := h.db.UpdateExpenseAccount(account); err != nil {
@@ -524,6 +565,11 @@ func (h *ExpenseHandler) DeleteAccount(c *gin.Context) {
 
 	if password == "" || !utils.VerifyPassword(password, profile.Password) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误", "code": 401})
+		return
+	}
+
+	if _, err := h.db.GetExpenseAccountForProfile(profileID, accountID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该账户", "code": 404})
 		return
 	}
 
@@ -622,7 +668,7 @@ func (h *ExpenseHandler) UpdateCategory(c *gin.Context) {
 		return
 	}
 
-	category, err := h.db.GetExpenseCategory(categoryID)
+	category, err := h.db.GetExpenseCategoryForProfile(profileID, categoryID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该分类", "code": 404})
 		return
@@ -634,20 +680,20 @@ func (h *ExpenseHandler) UpdateCategory(c *gin.Context) {
 		return
 	}
 
-	if req.Name != "" {
-		category.Name = req.Name
+	if req.Name != nil {
+		category.Name = strings.TrimSpace(*req.Name)
 	}
-	if req.Type != "" {
-		category.Type = req.Type
+	if req.Type != nil && *req.Type != "" {
+		category.Type = *req.Type
 	}
-	if req.Icon != "" {
-		category.Icon = req.Icon
+	if req.Icon != nil && *req.Icon != "" {
+		category.Icon = *req.Icon
 	}
-	if req.Color != "" {
-		category.Color = req.Color
+	if req.Color != nil && *req.Color != "" {
+		category.Color = *req.Color
 	}
-	if req.Sort != 0 {
-		category.Sort = req.Sort
+	if req.Sort != nil {
+		category.Sort = *req.Sort
 	}
 
 	if err := h.db.UpdateExpenseCategory(category); err != nil {
@@ -674,6 +720,11 @@ func (h *ExpenseHandler) DeleteCategory(c *gin.Context) {
 		return
 	}
 
+	if _, err := h.db.GetExpenseCategoryForProfile(profileID, categoryID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该分类", "code": 404})
+		return
+	}
+
 	if err := h.db.DeleteExpenseCategory(categoryID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败", "code": 500})
 		return
@@ -689,6 +740,15 @@ func (h *ExpenseHandler) GetTransactions(c *gin.Context) {
 	password := getPassword(c)
 	startDate := c.Query("start_date")
 	endDate := c.Query("end_date")
+	limit := 0
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			if parsed > 1000 {
+				parsed = 1000
+			}
+			limit = parsed
+		}
+	}
 
 	profile, err := h.db.GetExpenseProfile(profileID)
 	if err != nil {
@@ -701,42 +761,13 @@ func (h *ExpenseHandler) GetTransactions(c *gin.Context) {
 		return
 	}
 
-	txs, err := h.db.GetExpenseTransactions(profileID, startDate, endDate)
+	txs, err := h.db.GetExpenseTransactionsDetailed(profileID, startDate, endDate, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取失败", "code": 500})
 		return
 	}
 
-	// Enrich with account and category names
-	type EnrichTx struct {
-		*models.ExpenseTransaction
-		AccountName   string `json:"account_name"`
-		CategoryName  string `json:"category_name"`
-		CategoryColor string `json:"category_color"`
-	}
-
-	result := make([]EnrichTx, 0, len(txs))
-	for _, t := range txs {
-		acc, _ := h.db.GetExpenseAccount(t.AccountID)
-		cat, _ := h.db.GetExpenseCategory(t.CategoryID)
-
-		et := EnrichTx{
-			ExpenseTransaction: t,
-			AccountName:        "",
-			CategoryName:       "",
-			CategoryColor:      "",
-		}
-		if acc != nil {
-			et.AccountName = acc.Name
-		}
-		if cat != nil {
-			et.CategoryName = cat.Name
-			et.CategoryColor = cat.Color
-		}
-		result = append(result, et)
-	}
-
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, txs)
 }
 
 func (h *ExpenseHandler) CreateTransaction(c *gin.Context) {
@@ -760,6 +791,34 @@ func (h *ExpenseHandler) CreateTransaction(c *gin.Context) {
 		return
 	}
 
+	if req.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "金额必须大于 0", "code": 400})
+		return
+	}
+	if !validateExpenseType(req.Type) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的交易类型", "code": 400})
+		return
+	}
+	if !validateExpenseDate(req.Date) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "日期格式无效", "code": 400})
+		return
+	}
+
+	account, err := h.db.GetExpenseAccountForProfile(profileID, req.AccountID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "账户不存在或不属于当前档案", "code": 400})
+		return
+	}
+	category, err := h.db.GetExpenseCategoryForProfile(profileID, req.CategoryID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "分类不存在或不属于当前档案", "code": 400})
+		return
+	}
+	if category.Type != req.Type {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "分类与交易类型不匹配", "code": 400})
+		return
+	}
+
 	tx := &models.ExpenseTransaction{
 		ProfileID:  profileID,
 		AccountID:  req.AccountID,
@@ -769,10 +828,7 @@ func (h *ExpenseHandler) CreateTransaction(c *gin.Context) {
 		Date:       req.Date,
 		Remark:     req.Remark,
 		Tags:       req.Tags,
-	}
-
-	if tx.Date == "" {
-		tx.Date = time.Now().Format("2006-01-02")
+		VoiceText:  strings.TrimSpace(req.VoiceText),
 	}
 
 	if err := h.db.CreateExpenseTransaction(tx); err != nil {
@@ -781,16 +837,13 @@ func (h *ExpenseHandler) CreateTransaction(c *gin.Context) {
 	}
 
 	// Update account balance
-	account, err := h.db.GetExpenseAccount(req.AccountID)
-	if err == nil {
-		var newBalance float64
-		if req.Type == "expense" {
-			newBalance = account.Balance - req.Amount
-		} else {
-			newBalance = account.Balance + req.Amount
-		}
-		h.db.UpdateExpenseAccountBalance(req.AccountID, newBalance)
+	var newBalance float64
+	if req.Type == "expense" {
+		newBalance = account.Balance - req.Amount
+	} else {
+		newBalance = account.Balance + req.Amount
 	}
+	h.db.UpdateExpenseAccountBalance(req.AccountID, newBalance)
 
 	c.JSON(http.StatusCreated, tx)
 }
@@ -811,7 +864,7 @@ func (h *ExpenseHandler) UpdateTransaction(c *gin.Context) {
 		return
 	}
 
-	oldTx, err := h.db.GetExpenseTransaction(txID)
+	oldTx, err := h.db.GetExpenseTransactionForProfile(profileID, txID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该记录", "code": 404})
 		return
@@ -836,28 +889,57 @@ func (h *ExpenseHandler) UpdateTransaction(c *gin.Context) {
 	}
 
 	// Apply updates
-	if req.AccountID != "" {
-		tx.AccountID = req.AccountID
+	if req.AccountID != nil && *req.AccountID != "" {
+		tx.AccountID = *req.AccountID
 	}
-	if req.CategoryID != "" {
-		tx.CategoryID = req.CategoryID
+	if req.CategoryID != nil && *req.CategoryID != "" {
+		tx.CategoryID = *req.CategoryID
 	}
-	if req.Amount != 0 {
-		tx.Amount = req.Amount
+	if req.Amount != nil {
+		tx.Amount = *req.Amount
 	}
-	if req.Type != "" {
-		tx.Type = req.Type
+	if req.Type != nil && *req.Type != "" {
+		tx.Type = *req.Type
 	}
-	if req.Date != "" {
-		tx.Date = req.Date
+	if req.Date != nil && *req.Date != "" {
+		tx.Date = *req.Date
 	}
-	tx.Remark = req.Remark
-	if req.Tags != "" {
-		tx.Tags = req.Tags
+	if req.Remark != nil {
+		tx.Remark = *req.Remark
+	}
+	if req.Tags != nil {
+		tx.Tags = *req.Tags
+	}
+
+	if tx.Amount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "金额必须大于 0", "code": 400})
+		return
+	}
+	if !validateExpenseType(tx.Type) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的交易类型", "code": 400})
+		return
+	}
+	if !validateExpenseDate(tx.Date) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "日期格式无效", "code": 400})
+		return
+	}
+
+	if _, err := h.db.GetExpenseAccountForProfile(profileID, tx.AccountID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "账户不存在或不属于当前档案", "code": 400})
+		return
+	}
+	newCategory, err := h.db.GetExpenseCategoryForProfile(profileID, tx.CategoryID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "分类不存在或不属于当前档案", "code": 400})
+		return
+	}
+	if newCategory.Type != tx.Type {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "分类与交易类型不匹配", "code": 400})
+		return
 	}
 
 	// Reverse old balance change
-	oldAccount, _ := h.db.GetExpenseAccount(oldTx.AccountID)
+	oldAccount, _ := h.db.GetExpenseAccountForProfile(profileID, oldTx.AccountID)
 	if oldAccount != nil {
 		var oldBalance float64
 		if oldTx.Type == "expense" {
@@ -874,7 +956,7 @@ func (h *ExpenseHandler) UpdateTransaction(c *gin.Context) {
 	}
 
 	// Apply new balance change
-	newAccount, _ := h.db.GetExpenseAccount(tx.AccountID)
+	newAccount, _ := h.db.GetExpenseAccountForProfile(profileID, tx.AccountID)
 	if newAccount != nil {
 		var newBalance float64
 		if tx.Type == "expense" {
@@ -904,14 +986,14 @@ func (h *ExpenseHandler) DeleteTransaction(c *gin.Context) {
 		return
 	}
 
-	tx, err := h.db.GetExpenseTransaction(txID)
+	tx, err := h.db.GetExpenseTransactionForProfile(profileID, txID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该记录", "code": 404})
 		return
 	}
 
 	// Reverse balance change
-	account, _ := h.db.GetExpenseAccount(tx.AccountID)
+	account, _ := h.db.GetExpenseAccountForProfile(profileID, tx.AccountID)
 	if account != nil {
 		var newBalance float64
 		if tx.Type == "expense" {
@@ -932,6 +1014,8 @@ func (h *ExpenseHandler) GetStats(c *gin.Context) {
 	profileID := c.Param("id")
 	password := getPassword(c)
 	period := c.DefaultQuery("period", "month")
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
 
 	profile, err := h.db.GetExpenseProfile(profileID)
 	if err != nil {
@@ -944,7 +1028,13 @@ func (h *ExpenseHandler) GetStats(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.db.GetExpenseStats(profileID, period)
+	resolvedStart, resolvedEnd, _, err := resolveExpenseRange(period, startDate, endDate)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": 400})
+		return
+	}
+
+	stats, err := h.db.GetExpenseStatsByRange(profileID, resolvedStart, resolvedEnd)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取统计失败", "code": 500})
 		return
@@ -976,61 +1066,124 @@ func (h *ExpenseHandler) Analyze(c *gin.Context) {
 	period := req.Period
 	if period == "" {
 		period = "month"
+		req.Period = period
 	}
 
-	// Get stats data
-	stats, err := h.db.GetExpenseStats(profileID, period)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取数据失败", "code": 500})
+	if _, _, _, err := resolveExpenseRange(period, req.StartDate, req.EndDate); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": 400})
 		return
 	}
 
-	// Calculate date range for transactions
-	startDate, endDate := calculateDateRange(period)
-	// Get transactions for the period
+	job := ExpenseAnalyzeJob{
+		ID:        utils.GenerateHexKey(12),
+		ProfileID: profileID,
+		Status:    "queued",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	expenseAnalyzeJobs.Store(job.ID, job)
+
+	go h.runAnalyzeJob(job.ID, profileID, req)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"job_id":     job.ID,
+		"status":     job.Status,
+		"created_at": job.CreatedAt,
+	})
+}
+
+func (h *ExpenseHandler) GetAnalyzeJob(c *gin.Context) {
+	profileID := c.Param("id")
+	jobID := c.Param("jobId")
+	password := getPassword(c)
+
+	profile, err := h.db.GetExpenseProfile(profileID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该档案", "code": 404})
+		return
+	}
+
+	if password == "" || !utils.VerifyPassword(password, profile.Password) {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误", "code": 401})
+		return
+	}
+
+	jobValue, ok := expenseAnalyzeJobs.Load(jobID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到分析任务", "code": 404})
+		return
+	}
+
+	job := jobValue.(ExpenseAnalyzeJob)
+	if job.ProfileID != profileID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该分析任务", "code": 403})
+		return
+	}
+
+	c.JSON(http.StatusOK, job)
+}
+
+func (h *ExpenseHandler) runAnalyzeJob(jobID, profileID string, req AnalyzeRequest) {
+	jobValue, ok := expenseAnalyzeJobs.Load(jobID)
+	if !ok {
+		return
+	}
+	job := jobValue.(ExpenseAnalyzeJob)
+	job.Status = "running"
+	job.UpdatedAt = time.Now()
+	expenseAnalyzeJobs.Store(jobID, job)
+
+	analysis, aiEnabled, err := h.generateExpenseAnalysis(profileID, req)
+	job.UpdatedAt = time.Now()
+	job.AIEnabled = aiEnabled
+	if err != nil {
+		job.Status = "failed"
+		job.Error = err.Error()
+		expenseAnalyzeJobs.Store(jobID, job)
+		return
+	}
+
+	job.Status = "completed"
+	job.Analysis = analysis
+	expenseAnalyzeJobs.Store(jobID, job)
+}
+
+func (h *ExpenseHandler) generateExpenseAnalysis(profileID string, req AnalyzeRequest) (string, bool, error) {
+	period := req.Period
+	if period == "" {
+		period = "month"
+	}
+
+	startDate, endDate, periodLabel, err := resolveExpenseRange(period, req.StartDate, req.EndDate)
+	if err != nil {
+		return "", false, err
+	}
+
+	stats, err := h.db.GetExpenseStatsByRange(profileID, startDate, endDate)
+	if err != nil {
+		return "", false, fmt.Errorf("获取数据失败")
+	}
+
 	txs, err := h.db.GetExpenseTransactions(profileID, startDate, endDate)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取记录失败", "code": 500})
-		return
+		return "", false, fmt.Errorf("获取记录失败")
 	}
 
-	// Check if DeepSeek is configured
 	if h.cfg.DeepSeek.APIKey == "" {
-		// Return basic analysis without AI
-		c.JSON(http.StatusOK, gin.H{
-			"analysis":   getBasicAnalysis(stats, period),
-			"ai_enabled": false,
-		})
-		return
+		return getBasicAnalysis(stats, periodLabel), false, nil
 	}
 
-	// Check if there's any data to analyze
 	if stats.TransactionCount == 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"analysis":   "暂无消费记录，无法进行分析。建议先添加一些记账记录后再使用AI分析功能。",
-			"ai_enabled": true,
-		})
-		return
+		return "暂无消费记录，无法进行分析。建议先添加一些记账记录后再使用AI分析功能。", true, nil
 	}
 
-	// Prepare prompt
-	prompt := prepareAnalysisPrompt(stats, txs, period)
-
-	// Call DeepSeek API
+	prompt := prepareAnalysisPrompt(stats, txs, periodLabel, req.Focus)
 	result, err := h.callDeepSeekAPI(prompt)
 	if err != nil {
-		// API调用失败时返回基础分析
-		c.JSON(http.StatusOK, gin.H{
-			"analysis":   getBasicAnalysis(stats, period) + "\n\n⚠️ AI分析暂时不可用: " + err.Error(),
-			"ai_enabled": false,
-		})
-		return
+		return getBasicAnalysis(stats, periodLabel) + "\n\n⚠️ AI分析暂时不可用: " + err.Error(), false, nil
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"analysis":   result,
-		"ai_enabled": true,
-	})
+	return result, true, nil
 }
 
 func (h *ExpenseHandler) callDeepSeekAPI(prompt string) (string, error) {
@@ -1104,14 +1257,47 @@ func (h *ExpenseHandler) callDeepSeekAPI(prompt string) (string, error) {
 	return content, nil
 }
 
-func prepareAnalysisPrompt(stats *models.ExpenseStats, txs []*models.ExpenseTransaction, period string) string {
-	// Get recent transactions for context
+func prepareAnalysisPrompt(stats *models.ExpenseStats, txs []*models.ExpenseTransaction, periodLabel, focus string) string {
 	var recentTxStrings []string
+	var largestExpenseTxs []string
+	type txSnapshot struct {
+		Date   string
+		Type   string
+		Amount float64
+		Remark string
+	}
+	expenses := make([]txSnapshot, 0, len(txs))
 	for i, tx := range txs {
-		if i >= 20 {
+		if i < 20 {
+			recentTxStrings = append(recentTxStrings, fmt.Sprintf("%s %s %.2f %s", tx.Date, tx.Type, tx.Amount, tx.Remark))
+		}
+		if tx.Type == "expense" {
+			expenses = append(expenses, txSnapshot{
+				Date:   tx.Date,
+				Type:   tx.Type,
+				Amount: tx.Amount,
+				Remark: tx.Remark,
+			})
+		}
+	}
+	sort.Slice(expenses, func(i, j int) bool {
+		return expenses[i].Amount > expenses[j].Amount
+	})
+	for i, tx := range expenses {
+		if i >= 10 {
 			break
 		}
-		recentTxStrings = append(recentTxStrings, fmt.Sprintf("%s %s %.2f %s", tx.Date, tx.Type, tx.Amount, tx.Remark))
+		largestExpenseTxs = append(largestExpenseTxs, fmt.Sprintf("%s %.2f %s", tx.Date, tx.Amount, tx.Remark))
+	}
+
+	focusPrompt := "请优先给出总体消费结构、异常支出、预算和可执行建议。"
+	switch focus {
+	case "savings":
+		focusPrompt = "请重点找出可节省支出、可替代消费和预算压缩空间，并给出优先级。"
+	case "anomaly":
+		focusPrompt = "请重点找出异常高额、突然上升、集中发生的支出，并解释可能原因。"
+	case "category":
+		focusPrompt = "请重点分析分类结构、主要支出来源、细分消费习惯和分类优化建议。"
 	}
 
 	prompt := fmt.Sprintf(`请分析以下消费数据，给出专业的财务建议：
@@ -1125,7 +1311,19 @@ func prepareAnalysisPrompt(stats *models.ExpenseStats, txs []*models.ExpenseTran
 支出分类统计:
 %s
 
+账户分布:
+%s
+
 月度支出趋势:
+%s
+
+近期交易样本:
+%s
+
+大额支出样本:
+%s
+
+用户关注重点:
 %s
 
 请从以下几个方面进行分析：
@@ -1133,20 +1331,46 @@ func prepareAnalysisPrompt(stats *models.ExpenseStats, txs []*models.ExpenseTran
 2. 异常消费提醒 - 是否有不合理的支出
 3. 理财建议 - 如何优化支出结构
 4. 预算建议 - 建议每月支出控制在多少
+5. 输出请分段，尽量用短标题和项目符号，便于直接阅读
 
-请用中文回答，语言要自然流畅。`, period, stats.TotalIncome, stats.TotalExpense, stats.Balance, stats.TransactionCount,
+请用中文回答，语言要自然流畅。`, periodLabel, stats.TotalIncome, stats.TotalExpense, stats.Balance, stats.TransactionCount,
 		formatMap(stats.ByCategory),
-		formatMap(stats.ByMonth))
+		formatMap(stats.ByAccount),
+		formatMap(stats.ByMonth),
+		expenseFallbackText(strings.Join(recentTxStrings, "\n")),
+		expenseFallbackText(strings.Join(largestExpenseTxs, "\n")),
+		focusPrompt)
 
 	return prompt
 }
 
 func formatMap(m map[string]float64) string {
-	var parts []string
+	type pair struct {
+		Key   string
+		Value float64
+	}
+	pairs := make([]pair, 0, len(m))
 	for k, v := range m {
-		parts = append(parts, fmt.Sprintf("%s: %.2f", k, v))
+		pairs = append(pairs, pair{Key: k, Value: v})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].Value == pairs[j].Value {
+			return pairs[i].Key < pairs[j].Key
+		}
+		return pairs[i].Value > pairs[j].Value
+	})
+	var parts []string
+	for _, item := range pairs {
+		parts = append(parts, fmt.Sprintf("%s: %.2f", item.Key, item.Value))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func expenseFallbackText(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "无"
+	}
+	return value
 }
 
 // calculateDateRange calculates start and end dates based on period
@@ -1176,11 +1400,9 @@ func calculateDateRange(period string) (string, string) {
 	return startDate, endDate
 }
 
-func getBasicAnalysis(stats *models.ExpenseStats, period string) string {
-	periodCN := map[string]string{"week": "本周", "month": "本月", "year": "今年"}[period]
-
+func getBasicAnalysis(stats *models.ExpenseStats, periodLabel string) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("【%s财务概要】\n\n", periodCN))
+	sb.WriteString(fmt.Sprintf("【%s财务概要】\n\n", periodLabel))
 	sb.WriteString(fmt.Sprintf("收入: %.2f 元\n", stats.TotalIncome))
 	sb.WriteString(fmt.Sprintf("支出: %.2f 元\n", stats.TotalExpense))
 	sb.WriteString(fmt.Sprintf("结余: %.2f 元\n\n", stats.Balance))

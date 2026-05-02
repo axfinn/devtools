@@ -27,6 +27,7 @@
         <div class="hero-actions">
           <el-button type="primary" @click="copyText(currentPageURL)">复制页面链接</el-button>
           <el-button @click="copyText(prettyPayload)">复制原始结果 JSON</el-button>
+          <el-button @click="$router.push('/gallery')">浏览画廊</el-button>
         </div>
       </section>
 

@@ -207,6 +207,59 @@ func (h *AIGatewayHandler) GetMiniMaxResultShareAsset(c *gin.Context) {
 	http.ServeContent(c.Writer, c.Request, asset.Filename, info.ModTime(), file)
 }
 
+// PublicListMiniMaxResultShares returns active shares without authentication.
+// GET /api/minimax/result-shares/public/list
+func (h *AIGatewayHandler) PublicListMiniMaxResultShares(c *gin.Context) {
+	origin := minimaxPublicOrigin(c)
+	limit := boundedInt(c.Query("limit"), 50, 1, 200)
+	offset := boundedInt(c.Query("offset"), 0, 0, 100000)
+	resultType := strings.TrimSpace(c.Query("type"))
+	keyword := strings.TrimSpace(c.Query("keyword"))
+
+	items, err := h.db.ListMiniMaxResultShares("active", keyword, limit, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询分享列表失败", "code": 500})
+		return
+	}
+
+	// Filter by result_type client-side since DB query doesn't support type filter
+	filtered := make([]gin.H, 0, len(items))
+	for _, item := range items {
+		if resultType != "" && item.ResultType != resultType {
+			continue
+		}
+		assets, _ := models.ParseMiniMaxResultShareAssets(item.AssetsJSON)
+		assetList := make([]gin.H, 0, len(assets))
+		for _, a := range assets {
+			assetPath := fmt.Sprintf("/api/minimax/result-shares/%s/assets/%s", item.ID, a.ID)
+			assetList = append(assetList, gin.H{
+				"id":           a.ID,
+				"kind":         a.Kind,
+				"filename":     a.Filename,
+				"content_type": a.ContentType,
+				"size_bytes":   a.SizeBytes,
+				"asset_url":    origin + assetPath,
+			})
+		}
+		filtered = append(filtered, gin.H{
+			"id":          item.ID,
+			"title":       item.Title,
+			"summary":     item.Summary,
+			"result_type": item.ResultType,
+			"model":       item.Model,
+			"assets":      assetList,
+			"created_at":  item.CreatedAt,
+			"share_url":   fmt.Sprintf("%s/minimax/share/%s", origin, item.ID),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"items":  filtered,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
 func (h *AIGatewayHandler) AdminListMiniMaxResultShares(c *gin.Context) {
 	if !h.requireSuperAdmin(c, "") {
 		return

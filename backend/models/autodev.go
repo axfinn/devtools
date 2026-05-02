@@ -3,7 +3,6 @@ package models
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
 	"strings"
 	"time"
 )
@@ -15,7 +14,7 @@ func init() {
 // Task type constants
 const (
 	TaskTypeDevelop = "develop"
-	TaskTypeLoop    = "loop"   // --loop 无限迭代模式
+	TaskTypeLoop    = "loop" // --loop 无限迭代模式
 	TaskTypeAsk     = "ask"
 	TaskTypeExport  = "export"
 	TaskTypeExtend  = "extend"
@@ -133,20 +132,22 @@ func (db *DB) migrateAutoDevTasksTable() error {
 	for rows.Next() {
 		var cid int
 		var name, colType string
-		var notnull, dfltValue, pk int
+		var notnull, pk int
+		var dfltValue sql.NullString
 		if err := rows.Scan(&cid, &name, &colType, &notnull, &dfltValue, &pk); err != nil {
-			continue
+			return err
 		}
 		existingColumns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
 	}
 
 	// Add missing columns
 	for _, col := range requiredColumns {
 		if !existingColumns[col.name] {
-			_, err := db.conn.Exec(col.expr)
-			if err != nil {
-				// Log but don't fail - column might already exist in some SQLite versions
-				log.Printf("[AutoDev] Migration: attempted to add column %s, error: %v", col.name, err)
+			if _, err := db.conn.Exec(col.expr); err != nil {
+				return err
 			}
 		}
 	}

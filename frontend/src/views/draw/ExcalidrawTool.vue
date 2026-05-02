@@ -902,7 +902,7 @@ const adminCurrentPage = ref(1)
 const adminPageSize = 10
 
 onMounted(() => {
-  const savedPwd = sessionStorage.getItem('excalidraw_admin_pwd')
+  const savedPwd = localStorage.getItem('excalidraw_admin_pwd')
   if (savedPwd) {
     isAdmin.value = true
   }
@@ -932,7 +932,7 @@ const verifyAdminPassword = async () => {
   try {
     const res = await fetch(`/api/excalidraw/admin/list?admin_password=${encodeURIComponent(adminPassword.value)}`)
     if (res.ok) {
-      sessionStorage.setItem('excalidraw_admin_pwd', adminPassword.value)
+      localStorage.setItem('excalidraw_admin_pwd', adminPassword.value)
       isAdmin.value = true
       showAdminLogin.value = false
       const data = await res.json()
@@ -955,7 +955,7 @@ const openAdminPanel = async () => {
 }
 
 const loadAllDrawings = async () => {
-  const pwd = sessionStorage.getItem('excalidraw_admin_pwd')
+  const pwd = localStorage.getItem('excalidraw_admin_pwd')
   if (!pwd) {
     isAdmin.value = false
     showAdminPanel.value = false
@@ -970,7 +970,7 @@ const loadAllDrawings = async () => {
       const data = await res.json()
       allDrawings.value = data.list || []
     } else if (res.status === 401 || res.status === 403) {
-      sessionStorage.removeItem('excalidraw_admin_pwd')
+      localStorage.removeItem('excalidraw_admin_pwd')
       isAdmin.value = false
       showAdminPanel.value = false
       ElMessage.error('密码已失效，请重新登录')
@@ -984,7 +984,7 @@ const loadAllDrawings = async () => {
 }
 
 const logoutAdmin = () => {
-  sessionStorage.removeItem('excalidraw_admin_pwd')
+  localStorage.removeItem('excalidraw_admin_pwd')
   isAdmin.value = false
   showAdminPanel.value = false
   adminPassword.value = ''
@@ -993,7 +993,7 @@ const logoutAdmin = () => {
 }
 
 const loadAdminDrawing = async (drawing) => {
-  const pwd = sessionStorage.getItem('excalidraw_admin_pwd')
+  const pwd = localStorage.getItem('excalidraw_admin_pwd')
   try {
     const res = await fetch(`/api/excalidraw/admin/${drawing.id}?admin_password=${encodeURIComponent(pwd)}`)
     if (res.ok) {
@@ -1030,7 +1030,7 @@ const setPermanent = async (drawing) => {
     return
   }
 
-  const pwd = sessionStorage.getItem('excalidraw_admin_pwd')
+  const pwd = localStorage.getItem('excalidraw_admin_pwd')
   try {
     const res = await fetch(`/api/excalidraw/${drawing.id}`, {
       method: 'PUT',
@@ -1063,7 +1063,7 @@ const deleteAdminDrawing = async (drawing) => {
     return
   }
 
-  const pwd = sessionStorage.getItem('excalidraw_admin_pwd')
+  const pwd = localStorage.getItem('excalidraw_admin_pwd')
   try {
     const res = await fetch(`/api/excalidraw/admin/${drawing.id}?admin_password=${encodeURIComponent(pwd)}`, {
       method: 'DELETE'

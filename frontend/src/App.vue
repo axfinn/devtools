@@ -169,14 +169,75 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- 全局媒体播放器栏 (悬浮，跨页面持久) -->
+    <Teleport to="body">
+      <Transition name="pb-slide">
+        <div v-if="playerState.currentIndex >= 0" class="player-bar">
+          <!-- Progress thin line at top -->
+          <div class="pb-progress-track" @click="seekBar">
+            <div class="pb-progress-fill" :style="{ width: progressPercent + '%' }" />
+          </div>
+
+          <div class="pb-inner">
+            <!-- Track info -->
+            <div class="pb-info" @click="goToGallery">
+              <div class="pb-visual">
+                <div class="pb-waveform">
+                  <span v-for="i in 4" :key="i" class="pb-bar" :class="{ active: playerState.isPlaying }" :style="{ animationDelay: `${i * 0.15}s` }" />
+                </div>
+              </div>
+              <div class="pb-meta">
+                <span class="pb-title">{{ currentTrack?.title || '未命名' }}</span>
+                <span class="pb-type">{{ currentTrack?.result_type === 'audio' ? '音乐' : '视频' }}</span>
+              </div>
+            </div>
+
+            <!-- Transport controls -->
+            <div class="pb-controls">
+              <button class="pb-btn" :class="{ active: playerState.shuffleMode }" title="随机播放" @click="player.toggleShuffle()">
+                <el-icon :size="16"><Rank /></el-icon>
+              </button>
+              <button class="pb-btn" title="上一首" @click="player.skipPrev()">
+                <el-icon :size="20"><ArrowLeftBold /></el-icon>
+              </button>
+              <button class="pb-btn pb-btn-play" title="播放/暂停" @click="player.togglePlay()">
+                <el-icon :size="22"><component :is="playerState.isPlaying ? 'VideoPause' : 'VideoPlay'" /></el-icon>
+              </button>
+              <button class="pb-btn" title="下一首" @click="player.skipNext()">
+                <el-icon :size="20"><ArrowRightBold /></el-icon>
+              </button>
+              <button
+                class="pb-btn"
+                :class="{ active: playerState.loopMode !== 'off' }"
+                title="循环模式"
+                @click="cycleLoop"
+              >
+                <el-icon :size="16"><RefreshRight /></el-icon>
+                <span v-if="playerState.loopMode === 'one'" class="pb-loop-badge">1</span>
+              </button>
+            </div>
+
+            <!-- Time + close -->
+            <div class="pb-right">
+              <span class="pb-time">{{ fmtTime(playerState.currentTime) }} / {{ fmtTime(playerState.duration) }}</span>
+              <button class="pb-btn pb-btn-close" title="停止播放" @click="player.stop()">
+                <el-icon :size="16"><Close /></el-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </el-container>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tools } from '@element-plus/icons-vue'
+import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tools, VideoPlay, VideoPause, ArrowLeftBold, ArrowRightBold, RefreshRight, Rank, Close } from '@element-plus/icons-vue'
 import { useTheme } from './composables/useTheme'
+import { useMediaPlayer } from './composables/useMediaPlayer'
 
 const router = useRouter()
 const route = useRoute()
@@ -185,6 +246,37 @@ const showDrawer = ref(false)
 const isMobile = ref(false)
 const showDonateDialog = ref(false)
 const hiddenRoutes = ref([])
+
+// Global media player
+const player = useMediaPlayer()
+const playerState = player.state
+const currentTrack = computed(() => player.currentTrack())
+const progressPercent = computed(() => {
+  if (!playerState.duration) return 0
+  return Math.min((playerState.currentTime / playerState.duration) * 100, 100)
+})
+
+function cycleLoop() {
+  const modes = ['off', 'all', 'one']
+  const idx = modes.indexOf(playerState.loopMode)
+  player.setLoopMode(modes[(idx + 1) % 3])
+}
+
+function seekBar(e) {
+  const rect = e.currentTarget.getBoundingClientRect()
+  const pct = (e.clientX - rect.left) / rect.width
+  player.seek(pct * playerState.duration)
+}
+
+function goToGallery() {
+  if (route.path !== '/gallery') {
+    router.push('/gallery')
+  }
+}
+
+function fmtTime(s) {
+  return player.fmtTime(s)
+}
 
 // 启动时拉取隐藏路由配置
 fetch('/api/console/settings').then(r => r.json()).then(d => {
@@ -212,11 +304,17 @@ const menuRoutes = computed(() => {
   )
 })
 
-// 侧边栏搜索
+// 侧边栏搜索（带防抖）
 const sidebarSearch = ref('')
+const debouncedSearch = ref('')
+let searchTimer = null
+watch(sidebarSearch, (val) => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { debouncedSearch.value = val }, 300)
+})
 const filteredMenuRoutes = computed(() => {
-  if (!sidebarSearch.value) return menuRoutes.value
-  const keyword = sidebarSearch.value.toLowerCase()
+  if (!debouncedSearch.value) return menuRoutes.value
+  const keyword = debouncedSearch.value.toLowerCase()
   return menuRoutes.value.filter(route =>
     route.meta?.title?.toLowerCase().includes(keyword) ||
     route.meta?.description?.toLowerCase().includes(keyword)
@@ -271,6 +369,7 @@ onMounted(() => {
   onUnmounted(() => {
     window.removeEventListener('resize', checkMobile)
     if (cleanup) cleanup()
+    clearTimeout(searchTimer)
   })
 })
 
@@ -296,6 +395,7 @@ const themeModeName = computed(() => {
 <style scoped>
 .app-container {
   height: 100vh;
+  height: 100dvh;
   background-color: var(--bg-base);
   overflow: hidden;
   transition: background-color 0.3s;
@@ -307,6 +407,7 @@ const themeModeName = computed(() => {
 
 .app-container.fullscreen-mode .main-content {
   height: 100vh;
+  height: 100dvh;
   padding: 0;
 }
 
@@ -465,6 +566,7 @@ const themeModeName = computed(() => {
 /* 侧边栏内容 */
 .sidebar-content {
   height: calc(100vh - 100px);
+  height: calc(100dvh - 100px);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -518,6 +620,7 @@ const themeModeName = computed(() => {
 .sidebar-menu {
   border-right: none;
   height: calc(100vh - 60px);
+  height: calc(100dvh - 60px);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -585,6 +688,7 @@ const themeModeName = computed(() => {
   padding: 20px;
   color: var(--text-primary);
   height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   flex: 1;
   min-width: 0;
@@ -597,6 +701,7 @@ const themeModeName = computed(() => {
   padding-bottom: 100px; /* 为底部留出足够空间 */
   height: auto; /* 改为自动高度 */
   min-height: calc(100vh - 56px); /* 最小高度减去头部 */
+  min-height: calc(100dvh - 56px);
 }
 
 /* 页面底部 Footer */
@@ -693,6 +798,7 @@ const themeModeName = computed(() => {
 @media (min-width: 768px) and (max-width: 1024px) {
   .sidebar-menu {
     height: calc(100vh - 60px);
+    height: calc(100dvh - 60px);
   }
 }
 
@@ -711,6 +817,162 @@ const themeModeName = computed(() => {
 </style>
 
 <style>
+/* ===== 全局媒体播放器栏 (持久化悬浮) ===== */
+.player-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 10000;
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(24px) saturate(1.5);
+  border-top: 1px solid rgba(56, 189, 248, 0.25);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+
+.pb-progress-track {
+  position: absolute;
+  top: -3px; left: 0; right: 0;
+  height: 3px;
+  background: rgba(255,255,255,0.08);
+  cursor: pointer;
+  transition: height 0.15s;
+}
+.pb-progress-track:hover { height: 6px; top: -6px; }
+.pb-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #6366f1, #a78bfa);
+  border-radius: 0 2px 2px 0;
+  transition: width 0.15s linear;
+}
+
+.pb-inner {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  padding: 0 16px;
+  gap: 14px;
+}
+
+.pb-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+.pb-visual {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.pb-waveform { display: flex; align-items: flex-end; gap: 3px; height: 22px; }
+.pb-bar {
+  width: 4px;
+  border-radius: 2px;
+  background: rgba(56, 189, 248, 0.4);
+  height: 6px;
+  transition: background 0.2s;
+}
+.pb-bar.active {
+  animation: pbWave 0.7s ease-in-out infinite alternate;
+  background: linear-gradient(180deg, #38bdf8, #6366f1);
+}
+@keyframes pbWave {
+  0% { height: 6px; }
+  100% { height: 22px; }
+}
+.pb-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.pb-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pb-type {
+  font-size: 11px;
+  color: #38bdf8;
+}
+
+.pb-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.pb-btn {
+  width: 36px; height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  position: relative;
+}
+.pb-btn:hover { background: rgba(148, 163, 184, 0.12); color: #e2e8f0; }
+.pb-btn.active { color: #38bdf8; }
+.pb-btn-play {
+  width: 42px; height: 42px;
+  background: #fff;
+  color: #0f172a;
+}
+.pb-btn-play:hover { background: #e2e8f0; color: #0f172a; transform: scale(1.05); }
+.pb-btn-close:hover { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+.pb-loop-badge {
+  position: absolute;
+  top: 2px; right: 2px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.pb-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.pb-time {
+  font-size: 11px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  min-width: 80px;
+  text-align: right;
+}
+
+/* Player bar slide transition */
+.pb-slide-enter-active { transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.pb-slide-leave-active { transition: all 0.25s ease-in; }
+.pb-slide-enter-from,
+.pb-slide-leave-to { transform: translateY(100%); opacity: 0; }
+
+/* Push up player bar on mobile for safe area */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .player-bar { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+@media (max-width: 768px) {
+  .pb-inner { padding: 0 10px; gap: 8px; height: 52px; }
+  .pb-time { display: none; }
+  .pb-title { font-size: 12px; }
+  .pb-btn { width: 32px; height: 32px; }
+  .pb-btn-play { width: 38px; height: 38px; }
+  .pb-visual { display: none; }
+}
+
 /* 全局移动端样式 */
 @media (max-width: 768px) {
   /* 抽屉样式 */

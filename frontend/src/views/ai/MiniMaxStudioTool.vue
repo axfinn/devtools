@@ -11,6 +11,7 @@
           <span>支持 `AI Gateway API Key`</span>
           <span>也支持 `超级管理员密码` 直接调试</span>
           <span>`coding-plan-vlm / search` 走图像理解能力入口</span>
+          <span><el-button type="primary" size="small" @click="$router.push('/gallery')">浏览媒体画廊</el-button></span>
         </div>
       </div>
 
@@ -603,7 +604,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
 import ImageUnderstandingTool from './ImageUnderstandingTool.vue'
@@ -614,8 +615,8 @@ const API_KEY_STORAGE = 'minimax_studio_api_key'
 const pageOrigin = window.location.origin
 
 const activeTab = ref('text')
-const superAdminPassword = ref(sessionStorage.getItem(SUPER_ADMIN_KEY) || '')
-const apiKey = ref(sessionStorage.getItem(API_KEY_STORAGE) || '')
+const superAdminPassword = ref(localStorage.getItem(SUPER_ADMIN_KEY) || '')
+const apiKey = ref(localStorage.getItem(API_KEY_STORAGE) || '')
 
 const textLoading = ref(false)
 const textRaw = ref(null)
@@ -841,10 +842,21 @@ onBeforeUnmount(() => {
   clearMediaPoll()
 })
 
+onDeactivated(() => {
+  clearMediaPoll()
+})
+
+onActivated(() => {
+  if (currentMediaTask.value && mediaForm.value.autoPoll) {
+    const s = currentMediaTask.value.status
+    if (s === 'pending' || s === 'running') scheduleMediaPoll()
+  }
+})
+
 function saveCredentials() {
-  sessionStorage.setItem(SUPER_ADMIN_KEY, superAdminPassword.value)
-  sessionStorage.setItem(API_KEY_STORAGE, apiKey.value)
-  ElMessage.success('MiniMax Studio 凭证已保存到当前会话')
+  localStorage.setItem(SUPER_ADMIN_KEY, superAdminPassword.value)
+  localStorage.setItem(API_KEY_STORAGE, apiKey.value)
+  ElMessage.success('MiniMax Studio 凭证已保存')
   if (hasCredential.value) {
     void loadMediaTasks()
   }
@@ -856,11 +868,11 @@ function saveCredentials() {
 function clearCredentials() {
   superAdminPassword.value = ''
   apiKey.value = ''
-  sessionStorage.removeItem(SUPER_ADMIN_KEY)
-  sessionStorage.removeItem(API_KEY_STORAGE)
+  localStorage.removeItem(SUPER_ADMIN_KEY)
+  localStorage.removeItem(API_KEY_STORAGE)
   adminShares.value = []
   adminEditingShare.value = null
-  ElMessage.success('已清空当前会话凭证')
+  ElMessage.success('已清空凭证')
 }
 
 function requireCredential() {
@@ -1074,8 +1086,9 @@ async function pollCurrentMediaTask() {
 
 function scheduleMediaPoll() {
   clearMediaPoll()
+  if (document.hidden) return
   mediaPollTimer.value = window.setTimeout(async () => {
-    if (activeTab.value !== 'media' || !currentMediaTask.value?.task_id) return
+    if (document.hidden || activeTab.value !== 'media' || !currentMediaTask.value?.task_id) return
     await pollCurrentMediaTask()
   }, 6000)
 }

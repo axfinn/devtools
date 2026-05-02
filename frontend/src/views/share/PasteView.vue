@@ -382,6 +382,7 @@ const fetchPaste = async (pwd = '') => {
       if (data.has_password) {
         needPassword.value = true
         passwordError.value = pwd ? '密码错误' : ''
+        if (pwd) localStorage.removeItem(`paste_password_${id}`)
       } else {
         error.value = data.error || '访问被拒绝'
       }
@@ -390,6 +391,7 @@ const fetchPaste = async (pwd = '') => {
     } else {
       paste.value = data
       needPassword.value = false
+      if (pwd) localStorage.setItem(`paste_password_${id}`, pwd)
     }
   } catch (e) {
     error.value = '网络错误，请稍后重试'
@@ -772,7 +774,10 @@ const viewArchive = (file) => {
 }
 
 onMounted(() => {
-  fetchPaste().then(() => {
+  const id = route.params.id
+  const savedPassword = id ? localStorage.getItem(`paste_password_${id}`) : null
+  if (savedPassword) password.value = savedPassword
+  fetchPaste(savedPassword || '').then(() => {
     // 获取代码统计信息
     if (paste.value && paste.value.content_type === 'code') {
       fetchCodeStats()

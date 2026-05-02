@@ -221,6 +221,18 @@
             <div v-else class="preview-generic">
               <el-icon style="font-size:80px;color:#c0c4cc"><Document /></el-icon>
               <p style="color:#909399;margin-top:12px">该文件类型暂不支持预览</p>
+              <el-button
+                v-if="!info.disable_download"
+                type="primary"
+                size="large"
+                :href="downloadUrl"
+                tag="a"
+                download
+                style="margin-top: 16px;"
+              >
+                <el-icon><Download /></el-icon>
+                直接下载原文件
+              </el-button>
             </div>
           </div>
         </div>

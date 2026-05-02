@@ -37,6 +37,7 @@ type routeHandlers struct {
 	proxyHandler              *handlers.ProxyHandler
 	hermesHandler             *handlers.HermesHandler
 	edgeTTSHandler            *handlers.EdgeTTSHandler
+	voiceMemoHandler          *handlers.VoiceMemoHandler
 	gameHandler               *handlers.GameHandler
 }
 
@@ -133,24 +134,23 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	// 游戏 API
 	game := api.Group("/game")
 	{
-		game.GET("/info", h.gameHandler.GetGameInfo)
-		// 井字棋
-		game.POST("/tictactoe/init", h.gameHandler.InitTicTacToe)
-		game.POST("/tictactoe/move", h.gameHandler.MoveTicTacToe)
-		// 五子棋
-		game.POST("/gomoku/init", h.gameHandler.InitGomoku)
-		game.POST("/gomoku/move", h.gameHandler.MoveGomoku)
-		// 猜数字
-		game.POST("/guessnumber/init", h.gameHandler.InitGuessNumber)
-		game.POST("/guessnumber/guess", h.gameHandler.Guess)
-		// 石头剪刀布
-		game.POST("/rps/init", h.gameHandler.InitRPS)
-		game.POST("/rps/play", h.gameHandler.PlayRPS)
-		// 色子比大小
-		game.POST("/dice/init", h.gameHandler.InitDice)
-		game.POST("/dice/roll", h.gameHandler.RollDice)
-		// AI 对话
-		game.POST("/ai-chat", h.gameHandler.AIChat)
+		game.POST("/arcade/rooms", h.gameHandler.CreateArcadeRoom)
+		game.POST("/arcade/rooms/:id/join", h.gameHandler.JoinArcadeRoom)
+		game.GET("/arcade/rooms/:id", h.gameHandler.GetArcadeRoom)
+		game.GET("/arcade/ws/:id", h.gameHandler.ArcadeWS)
+	}
+
+	// 语音备忘录 API
+	voicememo := api.Group("/voicememo")
+	{
+		voicememo.POST("/upload", h.voiceMemoHandler.Upload)
+		voicememo.GET("/list", h.voiceMemoHandler.List)
+		voicememo.GET("/:id/audio", h.voiceMemoHandler.ServeMemoAudio)
+		voicememo.POST("/:id/transcribe", h.voiceMemoHandler.Transcribe)
+		voicememo.POST("/:id/planner-task", h.voiceMemoHandler.CreatePlannerTask)
+		voicememo.PUT("/:id", h.voiceMemoHandler.Update)
+		voicememo.GET("/:id", h.voiceMemoHandler.Get)
+		voicememo.DELETE("/:id", h.voiceMemoHandler.Delete)
 	}
 
 	// 短链 API
@@ -240,6 +240,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		expense.GET("/:id/stats", h.expenseHandler.GetStats)
 		// AI Analyze
 		expense.POST("/:id/analyze", h.expenseHandler.Analyze)
+		expense.GET("/:id/analyze/:jobId", h.expenseHandler.GetAnalyzeJob)
 		// AI Voice Parse
 		expense.POST("/:id/voice-parse", h.expenseHandler.VoiceParse)
 	}
@@ -435,7 +436,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		nfsshare.GET("/:id/info", h.nfsShareHandler.Info)                       // 分享信息（公开，不消耗次数）
 		nfsshare.GET("/:id/stream", h.nfsShareHandler.Stream)                   // 原生视频流（公开，Range 支持）
 		nfsshare.GET("/:id/qualities", h.nfsShareHandler.HLSQualities)          // 可用清晰度列表（公开）
-		nfsshare.GET("/:id/hls/:quality/:segment", func(c *gin.Context) {     // HLS 转码播放（公开）
+		nfsshare.GET("/:id/hls/:quality/:segment", func(c *gin.Context) {       // HLS 转码播放（公开）
 			if c.Param("segment") == "index.m3u8" {
 				h.nfsShareHandler.HLSPlaylist(c)
 			} else {
@@ -517,12 +518,12 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		aigw.POST("/v1/media/generations", h.aiGatewayHandler.MediaGenerations)
 		aigw.GET("/v1/media/tasks", h.aiGatewayHandler.ListMediaTasks)
 		aigw.GET("/v1/media/tasks/:id", h.aiGatewayHandler.GetMediaTask)
-			// 图像理解（需 API Key 认证，scope: media）
-			aigw.POST("/v1/image/understanding", h.aiGatewayHandler.ImageUnderstanding)
-			aigw.POST("/v1/image/understanding/file", h.aiGatewayHandler.ImageUnderstandingFile)
-			aigw.POST("/v1/image/understanding/sse", h.aiGatewayHandler.ImageUnderstandingSSE)
-			aigw.POST("/v1/image/understanding/sse/file", h.aiGatewayHandler.ImageUnderstandingSSEFile)
-			aigw.GET("/v1/image/understanding/stream/:id", h.aiGatewayHandler.ImageUnderstandingStream)
+		// 图像理解（需 API Key 认证，scope: media）
+		aigw.POST("/v1/image/understanding", h.aiGatewayHandler.ImageUnderstanding)
+		aigw.POST("/v1/image/understanding/file", h.aiGatewayHandler.ImageUnderstandingFile)
+		aigw.POST("/v1/image/understanding/sse", h.aiGatewayHandler.ImageUnderstandingSSE)
+		aigw.POST("/v1/image/understanding/sse/file", h.aiGatewayHandler.ImageUnderstandingSSEFile)
+		aigw.GET("/v1/image/understanding/stream/:id", h.aiGatewayHandler.ImageUnderstandingStream)
 	}
 
 	// 内部免认证聊天接口（同域浏览器调用）
@@ -554,6 +555,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	// MiniMax 结果分享
 	api.GET("/minimax/result-shares/docs", h.aiGatewayHandler.GetMiniMaxResultShareDocs)
 	api.POST("/minimax/result-shares", h.aiGatewayHandler.CreateMiniMaxResultShare)
+	api.GET("/minimax/result-shares/public/list", h.aiGatewayHandler.PublicListMiniMaxResultShares)
 	api.GET("/minimax/result-shares/:id", h.aiGatewayHandler.GetMiniMaxResultShare)
 	api.GET("/minimax/result-shares/:id/assets/:assetId", h.aiGatewayHandler.GetMiniMaxResultShareAsset)
 	api.GET("/minimax/result-shares/admin/list", h.aiGatewayHandler.AdminListMiniMaxResultShares)

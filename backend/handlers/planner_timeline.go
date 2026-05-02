@@ -266,10 +266,11 @@ func sortPlannerEventItems(items []*plannerTimelineItem, now time.Time) {
 
 func plannerCommentPreview(value string) string {
 	value = strings.TrimSpace(strings.ReplaceAll(value, "\n", " "))
-	if len(value) <= 48 {
+	runes := []rune(value)
+	if len(runes) <= 48 {
 		return value
 	}
-	return value[:48] + "..."
+	return string(runes[:48]) + "..."
 }
 
 func applyPlannerCommentSummary(item *plannerTimelineItem, summaries map[string]*models.PlannerTaskCommentSummary) {

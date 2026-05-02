@@ -918,7 +918,7 @@ const adminPageSize = 10
 
 // Check if already logged in
 onMounted(() => {
-  const savedPwd = sessionStorage.getItem('mdshare_admin_pwd')
+  const savedPwd = localStorage.getItem('mdshare_admin_pwd')
   if (savedPwd) {
     isAdmin.value = true
   }
@@ -948,7 +948,7 @@ const verifyAdminPassword = async () => {
   try {
     const res = await fetch(`/api/mdshare/admin/list?admin_password=${encodeURIComponent(adminPassword.value)}`)
     if (res.ok) {
-      sessionStorage.setItem('mdshare_admin_pwd', adminPassword.value)
+      localStorage.setItem('mdshare_admin_pwd', adminPassword.value)
       isAdmin.value = true
       showAdminLogin.value = false
       const data = await res.json()
@@ -970,7 +970,7 @@ const openAdminPanel = async () => {
 }
 
 const loadAllShares = async () => {
-  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
+  const pwd = localStorage.getItem('mdshare_admin_pwd')
   if (!pwd) {
     isAdmin.value = false
     showAdminPanel.value = false
@@ -985,7 +985,7 @@ const loadAllShares = async () => {
       const data = await res.json()
       allShares.value = data.list || []
     } else if (res.status === 401 || res.status === 403) {
-      sessionStorage.removeItem('mdshare_admin_pwd')
+      localStorage.removeItem('mdshare_admin_pwd')
       isAdmin.value = false
       showAdminPanel.value = false
       ElMessage.error('密码已失效，请重新登录')
@@ -998,7 +998,7 @@ const loadAllShares = async () => {
 }
 
 const logoutAdmin = () => {
-  sessionStorage.removeItem('mdshare_admin_pwd')
+  localStorage.removeItem('mdshare_admin_pwd')
   isAdmin.value = false
   showAdminPanel.value = false
   adminPassword.value = ''
@@ -1012,7 +1012,7 @@ const adminPreviewShare = ref(null)
 const adminPreviewHtml = ref('')
 
 const previewShareAdmin = async (share) => {
-  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
+  const pwd = localStorage.getItem('mdshare_admin_pwd')
   try {
     const res = await fetch(`/api/mdshare/admin/${share.id}?admin_password=${encodeURIComponent(pwd)}`)
     if (res.ok) {
@@ -1048,7 +1048,7 @@ const deleteShareAdmin = async (share) => {
     return
   }
 
-  const pwd = sessionStorage.getItem('mdshare_admin_pwd')
+  const pwd = localStorage.getItem('mdshare_admin_pwd')
   try {
     const res = await fetch(`/api/mdshare/admin/${share.id}?admin_password=${encodeURIComponent(pwd)}`, {
       method: 'DELETE'

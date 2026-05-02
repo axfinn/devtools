@@ -438,7 +438,7 @@ func (h *AIGatewayHandler) TTSWithVoiceClone(c *gin.Context) {
 	start := time.Now()
 	upstreamURL := strings.TrimRight(baseURL, "/") + "/v1/t2a_v2"
 
-	respBody, _, err := h.doRawRequestWithResp(upstreamURL, apiKey, "POST", upstreamBytes, c.Request.Header)
+	respBody, _, err := h.doMediaRequestWithResp(upstreamURL, apiKey, "POST", upstreamBytes, c.Request.Header)
 	if err != nil {
 		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/voice-cloning/tts", "media", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})

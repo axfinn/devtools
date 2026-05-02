@@ -83,7 +83,7 @@ async function login() {
       ElMessage.error('密码错误')
       return
     }
-    sessionStorage.setItem(SESSION_KEY, passwordInput.value)
+    localStorage.setItem(SESSION_KEY, passwordInput.value)
     isAdmin.value = true
     await loadSettings()
   } catch {
@@ -102,7 +102,7 @@ async function loadSettings() {
 
 async function save() {
   saving.value = true
-  const pass = sessionStorage.getItem(SESSION_KEY)
+  const pass = localStorage.getItem(SESSION_KEY)
   const hidden = Object.keys(hiddenSet).filter(k => hiddenSet[k])
   try {
     const res = await fetch(`/api/console/settings?admin_password=${encodeURIComponent(pass)}`, {
@@ -120,13 +120,13 @@ async function save() {
 }
 
 function logout() {
-  sessionStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SESSION_KEY)
   isAdmin.value = false
   passwordInput.value = ''
 }
 
 onMounted(() => {
-  const saved = sessionStorage.getItem(SESSION_KEY)
+  const saved = localStorage.getItem(SESSION_KEY)
   if (saved) {
     passwordInput.value = saved
     login()

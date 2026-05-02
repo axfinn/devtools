@@ -115,6 +115,13 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			// 扫描事项提醒
 			plannerHandler.ProcessDueReminders()
 			// 清理过期/耗尽的 NFS 分享
+
+	// 清理过期语音备忘录（草稿14天未处理 + 已删除7天）
+	vmCount, err := db.CleanExpiredVoiceMemos()
+	if err == nil && vmCount > 0 {
+		log.Printf("已清理 %d 条过期语音备忘", vmCount)
+	}
+
 			nfsCount, err := db.CleanExpiredNFSShares()
 			if err == nil && nfsCount > 0 {
 				log.Printf("已清理 %d 个过期 NFS 分享", nfsCount)

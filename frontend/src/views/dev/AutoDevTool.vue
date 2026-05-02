@@ -1414,7 +1414,7 @@ const passwordInput = ref('')
 const loggingIn = ref(false)
 let savedPassword = ''
 
-function getPassword() { return sessionStorage.getItem(SESSION_KEY) || '' }
+function getPassword() { return localStorage.getItem(SESSION_KEY) || '' }
 
 async function login() {
   if (!passwordInput.value.trim()) return
@@ -1426,7 +1426,7 @@ async function login() {
       body: JSON.stringify({ password: passwordInput.value })
     })
     if (res.ok) {
-      sessionStorage.setItem(SESSION_KEY, passwordInput.value)
+      localStorage.setItem(SESSION_KEY, passwordInput.value)
       savedPassword = passwordInput.value
       authenticated.value = true
       loadTasks()
@@ -1438,7 +1438,7 @@ async function login() {
 }
 
 function logout() {
-  sessionStorage.removeItem(SESSION_KEY)
+  localStorage.removeItem(SESSION_KEY)
   authenticated.value = false
   passwordInput.value = ''
   savedPassword = ''

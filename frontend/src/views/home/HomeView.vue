@@ -100,7 +100,10 @@ const validTools = computed(() =>
 
 // 常用工具
 const shortcutTools = computed(() =>
-  validTools.value.filter(t => t.meta?.shortcut).slice(0, 6)
+  validTools.value
+    .filter(t => t.meta?.shortcut)
+    .sort((a, b) => (b.meta?.shortcutPriority || 0) - (a.meta?.shortcutPriority || 0))
+    .slice(0, 6)
 )
 
 // 搜索结果

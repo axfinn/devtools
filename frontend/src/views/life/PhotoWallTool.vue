@@ -317,7 +317,7 @@ const editForm = ref({
 })
 
 const extendDays = ref(90)
-const adminPassword = ref(sessionStorage.getItem(ADMIN_KEY) || '')
+const adminPassword = ref(localStorage.getItem(ADMIN_KEY) || '')
 const adminLoading = ref(false)
 const adminProfiles = ref([])
 const adminPreview = ref(null)
@@ -695,7 +695,7 @@ async function loadAdminList() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || '加载失败')
     adminProfiles.value = data.profiles || []
-    sessionStorage.setItem(ADMIN_KEY, adminPassword.value)
+    localStorage.setItem(ADMIN_KEY, adminPassword.value)
   } catch (error) {
     ElMessage.error(error.message || '加载失败')
   } finally {

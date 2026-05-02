@@ -135,7 +135,7 @@ func (h *AIGatewayHandler) performMiniMaxMusicRequest(apiKey, url string, body [
 		}
 	}
 
-	resp, err := h.noProxyClient.Do(req)
+	resp, err := h.mediaClient.Do(req)
 	if err != nil {
 		return nil, 0, nil, err
 	}

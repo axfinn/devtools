@@ -323,7 +323,7 @@ func isShareTextFile(mimeType, filePath string) bool {
 	}
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {
-	case ".txt", ".md", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+	case ".txt", ".md", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".csv", ".tsv",
 		".go", ".py", ".js", ".ts", ".jsx", ".tsx", ".vue", ".html", ".css", ".scss",
 		".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd",
 		".c", ".cpp", ".h", ".hpp", ".java", ".kt", ".rs", ".rb", ".php", ".swift",

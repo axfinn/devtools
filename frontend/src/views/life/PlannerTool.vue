@@ -968,12 +968,12 @@
         </div>
         <div v-if="aiSuggestions.length > 0" class="ai-suggestions">
           <article v-for="(item, index) in aiSuggestions" :key="`${item.title}-${index}`" class="ai-card">
-            <div>
-              <strong>{{ item.title }}</strong>
-              <p>{{ item.detail || '无补充描述' }}</p>
-            <details v-if="item.raw_text && item.raw_text !== item.title" style="margin-top:4px;">
-              <summary style="cursor:pointer;font-size:12px;color:#909399;">原文</summary>
-              <p style="margin:4px 0 0;font-size:12px;color:#909399;white-space:pre-wrap;">{{ item.raw_text }}</p>
+            <div class="ai-card-body">
+              <strong class="ai-card-title">{{ item.title }}</strong>
+              <p class="ai-card-detail">{{ item.detail || '无补充描述' }}</p>
+            <details v-if="item.raw_text && item.raw_text !== item.title" class="ai-card-raw">
+              <summary>原文</summary>
+              <p>{{ item.raw_text }}</p>
             </details>
             </div>
             <div class="task-tags">
@@ -4046,6 +4046,65 @@ onBeforeUnmount(() => {
 .activity-item p,
 .ai-card p {
   margin: 8px 0 0;
+}
+
+.ai-card-body {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ai-card-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.ai-card-detail {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  line-height: 1.5;
+  color: #606266;
+}
+
+.ai-card-raw {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.ai-card-raw summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #909399;
+}
+
+.ai-card-raw p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #909399;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.task-tags {
+  overflow-x: auto;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.task-tags .el-tag {
+  flex-shrink: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-copy p {

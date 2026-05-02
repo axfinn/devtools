@@ -357,6 +357,12 @@ func normalizePlannerAITask(task plannerAITask, defaultKind string) plannerAITas
 	if task.EntryType == models.PlannerEntryEvent && task.Bucket != models.PlannerBucketPlanned {
 		task.Bucket = models.PlannerBucketPlanned
 	}
+	// Truncate fields to prevent frontend overflow
+	task.Title = truncatePlannerText(task.Title, 30)
+	task.Detail = truncatePlannerText(task.Detail, 200)
+	task.Notes = truncatePlannerText(task.Notes, 500)
+	task.RawText = truncatePlannerText(task.RawText, 1000)
+
 	if strings.TrimSpace(task.Title) == "" {
 		task.Title = "待整理事项"
 	}
@@ -457,6 +463,15 @@ func plannerFirstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func truncatePlannerText(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) <= maxLen {
+		return s
+	}
+	runes := []rune(s)
+	return strings.TrimSpace(string(runes[:maxLen])) + "…"
 }
 
 func guessEnergyLevel(text string) string {

@@ -68,3 +68,4 @@ coverage/
 # Archives
 scripts/archive/
 .env
+backend/expense_csv_import

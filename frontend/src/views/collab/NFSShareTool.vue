@@ -698,7 +698,7 @@ const dialogWidth = computed(() => window.innerWidth < 640 ? '95%' : '560px')
 onMounted(async () => {
   await checkStatus()
   if (nfsEnabled.value) {
-    const saved = sessionStorage.getItem('nfs_admin_password')
+    const saved = localStorage.getItem('nfs_admin_password')
     if (saved) {
       adminPassword.value = saved
       await loginAdmin(true)
@@ -731,13 +731,13 @@ async function loginAdmin(silent = false) {
     const res = await fetch(`/api/nfsshare/admin/browse?path=.&admin_password=${encodeURIComponent(adminPassword.value)}`)
     if (res.ok) {
       adminLoggedIn.value = true
-      sessionStorage.setItem('nfs_admin_password', adminPassword.value)
+      localStorage.setItem('nfs_admin_password', adminPassword.value)
       await Promise.all([loadDir('.'), loadShareList(), loadMounts()])
     } else {
       const data = await res.json()
       if (!silent) ElMessage.error(data.error || '密码错误')
       adminPassword.value = ''
-      sessionStorage.removeItem('nfs_admin_password')
+      localStorage.removeItem('nfs_admin_password')
     }
   } catch {
     if (!silent) ElMessage.error('网络错误，请重试')
@@ -749,7 +749,7 @@ async function loginAdmin(silent = false) {
 function logout() {
   adminLoggedIn.value = false
   adminPassword.value = ''
-  sessionStorage.removeItem('nfs_admin_password')
+  localStorage.removeItem('nfs_admin_password')
   dirEntries.value = []
   shareList.value = []
   currentPath.value = '.'

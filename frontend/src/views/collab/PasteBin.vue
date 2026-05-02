@@ -1853,8 +1853,8 @@ const adminLogin = async () => {
     adminPastes.value = data.pastes || []
     ElMessage.success('登录成功')
 
-    // 存储到 sessionStorage
-    sessionStorage.setItem('paste_admin_password', adminPasswordInput.value)
+    // 存储到 localStorage
+    localStorage.setItem('paste_admin_password', adminPasswordInput.value)
   } catch (err) {
     ElMessage.error(err.message)
   } finally {
@@ -1959,9 +1959,9 @@ const deleteAdminPaste = async (id) => {
   }
 }
 
-// 从 sessionStorage 恢复管理员密码
+// 从 localStorage 恢复管理员密码
 const restoreAdminPassword = () => {
-  const stored = sessionStorage.getItem('paste_admin_password')
+  const stored = localStorage.getItem('paste_admin_password')
   if (stored) {
     adminPasswordInput.value = stored
     adminPasswordStored.value = stored

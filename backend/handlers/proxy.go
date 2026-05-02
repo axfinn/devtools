@@ -61,6 +61,7 @@ type proxyPersist struct {
 }
 
 const proxyDataFile = "./data/proxy_config.json"
+const proxySubscriptionBackupFile = "./data/subscription_latest.yaml"
 
 // proxySession 当前会话（内存单例）
 type proxySession struct {
@@ -150,6 +151,34 @@ func savePersistedProxy() {
 	globalSession.mu.RUnlock()
 	data, _ := json.Marshal(p)
 	os.WriteFile(proxyDataFile, data, 0644)
+}
+
+// saveSubscriptionBackup 保存订阅 YAML 到独立备份文件，供后续刷新失败时兜底
+func saveSubscriptionBackup(yamlText string) {
+	if yamlText == "" {
+		return
+	}
+	os.WriteFile(proxySubscriptionBackupFile, []byte(yamlText), 0644)
+}
+
+// loadSubscriptionBackup 从备份文件加载 YAML 并解析节点
+func loadSubscriptionBackup() (string, []ProxyNode, error) {
+	data, err := os.ReadFile(proxySubscriptionBackupFile)
+	if err != nil {
+		return "", nil, err
+	}
+	yamlText := string(data)
+	if yamlText == "" {
+		return "", nil, errors.New("备份文件为空")
+	}
+	nodes, err := parseClashYAML(yamlText)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(nodes) == 0 {
+		return "", nil, errors.New("备份文件无有效节点")
+	}
+	return yamlText, nodes, nil
 }
 
 func normalizeProxyRouteMode(mode string) string {
@@ -261,6 +290,7 @@ func currentProxyURL() string {
 type managedRefreshClientCandidate struct {
 	source string
 	client *http.Client
+	ln     net.Listener // 非 nil 时需要在刷新完成后关闭
 }
 
 type managedRefreshAttempt struct {
@@ -382,7 +412,7 @@ func mergeProxyNodes(groups ...[]ProxyNode) []ProxyNode {
 	return merged
 }
 
-func fetchSubscriptions(sourceURLs []string) (string, []ProxyNode, error) {
+func (h *ProxyHandler) fetchSubscriptions(sourceURLs []string) (string, []ProxyNode, error) {
 	urls := normalizeSourceURLs(sourceURLs, "")
 	if len(urls) == 0 {
 		return "", nil, fmt.Errorf("未提供订阅 URL")
@@ -407,7 +437,7 @@ func fetchSubscriptions(sourceURLs []string) (string, []ProxyNode, error) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			text, err := fetchSubscription(rawURL)
+			text, err := h.fetchSubscriptionWithFallback(rawURL)
 			if err != nil {
 				results[idx] = fetchResult{index: idx, url: rawURL, err: err}
 				return
@@ -974,6 +1004,145 @@ func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, node
 	return true, nil
 }
 
+// serveForceProxy 强制通过指定节点代理所有请求（绕过 GFW 检查）
+func serveForceProxy(ln net.Listener, node *ProxyNode) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			c.SetDeadline(time.Now().Add(30 * time.Second))
+			br := bufio.NewReader(c)
+			req, err := http.ReadRequest(br)
+			if err != nil {
+				return
+			}
+			c.SetDeadline(time.Time{})
+
+			if req.Method == http.MethodConnect {
+				host := req.Host
+				upstream, err := dialUpstream(node, host)
+				if err != nil {
+					c.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+					return
+				}
+				c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+				go io.Copy(upstream, br)
+				io.Copy(c, upstream)
+				upstream.Close()
+			} else {
+				host := req.Host
+				if !strings.Contains(host, ":") {
+					host += ":80"
+				}
+				upstream, err := dialUpstream(node, host)
+				if err != nil {
+					c.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
+					return
+				}
+				if err := req.Write(upstream); err != nil {
+					upstream.Close()
+					return
+				}
+				go io.Copy(upstream, c)
+				io.Copy(c, upstream)
+				upstream.Close()
+			}
+		}(conn)
+	}
+}
+
+// buildNodeClientsForURL 测试所有节点对目标 URL 的连通性，为能连通的节点创建临时代理客户端
+func (h *ProxyHandler) buildNodeClientsForURL(testURL string, timeout time.Duration) []managedRefreshClientCandidate {
+	if testURL == "" {
+		return nil
+	}
+
+	globalSession.mu.RLock()
+	nodes := make([]ProxyNode, len(globalSession.nodes))
+	copy(nodes, globalSession.nodes)
+	globalSession.mu.RUnlock()
+
+	if len(nodes) == 0 {
+		log.Printf("proxy: 节点检测跳过，无可用节点")
+		return nil
+	}
+
+	log.Printf("proxy: 开始检测 %d 个节点对落地页 %s 的连通性...", len(nodes), maskURL(testURL))
+
+	type nodeClient struct {
+		node   ProxyNode
+		ln     net.Listener
+		client *http.Client
+	}
+	results := make(chan nodeClient, len(nodes))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10) // 并发 10 个检测
+
+	for i := range nodes {
+		wg.Add(1)
+		go func(n ProxyNode) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				return
+			}
+			go serveForceProxy(ln, &n)
+
+			port := ln.Addr().(*net.TCPAddr).Port
+			proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+			client := &http.Client{
+				Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+				Timeout:   8 * time.Second,
+			}
+
+			resp, err := client.Get(testURL)
+			if err != nil {
+				ln.Close()
+				return
+			}
+			resp.Body.Close()
+			results <- nodeClient{node: n, ln: ln, client: client}
+		}(nodes[i])
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// 收集可达节点（最多 3 个），其余关闭
+	candidates := make([]managedRefreshClientCandidate, 0, 3)
+	for nc := range results {
+		if len(candidates) < 3 {
+			// 用实际超时重建长存活 client
+			pu, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", nc.ln.Addr().(*net.TCPAddr).Port))
+			longClient := &http.Client{
+				Transport: &http.Transport{Proxy: http.ProxyURL(pu)},
+				Timeout:   timeout,
+			}
+			jar, _ := cookiejar.New(nil)
+			longClient.Jar = jar
+			candidates = append(candidates, managedRefreshClientCandidate{
+				source: "node:" + nc.node.Name,
+				client: longClient,
+				ln:     nc.ln,
+			})
+			log.Printf("proxy: 节点可达落地页: %s", nc.node.Name)
+		} else {
+			nc.ln.Close()
+		}
+	}
+	if len(candidates) == 0 {
+		log.Printf("proxy: 节点检测完成，%d 个节点均无法访问落地页", len(nodes))
+	}
+	return candidates
+}
+
 func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 	attempts := make([]managedRefreshAttempt, 0, 4)
 	recordAttempt := func(attempt managedRefreshAttempt) {
@@ -1001,7 +1170,23 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 	}
 
 	var lastErr error
-	for _, candidate := range h.managedRefreshClients(20 * time.Second) {
+	landingURL := strings.TrimSpace(h.subRefresh.landingURL)
+	if landingURL == "" {
+		landingURL = strings.TrimSpace(h.subRefresh.siteURL)
+	}
+
+	// 测试所有节点对落地页的连通性，优先使用能直达的节点
+	nodeCandidates := h.buildNodeClientsForURL(landingURL, 20*time.Second)
+	allCandidates := append(nodeCandidates, h.managedRefreshClients(20*time.Second)...)
+	defer func() {
+		for _, c := range nodeCandidates {
+			if c.ln != nil {
+				c.ln.Close()
+			}
+		}
+	}()
+
+	for _, candidate := range allCandidates {
 		attempt := managedRefreshAttempt{
 			Source: candidate.source,
 			Stage:  "resolve_site",
@@ -1063,6 +1248,7 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 			continue
 		}
 		attempt.NodeCount = len(nodes)
+		saveSubscriptionBackup(yamlText)
 
 		applied, err := h.applyManagedSubscription(subscribeURL, yamlText, nodes)
 		if err != nil {
@@ -1073,13 +1259,19 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 			recordAttempt(attempt)
 			h.markSubscriptionState(status, siteURL, subscribeURL, candidate.source, "", true, false)
 			log.Printf("proxy: 托管订阅接管失败(%s): %v", candidate.source, err)
+			// 即使新节点当前不可用，也持久化订阅地址和内容，供后续刷新兜底
+			globalSession.mu.Lock()
+			globalSession.sourceURL = subscribeURL
+			globalSession.sourceURLs = normalizeSourceURLs([]string{subscribeURL}, "")
+			globalSession.mu.Unlock()
+			go savePersistedProxy()
 			h.sendManagedRefreshReport("代理订阅刷新失败", status, attempts, map[string]interface{}{
 				"resolved_site_url": siteURL,
 				"subscribe_url":     subscribeURL,
 				"refresh_source":    candidate.source,
 				"node_count":        len(nodes),
 			}, nil)
-			return
+			continue
 		}
 		if !applied {
 			status := "托管订阅检查完成：无变化，保持当前线路"
@@ -1117,6 +1309,87 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 			"node_count":        len(nodes),
 		}, managedSubscriptionAttachment(subscribeURL, h.subRefresh.preferredSubType, []byte(yamlText)))
 		return
+	}
+
+	// 托管流程全部失败，回退策略（按优先级逐个尝试）：
+	// 1. 通过节点/直连重新下载持久化的订阅 URL
+	// 2. 加载本地备份 YAML 文件（上次下载但可能未成功应用的订阅内容）
+	// 3. 使用 proxy_config.json 中已持久化的 YAML 内容
+	globalSession.mu.RLock()
+	fallbackURLs := append([]string(nil), globalSession.sourceURLs...)
+	persistedYAML := globalSession.yamlContent
+	globalSession.mu.RUnlock()
+
+	var yamlText string
+	var nodes []ProxyNode
+
+	// 回退 1：通过节点/直连下载持久化订阅 URL
+	if len(fallbackURLs) > 0 {
+		log.Printf("proxy: 托管订阅流程失败，回退1：尝试下载持久化订阅 URL（%d 个）", len(fallbackURLs))
+		var err error
+		for _, nc := range nodeCandidates {
+			for _, fallbackURL := range fallbackURLs {
+				yamlText, err = fetchSubscriptionWithClient(nc.client, fallbackURL)
+				if err == nil {
+					nodes, err = parseClashYAML(yamlText)
+					if err == nil && len(nodes) > 0 {
+						log.Printf("proxy: 通过节点 %s 获取持久化订阅成功", nc.source)
+						break
+					}
+				}
+			}
+			if len(nodes) > 0 {
+				break
+			}
+		}
+		if len(nodes) == 0 {
+			yamlText, nodes, err = h.fetchSubscriptions(fallbackURLs)
+		}
+		if len(nodes) > 0 {
+			saveSubscriptionBackup(yamlText)
+			_, applyErr := h.applyManagedSubscription(fallbackURLs[0], yamlText, nodes)
+			if applyErr == nil {
+				log.Printf("proxy: 回退1成功（持久化订阅 URL），共 %d 个节点", len(nodes))
+				return
+			}
+			log.Printf("proxy: 回退1应用失败: %v，尝试回退2", applyErr)
+		} else {
+			log.Printf("proxy: 回退1下载失败: %v，尝试回退2", err)
+		}
+		yamlText, nodes = "", nil
+	}
+
+	// 回退 2：加载本地备份 YAML 文件
+	yamlText, nodes, _ = loadSubscriptionBackup()
+	if len(nodes) > 0 {
+		log.Printf("proxy: 回退2：加载本地备份 YAML，共 %d 个节点", len(nodes))
+		source := firstSourceURL(fallbackURLs, "backup_file")
+		_, applyErr := h.applyManagedSubscription(source, yamlText, nodes)
+		if applyErr == nil {
+			log.Printf("proxy: 回退2成功（备份 YAML 文件），共 %d 个节点", len(nodes))
+			return
+		}
+		log.Printf("proxy: 回退2应用失败: %v，尝试回退3", applyErr)
+	} else {
+		log.Printf("proxy: 回退2无可用备份文件，尝试回退3")
+	}
+	yamlText, nodes = "", nil
+
+	// 回退 3：使用 proxy_config.json 中已持久化的 YAML
+	if persistedYAML != "" {
+		nodes, err := parseClashYAML(persistedYAML)
+		if err == nil && len(nodes) > 0 {
+			log.Printf("proxy: 回退3：加载持久化 YAML（proxy_config.json），共 %d 个节点", len(nodes))
+			source := firstSourceURL(fallbackURLs, "persisted_config")
+			_, applyErr := h.applyManagedSubscription(source, persistedYAML, nodes)
+			if applyErr == nil {
+				log.Printf("proxy: 回退3成功（持久化配置），共 %d 个节点", len(nodes))
+				return
+			}
+			log.Printf("proxy: 回退3应用失败: %v", applyErr)
+		} else {
+			log.Printf("proxy: 回退3解析持久化 YAML 失败: %v", err)
+		}
 	}
 
 	status := "托管订阅未执行：全部刷新链路失败"
@@ -1352,7 +1625,7 @@ func (h *ProxyHandler) refreshSubscription() {
 	if len(sourceURLs) == 0 {
 		return
 	}
-	text, nodes, err := fetchSubscriptions(sourceURLs)
+	text, nodes, err := h.fetchSubscriptions(sourceURLs)
 	if err != nil {
 		log.Printf("proxy: 订阅更新失败: %v", err)
 		return
@@ -1369,6 +1642,19 @@ func (h *ProxyHandler) refreshSubscription() {
 	log.Printf("proxy: 订阅已更新，共 %d 个节点，来源 %d 个 URL", len(nodes), len(sourceURLs))
 }
 
+// waitForActiveProxy 等待代理监听器就绪，超时后返回
+func (h *ProxyHandler) waitForActiveProxy(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if currentProxyURL() != "" {
+			log.Printf("proxy: 代理已就绪，开始订阅刷新")
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	log.Printf("proxy: 等待代理就绪超时（%v），继续订阅刷新", timeout)
+}
+
 // StartAutoMaintenance 启动后台维护：定期更新订阅 + 定期探测切换
 func (h *ProxyHandler) StartAutoMaintenance() {
 	go func() {
@@ -1383,6 +1669,8 @@ func (h *ProxyHandler) StartAutoMaintenance() {
 		defer probeTicker.Stop()
 
 		if h.subRefresh.enabled {
+			// 等待代理启动（可能在 AutoSelectOnStartup 中异步启动）
+			h.waitForActiveProxy(30 * time.Second)
 			h.refreshManagedSubscription()
 		}
 
@@ -1510,6 +1798,40 @@ func parseClashYAML(data string) ([]ProxyNode, error) {
 	return nodes, nil
 }
 
+// fetchSubscriptionWithFallback 尝试通过代理（活跃代理 → 配置的 request_proxy_url → 直连）下载订阅
+func (h *ProxyHandler) fetchSubscriptionWithFallback(rawURL string) (string, error) {
+	type candidate struct {
+		source string
+		client *http.Client
+	}
+	candidates := make([]candidate, 0, 3)
+
+	if proxyURL := currentProxyURL(); proxyURL != "" {
+		if c, err := newHTTPClient(15*time.Second, proxyURL, false); err == nil {
+			candidates = append(candidates, candidate{"active_proxy", c})
+		}
+	}
+	if proxyURL := strings.TrimSpace(h.subRefresh.requestProxyURL); proxyURL != "" {
+		if c, err := newHTTPClient(15*time.Second, proxyURL, false); err == nil {
+			candidates = append(candidates, candidate{"configured_proxy", c})
+		}
+	}
+	candidates = append(candidates, candidate{"direct", newDirectHTTPClient(15 * time.Second)})
+
+	var lastErr error
+	for _, cand := range candidates {
+		text, err := fetchSubscriptionWithClient(cand.client, rawURL)
+		if err == nil {
+			if cand.source != "direct" {
+				log.Printf("proxy: 订阅下载成功（%s → %s）", cand.source, maskURL(rawURL))
+			}
+			return text, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
 // fetchSubscription 下载订阅内容（支持 Base64 和 YAML）
 func fetchSubscription(rawURL string) (string, error) {
 	return fetchSubscriptionWithClient(newDirectHTTPClient(15*time.Second), rawURL)
@@ -1587,7 +1909,7 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 		err      error
 	)
 	if len(sourceURLs) > 0 {
-		yamlText, nodes, err = fetchSubscriptions(sourceURLs)
+		yamlText, nodes, err = h.fetchSubscriptions(sourceURLs)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "下载订阅失败: " + err.Error()})
 			return
