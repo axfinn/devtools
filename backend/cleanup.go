@@ -14,6 +14,7 @@ import (
 // startCleanupRoutine 启动定时清理协程，每小时清理过期数据
 func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler, cfg *config.Config) {
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		ticker := time.NewTicker(time.Hour)
 		for range ticker.C {
 			// 清理过期粘贴板

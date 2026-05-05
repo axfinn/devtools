@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -171,6 +172,7 @@ func (h *AIGatewayHandler) ImageUnderstandingSSE(c *gin.Context) {
 	}
 
 	go func(task *state.ImageTask) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		ctx, cancel := context.WithTimeout(context.Background(), h.imageHandler.cfg.Timeout())
 		defer cancel()
 
@@ -251,6 +253,7 @@ func (h *AIGatewayHandler) ImageUnderstandingSSEFile(c *gin.Context) {
 	}
 
 	go func(task *state.ImageTask) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		ctx, cancel := context.WithTimeout(context.Background(), h.imageHandler.cfg.Timeout())
 		defer cancel()
 

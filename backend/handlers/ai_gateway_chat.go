@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -146,6 +147,7 @@ func (h *AIGatewayHandler) GetChatTask(c *gin.Context) {
 // runAsyncChatTask 后台执行 LLM 调用，更新任务状态
 
 func (h *AIGatewayHandler) runAsyncChatTask(taskID string, req ChatCompletionRequest) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runAsyncChatTask: %v", r) } }()
 	task, err := h.db.GetLLMTask(taskID)
 	if err != nil {
 		return

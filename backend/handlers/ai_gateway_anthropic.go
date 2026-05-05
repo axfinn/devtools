@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -537,6 +538,7 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 中间代理（nginx/CDN）或客户端因空闲超时断开连接
 	heartbeatDone := make(chan struct{})
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 		for {

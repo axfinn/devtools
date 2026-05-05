@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"sort"
@@ -1124,6 +1125,7 @@ func (h *ExpenseHandler) GetAnalyzeJob(c *gin.Context) {
 }
 
 func (h *ExpenseHandler) runAnalyzeJob(jobID, profileID string, req AnalyzeRequest) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runAnalyzeJob: %v", r) } }()
 	jobValue, ok := expenseAnalyzeJobs.Load(jobID)
 	if !ok {
 		return

@@ -90,6 +90,7 @@ func startTunnelProxyServer(cfg *config.Config, proxyHandler *handlers.ProxyHand
 		log.Printf("警告：proxy.tunnel_port 已配置但 proxy.admin_password 为空，代理端口将拒绝所有连接")
 	}
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		tunnelSrv := &http.Server{
 			Addr: ":" + cfg.Proxy.TunnelPort,
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -105,7 +106,10 @@ func startTunnelProxyServer(cfg *config.Config, proxyHandler *handlers.ProxyHand
 
 func newMainHTTPServer(port string, router *gin.Engine, proxyHandler *handlers.ProxyHandler) *http.Server {
 	return &http.Server{
-		Addr: ":" + port,
+		Addr:              ":" + port,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		IdleTimeout:       120 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.Method == http.MethodConnect {
 				proxyHandler.Tunnel(w, req)

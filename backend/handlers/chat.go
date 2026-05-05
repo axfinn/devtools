@@ -347,6 +347,7 @@ func (h *ChatHandler) startBotConversation(room *Room, roomID, userNickname, use
 	room.mu.Unlock()
 
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		defer cancel()
 		defer func() {
 			room.mu.Lock()
@@ -739,6 +740,7 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 }
 
 func (h *ChatHandler) readPump(client *Client, roomID string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in readPump: %v", r) } }()
 	defer func() {
 		h.removeClient(client)
 		client.conn.Close()
@@ -820,6 +822,7 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 }
 
 func (h *ChatHandler) writePump(client *Client) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in writePump: %v", r) } }()
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
@@ -1295,6 +1298,7 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 	replyCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		reply, err := h.requestBotReply(ctx, bot.SystemPrompt, historyCopy)
 		if err != nil {
 			errCh <- err

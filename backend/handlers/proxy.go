@@ -136,6 +136,7 @@ func loadPersistedProxy() {
 
 // savePersistedProxy 将节点配置写入磁盘
 func savePersistedProxy() {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in savePersistedProxy: %v", r) } }()
 	globalSession.mu.RLock()
 	p := proxyPersist{
 		SourceURL:        firstSourceURL(globalSession.sourceURLs, globalSession.sourceURL),
@@ -433,6 +434,7 @@ func (h *ProxyHandler) fetchSubscriptions(sourceURLs []string) (string, []ProxyN
 	for i, sourceURL := range urls {
 		wg.Add(1)
 		go func(idx int, rawURL string) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -1006,12 +1008,14 @@ func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, node
 
 // serveForceProxy 强制通过指定节点代理所有请求（绕过 GFW 检查）
 func serveForceProxy(ln net.Listener, node *ProxyNode) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in serveForceProxy: %v", r) } }()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
 		go func(c net.Conn) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 			defer c.Close()
 			c.SetDeadline(time.Now().Add(30 * time.Second))
 			br := bufio.NewReader(c)
@@ -1029,7 +1033,7 @@ func serveForceProxy(ln net.Listener, node *ProxyNode) {
 					return
 				}
 				c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-				go io.Copy(upstream, br)
+				go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, br) }()
 				io.Copy(c, upstream)
 				upstream.Close()
 			} else {
@@ -1046,7 +1050,7 @@ func serveForceProxy(ln net.Listener, node *ProxyNode) {
 					upstream.Close()
 					return
 				}
-				go io.Copy(upstream, c)
+				go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, c) }()
 				io.Copy(c, upstream)
 				upstream.Close()
 			}
@@ -1084,6 +1088,7 @@ func (h *ProxyHandler) buildNodeClientsForURL(testURL string, timeout time.Durat
 	for i := range nodes {
 		wg.Add(1)
 		go func(n ProxyNode) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -1111,6 +1116,7 @@ func (h *ProxyHandler) buildNodeClientsForURL(testURL string, timeout time.Durat
 		}(nodes[i])
 	}
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		wg.Wait()
 		close(results)
 	}()
@@ -1449,6 +1455,7 @@ func (h *ProxyHandler) TriggerSubscriptionRefresh(c *gin.Context) {
 	}
 	h.markSubscriptionState("手动刷新已启动，正在后台执行", "", "", "manual", "", false, false)
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		defer h.subRefreshMu.Unlock()
 		h.refreshManagedSubscriptionLocked()
 	}()
@@ -1499,6 +1506,7 @@ func (h *ProxyHandler) AutoSelectOnStartup() {
 	}
 
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		globalSession.mu.RLock()
 		nodes := make([]ProxyNode, len(globalSession.nodes))
 		copy(nodes, globalSession.nodes)
@@ -1550,6 +1558,7 @@ func collectReachableNodes(nodes []ProxyNode, limit int, checker func(ProxyNode)
 	for i, node := range nodes {
 		wg.Add(1)
 		go func(idx int, n ProxyNode) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -1658,6 +1667,7 @@ func (h *ProxyHandler) waitForActiveProxy(timeout time.Duration) {
 // StartAutoMaintenance 启动后台维护：定期更新订阅 + 定期探测切换
 func (h *ProxyHandler) StartAutoMaintenance() {
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		subInterval := 6 * time.Hour
 		if h.subRefresh.enabled {
 			subInterval = h.subRefresh.interval
@@ -1736,6 +1746,7 @@ func (h *ProxyHandler) startNPC() {
 	h.npcMu.Unlock()
 	cmd.Start()
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		cmd.Wait()
 		h.npcMu.Lock()
 		if h.npcCmd == cmd {
@@ -2145,6 +2156,7 @@ func (h *ProxyHandler) CheckNodes(c *gin.Context) {
 
 	h.markCheckState(fmt.Sprintf("节点可用性检测已启动，目标 %d 个", len(targets)), true, nil)
 	go func(targets []ProxyNode) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		defer h.checkMu.Unlock()
 		h.runCheckNodesLocked(targets)
 	}(append([]ProxyNode(nil), targets...))
@@ -2269,6 +2281,7 @@ func (h *ProxyHandler) triggerAutoSelect() {
 	}
 
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		globalSession.mu.RLock()
 		nodes := make([]ProxyNode, len(globalSession.nodes))
 		copy(nodes, globalSession.nodes)
@@ -2885,6 +2898,7 @@ const fakeWebPage = "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0\r\nContent-Type: te
 // serveHTTPProxy 运行一个简单的 HTTP CONNECT 代理，转发到目标节点
 // 支持 http/socks5 类型节点的上游代理，其他类型直连
 func serveHTTPProxy(ln net.Listener, node *ProxyNode, adminPassword string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in serveHTTPProxy: %v", r) } }()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -2895,6 +2909,7 @@ func serveHTTPProxy(ln net.Listener, node *ProxyNode, adminPassword string) {
 }
 
 func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in handleProxyConn: %v", r) } }()
 	defer clientConn.Close()
 	clientConn.SetDeadline(time.Now().Add(30 * time.Second))
 
@@ -2931,7 +2946,7 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string)
 			return
 		}
 		clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-		go io.Copy(upstream, br)
+		go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, br) }()
 		io.Copy(clientConn, upstream)
 		upstream.Close()
 	} else {
@@ -3313,6 +3328,7 @@ var lastFailover time.Time
 
 // triggerFailover 请求失败时触发节点切换，60s 内只触发一次
 func triggerFailover() {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in triggerFailover: %v", r) } }()
 	failoverMu.Lock()
 	if time.Since(lastFailover) < 60*time.Second {
 		failoverMu.Unlock()
@@ -3515,6 +3531,7 @@ func writeBase64Lines(dst *strings.Builder, data []byte) {
 
 // sendAlert 发送告警邮件（SMTP SSL，465 端口）
 func (h *ProxyHandler) sendAlertWithAttachment(subject, body string, attachment *mailAttachment) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in sendAlertWithAttachment: %v", r) } }()
 	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" || h.smtpPass == "" {
 		return
 	}
@@ -3754,7 +3771,7 @@ func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 	brw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	brw.Flush()
 
-	go io.Copy(upstream, brw)
+	go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, brw) }()
 	io.Copy(clientConn, upstream)
 	upstream.Close()
 	clientConn.Close()
@@ -3807,7 +3824,7 @@ func (h *ProxyHandler) TunnelDirect(w http.ResponseWriter, r *http.Request) {
 	brw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	brw.Flush()
 
-	go io.Copy(upstream, brw)
+	go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, brw) }()
 	io.Copy(clientConn, upstream)
 	upstream.Close()
 	clientConn.Close()
@@ -4204,6 +4221,7 @@ func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 
 	// ws → tcp
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		for {
 			_, msg, err := wsConn.ReadMessage()
 			if err != nil {

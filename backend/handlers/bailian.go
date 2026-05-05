@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -741,6 +742,7 @@ func (h *BailianHandler) extractVendorError(payload map[string]interface{}) stri
 // 避免因 HTTP 连接长时间阻塞而触发 Cloudflare 524。
 // 执行完成后更新数据库任务状态，客户端通过轮询接口获取结果。
 func (h *BailianHandler) runSyncTaskBackground(taskID string, originalQuotaUsed int, endpoint string, body map[string]interface{}) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runSyncTaskBackground: %v", r) } }()
 	task, err := h.db.GetBailianTask(taskID)
 	if err != nil {
 		return

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -808,6 +809,7 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		h.db.IncrementNFSShareViews(id)
 		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", 0)
 		go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 			defer h.hlsJobs.Delete(key)
 			job.err = h.doTranscode(id, share, preset, outDir, m3u8Path)
 			close(job.done)
@@ -963,6 +965,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 
 	// 写 goroutine
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		defer conn.Close()
 		for data := range client.send {
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -979,6 +982,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	})
 	pingTicker := time.NewTicker(30 * time.Second)
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		defer pingTicker.Stop()
 		for range pingTicker.C {
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
@@ -1417,6 +1421,7 @@ func (h *NFSShareHandler) UploadComplete(c *gin.Context) {
 	pr, pw := io.Pipe()
 	errCh := make(chan error, 1)
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		errCh <- writeFunc(pr)
 	}()
 	for i := 0; i < req.TotalChunks; i++ {

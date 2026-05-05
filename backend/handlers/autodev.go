@@ -888,6 +888,7 @@ func (h *AutoDevHandler) DeleteTask(c *gin.Context) {
 
 // runTask executes autodev in a background goroutine
 func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build, push bool, resumeFrom int, module string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runTask: %v", r) } }()
 	module = models.NormalizeAutoDevModule(module)
 	args := []string{description, "--path", workDir, "--module", module}
 	if publish {
@@ -955,6 +956,7 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 // runAskTask executes `autodev ask "description" --path workDir` in a background goroutine.
 // The new clawtest supports the `ask` subcommand which appends Q&A to process/qa.md.
 func (h *AutoDevHandler) runAskTask(id, description, workDir, module string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runAskTask: %v", r) } }()
 	// Ensure directories exist with correct ownership for non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
 	os.MkdirAll(logDir, 0755)
@@ -1046,6 +1048,7 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir, module string) {
 // The new clawtest supports the `extend` subcommand which adds new requirements to existing projects.
 // Each iteration writes to process/iter-N/ and updates RESULT.md.
 func (h *AutoDevHandler) runExtendTask(id, description, workDir, module string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runExtendTask: %v", r) } }()
 	// Ensure directories exist with correct ownership for non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
 	os.MkdirAll(logDir, 0755)
@@ -1127,6 +1130,7 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir, module string) 
 // runLoopTask executes `autodev --loop [N] "description" --path workDir` in a background goroutine.
 // loop=0 means no loop (same as develop), loop=-1 means infinite, loop=N means at most N iterations.
 func (h *AutoDevHandler) runLoopTask(id, description, workDir string, publish, build, push bool, loop int, module string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runLoopTask: %v", r) } }()
 	module = models.NormalizeAutoDevModule(module)
 
 	logDir := filepath.Join(workDir, ".autodev", "logs")
@@ -1223,6 +1227,7 @@ func (h *AutoDevHandler) buildEnv() []string {
 
 // runExportTask executes autodev export in a background goroutine
 func (h *AutoDevHandler) runExportTask(id, description, workDir, exportFormat string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runExportTask: %v", r) } }()
 	// Default format is zip
 	if exportFormat == "" {
 		exportFormat = "zip"

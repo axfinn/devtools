@@ -546,6 +546,7 @@ type asrResponse struct {
 }
 
 func (h *VoiceMemoHandler) transcribeMemo(memoID, filePath, originalName string) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in transcribeMemo: %v", r) } }()
 	if h.asrServiceURL == "" {
 		h.db.UpdateVoiceMemoTranscript(memoID, "", "", "failed", "未配置 ASR 服务")
 		return

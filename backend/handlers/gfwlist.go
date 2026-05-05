@@ -40,6 +40,7 @@ func InitGFWList(dbPath string) {
 		log.Printf("gfwlist 初始加载失败: %v，使用空列表", err)
 	}
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		for range time.Tick(gfwlistTTL) {
 			if err := globalGFW.load(); err != nil {
 				log.Printf("gfwlist 刷新失败: %v", err)

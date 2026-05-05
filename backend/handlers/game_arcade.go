@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"math"
 	mathrand "math/rand"
 	"net/http"
@@ -167,6 +168,7 @@ func newArcadeHub() *arcadeHub {
 }
 
 func (h *arcadeHub) cleanupLoop() {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in cleanupLoop: %v", r) } }()
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 
@@ -736,6 +738,7 @@ func buildArcadeSnapshotLocked(room *arcadeRoom) arcadeSnapshot {
 }
 
 func broadcastArcadeState(room *arcadeRoom) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in broadcastArcadeState: %v", r) } }()
 	room.mu.RLock()
 	snapshot := buildArcadeSnapshotLocked(room)
 	players := make([]*arcadePlayer, 0, len(room.Players))
@@ -812,6 +815,7 @@ func startReactionRoundLocked(room *arcadeRoom) {
 	go broadcastArcadeState(room)
 
 	go func(roundToken int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(3 * time.Second)
 		armReactionRound(room, roundToken)
 	}(token)
@@ -833,6 +837,7 @@ func armReactionRound(room *arcadeRoom, token int) {
 	broadcastArcadeState(room)
 
 	go func(roundToken int, wait time.Duration) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(wait)
 		liveReactionRound(room, roundToken)
 	}(token, delay)
@@ -855,12 +860,14 @@ func liveReactionRound(room *arcadeRoom, token int) {
 	broadcastArcadeState(room)
 
 	go func(roundToken int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(2200 * time.Millisecond)
 		finishReactionRound(room, roundToken)
 	}(token)
 }
 
 func finishReactionRound(room *arcadeRoom, token int) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in finishReactionRound: %v", r) } }()
 	room.mu.Lock()
 	if room.roundToken != token || room.Phase != arcadePhaseLive {
 		room.mu.Unlock()
@@ -908,6 +915,7 @@ func finishReactionRound(room *arcadeRoom, token int) {
 
 	broadcastArcadeState(room)
 	go func(roundToken int, round int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(2600 * time.Millisecond)
 		startNextArcadeRound(room, roundToken, round)
 	}(token, nextRound)
@@ -940,12 +948,14 @@ func startHuntRoundLocked(room *arcadeRoom) {
 	go broadcastArcadeState(room)
 
 	go func(roundToken int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(8 * time.Second)
 		finishHuntRound(room, roundToken)
 	}(token)
 }
 
 func finishHuntRound(room *arcadeRoom, token int) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in finishHuntRound: %v", r) } }()
 	room.mu.Lock()
 	if room.roundToken != token || room.Phase != arcadePhaseLive || room.Game != arcadeGameHunt {
 		room.mu.Unlock()
@@ -987,6 +997,7 @@ func finishHuntRound(room *arcadeRoom, token int) {
 
 	broadcastArcadeState(room)
 	go func(roundToken int, round int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(2600 * time.Millisecond)
 		startNextArcadeRound(room, roundToken, round)
 	}(token, nextRound)
@@ -1018,12 +1029,14 @@ func startBeatRoundLocked(room *arcadeRoom) {
 	go broadcastArcadeState(room)
 
 	go func(roundToken int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(4200 * time.Millisecond)
 		finishBeatRound(room, roundToken)
 	}(token)
 }
 
 func finishBeatRound(room *arcadeRoom, token int) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in finishBeatRound: %v", r) } }()
 	room.mu.Lock()
 	if room.roundToken != token || room.Phase != arcadePhaseLive || room.Game != arcadeGameBeat {
 		room.mu.Unlock()
@@ -1048,6 +1061,7 @@ func finishBeatRound(room *arcadeRoom, token int) {
 
 	broadcastArcadeState(room)
 	go func(roundToken int, round int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(2600 * time.Millisecond)
 		startNextArcadeRound(room, roundToken, round)
 	}(token, nextRound)
@@ -1079,12 +1093,14 @@ func startSequenceRoundLocked(room *arcadeRoom) {
 	go broadcastArcadeState(room)
 
 	go func(roundToken int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(14 * time.Second)
 		finishSequenceRound(room, roundToken)
 	}(token)
 }
 
 func finishSequenceRound(room *arcadeRoom, token int) {
+	defer func() { if r := recover(); r != nil { log.Printf("PANIC in finishSequenceRound: %v", r) } }()
 	room.mu.Lock()
 	if room.roundToken != token || room.Phase != arcadePhaseLive || room.Game != arcadeGameSequence {
 		room.mu.Unlock()
@@ -1126,6 +1142,7 @@ func finishSequenceRound(room *arcadeRoom, token int) {
 
 	broadcastArcadeState(room)
 	go func(roundToken int, round int) {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
 		time.Sleep(2600 * time.Millisecond)
 		startNextArcadeRound(room, roundToken, round)
 	}(token, nextRound)
