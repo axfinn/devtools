@@ -1965,6 +1965,41 @@ function clearSession() {
   localStorage.removeItem('planner_creator_key')
 }
 
+function logout() {
+  clearSession()
+  profile.value = null
+  tasks.value = []
+  meetings.value = []
+  timelineItems.value = []
+  activeView.value = 'overview'
+}
+
+function startTriage() {
+  triageIndex.value = 0
+  triageActive.value = true
+}
+
+async function triageDecide(status) {
+  const item = triageCurrent.value
+  if (!item) return
+
+  if (status === 'planned') {
+    await moveTaskBucket(item, 'planned')
+  } else if (status === 'someday') {
+    await moveTaskBucket(item, 'someday')
+  } else if (status === 'discard') {
+    await updateTask(item, { status: 'cancelled', cancel_reason: '收件箱分流丢弃' }, '已丢弃')
+  }
+
+  const items = board.value.inbox_items
+  if (triageIndex.value < items.length - 1) {
+    triageIndex.value++
+  } else {
+    triageActive.value = false
+    triageIndex.value = 0
+  }
+}
+
 async function createProfile() {
   if (createForm.password.length < 4) {
     ElMessage.warning('密码至少 4 位')

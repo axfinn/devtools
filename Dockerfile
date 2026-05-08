@@ -9,6 +9,7 @@ COPY frontend/scripts ./scripts
 RUN pnpm install --frozen-lockfile
 
 COPY frontend/ ./
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build
 
 FROM docker.m.daocloud.io/library/golang:1.22-alpine AS backend-builder

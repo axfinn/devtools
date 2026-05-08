@@ -118,6 +118,63 @@
         </article>
       </section>
 
+      <!-- Mobile-only: compact stats & quick-switch -->
+      <section class="mobile-quick-bar">
+        <div class="mqb-stats">
+          <div class="mqb-stat">
+            <span class="mqb-stat-label">今日</span>
+            <strong class="mqb-stat-value" :class="{ bump: isBumping }">{{ todayCount.toLocaleString() }}</strong>
+          </div>
+          <div class="mqb-stat">
+            <span class="mqb-stat-label">累计</span>
+            <strong class="mqb-stat-value">{{ grandTotal.toLocaleString() }}</strong>
+          </div>
+          <div class="mqb-goal" v-if="dailyGoal > 0">
+            <div class="mqb-goal-bar">
+              <div class="mqb-goal-fill" :style="{ width: `${goalPercent}%` }"></div>
+            </div>
+            <span class="mqb-goal-text">{{ todayCount }}/{{ dailyGoal }}</span>
+          </div>
+        </div>
+
+        <div class="mqb-strips">
+          <div class="mqb-strip-label">形象</div>
+          <div class="mqb-strip">
+            <button
+              v-for="f in figurePresets"
+              :key="f.id"
+              type="button"
+              class="mqb-chip"
+              :class="{ active: figureId === f.id }"
+              @click="figureId = f.id"
+            >
+              <span class="mqb-chip-symbol">{{ f.symbol }}</span>
+              <span>{{ f.name }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="mqb-strips">
+          <div class="mqb-strip-label">主题</div>
+          <div class="mqb-strip">
+            <button
+              v-for="s in scenePresets"
+              :key="s.id"
+              type="button"
+              class="mqb-chip mqb-scene-chip"
+              :class="{ active: sceneId === s.id }"
+              @click="sceneId = s.id"
+            >
+              <span class="mqb-swatch">
+                <i :style="{ background: s.swatches[0] }"></i>
+                <i :style="{ background: s.swatches[1] }"></i>
+              </span>
+              <span>{{ s.name }}</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section class="work-grid">
         <article class="glass-card tap-panel">
           <div class="panel-head">
@@ -160,15 +217,14 @@
               circle
               size="large"
               :disabled="todayCount <= 0"
-              @click="decrement"
+              @pointerdown.prevent="decrement"
             />
 
             <button
               type="button"
               class="figure-button"
               :class="{ bump: isBumping }"
-              @pointerdown="primeAudio"
-              @click="increment"
+              @pointerdown="handleFigureTap"
             >
               <span class="figure-orbit orbit-a"></span>
               <span class="figure-orbit orbit-b"></span>
@@ -185,7 +241,7 @@
               :icon="Plus"
               circle
               size="large"
-              @click="increment"
+              @pointerdown.prevent="increment"
             />
           </div>
 
@@ -1131,6 +1187,11 @@ function bumpFigure() {
   }, 150)
 }
 
+function handleFigureTap() {
+  primeAudio()
+  increment()
+}
+
 function increment() {
   applyDelta(step.value, true)
 }
@@ -1216,7 +1277,9 @@ function stopAuto() {
 function primeAudio() {
   if (!soundOn.value) return
   try {
-    getAudioContext()
+    const ctx = getAudioContext()
+    // Pre-generate all sound buffers on first interaction
+    if (!soundBuffers.size) buildAllSoundBuffers(ctx)
   } catch (_) {
     // ignore
   }
@@ -1226,43 +1289,178 @@ function getAudioContext() {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)()
   }
-
   if (audioContext.state === 'suspended') {
     audioContext.resume()
   }
-
   return audioContext
 }
 
-function playTone(ctx, config) {
-  const oscillator = ctx.createOscillator()
-  const gainNode = ctx.createGain()
-  const start = ctx.currentTime + (config.delay || 0)
+// Pre-generated sound buffers
+const soundBuffers = new Map()
 
-  oscillator.type = config.type || 'sine'
-  oscillator.frequency.setValueAtTime(config.frequency, start)
+function buildAllSoundBuffers(ctx) {
+  const sr = ctx.sampleRate
+  soundBuffers.set('mokugyo', buildMokugyo(ctx, sr))
+  soundBuffers.set('bell', buildBell(ctx, sr))
+  soundBuffers.set('drum', buildDrum(ctx, sr))
+  soundBuffers.set('chime', buildChime(ctx, sr))
+}
 
-  if (config.endFrequency && config.endFrequency !== config.frequency) {
-    oscillator.frequency.exponentialRampToValueAtTime(config.endFrequency, start + config.duration)
+// Create a buffer from a generator function that fills sample data
+function makeBuffer(ctx, sr, duration, fillFn) {
+  const len = Math.ceil(sr * duration)
+  const buf = ctx.createBuffer(1, len, sr)
+  const data = buf.getChannelData(0)
+  fillFn(data, sr, len)
+  return buf
+}
+
+// Mix multiple signals into one buffer
+function mixBuffers(buffers) {
+  const maxLen = Math.max(...buffers.map(b => b.length))
+  const result = new Float32Array(maxLen)
+  for (const buf of buffers) {
+    for (let i = 0; i < buf.length; i++) {
+      result[i] += buf[i]
+    }
   }
-
-  gainNode.gain.setValueAtTime(Math.max(config.gain, 0.0001), start)
-  gainNode.gain.exponentialRampToValueAtTime(0.001, start + config.duration)
-
-  if (config.filterType) {
-    const filter = ctx.createBiquadFilter()
-    filter.type = config.filterType
-    filter.frequency.value = config.filterFrequency || config.frequency
-    filter.Q.value = config.filterQ || 1
-    oscillator.connect(filter)
-    filter.connect(gainNode)
-  } else {
-    oscillator.connect(gainNode)
+  // Normalize
+  let peak = 0
+  for (let i = 0; i < result.length; i++) {
+    const abs = Math.abs(result[i])
+    if (abs > peak) peak = abs
   }
+  if (peak > 0.98) {
+    const scale = 0.98 / peak
+    for (let i = 0; i < result.length; i++) {
+      result[i] *= scale
+    }
+  }
+  return result
+}
 
-  gainNode.connect(ctx.destination)
-  oscillator.start(start)
-  oscillator.stop(start + config.duration)
+// ============ Sound generators ============
+
+// Soft clipping for warmth
+function softClip(x) {
+  return Math.tanh(x * 1.2)
+}
+
+// Exponential decay envelope
+function decayEnv(i, len, attackLen, peakLevel) {
+  if (i < attackLen) return (i / attackLen) * peakLevel
+  const t = (i - attackLen) / (len - attackLen)
+  return peakLevel * Math.exp(-t * 6)
+}
+
+// Wooden fish: sharp resonant knock
+function buildMokugyo(ctx, sr) {
+  const dur = 0.09
+  const len = Math.ceil(sr * dur)
+  const buf = ctx.createBuffer(1, len, sr)
+  const d = buf.getChannelData(0)
+  const attackLen = Math.ceil(sr * 0.0003)
+  const f1 = 560, f2 = 1240, f3 = 280
+
+  for (let i = 0; i < len; i++) {
+    const t = i / sr
+    const env = decayEnv(i, len, attackLen, 1)
+    // Fundamental + 2 harmonics with detune
+    let s = Math.sin(2 * Math.PI * f1 * t) * 0.7
+    s += Math.sin(2 * Math.PI * f2 * t) * 0.2 * Math.exp(-t * 40)
+    s += Math.sin(2 * Math.PI * f3 * t) * 0.35 * Math.exp(-t * 18)
+    // Very short noise attack
+    if (t < 0.004) {
+      s += (Math.random() * 2 - 1) * 0.25 * (1 - t / 0.004)
+    }
+    d[i] = softClip(s * env)
+  }
+  return buf
+}
+
+// Bell: bright metallic ping
+function buildBell(ctx, sr) {
+  const dur = 0.22
+  const len = Math.ceil(sr * dur)
+  const buf = ctx.createBuffer(1, len, sr)
+  const d = buf.getChannelData(0)
+  const attackLen = Math.ceil(sr * 0.0005)
+  // Musical intervals: fundamental + major third + fifth
+  const partials = [
+    { f: 880, amp: 1, decay: 12 },
+    { f: 1100, amp: 0.55, decay: 15 },
+    { f: 1320, amp: 0.3, decay: 18 },
+    { f: 660, amp: 0.4, decay: 10 },
+    { f: 1760, amp: 0.12, decay: 24 }
+  ]
+
+  for (let i = 0; i < len; i++) {
+    const t = i / sr
+    const env = decayEnv(i, len, attackLen, 1)
+    let s = 0
+    for (const p of partials) {
+      s += Math.sin(2 * Math.PI * p.f * t) * p.amp * Math.exp(-t * p.decay)
+    }
+    d[i] = softClip(s * env * 0.7)
+  }
+  return buf
+}
+
+// Drum: deep thump
+function buildDrum(ctx, sr) {
+  const dur = 0.16
+  const len = Math.ceil(sr * dur)
+  const buf = ctx.createBuffer(1, len, sr)
+  const d = buf.getChannelData(0)
+  const attackLen = Math.ceil(sr * 0.0002)
+
+  for (let i = 0; i < len; i++) {
+    const t = i / sr
+    const env = decayEnv(i, len, attackLen, 1)
+    // Frequency sweep: 140Hz → 45Hz
+    const freq = 140 * Math.exp(-t * 14) + 45
+    let s = Math.sin(2 * Math.PI * freq * t) * 0.8
+    // Second harmonic
+    s += Math.sin(2 * Math.PI * freq * 2.2 * t) * 0.25 * Math.exp(-t * 22)
+    // Noise - drum head
+    if (t < 0.03) {
+      const noiseEnv = Math.exp(-t * 60)
+      s += (Math.random() * 2 - 1) * 0.3 * noiseEnv
+    }
+    d[i] = softClip(s * env * 0.85)
+  }
+  return buf
+}
+
+// Chime: sparkly short tink
+function buildChime(ctx, sr) {
+  const dur = 0.16
+  const len = Math.ceil(sr * dur)
+  const buf = ctx.createBuffer(1, len, sr)
+  const d = buf.getChannelData(0)
+  const attackLen = Math.ceil(sr * 0.0003)
+  // Major chord: root + third + fifth + octave
+  const partials = [
+    { f: 1047, amp: 1, decay: 16 },
+    { f: 1319, amp: 0.5, decay: 20 },
+    { f: 1568, amp: 0.3, decay: 24 },
+    { f: 2093, amp: 0.1, decay: 30 }
+  ]
+
+  for (let i = 0; i < len; i++) {
+    const t = i / sr
+    const env = decayEnv(i, len, attackLen, 1)
+    let s = 0
+    for (const p of partials) {
+      s += Math.sin(2 * Math.PI * p.f * t) * p.amp * Math.exp(-t * p.decay)
+    }
+    // Subtle sparkle noise
+    if (t < 0.02) {
+      s += (Math.random() * 2 - 1) * 0.12 * Math.exp(-t * 80)
+    }
+    d[i] = softClip(s * env * 0.65)
+  }
+  return buf
 }
 
 function playFigureSound() {
@@ -1270,99 +1468,20 @@ function playFigureSound() {
 
   try {
     const ctx = getAudioContext()
-    const level = volume.value / 100
+    if (soundBuffers.size === 0) buildAllSoundBuffers(ctx)
 
-    switch (activeFigure.value.sound) {
-      case 'mokugyo':
-        playTone(ctx, {
-          type: 'triangle',
-          frequency: 720,
-          endFrequency: 430,
-          duration: 0.14,
-          gain: level * 0.52,
-          filterType: 'bandpass',
-          filterFrequency: 860,
-          filterQ: 4.6
-        })
-        playTone(ctx, {
-          type: 'sine',
-          frequency: 240,
-          endFrequency: 190,
-          duration: 0.18,
-          gain: level * 0.18,
-          delay: 0.01
-        })
-        break
-      case 'bell':
-        playTone(ctx, {
-          type: 'sine',
-          frequency: 1180,
-          endFrequency: 960,
-          duration: 0.34,
-          gain: level * 0.36
-        })
-        playTone(ctx, {
-          type: 'triangle',
-          frequency: 860,
-          endFrequency: 660,
-          duration: 0.4,
-          gain: level * 0.22,
-          delay: 0.01
-        })
-        playTone(ctx, {
-          type: 'sine',
-          frequency: 1450,
-          endFrequency: 1180,
-          duration: 0.28,
-          gain: level * 0.11,
-          delay: 0.02
-        })
-        break
-      case 'drum':
-        playTone(ctx, {
-          type: 'sine',
-          frequency: 200,
-          endFrequency: 84,
-          duration: 0.22,
-          gain: level * 0.6
-        })
-        playTone(ctx, {
-          type: 'triangle',
-          frequency: 540,
-          endFrequency: 260,
-          duration: 0.08,
-          gain: level * 0.16,
-          delay: 0.004
-        })
-        break
-      case 'chime':
-        playTone(ctx, {
-          type: 'sine',
-          frequency: 1320,
-          endFrequency: 1080,
-          duration: 0.24,
-          gain: level * 0.28
-        })
-        playTone(ctx, {
-          type: 'triangle',
-          frequency: 1640,
-          endFrequency: 1360,
-          duration: 0.22,
-          gain: level * 0.16,
-          delay: 0.01
-        })
-        playTone(ctx, {
-          type: 'sine',
-          frequency: 980,
-          endFrequency: 860,
-          duration: 0.18,
-          gain: level * 0.1,
-          delay: 0.02
-        })
-        break
-      default:
-        break
-    }
+    const buf = soundBuffers.get(activeFigure.value.sound)
+    if (!buf) return
+
+    const source = ctx.createBufferSource()
+    source.buffer = buf
+
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(volume.value / 100, ctx.currentTime)
+
+    source.connect(gain)
+    gain.connect(ctx.destination)
+    source.start(ctx.currentTime)
   } catch (_) {
     // ignore audio failures
   }
@@ -1776,6 +1895,8 @@ onUnmounted(() => {
   background: transparent;
   color: inherit;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -1862,6 +1983,8 @@ onUnmounted(() => {
   color: var(--counter-muted);
   font-weight: 700;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: all 0.18s ease;
 }
 
@@ -1877,6 +2000,9 @@ onUnmounted(() => {
   align-items: center;
   gap: 14px;
   margin-top: 22px;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .side-round {
@@ -1885,6 +2011,10 @@ onUnmounted(() => {
   background: var(--counter-card-strong);
   border-color: var(--counter-border) !important;
   color: var(--counter-text) !important;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .side-plus {
@@ -1904,6 +2034,10 @@ onUnmounted(() => {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
   cursor: pointer;
   overflow: hidden;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
   transition: transform 0.14s ease, box-shadow 0.14s ease;
 }
 
@@ -2329,13 +2463,145 @@ onUnmounted(() => {
   }
 }
 
+/* ====== Mobile Quick Bar (hidden on desktop) ====== */
+.mobile-quick-bar {
+  display: none;
+}
+.mqb-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: var(--counter-card);
+  border: 1px solid var(--counter-border);
+}
+.mqb-stat {
+  flex: 1;
+  min-width: 0;
+}
+.mqb-stat-label {
+  display: block;
+  color: var(--counter-subtle);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.mqb-stat-value {
+  display: block;
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.mqb-stat-value.bump {
+  animation: count-bump 0.16s ease;
+}
+.mqb-goal {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mqb-goal-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--counter-track);
+  overflow: hidden;
+}
+.mqb-goal-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--counter-accent), rgba(255,255,255,0.7));
+  transition: width 0.24s ease;
+}
+.mqb-goal-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--counter-muted);
+  text-align: right;
+}
+.mqb-strips {
+  margin-top: 10px;
+}
+.mqb-strip-label {
+  color: var(--counter-subtle);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+  padding-left: 4px;
+}
+.mqb-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+.mqb-strip::-webkit-scrollbar {
+  display: none;
+}
+.mqb-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--counter-border);
+  border-radius: 999px;
+  background: var(--counter-card);
+  color: var(--counter-muted);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+.mqb-chip:hover {
+  border-color: var(--counter-accent);
+}
+.mqb-chip.active {
+  background: var(--counter-accent-soft);
+  border-color: var(--counter-accent);
+  color: var(--counter-accent);
+  font-weight: 700;
+}
+.mqb-chip-symbol {
+  font-size: 16px;
+  font-weight: 800;
+}
+.mqb-swatch {
+  display: flex;
+  gap: 3px;
+}
+.mqb-swatch i {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+
 @media (max-width: 720px) {
   .counter-app {
-    padding: 10px 10px 24px;
+    padding: 8px 6px 24px;
   }
 
   .counter-shell {
-    gap: 12px;
+    gap: 10px;
+  }
+
+  /* Show mobile quick bar */
+  .mobile-quick-bar {
+    display: block;
+  }
+
+  /* Compact the hero card instead of hiding */
+  .hero-card,
+  .preset-grid {
+    display: none;
   }
 
   .hero-card,
@@ -2343,8 +2609,8 @@ onUnmounted(() => {
   .tap-panel,
   .insight-panel,
   .panel-card {
-    padding: 16px;
-    border-radius: 20px;
+    padding: 14px;
+    border-radius: 18px;
   }
 
   .hero-top,
@@ -2359,11 +2625,6 @@ onUnmounted(() => {
     justify-content: flex-start;
   }
 
-  .hero-card,
-  .preset-grid {
-    display: none;
-  }
-
   .work-grid,
   .mini-stats {
     grid-template-columns: 1fr;
@@ -2371,7 +2632,6 @@ onUnmounted(() => {
 
   .tap-panel {
     padding-bottom: 10px;
-    gap: 0;
   }
 
   .mobile-focus-strip {
@@ -2539,11 +2799,11 @@ onUnmounted(() => {
     color: var(--counter-accent);
   }
 
-  .panel-head p {
-    display: none;
+  .insight-panel {
+    padding: 14px;
   }
 
-  .insight-panel {
+  .insight-panel .panel-head p {
     display: none;
   }
 

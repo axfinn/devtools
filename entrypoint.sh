@@ -189,4 +189,19 @@ EOF
     fi
 fi
 
+# 等待 Redis 就绪（带超时保护，避免 Go 进程因 Redis 不可用而崩溃重启）
+if [ -n "${REDIS_ADDR}" ]; then
+    echo "[entrypoint] Waiting for Redis at ${REDIS_ADDR}..."
+    REDIS_HOST=$(echo "${REDIS_ADDR}" | cut -d: -f1)
+    REDIS_PORT=$(echo "${REDIS_ADDR}" | cut -d: -f2)
+    for i in $(seq 1 30); do
+        if printf "PING\r\n" | nc -w 2 "${REDIS_HOST}" "${REDIS_PORT}" 2>/dev/null | grep -q PONG; then
+            echo "[entrypoint] Redis is ready"
+            break
+        fi
+        echo "[entrypoint] Redis not ready, retrying (${i}/30)..."
+        sleep 2
+    done
+fi
+
 exec ./server

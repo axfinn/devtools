@@ -377,6 +377,135 @@
           </div>
         </el-tab-pane>
 
+        <!-- Contraction Timer Tab -->
+        <el-tab-pane label="宫缩" name="contraction">
+          <div class="contraction-section">
+            <div class="fetal-hero" :class="`tone-${contractionStatusTone}`">
+              <div class="fetal-hero-copy">
+                <span class="hero-eyebrow">孕晚期重要工具</span>
+                <h3>宫缩记录</h3>
+                <p>{{ contractionStatusLabel }}</p>
+                <small>规律宫缩（5-10分钟一次，持续30-70秒）是临产信号，请及时就医。</small>
+              </div>
+              <div class="hero-stats">
+                <div class="hero-stat">
+                  <strong>{{ todayContractionCount }}</strong>
+                  <span>今日次数</span>
+                </div>
+                <div class="hero-stat">
+                  <strong>{{ contractionAvgDuration }}</strong>
+                  <span>平均时长(秒)</span>
+                </div>
+                <div class="hero-stat">
+                  <strong>{{ contractionAvgInterval }}</strong>
+                  <span>平均间隔(分钟)</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="fetal-tip-band" v-if="contractionWarning">
+              <span>{{ contractionWarning }}</span>
+            </div>
+
+            <div class="fetal-grid">
+              <div class="counter-area">
+                <div class="counter-display" :class="{ 'timer-active': contractionTimerRunning }">
+                  <span class="counter-number">{{ contractionTimerDisplay }}</span>
+                  <span class="counter-label">秒</span>
+                </div>
+                <div class="counter-timer" v-if="contractionTimerRunning">
+                  <span>本次宫缩计时中…</span>
+                </div>
+                <div class="counter-timer" v-if="contractionLastDuration > 0 && !contractionTimerRunning">
+                  <span>上一次持续 {{ contractionLastDuration }} 秒，间隔 {{ contractionLastIntervalStr }}</span>
+                </div>
+                <div class="counter-actions">
+                  <el-button
+                    v-if="!contractionTimerRunning"
+                    type="danger" size="large" class="kick-pill"
+                    @click="startContraction"
+                  >
+                    开始宫缩计时
+                  </el-button>
+                  <el-button
+                    v-else
+                    type="danger" size="large" class="kick-pill"
+                    @click="stopContraction"
+                  >
+                    停止计时（记录本次宫缩）
+                  </el-button>
+                  <el-button
+                    v-if="contractionTimerRunning"
+                    @click="resetContraction"
+                  >
+                    取消本次
+                  </el-button>
+                </div>
+              </div>
+
+              <div class="fetal-detail-card">
+                <div class="detail-card-head">
+                  <h4>今日明细</h4>
+                  <span>{{ todayContractionRecords.length }} 次</span>
+                </div>
+                <div v-if="todayContractionRecords.length" class="detail-time-list">
+                  <div
+                    v-for="(item, idx) in todayContractionRecords"
+                    :key="idx"
+                    class="detail-time-chip"
+                    :class="{ 'contraction-long': item.duration >= 60 }"
+                  >
+                    <span>{{ item.start_time }} · {{ item.duration }}秒</span>
+                    <span v-if="item.interval_minutes > 0" class="chip-sub">
+                      间隔 {{ item.interval_minutes >= 60 ? (item.interval_minutes / 60).toFixed(1) + '时' : item.interval_minutes + '分' }}
+                    </span>
+                  </div>
+                </div>
+                <el-empty v-else description="今天还没有记录宫缩" :image-size="70" />
+              </div>
+            </div>
+
+            <el-table v-if="sortedContractionRecords.length"
+              :data="sortedContractionRecords" stripe size="small" style="margin-top: 20px;">
+              <el-table-column prop="date" label="日期" width="130" />
+              <el-table-column prop="start_time" label="开始时间" width="110" />
+              <el-table-column prop="duration" label="持续(秒)" width="100" />
+              <el-table-column label="间隔(分)">
+                <template #default="{ row }">
+                  <span v-if="row.interval_minutes > 0">
+                    {{ row.interval_minutes >= 60
+                      ? (row.interval_minutes / 60).toFixed(1) + ' 小时'
+                      : row.interval_minutes + ' 分钟' }}
+                  </span>
+                  <span v-else>-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="notes" label="备注" min-width="120">
+                <template #default="{ row }">
+                  <el-input
+                    v-model="row.notes"
+                    size="small"
+                    placeholder="添加备注..."
+                    @change="scheduleAutoSave"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="80">
+                <template #default="{ $index }">
+                  <el-button link type="danger" size="small"
+                    @click="removeContraction($index)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <div class="fetal-tip-band" style="margin-top: 16px;">
+              <span>宫缩记录仅供参考，不能替代专业医疗判断。如出现规律宫缩或异常疼痛，请立即就医。</span>
+            </div>
+          </div>
+        </el-tab-pane>
+
         <!-- Knowledge Tab -->
         <el-tab-pane label="知识库" name="knowledge">
           <div class="knowledge-section">
@@ -513,7 +642,8 @@ const profileData = reactive({
   baby_essentials: { feeding: [], diaper: [], clothing: [], bathing: [], bedding: [], outdoor: [] },
   prenatal_checks: [],
   weight_records: [],
-  fetal_movements: []
+  fetal_movements: [],
+  contraction_records: []
 })
 const saveStatus = ref('saved')
 const activeTab = ref('hospitalBag')
@@ -545,6 +675,15 @@ const fetalCount = ref(0)
 const fetalTimerRunning = ref(false)
 const fetalTimerStart = ref(null)
 const fetalTimerElapsed = ref(0)
+
+// Contraction timer
+const contractionTimerRunning = ref(false)
+const contractionTimerStart = ref(null)
+const contractionTimerElapsed = ref(0)
+const contractionLastDuration = ref(0)
+const contractionLastEndTime = ref(null)
+let contractionTimer = null
+let contractionClockTimer = null
 const handledQuickAction = ref('')
 let fetalInterval = null
 
@@ -1106,6 +1245,170 @@ function handleQuickRouteAction() {
   }
 }
 
+// Contraction timer
+const contractionTimerDisplay = computed(() => {
+  const s = contractionTimerElapsed.value
+  if (s < 60) return String(s)
+  const m = Math.floor(s / 60)
+  const sec = s % 60
+  return `${m}:${String(sec).padStart(2, '0')}`
+})
+
+const sortedContractionRecords = computed(() => {
+  if (!profileData.contraction_records) return []
+  return [...profileData.contraction_records].sort((a, b) => {
+    const da = `${a.date} ${a.start_time}`
+    const db = `${b.date} ${b.start_time}`
+    return db.localeCompare(da)
+  })
+})
+
+const todayContractionRecords = computed(() => {
+  const today = new Date().toISOString().slice(0, 10)
+  return sortedContractionRecords.value.filter(r => r.date === today)
+})
+
+const todayContractionCount = computed(() => todayContractionRecords.value.length)
+
+const contractionAvgDuration = computed(() => {
+  const today = todayContractionRecords.value
+  if (!today.length) return '--'
+  const avg = Math.round(today.reduce((s, r) => s + (r.duration || 0), 0) / today.length)
+  return `${avg}`
+})
+
+const contractionAvgInterval = computed(() => {
+  const today = todayContractionRecords.value
+  const withInterval = today.filter(r => r.interval_minutes > 0)
+  if (!withInterval.length) return '--'
+  const avg = Math.round(withInterval.reduce((s, r) => s + r.interval_minutes, 0) / withInterval.length)
+  if (avg >= 60) return (avg / 60).toFixed(1)
+  return `${avg}`
+})
+
+const contractionLastIntervalStr = computed(() => {
+  const d = contractionLastDuration.value
+  if (!d) return ''
+  const records = todayContractionRecords.value
+  if (records.length >= 2) {
+    const last = records[records.length - 1]
+    const mins = last.interval_minutes
+    if (mins > 0) {
+      return mins >= 60 ? `，距上次 ${(mins / 60).toFixed(1)} 小时` : `，距上次 ${mins} 分钟`
+    }
+  }
+  return ''
+})
+
+const contractionStatusLabel = computed(() => {
+  if (contractionTimerRunning.value) return '正在记录宫缩…'
+  const today = todayContractionRecords.value
+  if (!today.length) return '今天还没有记录宫缩'
+  return `今天已记录 ${today.length} 次宫缩`
+})
+
+const contractionStatusTone = computed(() => {
+  if (contractionTimerRunning.value) return 'warning'
+  const today = todayContractionRecords.value
+  if (!today.length) return 'info'
+  // Check if pattern suggests regular contractions (labor sign)
+  const recent = today.slice(-6)
+  const withInterval = recent.filter(r => r.interval_minutes > 0 && r.interval_minutes <= 10)
+  if (withInterval.length >= 4) return 'danger'
+  if (recent.some(r => r.duration >= 60)) return 'warning'
+  return 'success'
+})
+
+const contractionWarning = computed(() => {
+  const today = todayContractionRecords.value
+  if (!today.length) return ''
+  const recent = today.slice(-6)
+  const withInterval = recent.filter(r => r.interval_minutes > 0 && r.interval_minutes <= 10 && r.duration >= 30)
+  if (withInterval.length >= 4) {
+    return '宫缩已变得规律（间隔≤10分钟，持续≥30秒），这是临产的重要信号，建议立即联系医生或前往医院！'
+  }
+  if (recent.some(r => r.duration >= 90)) {
+    return '检测到超过90秒的宫缩，请立即就医！'
+  }
+  if (today.length >= 6) {
+    return '今天宫缩较频繁，请注意观察间隔和持续时间的变化。如有规律化趋势，及时就医。'
+  }
+  return ''
+})
+
+function startContraction() {
+  contractionTimerElapsed.value = 0
+  contractionTimerRunning.value = true
+  contractionTimerStart.value = new Date()
+  if (contractionTimer) clearInterval(contractionTimer)
+  contractionTimer = setInterval(() => {
+    contractionTimerElapsed.value++
+  }, 1000)
+}
+
+function stopContraction() {
+  if (contractionTimer) {
+    clearInterval(contractionTimer)
+    contractionTimer = null
+  }
+  contractionTimerRunning.value = false
+
+  const duration = contractionTimerElapsed.value
+  if (duration < 5) {
+    ElMessage.warning('宫缩持续时间太短（<5秒），未记录')
+    contractionTimerElapsed.value = 0
+    return
+  }
+
+  const now = new Date()
+  const today = now.toISOString().slice(0, 10)
+  const timeStr = now.toTimeString().slice(0, 5)
+
+  // Calculate interval from last contraction
+  let intervalMinutes = 0
+  if (contractionLastEndTime.value) {
+    const diffMs = now.getTime() - contractionLastEndTime.value.getTime()
+    intervalMinutes = Math.round(diffMs / 60000)
+  }
+
+  const record = {
+    date: today,
+    start_time: timeStr,
+    duration: duration,
+    interval_minutes: intervalMinutes,
+    notes: ''
+  }
+
+  if (!profileData.contraction_records) profileData.contraction_records = []
+  profileData.contraction_records.push(record)
+
+  contractionLastDuration.value = duration
+  contractionLastEndTime.value = now
+  contractionTimerElapsed.value = 0
+
+  scheduleAutoSave()
+  ElMessage.success(`已记录宫缩：持续 ${duration} 秒`)
+}
+
+function resetContraction() {
+  if (contractionTimer) {
+    clearInterval(contractionTimer)
+    contractionTimer = null
+  }
+  contractionTimerRunning.value = false
+  contractionTimerElapsed.value = 0
+}
+
+function removeContraction(idx) {
+  const record = sortedContractionRecords.value[idx]
+  if (!record) return
+  const realIdx = profileData.contraction_records.findIndex(r =>
+    r.date === record.date && r.start_time === record.start_time && r.duration === record.duration
+  )
+  if (realIdx >= 0) profileData.contraction_records.splice(realIdx, 1)
+  scheduleAutoSave()
+}
+
 // Knowledge category filter
 const knowledgeCategory = ref('all')
 const knowledgeCategoryOptions = [
@@ -1591,6 +1894,7 @@ function applyData(data) {
         : Array.from({ length: Number(record.count || 0) }, () => record.start_time || '')
     }))
   }
+  if (d.contraction_records) profileData.contraction_records = d.contraction_records
 }
 
 async function saveData() {
@@ -1608,7 +1912,8 @@ async function saveData() {
           baby_essentials: profileData.baby_essentials,
           prenatal_checks: profileData.prenatal_checks,
           weight_records: profileData.weight_records,
-          fetal_movements: profileData.fetal_movements
+          fetal_movements: profileData.fetal_movements,
+          contraction_records: profileData.contraction_records
         }
       })
     })
@@ -1686,6 +1991,12 @@ function resetProfileState() {
   profileData.prenatal_checks = []
   profileData.weight_records = []
   profileData.fetal_movements = []
+  profileData.contraction_records = []
+  contractionTimerRunning.value = false
+  contractionTimerElapsed.value = 0
+  contractionLastDuration.value = 0
+  contractionLastEndTime.value = null
+  if (contractionTimer) { clearInterval(contractionTimer); contractionTimer = null }
 }
 
 function logoutProfile() {
@@ -1726,6 +2037,8 @@ watch(() => route.query.quickAction, () => {
 onUnmounted(() => {
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
   if (fetalInterval) clearInterval(fetalInterval)
+  if (contractionTimer) clearInterval(contractionTimer)
+  if (contractionClockTimer) clearInterval(contractionClockTimer)
   window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
 })
 </script>
@@ -2136,6 +2449,52 @@ html.dark .overview-banner {
   color: #b44658;
   font-size: 13px;
   font-weight: 600;
+}
+
+/* Contraction section */
+.contraction-section h3 {
+  margin: 0;
+  color: #9b3250;
+}
+
+.timer-active .counter-number {
+  color: #e6495e;
+  animation: pulse-timer 1s ease-in-out infinite;
+}
+
+@keyframes pulse-timer {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+.detail-time-chip.contraction-long {
+  background: rgba(220, 80, 80, 0.12);
+  color: #c0392b;
+}
+
+.chip-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.fetal-hero.tone-warning {
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.28), transparent 30%),
+    linear-gradient(140deg, #fff9f0 0%, #ffe8d4 45%, #ffd4bb 100%);
+}
+
+.fetal-hero.tone-danger {
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.24), transparent 30%),
+    linear-gradient(140deg, #fff5f5 0%, #ffe0e0 45%, #ffcccc 100%);
+}
+
+.fetal-hero.tone-success {
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.3), transparent 28%),
+    linear-gradient(140deg, #f5fff7 0%, #e0ffe4 45%, #d4ffd8 100%);
 }
 
 /* Knowledge section */
