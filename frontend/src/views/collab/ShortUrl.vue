@@ -334,7 +334,7 @@
 import { ref, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Link, DocumentCopy, Refresh, Plus, Right, Lock, Edit } from '@element-plus/icons-vue'
-import QRCode from 'qrcode'
+import { getQRCode } from '../../utils/vendor-loaders'
 
 // 状态
 const originalUrl = ref('')
@@ -439,6 +439,7 @@ const createShortUrl = async (hours) => {
     // 生成 QR 码
     await nextTick()
     if (qrcodeCanvas.value) {
+      const QRCode = await getQRCode()
       await QRCode.toCanvas(qrcodeCanvas.value, data.short_url, {
         width: 200,
         margin: 2

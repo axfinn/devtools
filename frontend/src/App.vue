@@ -21,31 +21,95 @@
       v-if="isMobile && !hideSidebar"
       v-model="showDrawer"
       direction="ltr"
-      size="70%"
+      size="88%"
       :show-close="false"
       class="mobile-drawer"
     >
       <template #header>
         <div class="drawer-header">
-          <el-icon :size="24" color="#409eff"><Tools /></el-icon>
-          <span class="drawer-title">DevTools</span>
+          <div class="drawer-brand">
+            <el-icon :size="24"><Tools /></el-icon>
+            <div>
+              <span class="drawer-title">DevTools</span>
+              <small>选择一个工作场景</small>
+            </div>
+          </div>
+          <el-icon class="drawer-close" :size="20" @click="showDrawer = false"><Close /></el-icon>
         </div>
       </template>
-      <el-menu
-        :default-active="$route.path"
-        router
-        class="drawer-menu"
-        @select="showDrawer = false"
-      >
-        <el-menu-item
-          v-for="route in menuRoutes"
-          :key="route.path"
-          :index="route.path"
+      <div class="mobile-nav-panel">
+        <el-input
+          v-model="sidebarSearch"
+          class="mobile-nav-search"
+          placeholder="搜索工具..."
+          clearable
+          size="large"
         >
-          <el-icon><component :is="route.meta.icon" /></el-icon>
-          <span>{{ route.meta.title }}</span>
-        </el-menu-item>
-      </el-menu>
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+
+        <div class="mobile-shortcuts" v-if="!debouncedSearch && shortcutMenuRoutes.length">
+          <button
+            v-for="route in shortcutMenuRoutes"
+            :key="route.path"
+            type="button"
+            class="mobile-shortcut"
+            :class="{ active: $route.path === route.path }"
+            @click="goRoute(route.path)"
+          >
+            <el-icon><component :is="route.meta.icon" /></el-icon>
+            <span>{{ route.meta.title }}</span>
+          </button>
+        </div>
+
+        <div class="mobile-nav-results" v-if="debouncedSearch">
+          <button
+            v-for="route in filteredMenuRoutes"
+            :key="route.path"
+            type="button"
+            class="mobile-result-item"
+            :class="{ active: $route.path === route.path }"
+            @click="goRoute(route.path)"
+          >
+            <el-icon><component :is="route.meta.icon" /></el-icon>
+            <span>{{ route.meta.title }}</span>
+          </button>
+          <div v-if="filteredMenuRoutes.length === 0" class="mobile-empty">没有找到匹配工具</div>
+        </div>
+
+        <div v-else class="mobile-nav-groups">
+          <section
+            v-for="group in orderedMenuGroups"
+            :key="group.key"
+            class="mobile-nav-group"
+          >
+            <div class="mobile-group-head">
+              <span class="mobile-group-icon" :style="{ color: group.meta?.accent }">
+                <el-icon><component :is="group.meta?.icon || 'Tools'" /></el-icon>
+              </span>
+              <div>
+                <strong>{{ group.meta?.name || '其他' }}</strong>
+                <small>{{ group.meta?.description }}</small>
+              </div>
+            </div>
+            <div class="mobile-group-tools">
+              <button
+                v-for="route in group.routes"
+                :key="route.path"
+                type="button"
+                class="mobile-tool-item"
+                :class="{ active: $route.path === route.path }"
+                @click="goRoute(route.path)"
+              >
+                <el-icon><component :is="route.meta.icon" /></el-icon>
+                <span>{{ route.meta.title }}</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
     </el-drawer>
 
     <!-- PC端侧边栏 -->
@@ -77,23 +141,24 @@
       <!-- 分类菜单 -->
       <div class="sidebar-content" v-if="!isCollapse">
         <div
-          v-for="(routes, category) in groupedMenuRoutes"
-          :key="category"
+          v-for="group in orderedMenuGroups"
+          :key="group.key"
           class="sidebar-group"
         >
-          <div class="sidebar-group-title" @click="toggleCategory(category)">
+          <div class="sidebar-group-title" @click="toggleCategory(group.key)">
             <el-icon>
-              <component :is="expandedCategories[category] ? ArrowDown : ArrowRight" />
+              <component :is="expandedCategories[group.key] ? ArrowDown : ArrowRight" />
             </el-icon>
-            <span>{{ categories[category]?.name || '其他' }}</span>
+            <span>{{ group.meta?.name || '其他' }}</span>
+            <small>{{ group.routes.length }}</small>
           </div>
-          <div v-show="expandedCategories[category]" class="sidebar-group-items">
+          <div v-show="expandedCategories[group.key]" class="sidebar-group-items">
             <div
-              v-for="route in routes"
+              v-for="route in group.routes"
               :key="route.path"
               class="sidebar-item"
               :class="{ active: $route.path === route.path }"
-              @click="$router.push(route.path)"
+              @click="goRoute(route.path)"
             >
               <el-icon><component :is="route.meta.icon" /></el-icon>
               <span>{{ route.meta.title }}</span>
@@ -238,6 +303,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tools, VideoPlay, VideoPause, ArrowLeftBold, ArrowRightBold, RefreshRight, Rank, Close } from '@element-plus/icons-vue'
 import { useTheme } from './composables/useTheme'
 import { useMediaPlayer } from './composables/useMediaPlayer'
+import { useToolPreferences } from './composables/useToolPreferences'
 
 const router = useRouter()
 const route = useRoute()
@@ -246,6 +312,7 @@ const showDrawer = ref(false)
 const isMobile = ref(false)
 const showDonateDialog = ref(false)
 const hiddenRoutes = ref([])
+const { recentPaths, favoritePaths, rememberTool, sortRoutesByPreference } = useToolPreferences()
 
 // Global media player
 const player = useMediaPlayer()
@@ -312,10 +379,17 @@ watch(sidebarSearch, (val) => {
   clearTimeout(searchTimer)
   searchTimer = setTimeout(() => { debouncedSearch.value = val }, 300)
 })
+
+watch(() => route.path, (path) => {
+  if (route.meta?.category && route.meta.category !== 'home' && !route.meta?.hideSidebar && !path.includes(':')) {
+    rememberTool(path)
+  }
+}, { immediate: true })
+
 const filteredMenuRoutes = computed(() => {
   if (!debouncedSearch.value) return menuRoutes.value
   const keyword = debouncedSearch.value.toLowerCase()
-  return menuRoutes.value.filter(route =>
+  return sortRoutesByPreference(menuRoutes.value).filter(route =>
     route.meta?.title?.toLowerCase().includes(keyword) ||
     route.meta?.description?.toLowerCase().includes(keyword)
   )
@@ -333,6 +407,33 @@ const groupedMenuRoutes = computed(() => {
   })
   return groups
 })
+
+const orderedMenuGroups = computed(() => {
+  return Object.entries(groupedMenuRoutes.value)
+    .map(([key, routes]) => ({
+      key,
+      routes,
+      meta: categories[key] || categories.other
+    }))
+    .sort((a, b) => (a.meta?.order || 999) - (b.meta?.order || 999))
+})
+
+const shortcutMenuRoutes = computed(() => {
+  const hasPersonalTools = favoritePaths.value.length > 0 || recentPaths.value.length > 0
+  if (!hasPersonalTools) {
+    return menuRoutes.value
+      .filter(route => route.meta?.shortcut)
+      .sort((a, b) => (b.meta?.shortcutPriority || 0) - (a.meta?.shortcutPriority || 0))
+      .slice(0, 8)
+  }
+  const preferred = sortRoutesByPreference(menuRoutes.value)
+  return preferred.slice(0, 8)
+})
+
+function goRoute(path) {
+  router.push(path)
+  showDrawer.value = false
+}
 
 // 分类展开状态
 const expandedCategories = ref(Object.keys(categories).reduce((acc, key) => {
@@ -480,14 +581,49 @@ const themeModeName = computed(() => {
 .drawer-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.drawer-brand {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  padding: 10px 0;
+  min-width: 0;
+  color: var(--color-primary);
+}
+
+.drawer-brand > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .drawer-title {
   font-size: 20px;
   font-weight: bold;
-  color: #409eff;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.drawer-brand small {
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.drawer-close {
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.drawer-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .drawer-menu {
@@ -504,6 +640,158 @@ const themeModeName = computed(() => {
 
 .drawer-menu .el-menu-item.is-active {
   color: var(--color-primary);
+}
+
+.mobile-nav-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px;
+}
+
+.mobile-nav-search :deep(.el-input__wrapper) {
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--border-base) inset;
+}
+
+.mobile-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-shortcut,
+.mobile-result-item,
+.mobile-tool-item {
+  border: 1px solid var(--border-base);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-shortcut {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mobile-shortcut.active,
+.mobile-result-item.active,
+.mobile-tool-item.active {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: rgba(64, 158, 255, 0.1);
+}
+
+.mobile-nav-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-result-item {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.mobile-empty {
+  padding: 30px 12px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+.mobile-nav-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mobile-nav-group {
+  padding: 12px;
+  border: 1px solid var(--border-base);
+  border-radius: 14px;
+  background: var(--bg-overlay);
+}
+
+.mobile-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mobile-group-icon {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+
+.mobile-group-head div {
+  min-width: 0;
+}
+
+.mobile-group-head strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.mobile-group-head small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.mobile-group-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-tool-item {
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.mobile-tool-item span,
+.mobile-shortcut span,
+.mobile-result-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* PC端侧边栏 */
@@ -589,6 +877,13 @@ const themeModeName = computed(() => {
 
 .sidebar-group-title:hover {
   color: var(--text-primary);
+}
+
+.sidebar-group-title small {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .sidebar-group-items {

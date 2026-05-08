@@ -585,7 +585,7 @@ import {
   Edit,
   Promotion
 } from '@element-plus/icons-vue'
-import QRCode from 'qrcode'
+import { getQRCode } from '../../utils/vendor-loaders'
 
 // 基本状态
 const name = ref('')
@@ -722,6 +722,7 @@ const createMock = async () => {
     // 生成 QR 码
     await nextTick()
     if (qrcodeCanvas.value) {
+      const QRCode = await getQRCode()
       await QRCode.toCanvas(qrcodeCanvas.value, data.mock_url, {
         width: 200,
         margin: 2

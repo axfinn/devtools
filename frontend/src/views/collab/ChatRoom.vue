@@ -463,9 +463,9 @@
 import { ref, computed, onActivated, onDeactivated, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElImageViewer, ElMessageBox } from 'element-plus'
 import { API_BASE, WS_BASE } from '../../api'
-import QRCode from 'qrcode'
 import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
+import hljs from '../../utils/highlight'
+import { getQRCode } from '../../utils/vendor-loaders'
 
 const md = new MarkdownIt({
   html: false,
@@ -1533,6 +1533,7 @@ const showQRCode = async () => {
   const roomUrl = `${window.location.origin}${window.location.pathname}#/chat?roomId=${currentRoom.value.id}`
 
   try {
+    const QRCode = await getQRCode()
     await QRCode.toCanvas(qrCanvas.value, roomUrl, {
       width: 280,
       margin: 2,

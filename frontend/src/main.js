@@ -1,15 +1,84 @@
 import { createApp } from 'vue'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import {
+  Box,
+  Calendar,
+  ChatDotRound,
+  ChatLineSquare,
+  Clock,
+  Close,
+  Connection,
+  Document,
+  DocumentCopy,
+  Edit,
+  EditPen,
+  FirstAidKit,
+  FolderOpened,
+  Food,
+  Headset,
+  HomeFilled,
+  Key,
+  Link,
+  Location,
+  MagicStick,
+  Money,
+  Monitor,
+  Picture,
+  PictureFilled,
+  Position,
+  Search,
+  Setting,
+  Share,
+  Switch,
+  Timer,
+  Tools,
+  VideoPause,
+  VideoPlay
+} from '@element-plus/icons-vue'
 import './styles/index.css'
 import App from './App.vue'
 import router from './router'
 
 const app = createApp(App)
 
-// 注册所有 Element Plus 图标
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+const globalIcons = {
+  Box,
+  Calendar,
+  ChatDotRound,
+  ChatLineSquare,
+  Clock,
+  Close,
+  Connection,
+  Document,
+  DocumentCopy,
+  Edit,
+  EditPen,
+  FirstAidKit,
+  FolderOpened,
+  Food,
+  Headset,
+  Home: HomeFilled,
+  Key,
+  Link,
+  Location,
+  MagicStick,
+  Money,
+  Monitor,
+  Picture,
+  PictureFilled,
+  Position,
+  Search,
+  Setting,
+  Share,
+  Switch,
+  Timer,
+  Tools,
+  VideoPause,
+  VideoPlay
+}
+
+for (const [key, component] of Object.entries(globalIcons)) {
   app.component(key, component)
 }
 

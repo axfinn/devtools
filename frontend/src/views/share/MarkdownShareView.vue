@@ -52,7 +52,7 @@
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
+import hljs from '../../utils/highlight'
 import 'highlight.js/styles/github-dark.css'
 import texmath from 'markdown-it-texmath'
 import katex from 'katex'

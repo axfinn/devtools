@@ -2,13 +2,13 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 // 工具分类配置
 const categories = {
-  dev: { name: '开发工具', icon: 'Monitor' },
-  convert: { name: '转换工具', icon: 'Switch' },
-  draw: { name: '绘图/图表', icon: 'Edit' },
-  collab: { name: '协作分享', icon: 'Connection' },
-  life: { name: '生活工具', icon: 'Calendar' },
-  ai: { name: 'AI 工具', icon: 'MagicStick' },
-  other: { name: '其他工具', icon: 'Tools' }
+  dev: { name: '开发调试', icon: 'Monitor', description: '编码、接口、终端与调试', accent: '#2563eb', order: 10 },
+  convert: { name: '文本转换', icon: 'Switch', description: '编码、解析、文本处理', accent: '#0891b2', order: 20 },
+  draw: { name: '创作图表', icon: 'Edit', description: '文档、图表、白板与导图', accent: '#7c3aed', order: 30 },
+  collab: { name: '协作分享', icon: 'Connection', description: '粘贴、短链、文件与聊天', accent: '#059669', order: 40 },
+  ai: { name: 'AI 工作台', icon: 'MagicStick', description: '模型、媒体生成与网关管理', accent: '#db2777', order: 50 },
+  life: { name: '生活记录', icon: 'Calendar', description: '记账、事项、健康与家庭', accent: '#ea580c', order: 60 },
+  other: { name: '系统管理', icon: 'Tools', description: '代理、控制台与辅助工具', accent: '#475569', order: 70 }
 }
 
 // 工具路由配置

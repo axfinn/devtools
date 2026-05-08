@@ -41,3 +41,10 @@ export async function getECharts() {
     return core
   })
 }
+
+let qrcodePromise
+
+export async function getQRCode() {
+  const mod = await (qrcodePromise ||= import('qrcode'))
+  return mod.default ?? mod
+}

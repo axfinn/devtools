@@ -686,10 +686,8 @@ import { ref, nextTick, computed } from 'vue'
 import { ElImageViewer } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Share, CircleCheck, CopyDocument, Link, Plus, Folder, FolderOpened, Delete, Upload, Lock, Refresh, Document, Files, Reading, Microphone, Camera, VideoCamera, Monitor, VideoPlay, VideoPause, Bell, WarnTriangleFilled } from '@element-plus/icons-vue'
-import QRCode from 'qrcode'
 import { API_BASE } from '../../api'
-import { FFmpeg } from '@ffmpeg/ffmpeg'
-import { fetchFile, toBlobURL } from '@ffmpeg/util'
+import { getQRCode } from '../../utils/vendor-loaders'
 
 const content = ref('')
 const title = ref('')
@@ -858,6 +856,7 @@ const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB per chunk for chunked upload
 // FFmpeg 实例 (懒加载)
 let ffmpegInstance = null
 let ffmpegLoaded = false
+let ffmpegModulesPromise = null
 
 // 我的分享功能
 const showMyShares = ref(false)
@@ -1524,6 +1523,10 @@ const initFFmpeg = async () => {
   if (ffmpegLoaded) return ffmpegInstance
 
   try {
+    const [{ FFmpeg }, { toBlobURL }] = await (ffmpegModulesPromise ||= Promise.all([
+      import('@ffmpeg/ffmpeg'),
+      import('@ffmpeg/util')
+    ]))
     const ffmpeg = new FFmpeg()
 
     // 加载 FFmpeg 核心
@@ -1549,6 +1552,7 @@ const compressVideo = async (index) => {
   try {
     ElMessage.info('正在初始化视频压缩工具...')
     const ffmpeg = await initFFmpeg()
+    const { fetchFile } = await import('@ffmpeg/util')
 
     ElMessage.info('正在压缩视频，请稍候...')
 
@@ -1782,6 +1786,7 @@ const createPaste = async () => {
     // 生成二维码
     await nextTick()
     if (qrCanvas.value) {
+      const QRCode = await getQRCode()
       QRCode.toCanvas(qrCanvas.value, shareUrl.value, {
         width: 150,
         margin: 2,

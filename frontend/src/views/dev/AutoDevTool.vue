@@ -1255,7 +1255,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTheme } from '../../composables/useTheme'
 import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
+import hljs from '../../utils/highlight'
 import {
   Lock, MagicStick, VideoPlay, VideoPause, Refresh, RefreshRight,
   Delete, Download, DocumentRemove, Pointer, Loading, Document,
