@@ -19,19 +19,24 @@
 
             <el-form label-position="top">
               <el-form-item label="选择工具">
-                <el-select v-model="selectedTool" placeholder="自动选择" class="w-full" :loading="loadingTools">
+                <el-select
+                  v-model="selectedTool"
+                  placeholder="自动选择"
+                  class="w-full"
+                  :loading="loadingTools"
+                  filterable
+                  clearable
+                >
                   <el-option
                     v-for="tool in tools"
                     :key="tool.name"
-                    :label="tool.name"
+                    :label="toolLabel(tool)"
                     :value="tool.name"
-                  >
-                    <div class="tool-option">
-                      <span>{{ tool.name }}</span>
-                      <span class="tool-desc">{{ tool.description || '未填写描述' }}</span>
-                    </div>
-                  </el-option>
+                  />
                 </el-select>
+                <div v-if="selectedToolDescription" class="select-hint">
+                  {{ selectedToolDescription }}
+                </div>
               </el-form-item>
 
               <el-form-item label="图片">
@@ -124,10 +129,15 @@
 
             <el-form label-position="top">
               <el-form-item label="模型">
-                <el-select v-model="qwenModel" class="w-full">
-                  <el-option value="qwen3.5-plus" label="qwen3.5-plus（推荐，深度思考+视觉）" />
-                  <el-option value="kimi-k2.5" label="kimi-k2.5（Kimi 视觉理解）" />
+                <el-select v-model="qwenModel" class="w-full" filterable>
+                  <el-option
+                    v-for="model in qwenModelOptions"
+                    :key="model.value"
+                    :value="model.value"
+                    :label="model.label"
+                  />
                 </el-select>
+                <div class="select-hint">{{ qwenModelHint }}</div>
               </el-form-item>
 
               <el-form-item :label="`图片（已添加 ${qwenImages.length}/10 张）`">
@@ -309,6 +319,10 @@ const isListening = ref(false)
 
 // ---- Qwen 大模型理解 ----
 const qwenModel = ref('qwen3.5-plus')
+const qwenModelOptions = [
+  { value: 'qwen3.5-plus', label: 'qwen3.5-plus', hint: '推荐，深度思考 + 视觉理解。' },
+  { value: 'kimi-k2.5', label: 'kimi-k2.5', hint: 'Kimi 视觉理解。' }
+]
 const qwenPrompt = ref('')
 // qwenImages: { type: 'url'|'file', data: string (base64 or url), preview: string, label: string }
 const qwenImages = ref([])
@@ -335,6 +349,18 @@ const md = new MarkdownIt({
 
 const renderedHtml = computed(() => md.render(resultText.value || ''))
 const qwenRenderedHtml = computed(() => md.render(qwenResultText.value || ''))
+const selectedToolDescription = computed(() => {
+  const tool = tools.value.find((item) => item.name === selectedTool.value)
+  return tool?.description || ''
+})
+const qwenModelHint = computed(() => {
+  return qwenModelOptions.find((item) => item.value === qwenModel.value)?.hint || ''
+})
+
+const toolLabel = (tool) => {
+  if (!tool?.description) return tool?.name || ''
+  return `${tool.name} - ${tool.description}`
+}
 
 const parseJsonSafe = async (resp) => {
   const text = await resp.text()
@@ -823,14 +849,12 @@ onUnmounted(() => {
   margin-left: 4px;
 }
 
-.tool-option {
-  display: flex;
-  flex-direction: column;
-}
-
-.tool-desc {
+.select-hint {
+  margin-top: 6px;
   font-size: 12px;
   color: #909399;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .image-uploader :deep(.el-upload) {
@@ -861,6 +885,7 @@ onUnmounted(() => {
 
 .action-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -962,12 +987,14 @@ onUnmounted(() => {
 
 .img-url-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   width: 100%;
 }
 
 .img-url-row .el-input {
   flex: 1;
+  min-width: 220px;
 }
 
 .mt-2 {
@@ -1033,5 +1060,25 @@ onUnmounted(() => {
   font-size: 12px;
   color: #f56c6c;
   margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .tool-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .logs-toolbar,
+  .img-url-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .img-url-row .el-input {
+    min-width: 0;
+  }
+
+  .qwen-img-item {
+    align-items: flex-start;
+  }
 }
 </style>
