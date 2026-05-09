@@ -426,7 +426,7 @@ const toolRoutes = [
       title: 'MiniMax Studio',
       icon: 'MagicStick',
       category: 'ai',
-      description: 'MiniMax 文本、语音、视频、音乐、图像理解统一工作台'
+      description: 'MiniMax 文本、语音、视频、音乐与结果归档工作台'
     }
   },
   {

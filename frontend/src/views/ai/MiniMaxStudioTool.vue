@@ -3,14 +3,14 @@
     <section class="studio-hero">
       <div class="hero-copy">
         <p class="eyebrow">MINIMAX STUDIO</p>
-        <h2>把文本、语音、视频、音乐、图像理解放到一个工作台里。</h2>
+        <h2>把文本、语音、视频、音乐和结果归档放到一个工作台里。</h2>
         <p class="hero-desc">
-          页面直接复用项目现有的 MiniMax 配置与网关能力。文本生成、Speech、Hailuo、music-2.5 / 2.6、music-cover、lyrics_generation、image-01 都能从这里发起。
+          页面直接复用项目现有的 MiniMax 配置与网关能力。文本生成、Speech、Hailuo、music-2.5 / 2.6、music-cover、lyrics_generation、image-01 都能从这里发起和归档。
         </p>
         <div class="hero-tips">
           <span>支持 `AI Gateway API Key`</span>
           <span>也支持 `超级管理员密码` 直接调试</span>
-          <span>`coding-plan-vlm / search` 走图像理解能力入口</span>
+          <span><el-button type="primary" size="small" @click="$router.push('/image-understanding')">图像理解</el-button></span>
           <span><el-button type="primary" size="small" @click="$router.push('/gallery')">浏览媒体画廊</el-button></span>
         </div>
       </div>
@@ -57,7 +57,7 @@
         :key="item.name"
         class="capability-card"
         :class="`tone-${item.tone}`"
-        @click="jumpToTab(item.tab)"
+        @click="openCapability(item)"
       >
         <div class="capability-top">
           <span class="capability-name">{{ item.name }}</span>
@@ -598,20 +598,6 @@
         </el-card>
       </el-tab-pane>
 
-      <el-tab-pane label="图像理解 / Coding Plan" name="coding">
-        <el-alert
-          title="coding-plan-vlm / coding-plan-search 入口"
-          type="info"
-          :closable="false"
-          show-icon
-          class="coding-alert"
-        >
-          <template #default>
-            这里直接嵌入现有的 MiniMax MCP 图像理解能力。它就是当前项目里最接近 `coding-plan-vlm / search` 的使用入口。
-          </template>
-        </el-alert>
-        <ImageUnderstandingTool class="coding-embed" />
-      </el-tab-pane>
     </el-tabs>
 
     <el-dialog v-model="createShareVisible" width="760px" title="保存 MiniMax 结果分享">
@@ -696,14 +682,15 @@
 
 <script setup>
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
-import ImageUnderstandingTool from './ImageUnderstandingTool.vue'
 
 const OFFICIAL_DOCS_URL = 'https://platform.minimaxi.com/docs/api-reference/api-overview'
 const SUPER_ADMIN_KEY = 'minimax_studio_super_admin_password'
 const API_KEY_STORAGE = 'minimax_studio_api_key'
 const pageOrigin = window.location.origin
+const router = useRouter()
 
 const activeTab = ref('text')
 const superAdminPassword = ref(localStorage.getItem(SUPER_ADMIN_KEY) || '')
@@ -824,8 +811,8 @@ const capabilityCards = [
   { name: 'music-cover', badge: 'Workflow', model: 'music-cover', desc: '先做前处理，再带上歌词和结构元数据生成。', tab: 'music', tone: 'music' },
   { name: 'lyrics_generation', badge: 'Workflow', model: 'lyrics_generation', desc: '先写歌词，再带入音乐生成。', tab: 'music', tone: 'music' },
   { name: 'image-01', badge: 'Direct', model: 'image-01', desc: '图像生成任务入口。', tab: 'media', tone: 'image' },
-  { name: 'coding-plan-vlm', badge: 'Integrated', model: 'MiniMax MCP', desc: '在图像理解页内使用。', tab: 'coding', tone: 'coding' },
-  { name: 'coding-plan-search', badge: 'Integrated', model: 'MiniMax MCP', desc: '在图像理解页内使用。', tab: 'coding', tone: 'coding' }
+  { name: 'coding-plan-vlm', badge: 'Open Tool', model: 'MiniMax MCP', desc: '打开独立图像理解工具。', route: '/image-understanding', tone: 'coding' },
+  { name: 'coding-plan-search', badge: 'Open Tool', model: 'MiniMax MCP', desc: '打开独立图像理解工具。', route: '/image-understanding', tone: 'coding' }
 ]
 
 const imageAspectRatioOptions = [
@@ -1633,8 +1620,12 @@ async function deleteAdminShare(row) {
   }
 }
 
-function jumpToTab(tab) {
-  activeTab.value = tab
+function openCapability(item) {
+  if (item.route) {
+    router.push(item.route)
+    return
+  }
+  activeTab.value = item.tab
 }
 
 function openOfficialDocs() {
@@ -2300,14 +2291,6 @@ async function safeJson(res) {
 .asset-card video {
   min-height: 180px;
   object-fit: cover;
-}
-
-.coding-alert {
-  margin-bottom: 16px;
-}
-
-.coding-embed :deep(.tool-container) {
-  padding: 0;
 }
 
 .task-table-card {
