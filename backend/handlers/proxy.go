@@ -1828,6 +1828,16 @@ func (h *ProxyHandler) currentSubscriptionByType(subType string) (string, int, s
 	return strings.TrimSpace(text), 0, sourceURL, nil
 }
 
+func subscriptionUnavailableStatus(err error) int {
+	if err == nil {
+		return http.StatusNotFound
+	}
+	if strings.Contains(err.Error(), "no ss:// nodes") {
+		return http.StatusUnprocessableEntity
+	}
+	return http.StatusNotFound
+}
+
 func (h *ProxyHandler) fetchSubscriptionByType(sourceURLs []string, subType string) (string, string, error) {
 	sourceURLs = normalizeSourceURLs(sourceURLs, "")
 	subType = normalizeSubscriptionType(subType)
@@ -1840,7 +1850,13 @@ func (h *ProxyHandler) fetchSubscriptionByType(sourceURLs []string, subType stri
 	var lastErr error
 	for _, rawURL := range sourceURLs {
 		for _, sourceURL := range subscriptionURLCandidatesForType(rawURL, subType) {
-			text, err := h.fetchSubscriptionWithFallback(sourceURL)
+			var text string
+			var err error
+			if subType == "shadowrocket" {
+				text, err = h.fetchRawSubscriptionWithFallback(sourceURL)
+			} else {
+				text, err = h.fetchSubscriptionWithFallback(sourceURL)
+			}
 			if err != nil {
 				lastErr = err
 				continue
@@ -1874,6 +1890,10 @@ func (h *ProxyHandler) DownloadSubscription(c *gin.Context) {
 	subType := requestedSubscriptionType(c)
 	text, nodeCount, sourceURL, err := h.currentSubscriptionByType(subType)
 	if err != nil || text == "" {
+		if err != nil {
+			c.String(subscriptionUnavailableStatus(err), err.Error())
+			return
+		}
 		c.String(http.StatusNotFound, "subscription not available")
 		return
 	}
@@ -2003,6 +2023,7 @@ func (h *ProxyHandler) refreshSubscription() {
 	globalSession.yamlContent = text
 	globalSession.mu.Unlock()
 	go savePersistedProxy()
+	go h.refreshPublishedSubscriptionCaches(sourceURLs)
 	log.Printf("proxy: 订阅已更新，共 %d 个节点，来源 %d 个 URL", len(nodes), len(sourceURLs))
 }
 
@@ -2166,6 +2187,14 @@ func parseClashYAML(data string) ([]ProxyNode, error) {
 
 // fetchSubscriptionWithFallback 尝试通过代理（活跃代理 → 配置的 request_proxy_url → 直连）下载订阅
 func (h *ProxyHandler) fetchSubscriptionWithFallback(rawURL string) (string, error) {
+	return h.fetchSubscriptionWithFallbackMode(rawURL, true)
+}
+
+func (h *ProxyHandler) fetchRawSubscriptionWithFallback(rawURL string) (string, error) {
+	return h.fetchSubscriptionWithFallbackMode(rawURL, false)
+}
+
+func (h *ProxyHandler) fetchSubscriptionWithFallbackMode(rawURL string, decodeBase64 bool) (string, error) {
 	type candidate struct {
 		source string
 		client *http.Client
@@ -2186,7 +2215,7 @@ func (h *ProxyHandler) fetchSubscriptionWithFallback(rawURL string) (string, err
 
 	var lastErr error
 	for _, cand := range candidates {
-		text, err := fetchSubscriptionWithClient(cand.client, rawURL)
+		text, err := fetchSubscriptionWithClientMode(cand.client, rawURL, decodeBase64)
 		if err == nil {
 			if cand.source != "direct" {
 				log.Printf("proxy: 订阅下载成功（%s → %s）", cand.source, maskURL(rawURL))
@@ -2204,6 +2233,10 @@ func fetchSubscription(rawURL string) (string, error) {
 }
 
 func fetchSubscriptionWithClient(client *http.Client, rawURL string) (string, error) {
+	return fetchSubscriptionWithClientMode(client, rawURL, true)
+}
+
+func fetchSubscriptionWithClientMode(client *http.Client, rawURL string, decodeBase64 bool) (string, error) {
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return "", err
@@ -2214,6 +2247,9 @@ func fetchSubscriptionWithClient(client *http.Client, rawURL string) (string, er
 		return "", err
 	}
 	text := strings.TrimSpace(string(body))
+	if !decodeBase64 {
+		return text, nil
+	}
 	// 尝试 Base64 解码
 	if decoded, err := base64.StdEncoding.DecodeString(text); err == nil {
 		return string(decoded), nil
@@ -2332,6 +2368,9 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 	globalSession.mu.Unlock()
 
 	go savePersistedProxy()
+	if len(sourceURLs) > 0 {
+		go h.refreshPublishedSubscriptionCaches(sourceURLs)
+	}
 	configuredDefaultNode, configuredAINode := resolveConfiguredNodes()
 
 	c.JSON(200, gin.H{
