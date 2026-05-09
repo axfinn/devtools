@@ -190,7 +190,7 @@
     <el-main class="main-content" :class="{ 'mobile-main': isMobile }">
       <router-view v-slot="{ Component }">
         <keep-alive :exclude="['NeonApp']">
-          <component :is="Component" :key="viewRefreshKey" />
+          <component :is="Component" :key="currentViewKey" />
         </keep-alive>
       </router-view>
 
@@ -315,6 +315,7 @@ const hiddenRoutes = ref([])
 const viewRefreshKey = ref(0)
 const lastBackgroundAt = ref(Date.now())
 const { recentPaths, favoritePaths, rememberTool, sortRoutesByPreference } = useToolPreferences()
+const currentViewKey = computed(() => `${route.fullPath}:${viewRefreshKey.value}`)
 
 // Global media player
 const player = useMediaPlayer()
