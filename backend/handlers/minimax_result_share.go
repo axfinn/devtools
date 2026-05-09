@@ -213,48 +213,18 @@ func (h *AIGatewayHandler) PublicListMiniMaxResultShares(c *gin.Context) {
 	origin := minimaxPublicOrigin(c)
 	limit := boundedInt(c.Query("limit"), 50, 1, 200)
 	offset := boundedInt(c.Query("offset"), 0, 0, 100000)
-	resultType := strings.TrimSpace(c.Query("type"))
+	resultType := strings.TrimSpace(strings.ToLower(c.Query("type")))
 	keyword := strings.TrimSpace(c.Query("keyword"))
 
-	items, err := h.db.ListMiniMaxResultShares("active", keyword, limit, offset)
+	items, total, err := h.listMiniMaxResultShareItems(origin, "active", keyword, resultType, limit, offset, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询分享列表失败", "code": 500})
 		return
 	}
 
-	// Filter by result_type client-side since DB query doesn't support type filter
-	filtered := make([]gin.H, 0, len(items))
-	for _, item := range items {
-		if resultType != "" && item.ResultType != resultType {
-			continue
-		}
-		assets, _ := models.ParseMiniMaxResultShareAssets(item.AssetsJSON)
-		assetList := make([]gin.H, 0, len(assets))
-		for _, a := range assets {
-			assetPath := fmt.Sprintf("/api/minimax/result-shares/%s/assets/%s", item.ID, a.ID)
-			assetList = append(assetList, gin.H{
-				"id":           a.ID,
-				"kind":         a.Kind,
-				"filename":     a.Filename,
-				"content_type": a.ContentType,
-				"size_bytes":   a.SizeBytes,
-				"asset_url":    origin + assetPath,
-			})
-		}
-		filtered = append(filtered, gin.H{
-			"id":          item.ID,
-			"title":       item.Title,
-			"summary":     item.Summary,
-			"result_type": item.ResultType,
-			"model":       item.Model,
-			"assets":      assetList,
-			"created_at":  item.CreatedAt,
-			"share_url":   fmt.Sprintf("%s/minimax/share/%s", origin, item.ID),
-		})
-	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"items":  filtered,
+		"items":  items,
+		"total":  total,
 		"limit":  limit,
 		"offset": offset,
 	})
@@ -280,18 +250,9 @@ func (h *AIGatewayHandler) AdminListMiniMaxResultShares(c *gin.Context) {
 	resp := make([]gin.H, 0, len(items))
 	for _, item := range items {
 		assets, _ := models.ParseMiniMaxResultShareAssets(item.AssetsJSON)
-		resp = append(resp, gin.H{
-			"id":          item.ID,
-			"title":       item.Title,
-			"summary":     item.Summary,
-			"result_type": item.ResultType,
-			"model":       item.Model,
-			"status":      item.Status,
-			"asset_count": len(assets),
-			"created_at":  item.CreatedAt,
-			"updated_at":  item.UpdatedAt,
-			"share_url":   fmt.Sprintf("%s/minimax/share/%s", origin, item.ID),
-		})
+		payloadMap := make(map[string]interface{})
+		_ = json.Unmarshal([]byte(item.Payload), &payloadMap)
+		resp = append(resp, h.minimaxResultShareListItem(origin, item, assets, payloadMap, true))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -440,9 +401,112 @@ func (h *AIGatewayHandler) loadMiniMaxResultShareForPublic(id string, onlyActive
 
 func (h *AIGatewayHandler) minimaxResultShareResponse(c *gin.Context, share *models.MiniMaxResultShare, assets []models.MiniMaxResultShareAsset, payload map[string]interface{}) gin.H {
 	origin := minimaxPublicOrigin(c)
+	respAssets := minimaxResultShareAssetResponses(origin, share.ID, assets)
+	assetKinds := minimaxResultShareAssetKinds(respAssets)
+	return gin.H{
+		"id":               share.ID,
+		"title":            share.Title,
+		"summary":          share.Summary,
+		"result_type":      share.ResultType,
+		"display_type":     minimaxResultShareDisplayType(share.ResultType, assetKinds),
+		"asset_kinds":      assetKinds,
+		"model":            share.Model,
+		"status":           share.Status,
+		"payload":          payload,
+		"prompt":           minimaxResultSharePrompt(payload),
+		"task_id":          minimaxResultShareTaskID(payload),
+		"external_task_id": minimaxResultShareExternalTaskID(payload),
+		"assets":           respAssets,
+		"asset_count":      len(respAssets),
+		"primary_asset":    minimaxResultSharePrimaryAsset(respAssets),
+		"created_at":       share.CreatedAt,
+		"updated_at":       share.UpdatedAt,
+		"share_url":        fmt.Sprintf("%s/minimax/share/%s", origin, share.ID),
+	}
+}
+
+func (h *AIGatewayHandler) listMiniMaxResultShareItems(origin, status, keyword, resultType string, limit, offset int, includePayload bool) ([]gin.H, int, error) {
+	if resultType == "" {
+		items, err := h.db.ListMiniMaxResultShares(status, keyword, limit, offset)
+		if err != nil {
+			return nil, 0, err
+		}
+		total, _ := h.db.CountMiniMaxResultShares(status, keyword)
+		resp := make([]gin.H, 0, len(items))
+		for _, item := range items {
+			assets, _ := models.ParseMiniMaxResultShareAssets(item.AssetsJSON)
+			payloadMap := make(map[string]interface{})
+			_ = json.Unmarshal([]byte(item.Payload), &payloadMap)
+			resp = append(resp, h.minimaxResultShareListItem(origin, item, assets, payloadMap, includePayload))
+		}
+		return resp, total, nil
+	}
+
+	const batchSize = 200
+	items := make([]gin.H, 0, limit)
+	total := 0
+	scannedOffset := 0
+	for {
+		batch, err := h.db.ListMiniMaxResultShares(status, keyword, batchSize, scannedOffset)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, item := range batch {
+			assets, _ := models.ParseMiniMaxResultShareAssets(item.AssetsJSON)
+			payloadMap := make(map[string]interface{})
+			_ = json.Unmarshal([]byte(item.Payload), &payloadMap)
+			listItem := h.minimaxResultShareListItem(origin, item, assets, payloadMap, includePayload)
+			if !minimaxResultShareMatchesType(listItem, resultType) {
+				continue
+			}
+			if total >= offset && len(items) < limit {
+				items = append(items, listItem)
+			}
+			total++
+		}
+		if len(batch) < batchSize {
+			break
+		}
+		scannedOffset += batchSize
+	}
+	return items, total, nil
+}
+
+func (h *AIGatewayHandler) minimaxResultShareListItem(origin string, share *models.MiniMaxResultShare, assets []models.MiniMaxResultShareAsset, payload map[string]interface{}, includePayload bool) gin.H {
+	respAssets := minimaxResultShareAssetResponses(origin, share.ID, assets)
+	assetKinds := minimaxResultShareAssetKinds(respAssets)
+	item := gin.H{
+		"id":               share.ID,
+		"title":            share.Title,
+		"summary":          share.Summary,
+		"result_type":      share.ResultType,
+		"display_type":     minimaxResultShareDisplayType(share.ResultType, assetKinds),
+		"asset_kinds":      assetKinds,
+		"model":            share.Model,
+		"status":           share.Status,
+		"prompt":           minimaxResultSharePrompt(payload),
+		"task_id":          minimaxResultShareTaskID(payload),
+		"external_task_id": minimaxResultShareExternalTaskID(payload),
+		"assets":           respAssets,
+		"asset_count":      len(respAssets),
+		"primary_asset":    minimaxResultSharePrimaryAsset(respAssets),
+		"created_at":       share.CreatedAt,
+		"updated_at":       share.UpdatedAt,
+		"share_url":        fmt.Sprintf("%s/minimax/share/%s", origin, share.ID),
+	}
+	if includePayload {
+		item["payload"] = payload
+	}
+	return item
+}
+
+func minimaxResultShareAssetResponses(origin, shareID string, assets []models.MiniMaxResultShareAsset) []gin.H {
 	respAssets := make([]gin.H, 0, len(assets))
 	for _, asset := range assets {
-		assetPath := fmt.Sprintf("/api/minimax/result-shares/%s/assets/%s", share.ID, asset.ID)
+		assetPath := fmt.Sprintf("/api/minimax/result-shares/%s/assets/%s", shareID, asset.ID)
 		respAssets = append(respAssets, gin.H{
 			"id":           asset.ID,
 			"kind":         asset.Kind,
@@ -453,19 +517,139 @@ func (h *AIGatewayHandler) minimaxResultShareResponse(c *gin.Context, share *mod
 			"asset_url":    origin + assetPath,
 		})
 	}
-	return gin.H{
-		"id":          share.ID,
-		"title":       share.Title,
-		"summary":     share.Summary,
-		"result_type": share.ResultType,
-		"model":       share.Model,
-		"status":      share.Status,
-		"payload":     payload,
-		"assets":      respAssets,
-		"created_at":  share.CreatedAt,
-		"updated_at":  share.UpdatedAt,
-		"share_url":   fmt.Sprintf("%s/minimax/share/%s", origin, share.ID),
+	return respAssets
+}
+
+func minimaxResultShareAssetKinds(assets []gin.H) []string {
+	seen := make(map[string]struct{})
+	kinds := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		kind, _ := asset["kind"].(string)
+		kind = strings.TrimSpace(strings.ToLower(kind))
+		if kind == "" {
+			continue
+		}
+		if _, ok := seen[kind]; ok {
+			continue
+		}
+		seen[kind] = struct{}{}
+		kinds = append(kinds, kind)
 	}
+	return kinds
+}
+
+func minimaxResultShareDisplayType(resultType string, assetKinds []string) string {
+	resultType = strings.TrimSpace(strings.ToLower(resultType))
+	if resultType == "media" && len(assetKinds) == 1 {
+		return assetKinds[0]
+	}
+	if resultType == "" && len(assetKinds) > 0 {
+		return assetKinds[0]
+	}
+	return resultType
+}
+
+func minimaxResultSharePrimaryAsset(assets []gin.H) gin.H {
+	if len(assets) == 0 {
+		return nil
+	}
+	priority := []string{"video", "audio", "image"}
+	for _, kind := range priority {
+		for _, asset := range assets {
+			if asset["kind"] == kind {
+				return asset
+			}
+		}
+	}
+	return assets[0]
+}
+
+func minimaxResultShareMatchesType(item gin.H, resultType string) bool {
+	resultType = strings.TrimSpace(strings.ToLower(resultType))
+	if resultType == "" {
+		return true
+	}
+	if item["result_type"] == resultType || item["display_type"] == resultType {
+		return true
+	}
+	for _, kind := range stringSliceFromInterface(item["asset_kinds"]) {
+		if kind == resultType {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceFromInterface(value interface{}) []string {
+	raw, ok := value.([]string)
+	if ok {
+		return raw
+	}
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+func minimaxResultSharePrompt(payload map[string]interface{}) string {
+	for _, key := range []string{"prompt", "text", "lyrics", "summary", "image_prompt", "video_prompt"} {
+		if value := strings.TrimSpace(interfaceToString(payload[key])); value != "" && value != "null" {
+			return value
+		}
+	}
+	if request := parseMiniMaxPayloadObject(payload["request"]); request != nil {
+		for _, key := range []string{"prompt", "text", "lyrics"} {
+			if value := strings.TrimSpace(interfaceToString(request[key])); value != "" && value != "null" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func minimaxResultShareTaskID(payload map[string]interface{}) string {
+	for _, key := range []string{"task_id", "taskId"} {
+		if value := strings.TrimSpace(interfaceToString(payload[key])); value != "" && value != "null" {
+			return value
+		}
+	}
+	return ""
+}
+
+func minimaxResultShareExternalTaskID(payload map[string]interface{}) string {
+	for _, key := range []string{"external_task_id", "externalTaskID"} {
+		if value := strings.TrimSpace(interfaceToString(payload[key])); value != "" && value != "null" {
+			return value
+		}
+	}
+	if result := parseMiniMaxPayloadObject(payload["result"]); result != nil {
+		for _, key := range []string{"task_id", "id"} {
+			if value := strings.TrimSpace(interfaceToString(result[key])); value != "" && value != "null" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func parseMiniMaxPayloadObject(value interface{}) map[string]interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return v
+	case string:
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(v), &parsed); err == nil {
+			return parsed
+		}
+	}
+	return nil
 }
 
 func (h *AIGatewayHandler) persistMiniMaxResultShareAssets(shareID string, inputs []MiniMaxResultShareAssetInput) ([]models.MiniMaxResultShareAsset, error) {

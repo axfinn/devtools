@@ -251,14 +251,23 @@
               <div class="task-meta">
                 <el-tag :type="taskTagType(currentMediaTask.status)">{{ currentMediaTask.status }}</el-tag>
                 <span>{{ currentMediaTask.model }}</span>
+                <span v-if="currentMediaTask.task_id">{{ currentMediaTask.task_id }}</span>
+                <span v-if="currentMediaTask.external_task_id">上游 {{ currentMediaTask.external_task_id }}</span>
                 <span>{{ formatTime(currentMediaTask.created_at) }}</span>
+                <span v-if="currentMediaTask.completed_at">完成 {{ formatTime(currentMediaTask.completed_at) }}</span>
               </div>
+              <p v-if="taskPrompt(currentMediaTask)" class="task-prompt">{{ taskPrompt(currentMediaTask) }}</p>
               <p class="task-error" v-if="currentMediaTask.error">{{ currentMediaTask.error }}</p>
               <div v-if="mediaAssets.length" class="asset-grid">
                 <div v-for="(asset, index) in mediaAssets" :key="asset.url + index" class="asset-card">
                   <img v-if="asset.type === 'image'" :src="asset.url" alt="asset" />
                   <video v-else-if="asset.type === 'video'" :src="asset.url" controls />
-                  <audio v-else :src="asset.url" controls />
+                  <audio v-else-if="asset.type === 'audio'" :src="asset.url" controls />
+                  <div v-else class="empty-block">文件资产</div>
+                  <div class="asset-meta">
+                    <el-tag size="small">{{ asset.type }}</el-tag>
+                    <span>{{ asset.contentType || inferContentTypeFromAsset(asset) }}</span>
+                  </div>
                   <div class="asset-url">{{ asset.url }}</div>
                 </div>
               </div>
@@ -284,10 +293,22 @@
           <el-table :data="mediaTasks" v-loading="mediaTasksLoading" stripe size="small" max-height="420">
             <el-table-column prop="task_id" label="任务 ID" min-width="170">
               <template #default="{ row }">
-                <el-button text type="primary" @click="openMediaTask(row.task_id)">{{ row.task_id }}</el-button>
+                <div class="task-id-cell">
+                  <el-button text type="primary" @click.stop="openMediaTask(row.task_id)">{{ row.task_id }}</el-button>
+                  <div class="row-quick-actions">
+                    <el-button size="small" type="primary" @click.stop="openMediaTask(row.task_id)">查看</el-button>
+                    <el-button size="small" @click.stop="saveTaskFromList(row)">保存</el-button>
+                    <el-button size="small" @click.stop="downloadTask(row)">下载</el-button>
+                  </div>
+                </div>
               </template>
             </el-table-column>
             <el-table-column prop="model" label="模型" min-width="150" />
+            <el-table-column label="Prompt" min-width="260">
+              <template #default="{ row }">
+                <span class="task-prompt-cell">{{ taskPrompt(row) || '-' }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="status" label="状态" width="110">
               <template #default="{ row }">
                 <el-tag :type="taskTagType(row.status)">{{ row.status }}</el-tag>
@@ -305,15 +326,19 @@
             </el-table-column>
             <el-table-column label="结果" min-width="220">
               <template #default="{ row }">
-                <span class="result-links">{{ (row.result_urls || []).slice(0, 2).join(' | ') || '-' }}</span>
+                <div v-if="extractTaskAssets(row).length" class="task-result-cell">
+                  <el-tag size="small">{{ extractTaskAssets(row).length }} 个资产</el-tag>
+                  <span>{{ extractTaskAssets(row).map(item => item.type).join(' / ') }}</span>
+                </div>
+                <span v-else class="result-links">-</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="220" fixed="right">
+            <el-table-column label="操作" min-width="260">
               <template #default="{ row }">
-                <div class="inline-actions">
-                  <el-button text type="primary" @click="openMediaTask(row.task_id)">查看</el-button>
-                  <el-button text :disabled="row.status !== 'succeeded'" @click="saveTaskFromList(row)">保存分享</el-button>
-                  <el-button text :disabled="row.status !== 'succeeded'" @click="downloadTask(row)">下载</el-button>
+                <div class="inline-actions task-actions">
+                  <el-button size="small" type="primary" @click.stop="openMediaTask(row.task_id)">查看</el-button>
+                  <el-button size="small" @click.stop="saveTaskFromList(row)">保存分享</el-button>
+                  <el-button size="small" @click.stop="downloadTask(row)">下载</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -452,11 +477,12 @@
                   <strong>{{ latestShare.title || '未命名分享' }}</strong>
                   <p>{{ latestShare.summary || '最近一次已保存的 MiniMax 结果。' }}</p>
                 </div>
-                <el-tag type="success">{{ latestShare.result_type }}</el-tag>
+                <el-tag type="success">{{ shareTypeLabel(latestShare.display_type || latestShare.result_type) }}</el-tag>
               </div>
               <div class="share-meta-line">
                 <span>{{ latestShare.model || '未标注模型' }}</span>
-                <span>{{ latestShare.assets?.length || 0 }} 个资产</span>
+                <span>{{ latestShare.asset_count ?? latestShare.assets?.length ?? 0 }} 个资产</span>
+                <span v-if="latestShare.task_id">{{ latestShare.task_id }}</span>
                 <span>{{ formatTime(latestShare.created_at) }}</span>
               </div>
               <div class="archive-actions">
@@ -506,9 +532,9 @@
                   </div>
                 </div>
                 <div class="inline-actions">
-                  <el-button text type="primary" @click="openUnsharedTask(task)">查看</el-button>
-                  <el-button text @click="saveUnsharedTask(task)">保存分享</el-button>
-                  <el-button text @click="downloadTask(task)">下载</el-button>
+                  <el-button text type="primary" @click.stop="openUnsharedTask(task)">查看</el-button>
+                  <el-button text @click.stop="saveUnsharedTask(task)">保存分享</el-button>
+                  <el-button text @click.stop="downloadTask(task)">下载</el-button>
                 </div>
               </div>
             </div>
@@ -574,7 +600,26 @@
             <el-table-column prop="title" label="标题" min-width="220">
               <template #default="{ row }">{{ row.title || '未命名分享' }}</template>
             </el-table-column>
-            <el-table-column prop="result_type" label="类型" width="120" />
+            <el-table-column label="类型" width="120">
+              <template #default="{ row }">{{ shareTypeLabel(row.display_type || row.result_type) }}</template>
+            </el-table-column>
+            <el-table-column label="任务 / Prompt" min-width="260">
+              <template #default="{ row }">
+                <div class="share-list-info">
+                  <strong>{{ row.task_id || row.external_task_id || '-' }}</strong>
+                  <span>{{ row.prompt || row.summary || '-' }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="主资产" min-width="220">
+              <template #default="{ row }">
+                <div v-if="row.primary_asset" class="share-list-info">
+                  <strong>{{ row.primary_asset.kind }} · {{ formatBytes(row.primary_asset.size_bytes) }}</strong>
+                  <span>{{ row.primary_asset.filename }}</span>
+                </div>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="status" label="状态" width="110">
               <template #default="{ row }">
                 <el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag>
@@ -586,7 +631,7 @@
             </el-table-column>
             <el-table-column label="操作" min-width="250">
               <template #default="{ row }">
-                <div class="inline-actions">
+                <div class="inline-actions table-actions">
                   <el-button text type="primary" @click="inspectAdminShare(row.id)">查看 / 设置</el-button>
                   <el-button text @click="copyText(row.share_url)">复制链接</el-button>
                   <el-button text @click="openLink(row.share_url)">打开</el-button>
@@ -651,7 +696,11 @@
           <div class="share-highlight-top">
             <div>
               <strong>{{ adminEditingShare.share_url }}</strong>
-              <p>{{ adminEditingShare.model || '未标注模型' }} · {{ adminEditingShare.result_type }}</p>
+              <p>
+                {{ adminEditingShare.model || '未标注模型' }}
+                · {{ shareTypeLabel(adminEditingShare.display_type || adminEditingShare.result_type) }}
+                <template v-if="adminEditingShare.task_id"> · {{ adminEditingShare.task_id }}</template>
+              </p>
             </div>
             <div class="inline-actions">
               <el-button @click="copyText(adminEditingShare.share_url)">复制链接</el-button>
@@ -1204,11 +1253,15 @@ function saveUnsharedTask(task) {
 
 async function saveTaskFromList(task) {
   if (!task?.task_id) return
-  if (!task.result && !task.content_type) {
-    const detail = await openMediaTask(task.task_id)
-    if (!detail) return
-  } else {
-    currentMediaTask.value = task
+  const detail = await openMediaTask(task.task_id)
+  if (!detail) return
+  if (detail.status !== 'succeeded') {
+    ElMessage.error('任务尚未成功，不能保存分享')
+    return
+  }
+  if (!extractTaskAssets(detail).length) {
+    ElMessage.error('任务没有可保存的媒体资产')
+    return
   }
   openShareDialog('media')
 }
@@ -1270,7 +1323,17 @@ async function downloadCurrentMedia() {
 }
 
 async function downloadTask(task) {
-  currentMediaTask.value = task
+  if (!task?.task_id) return
+  const detail = await openMediaTask(task.task_id)
+  if (!detail) return
+  if (detail.status !== 'succeeded') {
+    ElMessage.error('任务尚未成功，不能下载')
+    return
+  }
+  if (!extractTaskAssets(detail).length) {
+    ElMessage.error('任务没有可下载的媒体资产')
+    return
+  }
   await downloadCurrentMedia()
 }
 
@@ -1658,6 +1721,20 @@ function buildMediaShareSummary(task, assets) {
   return `${prompt.slice(0, 60)}${prompt.length > 60 ? '…' : ''} · ${assetCount} 个资产`
 }
 
+function shareTypeLabel(type) {
+  const map = {
+    audio: '音频',
+    speech: '语音',
+    video: '视频',
+    image: '图像',
+    media: '媒体',
+    text: '文本',
+    lyrics: '歌词',
+    cover_feature: '翻唱前处理'
+  }
+  return map[type] || type || '-'
+}
+
 function loadLocalSharedTaskIds() {
   try {
     return JSON.parse(localStorage.getItem('minimax_studio_shared_task_ids') || '[]')
@@ -1801,10 +1878,13 @@ function extractCoverFeatureId(payload) {
 function extractTaskAssets(task) {
   if (!task) return []
   const urls = Array.isArray(task.result_urls) ? [...task.result_urls] : []
+  collectUrls(task.primary_asset, urls)
   collectUrls(task.result, urls)
+  collectUrls(parseTaskRequest(task.request), urls)
   return Array.from(new Set(urls)).map((url) => ({
     url,
-    type: inferAssetType(url, task.content_type, task.model)
+    type: inferAssetType(url, task.content_type, task.model),
+    contentType: inferContentTypeFromUrl(url, task.content_type, task.model)
   }))
 }
 
@@ -1828,8 +1908,26 @@ function collectUrls(value, bucket) {
 function inferAssetType(url, contentType, model) {
   const text = `${contentType || ''} ${model || ''} ${url || ''}`.toLowerCase()
   if (text.includes('video') || text.endsWith('.mp4')) return 'video'
-  if (text.includes('audio') || text.endsWith('.mp3') || text.endsWith('.wav')) return 'audio'
-  return 'image'
+  if (text.includes('audio') || text.endsWith('.mp3') || text.endsWith('.wav') || text.endsWith('.flac')) return 'audio'
+  if (text.includes('image') || text.endsWith('.png') || text.endsWith('.jpg') || text.endsWith('.jpeg') || text.endsWith('.webp')) return 'image'
+  return 'file'
+}
+
+function inferContentTypeFromAsset(asset) {
+  return inferContentTypeFromUrl(asset?.url, asset?.contentType, '')
+}
+
+function inferContentTypeFromUrl(url, contentType, model) {
+  if (contentType && contentType !== 'application/octet-stream') return contentType
+  const text = `${model || ''} ${url || ''}`.toLowerCase()
+  if (text.includes('.mp4') || text.startsWith('minimax-hailuo-') || text.includes('hailuo')) return 'video/mp4'
+  if (text.includes('.wav')) return 'audio/wav'
+  if (text.includes('.flac')) return 'audio/flac'
+  if (text.includes('.mp3') || text.startsWith('music-') || text.startsWith('speech-')) return 'audio/mpeg'
+  if (text.includes('.png')) return 'image/png'
+  if (text.includes('.jpg') || text.includes('.jpeg')) return 'image/jpeg'
+  if (text.includes('.webp')) return 'image/webp'
+  return 'application/octet-stream'
 }
 
 function guessExtension(contentType) {
@@ -1839,6 +1937,14 @@ function guessExtension(contentType) {
   if (contentType.includes('png')) return 'png'
   if (contentType.includes('jpeg')) return 'jpg'
   return 'bin'
+}
+
+function formatBytes(value) {
+  const size = Number(value || 0)
+  if (!size) return '0 B'
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(2)} MB`
 }
 
 function taskTagType(status) {
@@ -2206,6 +2312,29 @@ async function safeJson(res) {
   background: #f8fafc;
 }
 
+.share-list-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.share-list-info strong {
+  color: #0f172a;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.share-list-info span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 .result-text,
 .result-key {
   white-space: pre-wrap;
@@ -2261,6 +2390,65 @@ async function safeJson(res) {
   margin: 0;
   color: #b91c1c;
   font-size: 13px;
+}
+
+.task-prompt {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.task-prompt-cell {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.task-id-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-actions {
+  flex-wrap: wrap;
+  min-width: 230px;
+}
+
+.table-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.task-actions :deep(.el-button + .el-button),
+.row-quick-actions :deep(.el-button + .el-button),
+.table-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.task-result-cell,
+.asset-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .asset-grid {

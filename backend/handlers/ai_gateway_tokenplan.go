@@ -775,15 +775,33 @@ func (h *AIGatewayHandler) ListMinimaxTokenPlanTasks(c *gin.Context) {
 		if t.ExternalTaskID != "" {
 			item["external_task_id"] = t.ExternalTaskID
 		}
+		if strings.TrimSpace(t.RequestBody) != "" {
+			item["request"] = t.RequestBody
+			if requestMap := parseJSONMap(t.RequestBody); requestMap != nil {
+				item["prompt"] = firstNonEmpty(
+					extractString(requestMap, "prompt"),
+					extractString(requestMap, "text"),
+					extractString(requestMap, "lyrics"),
+				)
+				item["duration"] = requestMap["duration"]
+				item["resolution"] = requestMap["resolution"]
+				item["aspect_ratio"] = requestMap["aspect_ratio"]
+			}
+		}
 		// 如果有结果，解析并提取 URL
 		if t.ResultJSON != "" && t.Status == "succeeded" {
 			var result map[string]interface{}
 			if err := json.Unmarshal([]byte(t.ResultJSON), &result); err == nil {
-				if output, ok := result["output"].(map[string]interface{}); ok {
-					urls := extractMediaURLs(output)
-					if len(urls) > 0 {
-						item["result_urls"] = urls
-					}
+				item["result"] = result
+				contentType := extractContentType(result)
+				urls := extractMediaURLs(result)
+				if len(urls) > 0 {
+					item["result_urls"] = urls
+					item["asset_count"] = len(urls)
+					item["primary_asset"] = buildMiniMaxTaskAssetSummary(urls[0], t.Model, contentType)
+				}
+				if contentType != "" {
+					item["content_type"] = contentType
 				}
 			}
 		}
@@ -836,16 +854,31 @@ func (h *AIGatewayHandler) GetMinimaxTokenPlanTask(c *gin.Context) {
 	if task.ExternalTaskID != "" {
 		result["external_task_id"] = task.ExternalTaskID
 	}
+	if strings.TrimSpace(task.RequestBody) != "" {
+		if requestMap := parseJSONMap(task.RequestBody); requestMap != nil {
+			result["prompt"] = firstNonEmpty(
+				extractString(requestMap, "prompt"),
+				extractString(requestMap, "text"),
+				extractString(requestMap, "lyrics"),
+			)
+			result["duration"] = requestMap["duration"]
+			result["resolution"] = requestMap["resolution"]
+			result["aspect_ratio"] = requestMap["aspect_ratio"]
+		}
+	}
 	if task.ResultJSON != "" {
 		var resultMap map[string]interface{}
 		if err := json.Unmarshal([]byte(task.ResultJSON), &resultMap); err == nil {
 			result["result"] = resultMap
+			contentType := extractContentType(resultMap)
 			// 提取媒体 URL 列表
 			if urls := extractMediaURLs(resultMap); len(urls) > 0 {
 				result["result_urls"] = urls
+				result["asset_count"] = len(urls)
+				result["primary_asset"] = buildMiniMaxTaskAssetSummary(urls[0], task.Model, contentType)
 			}
 			// 提取内容类型
-			if contentType := extractContentType(resultMap); contentType != "" {
+			if contentType != "" {
 				result["content_type"] = contentType
 			}
 		} else {
@@ -854,6 +887,14 @@ func (h *AIGatewayHandler) GetMinimaxTokenPlanTask(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+func parseJSONMap(raw string) map[string]interface{} {
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return nil
+	}
+	return result
 }
 
 // extractMediaURLs 从结果中提取媒体 URL
@@ -883,6 +924,34 @@ func extractMediaURLs(output map[string]interface{}) []string {
 	}
 	walk(output)
 	return urls
+}
+
+func buildMiniMaxTaskAssetSummary(rawURL, model, contentType string) gin.H {
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = inferContentType(rawURL)
+	}
+	if contentType == "application/octet-stream" {
+		contentType = inferContentTypeByModel(model)
+	}
+	return gin.H{
+		"url":          rawURL,
+		"type":         inferMiniMaxAssetType(rawURL, model, contentType),
+		"content_type": contentType,
+	}
+}
+
+func inferMiniMaxAssetType(rawURL, model, contentType string) string {
+	text := strings.ToLower(contentType + " " + model + " " + rawURL)
+	switch {
+	case strings.Contains(text, "video") || strings.Contains(text, ".mp4"):
+		return "video"
+	case strings.Contains(text, "audio") || strings.Contains(text, ".mp3") || strings.Contains(text, ".wav") || strings.Contains(text, ".flac"):
+		return "audio"
+	case strings.Contains(text, "image") || strings.Contains(text, ".png") || strings.Contains(text, ".jpg") || strings.Contains(text, ".jpeg") || strings.Contains(text, ".webp"):
+		return "image"
+	default:
+		return "file"
+	}
 }
 
 // extractContentType 从结果中提取内容类型

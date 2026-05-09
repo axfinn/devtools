@@ -18,10 +18,10 @@
           <h1>{{ share.title || '未命名结果分享' }}</h1>
           <p class="hero-summary">{{ share.summary || '这个分享已被保存到本地，可公开查看，也可直接播放媒体产物。' }}</p>
           <div class="hero-meta">
-            <el-tag effect="dark" type="success">{{ share.result_type || 'result' }}</el-tag>
+            <el-tag effect="dark" type="success">{{ typeLabel(share.display_type || share.result_type) }}</el-tag>
             <el-tag>{{ share.model || '未标注模型' }}</el-tag>
             <span>{{ formatTime(share.created_at) }}</span>
-            <span>{{ share.assets?.length || 0 }} 个资产</span>
+            <span>{{ share.asset_count ?? share.assets?.length ?? 0 }} 个资产</span>
           </div>
         </div>
         <div class="hero-actions">
@@ -43,6 +43,13 @@
           <div v-if="primaryText" class="text-block">{{ primaryText }}</div>
           <div v-else-if="featureId" class="feature-block">{{ featureId }}</div>
           <div v-else class="empty-block">该结果没有可直接提取的文本摘要，请查看下方原始结果。</div>
+
+          <el-descriptions :column="1" border class="meta-table">
+            <el-descriptions-item label="任务 ID" v-if="share.task_id">{{ share.task_id }}</el-descriptions-item>
+            <el-descriptions-item label="上游任务" v-if="share.external_task_id">{{ share.external_task_id }}</el-descriptions-item>
+            <el-descriptions-item label="资产类型" v-if="share.asset_kinds?.length">{{ share.asset_kinds.join(' / ') }}</el-descriptions-item>
+            <el-descriptions-item label="更新时间" v-if="share.updated_at">{{ formatTime(share.updated_at) }}</el-descriptions-item>
+          </el-descriptions>
         </el-card>
 
         <el-card class="share-card" shadow="never">
@@ -63,7 +70,7 @@
                 <p>{{ asset.content_type || 'application/octet-stream' }}</p>
               </div>
               <div class="asset-actions">
-                <span class="asset-name">{{ asset.filename }}</span>
+                <span class="asset-name">{{ asset.filename }} · {{ asset.kind }} · {{ formatBytes(asset.size_bytes) }}</span>
                 <el-button text type="primary" @click="openLink(asset.asset_url)">打开</el-button>
               </div>
             </div>
@@ -134,6 +141,19 @@ async function loadShare() {
 function formatTime(value) {
   if (!value) return '-'
   return new Date(value).toLocaleString('zh-CN')
+}
+
+function formatBytes(value) {
+  const size = Number(value || 0)
+  if (!size) return '0 B'
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(2)} MB`
+}
+
+function typeLabel(type) {
+  const map = { audio: '音乐', speech: '语音', video: '视频', image: '图片', media: '媒体', text: '文本', lyrics: '歌词', cover_feature: '翻唱前处理' }
+  return map[type] || type || 'result'
 }
 
 function copyText(text) {
@@ -279,6 +299,10 @@ async function safeJson(res) {
   white-space: pre-wrap;
   color: #0f172a;
   line-height: 1.85;
+}
+
+.meta-table {
+  margin-top: 14px;
 }
 
 .feature-block {

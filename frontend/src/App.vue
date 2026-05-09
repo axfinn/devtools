@@ -171,7 +171,7 @@
         v-else
         :default-active="$route.path"
         :collapse="true"
-        router
+        @select="goRoute"
         class="sidebar-menu"
       >
         <el-menu-item
@@ -316,6 +316,7 @@ const viewRefreshKey = ref(0)
 const lastBackgroundAt = ref(Date.now())
 const { recentPaths, favoritePaths, rememberTool, sortRoutesByPreference } = useToolPreferences()
 const currentViewKey = computed(() => `${route.fullPath}:${viewRefreshKey.value}`)
+let idleRefreshTimer = null
 
 // Global media player
 const player = useMediaPlayer()
@@ -433,9 +434,20 @@ const shortcutMenuRoutes = computed(() => {
   return preferred.slice(0, 8)
 })
 
+function cancelIdleRefresh() {
+  if (!idleRefreshTimer) return
+  clearTimeout(idleRefreshTimer)
+  idleRefreshTimer = null
+}
+
 function goRoute(path) {
-  router.push(path)
+  cancelIdleRefresh()
   showDrawer.value = false
+  if (route.fullPath === path) {
+    viewRefreshKey.value += 1
+    return
+  }
+  router.push(path).catch(() => {})
 }
 
 // 分类展开状态
@@ -466,7 +478,14 @@ const refreshCurrentViewAfterIdle = (force = false) => {
   const idleMs = now - lastBackgroundAt.value
   lastBackgroundAt.value = now
   if (!force && idleMs < 5 * 60 * 1000) return
-  viewRefreshKey.value += 1
+  const targetFullPath = route.fullPath
+  cancelIdleRefresh()
+  idleRefreshTimer = setTimeout(() => {
+    idleRefreshTimer = null
+    if (route.fullPath === targetFullPath) {
+      viewRefreshKey.value += 1
+    }
+  }, 450)
 }
 
 const handleVisibilityChange = () => {
@@ -504,6 +523,7 @@ onMounted(() => {
     window.removeEventListener('focus', handleWindowFocus)
     if (cleanup) cleanup()
     clearTimeout(searchTimer)
+    cancelIdleRefresh()
   })
 })
 

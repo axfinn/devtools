@@ -143,7 +143,7 @@
 
             <!-- Hover overlay -->
             <div class="brick-overlay">
-              <span class="overlay-type">{{ typeLabel(item.result_type) }}</span>
+              <span class="overlay-type">{{ typeLabel(item.display_type || item.result_type) }}</span>
               <span class="overlay-model">{{ item.model }}</span>
             </div>
 
@@ -349,20 +349,13 @@ async function loadItems() {
   player.stop()
   try {
     const params = new URLSearchParams({ limit: String(limit), offset: '0' })
-    // Don't send type filter to API — filter client-side by asset kind instead.
-    // The backend result_type field doesn't distinguish video vs media vs audio well.
-    // Video shares have result_type="media", audio shares have "audio" or "speech", etc.
+    if (filterType.value) params.set('type', filterType.value)
     if (keyword.value) params.set('keyword', keyword.value)
     const res = await fetch(`/api/minimax/result-shares/public/list?${params}`)
     const data = await safeJson(res)
     if (!res.ok) throw new Error(data.error || '加载失败')
-    let enriched = enrichItems(data.items || [])
-    // Client-side filter by primary asset kind
-    if (filterType.value) {
-      enriched = enriched.filter(item => item.primaryAsset?.kind === filterType.value)
-    }
-    items.value = enriched
-    total.value = data.total || items.value.length
+    items.value = enrichItems(data.items || [])
+    total.value = Number(data.total ?? items.value.length)
   } catch (err) {
     error.value = err.message || '加载失败'
   } finally {
@@ -376,15 +369,12 @@ async function loadMore() {
   offset.value += limit
   try {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset.value) })
+    if (filterType.value) params.set('type', filterType.value)
     if (keyword.value) params.set('keyword', keyword.value)
     const res = await fetch(`/api/minimax/result-shares/public/list?${params}`)
     const data = await safeJson(res)
     if (!res.ok) throw new Error(data.error || '加载失败')
-    let newItems = enrichItems(data.items || [])
-    if (filterType.value) {
-      newItems = newItems.filter(item => item.primaryAsset?.kind === filterType.value)
-    }
-    items.value.push(...newItems)
+    items.value.push(...enrichItems(data.items || []))
   } catch (err) {
     ElMessage.error(err.message || '加载失败')
   } finally {
@@ -395,15 +385,22 @@ async function loadMore() {
 function enrichItems(raw) {
   return raw.map(item => {
     const assets = item.assets || []
-    const priority = ['audio', 'video', 'image']
-    let primaryAsset = null
-    for (const kind of priority) {
-      primaryAsset = assets.find(a => a.kind === kind)
-      if (primaryAsset) break
-    }
-    if (!primaryAsset && assets.length > 0) primaryAsset = assets[0]
+    const primaryAsset = item.primary_asset || pickPrimaryAsset(assets, item.display_type || item.result_type)
     return { ...item, _assets: assets, primaryAsset }
   })
+}
+
+function pickPrimaryAsset(assets, displayType) {
+  if (!assets.length) return null
+  if (displayType) {
+    const matched = assets.find(a => a.kind === displayType)
+    if (matched) return matched
+  }
+  for (const kind of ['video', 'audio', 'image']) {
+    const matched = assets.find(a => a.kind === kind)
+    if (matched) return matched
+  }
+  return assets[0]
 }
 
 function openDetail(item) {
@@ -427,7 +424,7 @@ function fmtDate(val) {
 }
 
 function typeLabel(type) {
-  const map = { audio: '音乐', video: '视频', image: '图片', media: '媒体', text: '文本' }
+  const map = { audio: '音乐', speech: '语音', video: '视频', image: '图片', media: '媒体', text: '文本' }
   return map[type] || type || '作品'
 }
 
