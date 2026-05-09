@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -422,9 +421,9 @@ func (h *AIGatewayHandler) TTSWithVoiceClone(c *gin.Context) {
 			vs["speed"] = speed
 		}
 	}
-	// 透传 audio_format
+	// 兼容旧前端字段，并转换为 MiniMax 官方 audio_setting 格式。
 	if af, ok := bodyMap["audio_format"].(string); ok && af != "" {
-		upstreamReq["audio_setting"] = map[string]interface{}{"audio_format": af}
+		upstreamReq["audio_setting"] = map[string]interface{}{"format": af}
 	}
 	// 其他字段直接透传
 	for k, v := range bodyMap {
@@ -467,7 +466,7 @@ func (h *AIGatewayHandler) TTSWithVoiceClone(c *gin.Context) {
 		}
 	}
 
-	// 提取 base64 音频数据
+	// 提取 hex 音频数据
 	var audioData string
 	if data, ok := respData["data"].(map[string]interface{}); ok {
 		if audio, ok := data["audio"].(string); ok {
@@ -481,15 +480,14 @@ func (h *AIGatewayHandler) TTSWithVoiceClone(c *gin.Context) {
 		return
 	}
 
-	// 解码 base64 音频
-	audioBytes, err := base64.StdEncoding.DecodeString(audioData)
+	audioBytes, err := decodeMiniMaxAudioHex(audioData)
 	if err != nil {
-		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/voice-cloning/tts", "media", http.StatusBadGateway, false, "音频base64解码失败: "+err.Error(), string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/voice-cloning/tts", "media", http.StatusBadGateway, false, "音频hex解码失败: "+err.Error(), string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "音频数据解码失败"})
 		return
 	}
 
-	h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/voice-cloning/tts", "media", http.StatusOK, true, "", string(bodyBytes), "[base64 audio]", c.ClientIP(), time.Since(start), usage)
+	h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/voice-cloning/tts", "media", http.StatusOK, true, "", string(bodyBytes), "[hex audio]", c.ClientIP(), time.Since(start), usage)
 
 	// 返回音频二进制
 	c.DataFromReader(http.StatusOK, int64(len(audioBytes)), "audio/mpeg", bytes.NewReader(audioBytes), nil)

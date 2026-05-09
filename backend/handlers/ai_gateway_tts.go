@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -100,9 +99,9 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 			vs["speed"] = speed
 		}
 	}
-	// 透传 audio_format 和 sample_rate 到 audio_setting
+	// 兼容旧前端字段，并转换为 MiniMax 官方 audio_setting 格式。
 	if af, ok := bodyMap["audio_format"].(string); ok && af != "" {
-		upstreamReq["audio_setting"] = map[string]interface{}{"audio_format": af}
+		upstreamReq["audio_setting"] = map[string]interface{}{"format": af}
 		if sr, ok := bodyMap["sample_rate"].(float64); ok {
 			if as, ok := upstreamReq["audio_setting"].(map[string]interface{}); ok {
 				as["sample_rate"] = sr
@@ -132,7 +131,7 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 	textLen := len(interfaceToString(bodyMap["text"]))
 	usage := usageSummary{Cost: float64(textLen) * 0.001, Currency: "CNY"} // 估算成本
 
-	// MiniMax TTS 返回格式：{"data":{"audio":"base64..."}} 或 {"base_resp":{"status_code":xxx,"status_msg":"..."}}
+	// MiniMax TTS 返回格式：{"data":{"audio":"hex..."}} 或 {"base_resp":{"status_code":xxx,"status_msg":"..."}}
 	var respData map[string]interface{}
 	if err := json.Unmarshal(respBody, &respData); err != nil {
 		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, "上游响应解析失败: "+err.Error(), string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
@@ -150,7 +149,7 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 		}
 	}
 
-	// 提取 base64 音频数据
+	// 提取 hex 音频数据
 	var audioData string
 	if data, ok := respData["data"].(map[string]interface{}); ok {
 		if audio, ok := data["audio"].(string); ok {
@@ -165,15 +164,14 @@ func (h *AIGatewayHandler) ProxyMinimaxTTS(c *gin.Context) {
 		return
 	}
 
-	// 解码 base64 音频
-	audioBytes, err := base64.StdEncoding.DecodeString(audioData)
+	audioBytes, err := decodeMiniMaxAudioHex(audioData)
 	if err != nil {
-		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, "音频base64解码失败: "+err.Error(), string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
+		h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusBadGateway, false, "音频hex解码失败: "+err.Error(), string(bodyBytes), string(respBody), c.ClientIP(), time.Since(start), usage)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "音频数据解码失败"})
 		return
 	}
 
-	h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), "[base64 audio]", c.ClientIP(), time.Since(start), usage)
+	h.logAPIRequest(key, model, "minimax-tts", "/api/minimax/tts/v1/generations", "media", http.StatusOK, true, "", string(bodyBytes), "[hex audio]", c.ClientIP(), time.Since(start), usage)
 
 	// 返回音频二进制
 	c.DataFromReader(http.StatusOK, int64(len(audioBytes)), "audio/mpeg", bytes.NewReader(audioBytes), nil)
