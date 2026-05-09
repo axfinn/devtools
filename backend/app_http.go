@@ -41,6 +41,8 @@ func newHTTPRouter(rt *appRuntime, handlers *routeHandlers) *gin.Engine {
 
 func registerPublicRoutes(router *gin.Engine, handlers *routeHandlers) {
 	router.GET("/s/:id", handlers.shortURLHandler.Redirect)
+	router.GET("/sub/proxy", handlers.proxyHandler.DownloadSubscription)
+	router.GET("/sub/proxy/:type", handlers.proxyHandler.DownloadSubscription)
 	router.Any("/mock/:id", handlers.mockAPIHandler.Execute)
 }
 

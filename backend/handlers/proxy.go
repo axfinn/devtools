@@ -62,6 +62,13 @@ type proxyPersist struct {
 
 const proxyDataFile = "./data/proxy_config.json"
 const proxySubscriptionBackupFile = "./data/subscription_latest.yaml"
+const proxySubscriptionCacheFile = "./data/subscription_cache.json"
+
+type proxySubscriptionFormatCache struct {
+	SourceURL string    `json:"source_url"`
+	Content   string    `json:"content"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
 
 // proxySession 当前会话（内存单例）
 type proxySession struct {
@@ -180,6 +187,49 @@ func loadSubscriptionBackup() (string, []ProxyNode, error) {
 		return "", nil, errors.New("备份文件无有效节点")
 	}
 	return yamlText, nodes, nil
+}
+
+func loadSubscriptionCache() map[string]proxySubscriptionFormatCache {
+	data, err := os.ReadFile(proxySubscriptionCacheFile)
+	if err != nil {
+		return map[string]proxySubscriptionFormatCache{}
+	}
+	var cache map[string]proxySubscriptionFormatCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return map[string]proxySubscriptionFormatCache{}
+	}
+	return cache
+}
+
+func saveSubscriptionCacheEntry(subType, sourceURL, content string) {
+	subType = normalizeSubscriptionType(subType)
+	content = strings.TrimSpace(content)
+	if subType == "" || content == "" {
+		return
+	}
+	cache := loadSubscriptionCache()
+	cache[subType] = proxySubscriptionFormatCache{
+		SourceURL: strings.TrimSpace(sourceURL),
+		Content:   content,
+		UpdatedAt: time.Now(),
+	}
+	data, err := json.Marshal(cache)
+	if err != nil {
+		return
+	}
+	os.WriteFile(proxySubscriptionCacheFile, data, 0644)
+}
+
+func loadSubscriptionCacheEntry(subType string) (string, string, bool) {
+	subType = normalizeSubscriptionType(subType)
+	if subType == "" {
+		return "", "", false
+	}
+	entry, ok := loadSubscriptionCache()[subType]
+	if !ok || strings.TrimSpace(entry.Content) == "" {
+		return "", "", false
+	}
+	return strings.TrimSpace(entry.Content), strings.TrimSpace(entry.SourceURL), true
 }
 
 func normalizeProxyRouteMode(mode string) string {
@@ -439,13 +489,14 @@ func (h *ProxyHandler) fetchSubscriptions(sourceURLs []string) (string, []ProxyN
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			text, err := h.fetchSubscriptionWithFallback(rawURL)
+			fetchURL := subscriptionURLForType(rawURL, "clash")
+			text, err := h.fetchSubscriptionWithFallback(fetchURL)
 			if err != nil {
-				results[idx] = fetchResult{index: idx, url: rawURL, err: err}
+				results[idx] = fetchResult{index: idx, url: fetchURL, err: err}
 				return
 			}
 			nodes, err := parseClashYAML(text)
-			results[idx] = fetchResult{index: idx, url: rawURL, text: text, nodes: nodes, err: err}
+			results[idx] = fetchResult{index: idx, url: fetchURL, text: text, nodes: nodes, err: err}
 		}(i, sourceURL)
 	}
 	wg.Wait()
@@ -619,6 +670,145 @@ func selectPreferredSubscriptionURL(urls []string, preferredType string) string 
 		return leftScore > rightScore
 	})
 	return sorted[0]
+}
+
+func normalizeSubscriptionType(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	switch value {
+	case "", "yaml":
+		return "clash"
+	case "ss", "shadowsocks":
+		return "shadowsocks"
+	case "clash", "clashr", "shadowrocket", "ssr", "surfboard":
+		return value
+	default:
+		return ""
+	}
+}
+
+func subscriptionURLForType(rawURL, subType string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	subType = normalizeSubscriptionType(subType)
+	if rawURL == "" || subType == "" {
+		return rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return rawURL
+	}
+	query := u.Query()
+	switch subType {
+	case "clash":
+		query.Del("list")
+		query.Del("surfboard")
+		query.Del("sub")
+		query.Set("clash", "1")
+	case "clashr":
+		query.Del("list")
+		query.Del("surfboard")
+		query.Del("sub")
+		query.Set("clash", "2")
+	case "shadowrocket":
+		query.Del("clash")
+		query.Del("surfboard")
+		query.Del("sub")
+		query.Set("list", "shadowrocket")
+	case "ssr":
+		query.Del("clash")
+		query.Del("list")
+		query.Del("surfboard")
+		query.Set("sub", "1")
+	case "shadowsocks":
+		query.Del("clash")
+		query.Del("list")
+		query.Del("surfboard")
+		query.Set("sub", "1")
+	case "surfboard":
+		query.Del("clash")
+		query.Del("list")
+		query.Del("sub")
+		query.Set("surfboard", "1")
+	}
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+func selectSubscriptionURLForType(urls []string, subType string) string {
+	subType = normalizeSubscriptionType(subType)
+	selected := selectPreferredSubscriptionURL(urls, subType)
+	if selected == "" {
+		return ""
+	}
+	return subscriptionURLForType(selected, subType)
+}
+
+func subscriptionURLCandidatesForType(rawURL, subType string) []string {
+	rawURL = strings.TrimSpace(rawURL)
+	subType = normalizeSubscriptionType(subType)
+	if rawURL == "" || subType == "" {
+		return nil
+	}
+	if subType != "shadowsocks" {
+		return []string{subscriptionURLForType(rawURL, subType)}
+	}
+
+	candidates := []string{
+		subscriptionURLForType(rawURL, "shadowsocks"),
+		subscriptionURLWithQuery(rawURL, func(query url.Values) {
+			query.Del("clash")
+			query.Del("sub")
+			query.Del("surfboard")
+			query.Set("list", "shadowsocks")
+		}),
+		subscriptionURLWithQuery(rawURL, func(query url.Values) {
+			query.Del("clash")
+			query.Del("sub")
+			query.Del("surfboard")
+			query.Set("list", "ss")
+		}),
+		rawURL,
+	}
+	return dedupeStrings(candidates)
+}
+
+func subscriptionURLWithQuery(rawURL string, update func(url.Values)) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return strings.TrimSpace(rawURL)
+	}
+	query := u.Query()
+	update(query)
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+func dedupeStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func filterShadowsocksSubscription(text string) string {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(line), "ss://") {
+			result = append(result, line)
+		}
+	}
+	return strings.Join(result, "\n")
 }
 
 func managedSubscriptionChanged(currentURLs []string, currentYAML string, nextURL, nextYAML string) bool {
@@ -925,7 +1115,7 @@ func (h *ProxyHandler) fetchManagedSubscriptionLink(client *http.Client, siteURL
 	}
 	html := string(body)
 	urls := extractManagedSubscribeURLs(html)
-	subscribeURL := selectPreferredSubscriptionURL(urls, h.subRefresh.preferredSubType)
+	subscribeURL := selectSubscriptionURLForType(urls, "clash")
 	if subscribeURL == "" {
 		return "", html, errors.New("未在用户中心解析到订阅链接")
 	}
@@ -1004,6 +1194,22 @@ func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, node
 	h.startNPC()
 	log.Printf("proxy: 托管订阅已接管，订阅 %s，线路 %s", maskURL(sourceURL), nodeHint)
 	return true, nil
+}
+
+func (h *ProxyHandler) refreshPublishedSubscriptionCaches(sourceURLs []string) {
+	sourceURLs = normalizeSourceURLs(sourceURLs, "")
+	if len(sourceURLs) == 0 {
+		return
+	}
+	for _, subType := range []string{"shadowrocket", "shadowsocks"} {
+		sourceURL, text, err := h.fetchSubscriptionByType(sourceURLs, subType)
+		if err != nil {
+			log.Printf("proxy: 刷新 %s 发布订阅缓存失败: %v", subType, err)
+			continue
+		}
+		saveSubscriptionCacheEntry(subType, sourceURL, text)
+		log.Printf("proxy: 已刷新 %s 发布订阅缓存，来源 %s", subType, maskURL(sourceURL))
+	}
 }
 
 // serveForceProxy 强制通过指定节点代理所有请求（绕过 GFW 检查）
@@ -1255,6 +1461,7 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 		}
 		attempt.NodeCount = len(nodes)
 		saveSubscriptionBackup(yamlText)
+		h.refreshPublishedSubscriptionCaches([]string{subscribeURL})
 
 		applied, err := h.applyManagedSubscription(subscribeURL, yamlText, nodes)
 		if err != nil {
@@ -1335,7 +1542,8 @@ func (h *ProxyHandler) refreshManagedSubscriptionLocked() {
 		var err error
 		for _, nc := range nodeCandidates {
 			for _, fallbackURL := range fallbackURLs {
-				yamlText, err = fetchSubscriptionWithClient(nc.client, fallbackURL)
+				clashURL := subscriptionURLForType(fallbackURL, "clash")
+				yamlText, err = fetchSubscriptionWithClient(nc.client, clashURL)
 				if err == nil {
 					nodes, err = parseClashYAML(yamlText)
 					if err == nil && len(nodes) > 0 {
@@ -1534,6 +1742,153 @@ func (h *ProxyHandler) AutoSelectOnStartup() {
 
 func (h *ProxyHandler) checkAdmin(password string) bool {
 	return h.adminPassword != "" && password == h.adminPassword
+}
+
+func (h *ProxyHandler) checkSubscriptionPassword(password string) bool {
+	return h.checkAdmin(strings.TrimSpace(password))
+}
+
+func requestedSubscriptionType(c *gin.Context) string {
+	for _, value := range []string{c.Param("type"), c.Query("type"), c.Query("list")} {
+		if subType := normalizeSubscriptionType(value); subType != "" {
+			return subType
+		}
+	}
+	return "clash"
+}
+
+func currentSubscriptionYAML() (string, int, error) {
+	globalSession.mu.RLock()
+	yamlText := strings.TrimSpace(globalSession.yamlContent)
+	nodeCount := len(globalSession.nodes)
+	globalSession.mu.RUnlock()
+	if yamlText != "" {
+		return yamlText, nodeCount, nil
+	}
+	backupText, nodes, err := loadSubscriptionBackup()
+	if err != nil {
+		return "", 0, err
+	}
+	return strings.TrimSpace(backupText), len(nodes), nil
+}
+
+func currentSubscriptionSourceURLs() []string {
+	globalSession.mu.RLock()
+	sourceURLs := append([]string(nil), globalSession.sourceURLs...)
+	sourceURL := globalSession.sourceURL
+	globalSession.mu.RUnlock()
+	return normalizeSourceURLs(sourceURLs, sourceURL)
+}
+
+func subscriptionContentType(subType string) string {
+	switch normalizeSubscriptionType(subType) {
+	case "clash", "clashr", "surfboard":
+		return "text/yaml; charset=utf-8"
+	default:
+		return "text/plain; charset=utf-8"
+	}
+}
+
+func subscriptionFilename(subType string) string {
+	switch normalizeSubscriptionType(subType) {
+	case "shadowrocket":
+		return "devtools-shadowrocket.txt"
+	case "shadowsocks":
+		return "devtools-shadowsocks.txt"
+	case "clashr":
+		return "devtools-clashr.yaml"
+	case "surfboard":
+		return "devtools-surfboard.conf"
+	case "ssr":
+		return "devtools-ssr.txt"
+	default:
+		return "devtools-clash.yaml"
+	}
+}
+
+func (h *ProxyHandler) currentSubscriptionByType(subType string) (string, int, string, error) {
+	subType = normalizeSubscriptionType(subType)
+	if subType == "" {
+		return "", 0, "", errors.New("unsupported subscription type")
+	}
+	if subType == "clash" {
+		yamlText, nodeCount, err := currentSubscriptionYAML()
+		return yamlText, nodeCount, "", err
+	}
+
+	sourceURLs := currentSubscriptionSourceURLs()
+	sourceURL, text, err := h.fetchSubscriptionByType(sourceURLs, subType)
+	if err != nil {
+		if cachedText, cachedSource, ok := loadSubscriptionCacheEntry(subType); ok {
+			return cachedText, 0, cachedSource, nil
+		}
+		return "", 0, sourceURL, err
+	}
+	saveSubscriptionCacheEntry(subType, sourceURL, text)
+	return strings.TrimSpace(text), 0, sourceURL, nil
+}
+
+func (h *ProxyHandler) fetchSubscriptionByType(sourceURLs []string, subType string) (string, string, error) {
+	sourceURLs = normalizeSourceURLs(sourceURLs, "")
+	subType = normalizeSubscriptionType(subType)
+	if len(sourceURLs) == 0 {
+		return "", "", errors.New("subscription source url not available")
+	}
+	if subType == "" || subType == "clash" {
+		return "", "", errors.New("unsupported subscription type")
+	}
+	var lastErr error
+	for _, rawURL := range sourceURLs {
+		for _, sourceURL := range subscriptionURLCandidatesForType(rawURL, subType) {
+			text, err := h.fetchSubscriptionWithFallback(sourceURL)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			text = strings.TrimSpace(text)
+			if subType == "shadowsocks" {
+				text = filterShadowsocksSubscription(text)
+				if text == "" {
+					lastErr = errors.New("subscription has no ss:// nodes")
+					continue
+				}
+			}
+			if text != "" {
+				return sourceURL, text, nil
+			}
+		}
+	}
+	if lastErr != nil {
+		return "", "", lastErr
+	}
+	return "", "", errors.New("subscription not available")
+}
+
+// DownloadSubscription GET /api/proxy/subscription?password=xxx
+// DownloadSubscription GET /sub/proxy?password=xxx
+func (h *ProxyHandler) DownloadSubscription(c *gin.Context) {
+	if !h.checkSubscriptionPassword(c.Query("password")) {
+		c.String(http.StatusUnauthorized, "subscription password required")
+		return
+	}
+	subType := requestedSubscriptionType(c)
+	text, nodeCount, sourceURL, err := h.currentSubscriptionByType(subType)
+	if err != nil || text == "" {
+		c.String(http.StatusNotFound, "subscription not available")
+		return
+	}
+	filename := subscriptionFilename(subType)
+	c.Header("Content-Type", subscriptionContentType(subType))
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Header("Cache-Control", "no-store")
+	c.Header("X-Proxy-Subscription-Type", subType)
+	if nodeCount > 0 {
+		c.Header("X-Proxy-Node-Count", strconv.Itoa(nodeCount))
+	}
+	if sourceURL != "" {
+		c.Header("X-Proxy-Source", maskURL(sourceURL))
+	}
+	c.String(http.StatusOK, text+"\n")
 }
 
 const probeURL = "https://www.google.com"

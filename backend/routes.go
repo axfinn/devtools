@@ -672,6 +672,8 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		proxyGroup.GET("/status", h.proxyHandler.Status)
 		proxyGroup.GET("/fetch", h.proxyHandler.Fetch)
 		proxyGroup.GET("/resource", h.proxyHandler.Resource)
+		proxyGroup.GET("/subscription", h.proxyHandler.DownloadSubscription)
+		proxyGroup.GET("/subscription/:type", h.proxyHandler.DownloadSubscription)
 		proxyGroup.GET("/extension", h.proxyHandler.DownloadExtension)
 		proxyGroup.GET("/ws-tunnel", h.proxyHandler.WsTunnel)
 		proxyGroup.GET("/client/download", h.proxyHandler.DownloadClient)

@@ -118,63 +118,6 @@
         </article>
       </section>
 
-      <!-- Mobile-only: compact stats & quick-switch -->
-      <section class="mobile-quick-bar">
-        <div class="mqb-stats">
-          <div class="mqb-stat">
-            <span class="mqb-stat-label">今日</span>
-            <strong class="mqb-stat-value" :class="{ bump: isBumping }">{{ todayCount.toLocaleString() }}</strong>
-          </div>
-          <div class="mqb-stat">
-            <span class="mqb-stat-label">累计</span>
-            <strong class="mqb-stat-value">{{ grandTotal.toLocaleString() }}</strong>
-          </div>
-          <div class="mqb-goal" v-if="dailyGoal > 0">
-            <div class="mqb-goal-bar">
-              <div class="mqb-goal-fill" :style="{ width: `${goalPercent}%` }"></div>
-            </div>
-            <span class="mqb-goal-text">{{ todayCount }}/{{ dailyGoal }}</span>
-          </div>
-        </div>
-
-        <div class="mqb-strips">
-          <div class="mqb-strip-label">形象</div>
-          <div class="mqb-strip">
-            <button
-              v-for="f in figurePresets"
-              :key="f.id"
-              type="button"
-              class="mqb-chip"
-              :class="{ active: figureId === f.id }"
-              @click="figureId = f.id"
-            >
-              <span class="mqb-chip-symbol">{{ f.symbol }}</span>
-              <span>{{ f.name }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="mqb-strips">
-          <div class="mqb-strip-label">主题</div>
-          <div class="mqb-strip">
-            <button
-              v-for="s in scenePresets"
-              :key="s.id"
-              type="button"
-              class="mqb-chip mqb-scene-chip"
-              :class="{ active: sceneId === s.id }"
-              @click="sceneId = s.id"
-            >
-              <span class="mqb-swatch">
-                <i :style="{ background: s.swatches[0] }"></i>
-                <i :style="{ background: s.swatches[1] }"></i>
-              </span>
-              <span>{{ s.name }}</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
       <section class="work-grid">
         <article class="glass-card tap-panel">
           <div class="panel-head">
@@ -2463,142 +2406,17 @@ onUnmounted(() => {
   }
 }
 
-/* ====== Mobile Quick Bar (hidden on desktop) ====== */
-.mobile-quick-bar {
-  display: none;
-}
-.mqb-stats {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 20px;
-  background: var(--counter-card);
-  border: 1px solid var(--counter-border);
-}
-.mqb-stat {
-  flex: 1;
-  min-width: 0;
-}
-.mqb-stat-label {
-  display: block;
-  color: var(--counter-subtle);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
-.mqb-stat-value {
-  display: block;
-  margin-top: 4px;
-  font-size: 22px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-.mqb-stat-value.bump {
-  animation: count-bump 0.16s ease;
-}
-.mqb-goal {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.mqb-goal-bar {
-  height: 8px;
-  border-radius: 999px;
-  background: var(--counter-track);
-  overflow: hidden;
-}
-.mqb-goal-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--counter-accent), rgba(255,255,255,0.7));
-  transition: width 0.24s ease;
-}
-.mqb-goal-text {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--counter-muted);
-  text-align: right;
-}
-.mqb-strips {
-  margin-top: 10px;
-}
-.mqb-strip-label {
-  color: var(--counter-subtle);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  margin-bottom: 6px;
-  padding-left: 4px;
-}
-.mqb-strip {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-  padding-bottom: 2px;
-}
-.mqb-strip::-webkit-scrollbar {
-  display: none;
-}
-.mqb-chip {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border: 1px solid var(--counter-border);
-  border-radius: 999px;
-  background: var(--counter-card);
-  color: var(--counter-muted);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  transition: all 0.18s ease;
-  white-space: nowrap;
-}
-.mqb-chip:hover {
-  border-color: var(--counter-accent);
-}
-.mqb-chip.active {
-  background: var(--counter-accent-soft);
-  border-color: var(--counter-accent);
-  color: var(--counter-accent);
-  font-weight: 700;
-}
-.mqb-chip-symbol {
-  font-size: 16px;
-  font-weight: 800;
-}
-.mqb-swatch {
-  display: flex;
-  gap: 3px;
-}
-.mqb-swatch i {
-  display: block;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-}
-
 @media (max-width: 720px) {
   .counter-app {
-    padding: 8px 6px 24px;
+    padding: max(8px, env(safe-area-inset-top)) 8px calc(14px + env(safe-area-inset-bottom));
+    overflow: auto;
+    overscroll-behavior-y: contain;
   }
 
   .counter-shell {
-    gap: 10px;
+    gap: 8px;
   }
 
-  /* Show mobile quick bar */
-  .mobile-quick-bar {
-    display: block;
-  }
-
-  /* Compact the hero card instead of hiding */
   .hero-card,
   .preset-grid {
     display: none;
@@ -2631,7 +2449,15 @@ onUnmounted(() => {
   }
 
   .tap-panel {
-    padding-bottom: 10px;
+    min-height: calc(100dvh - 26px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    padding: 14px 12px 12px;
+    border-radius: 22px;
+  }
+
+  .work-grid {
+    gap: 8px;
   }
 
   .mobile-focus-strip {
@@ -2649,10 +2475,10 @@ onUnmounted(() => {
 
   .mobile-focus-date {
     display: block;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
     color: var(--counter-subtle);
     font-size: 11px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
   }
 
   .mobile-focus-count strong.bump {
@@ -2663,16 +2489,16 @@ onUnmounted(() => {
     display: block;
     color: var(--counter-muted);
     font-size: 11px;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
   }
 
   .mobile-focus-count strong {
     display: block;
-    margin-top: 6px;
-    font-size: clamp(38px, 10vw, 52px);
+    margin-top: 4px;
+    font-size: 48px;
     line-height: 1;
     font-weight: 900;
-    letter-spacing: -0.04em;
+    letter-spacing: 0;
     font-variant-numeric: tabular-nums;
   }
 
@@ -2693,15 +2519,17 @@ onUnmounted(() => {
     background: var(--counter-card-strong);
     color: var(--counter-muted);
     font-size: 11px;
+    white-space: nowrap;
   }
 
   .step-strip {
     gap: 8px;
-    margin-top: 10px;
+    margin-top: 12px;
     flex-wrap: nowrap;
     overflow-x: auto;
-    padding-bottom: 2px;
+    padding: 0 0 2px;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
   .step-strip::-webkit-scrollbar {
@@ -2710,25 +2538,40 @@ onUnmounted(() => {
 
   .step-chip {
     flex: 0 0 auto;
-    min-width: 52px;
+    min-width: 56px;
+    min-height: 40px;
     padding: 9px 12px;
     font-size: 13px;
   }
 
   .tap-stage {
-    grid-template-columns: 50px minmax(0, 1fr) 50px;
-    gap: 10px;
+    position: relative;
+    display: block;
+    flex: 1;
+    min-height: 0;
     margin-top: 10px;
   }
 
   .side-round {
-    width: 48px !important;
-    height: 48px !important;
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    z-index: 3;
+    width: 56px !important;
+    height: 56px !important;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
+    backdrop-filter: blur(12px);
+  }
+
+  .side-plus {
+    right: 14px;
+    left: auto;
   }
 
   .figure-button {
-    height: min(58vh, 460px);
-    min-height: 336px;
+    width: 100%;
+    height: 100%;
+    min-height: 360px;
     border-radius: 26px;
   }
 
@@ -2747,6 +2590,7 @@ onUnmounted(() => {
   .step-float {
     top: 16px;
     right: 16px;
+    min-height: 30px;
     padding: 7px 10px;
     font-size: 11px;
   }
@@ -2777,13 +2621,15 @@ onUnmounted(() => {
 
   .mobile-main-actions {
     display: flex;
-    gap: 10px;
-    margin-top: 12px;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 10px;
     overflow-x: auto;
-    padding: 8px 10px 2px;
-    border-radius: 18px;
+    padding: 8px;
+    border-radius: 16px;
     background: var(--counter-card-strong);
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
   .mobile-main-actions::-webkit-scrollbar {
@@ -2791,7 +2637,9 @@ onUnmounted(() => {
   }
 
   .mobile-main-actions :deep(.el-button) {
-    flex: 0 0 auto;
+    flex: 1 0 86px;
+    min-height: 38px;
+    margin-left: 0;
     color: var(--counter-muted);
   }
 
@@ -2800,11 +2648,25 @@ onUnmounted(() => {
   }
 
   .insight-panel {
-    padding: 14px;
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .insight-panel .panel-head {
+    flex-direction: row;
+    align-items: center;
   }
 
   .insight-panel .panel-head p {
     display: none;
+  }
+
+  .insight-panel .panel-head h2 {
+    font-size: 15px;
+  }
+
+  .insight-panel .panel-head-meta {
+    padding: 5px 9px;
   }
 
   .panel-overlay {
@@ -2814,9 +2676,10 @@ onUnmounted(() => {
 
   .panel-card {
     width: 100%;
-    max-height: 84vh;
+    max-height: min(88dvh, 760px);
     border-radius: 24px 24px 0 0;
-    padding: 12px 16px 24px;
+    padding: 12px 16px calc(18px + env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
   }
 
   .panel-card::before {
@@ -2830,30 +2693,42 @@ onUnmounted(() => {
   }
 
   .week-heatmap {
-    gap: 6px;
-    margin-top: 12px;
+    gap: 5px;
+    margin-top: 10px;
+  }
+
+  .heat-cell {
+    border-radius: 13px;
+    gap: 4px;
+    min-height: 44px;
   }
 
   .heat-count {
-    font-size: 15px;
+    font-size: 14px;
   }
 
   .mini-stats {
     gap: 8px;
-    margin-top: 12px;
+    margin-top: 10px;
   }
 
   .mini-stat {
-    padding: 12px;
-    border-radius: 16px;
+    padding: 10px 12px;
+    border-radius: 14px;
+  }
+
+  .mini-stat strong {
+    margin-top: 5px;
+    font-size: 14px;
   }
 
   .toolbar {
     flex-wrap: nowrap;
     overflow-x: auto;
-    margin-top: 12px;
-    padding-bottom: 2px;
+    margin-top: 10px;
+    padding: 4px 0 2px;
     scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
 
   .toolbar::-webkit-scrollbar {
@@ -2862,8 +2737,9 @@ onUnmounted(() => {
 
   .toolbar :deep(.el-button) {
     flex: 0 0 auto;
-    padding-left: 2px;
-    padding-right: 2px;
+    min-height: 36px;
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
   .calendar-cell {
@@ -2873,26 +2749,58 @@ onUnmounted(() => {
 }
 
 @media (max-width: 420px) {
-  .mobile-focus-strip {
-    align-items: flex-start;
-    flex-direction: column;
+  .counter-app {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .tap-panel {
+    padding: 12px 10px 10px;
+  }
+
+  .mobile-focus-count strong {
+    font-size: 42px;
+  }
+
+  .mobile-focus-meta {
+    gap: 6px;
+  }
+
+  .mobile-focus-meta span {
+    min-height: 28px;
+    padding: 0 8px;
   }
 
   .figure-button {
-    height: min(52vh, 380px);
-    min-height: 300px;
+    min-height: 330px;
   }
 
   .figure-shell {
-    inset: 48px;
+    inset: 44px;
   }
 
   .shell-bell {
-    inset: 46px 50px 50px;
+    inset: 44px 48px 50px;
   }
 
   .shell-drum {
-    inset: 56px 44px;
+    inset: 54px 42px;
+  }
+
+  .side-round {
+    bottom: 12px;
+    left: 12px;
+    width: 52px !important;
+    height: 52px !important;
+  }
+
+  .side-plus {
+    right: 12px;
+    left: auto;
+  }
+
+  .mobile-main-actions :deep(.el-button) {
+    flex-basis: 78px;
   }
 }
 </style>

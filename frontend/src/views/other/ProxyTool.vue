@@ -105,6 +105,10 @@
         <div class="action-row">
           <el-button type="primary" @click="loadConfig" :loading="loadingConfig">解析节点</el-button>
           <el-button @click="copyExportConfig">复制配置</el-button>
+          <el-button @click="copySubscriptionURL('clash')" :disabled="!hasSubscriptionContent">复制 Clash 订阅</el-button>
+          <el-button @click="copySubscriptionURL('shadowrocket')" :disabled="!hasSubscriptionSource">复制 Shadowrocket 订阅</el-button>
+          <el-button @click="copySubscriptionURL('shadowsocks')" :disabled="!hasSubscriptionSource">复制 Shadowsocks 订阅</el-button>
+          <el-button @click="downloadSubscription('clash')" :disabled="!hasSubscriptionContent">下载 Clash</el-button>
           <el-button @click="speedTest" :loading="testingSpeed" :disabled="nodes.length === 0">全部测速</el-button>
           <el-button @click="checkNodes" :loading="checkingNodes" :disabled="nodes.length === 0">
             验证可用（curl google）
@@ -126,6 +130,9 @@
           <el-button type="danger" @click="stopProxy" :loading="stoppingProxy" v-if="proxyRunning">
             停止代理
           </el-button>
+        </div>
+        <div class="proxy-hint">
+          订阅发布：<code>/sub/proxy/clash?password=下载密码</code>、<code>/sub/proxy/shadowrocket?password=下载密码</code>、<code>/sub/proxy/shadowsocks?password=下载密码</code>。当前使用管理员密码下载。
         </div>
       </el-card>
 
@@ -953,6 +960,29 @@ const sortedNodes = computed(() => {
     return a.latency - b.latency
   })
 })
+
+const hasSubscriptionContent = computed(() => {
+  return !!yamlContent.value || nodes.value.length > 0
+})
+
+const hasSubscriptionSource = computed(() => {
+  return parseSourceURLs().length > 0 || !!subscriptionRefresh.value.last_subscribe_url
+})
+
+function subscriptionURL(type = 'clash') {
+  const pass = adminPassword()
+  const normalizedType = ['shadowrocket', 'shadowsocks'].includes(type) ? type : 'clash'
+  const path = `/sub/proxy/${normalizedType}?password=${encodeURIComponent(pass)}`
+  return `${window.location.origin}${path}`
+}
+
+function copySubscriptionURL(type = 'clash') {
+  copy(subscriptionURL(type))
+}
+
+function downloadSubscription(type = 'clash') {
+  window.open(subscriptionURL(type), '_blank')
+}
 
 // NPS 隧道代理地址：npc 将代理端口暴露到 NPS 服务器的 tunnel_port
 const npsTunnelAddr = computed(() => {
