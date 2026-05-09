@@ -190,7 +190,7 @@
     <el-main class="main-content" :class="{ 'mobile-main': isMobile }">
       <router-view v-slot="{ Component }">
         <keep-alive :exclude="['NeonApp']">
-          <component :is="Component" />
+          <component :is="Component" :key="viewRefreshKey" />
         </keep-alive>
       </router-view>
 
@@ -312,6 +312,8 @@ const showDrawer = ref(false)
 const isMobile = ref(false)
 const showDonateDialog = ref(false)
 const hiddenRoutes = ref([])
+const viewRefreshKey = ref(0)
+const lastBackgroundAt = ref(Date.now())
 const { recentPaths, favoritePaths, rememberTool, sortRoutesByPreference } = useToolPreferences()
 
 // Global media player
@@ -458,9 +460,36 @@ const checkMobile = () => {
   }
 }
 
+const refreshCurrentViewAfterIdle = (force = false) => {
+  const now = Date.now()
+  const idleMs = now - lastBackgroundAt.value
+  lastBackgroundAt.value = now
+  if (!force && idleMs < 5 * 60 * 1000) return
+  viewRefreshKey.value += 1
+}
+
+const handleVisibilityChange = () => {
+  if (document.hidden) {
+    lastBackgroundAt.value = Date.now()
+    return
+  }
+  refreshCurrentViewAfterIdle()
+}
+
+const handlePageShow = (event) => {
+  refreshCurrentViewAfterIdle(Boolean(event.persisted))
+}
+
+const handleWindowFocus = () => {
+  refreshCurrentViewAfterIdle()
+}
+
 onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('pageshow', handlePageShow)
+  window.addEventListener('focus', handleWindowFocus)
 
   // 初始化主题
   const { init } = useTheme()
@@ -469,6 +498,9 @@ onMounted(() => {
   // 组件卸载时清理监听器
   onUnmounted(() => {
     window.removeEventListener('resize', checkMobile)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('pageshow', handlePageShow)
+    window.removeEventListener('focus', handleWindowFocus)
     if (cleanup) cleanup()
     clearTimeout(searchTimer)
   })

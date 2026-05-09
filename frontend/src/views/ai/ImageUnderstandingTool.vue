@@ -372,6 +372,13 @@ const parseJsonSafe = async (resp) => {
   }
 }
 
+const closeEventSource = () => {
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
+}
+
 const loadTools = async () => {
   loadingTools.value = true
   try {
@@ -668,11 +675,7 @@ const submitSse = async () => {
     }
   }
 
-  // 关闭之前的连接
-  if (eventSource) {
-    eventSource.close()
-    eventSource = null
-  }
+  closeEventSource()
 
   sseLoading.value = true
   resultText.value = ''
@@ -722,10 +725,7 @@ const submitSse = async () => {
         rawResult.value = JSON.stringify(msg.result || {}, null, 2)
         ElMessage.success('识别完成')
         sseLoading.value = false
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
+        closeEventSource()
       } catch (err) {
         console.error('SSE completed 解析失败:', err)
       }
@@ -737,17 +737,11 @@ const submitSse = async () => {
         const msg = JSON.parse(event.data)
         ElMessage.error(msg.error || '识别失败')
         sseLoading.value = false
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
+        closeEventSource()
       } catch (err) {
         ElMessage.error('SSE 连接失败，请稍后重试')
         sseLoading.value = false
-        if (eventSource) {
-          eventSource.close()
-          eventSource = null
-        }
+        closeEventSource()
       }
     })
 
@@ -766,10 +760,7 @@ const submitSse = async () => {
         ElMessage.error('SSE 连接失败，请稍后重试')
         sseLoading.value = false
       }
-      if (eventSource) {
-        eventSource.close()
-        eventSource = null
-      }
+      closeEventSource()
     }
 
   } catch (err) {
@@ -795,6 +786,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   setupPasteListener(false)
+  closeEventSource()
 })
 </script>
 
