@@ -136,7 +136,10 @@
             <template #header>
               <div class="panel-head">
                 <span>媒体任务</span>
-                <el-button text @click="loadMediaTasks">刷新任务</el-button>
+                <div class="inline-actions">
+                  <el-button text @click="activeTab = 'archive'">结果归档</el-button>
+                  <el-button text @click="loadMediaTasks">刷新任务</el-button>
+                </div>
               </div>
             </template>
 
@@ -271,7 +274,10 @@
           <template #header>
             <div class="panel-head">
               <span>任务列表</span>
-              <span class="field-hint">只展示当前凭证能看到的任务</span>
+              <div class="inline-actions">
+                <span class="field-hint">只展示当前凭证能看到的任务</span>
+                <el-button text @click="activeTab = 'archive'">查看未分享结果</el-button>
+              </div>
             </div>
           </template>
 
@@ -287,12 +293,28 @@
                 <el-tag :type="taskTagType(row.status)">{{ row.status }}</el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="归档" width="110">
+              <template #default="{ row }">
+                <el-tag v-if="knownSharedTaskIds.has(row.task_id)" type="success">已归档</el-tag>
+                <el-tag v-else-if="row.status === 'succeeded'" type="warning">未分享</el-tag>
+                <el-tag v-else type="info">待完成</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column prop="created_at" label="创建时间" width="180">
               <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
             </el-table-column>
             <el-table-column label="结果" min-width="220">
               <template #default="{ row }">
                 <span class="result-links">{{ (row.result_urls || []).slice(0, 2).join(' | ') || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <div class="inline-actions">
+                  <el-button text type="primary" @click="openMediaTask(row.task_id)">查看</el-button>
+                  <el-button text :disabled="row.status !== 'succeeded'" @click="saveTaskFromList(row)">保存分享</el-button>
+                  <el-button text :disabled="row.status !== 'succeeded'" @click="downloadTask(row)">下载</el-button>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -382,14 +404,32 @@
       </el-tab-pane>
 
       <el-tab-pane label="结果分享 / API" name="archive">
-        <section class="panel-grid">
+        <section class="archive-overview">
           <el-card class="panel-card" shadow="never">
             <template #header>
               <div class="panel-head">
                 <span>结果归档</span>
-                <el-tag size="small" type="success">保存后可直接看 / 直接播</el-tag>
+                <div class="inline-actions">
+                  <el-button text :loading="mediaTasksLoading || adminSharesLoading" @click="refreshArchive">刷新</el-button>
+                  <el-tag size="small" type="success">保存后可直接看 / 直接播</el-tag>
+                </div>
               </div>
             </template>
+
+            <div class="archive-stats">
+              <div class="stat-tile">
+                <span>可归档结果</span>
+                <strong>{{ archiveReadyTasks.length }}</strong>
+              </div>
+              <div class="stat-tile">
+                <span>未分享</span>
+                <strong>{{ unsharedTasks.length }}</strong>
+              </div>
+              <div class="stat-tile">
+                <span>已保存分享</span>
+                <strong>{{ knownSharedTaskIds.size || adminShares.length }}</strong>
+              </div>
+            </div>
 
             <div class="archive-actions">
               <el-button :disabled="!textResult" @click="openShareDialog('text')">保存文本结果</el-button>
@@ -430,6 +470,56 @@
           <el-card class="panel-card" shadow="never">
             <template #header>
               <div class="panel-head">
+                <span>未分享任务结果</span>
+                <div class="inline-actions">
+                  <el-select v-model="archiveTypeFilter" size="small" class="archive-filter">
+                    <el-option label="全部类型" value="" />
+                    <el-option label="视频" value="video" />
+                    <el-option label="音频 / 音乐" value="audio" />
+                    <el-option label="图像" value="image" />
+                  </el-select>
+                  <el-button text :loading="mediaTasksLoading" @click="loadMediaTasks">刷新任务</el-button>
+                </div>
+              </div>
+            </template>
+
+            <el-alert
+              title="这里从当前任务列表中筛选已完成但未保存分享的结果，不需要新增后端接口。"
+              type="success"
+              :closable="false"
+              show-icon
+              class="archive-alert"
+            />
+
+            <div v-if="unsharedTasks.length" class="unshared-list">
+              <div v-for="task in unsharedTasks" :key="task.task_id" class="unshared-item">
+                <div class="unshared-main">
+                  <div class="task-meta">
+                    <el-tag :type="taskTagType(task.status)">{{ task.status }}</el-tag>
+                    <strong>{{ task.model }}</strong>
+                    <span>{{ formatTime(task.created_at) }}</span>
+                  </div>
+                  <p>{{ taskPrompt(task) || task.task_id }}</p>
+                  <div class="share-meta-line">
+                    <span>{{ task.task_id }}</span>
+                    <span>{{ extractTaskAssets(task).length }} 个资产</span>
+                  </div>
+                </div>
+                <div class="inline-actions">
+                  <el-button text type="primary" @click="openUnsharedTask(task)">查看</el-button>
+                  <el-button text @click="saveUnsharedTask(task)">保存分享</el-button>
+                  <el-button text @click="downloadTask(task)">下载</el-button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="empty-block">暂无未分享的任务结果。</div>
+          </el-card>
+        </section>
+
+        <section class="panel-grid archive-secondary">
+          <el-card class="panel-card" shadow="never">
+            <template #header>
+              <div class="panel-head">
                 <span>API 接入文档</span>
                 <el-button text :loading="resultShareDocsLoading" @click="loadResultShareDocs">刷新</el-button>
               </div>
@@ -441,6 +531,7 @@
                 <el-descriptions-item label="创建接口">POST /api/minimax/result-shares</el-descriptions-item>
                 <el-descriptions-item label="公开查看">GET /api/minimax/result-shares/:id</el-descriptions-item>
                 <el-descriptions-item label="公开资产">GET /api/minimax/result-shares/:id/assets/:assetId</el-descriptions-item>
+                <el-descriptions-item label="任务列表">GET /api/minimax/token-plan/tasks</el-descriptions-item>
                 <el-descriptions-item label="鉴权">
                   创建支持 `Authorization: Bearer dtk_ai_xxx` 或 `X-Super-Admin-Password`
                 </el-descriptions-item>
@@ -634,6 +725,8 @@ const mediaTasksLoading = ref(false)
 const mediaTasks = ref([])
 const currentMediaTask = ref(null)
 const mediaPollTimer = ref(null)
+const archiveTypeFilter = ref('')
+const localSharedTaskIds = ref(loadLocalSharedTaskIds())
 const mediaParametersText = ref('{}')
 const mediaForm = ref({
   model: 'MiniMax-Hailuo-2.3-Fast',
@@ -761,6 +854,30 @@ const coverRawPretty = computed(() => pretty(coverRaw.value))
 const lyricsResultText = computed(() => extractLyricsText(lyricsRaw.value))
 const coverFeatureId = computed(() => extractCoverFeatureId(coverRaw.value))
 const mediaAssets = computed(() => extractTaskAssets(currentMediaTask.value))
+const knownSharedTaskIds = computed(() => {
+  const ids = new Set(localSharedTaskIds.value)
+  for (const share of adminShares.value) {
+    collectTaskIds(share?.payload, ids)
+    collectTaskIds(share?.task_id, ids)
+  }
+  if (latestShare.value) {
+    collectTaskIds(latestShare.value.payload, ids)
+  }
+  return ids
+})
+const archiveReadyTasks = computed(() => {
+  return mediaTasks.value.filter(task => {
+    if (task.status !== 'succeeded') return false
+    return extractTaskAssets(task).length > 0 || task.result_urls?.length > 0
+  })
+})
+const unsharedTasks = computed(() => {
+  return archiveReadyTasks.value.filter(task => {
+    if (knownSharedTaskIds.value.has(task.task_id)) return false
+    if (!archiveTypeFilter.value) return true
+    return inferShareTypeFromTask(task, extractTaskAssets(task)) === archiveTypeFilter.value
+  })
+})
 const mediaJSONPlaceholder = computed(() => {
   if (isVideoModel.value) return '{\n  "camera_movement": "push_in"\n}'
   if (isMusicModel.value) return '{\n  "style": "cinematic"\n}'
@@ -819,6 +936,9 @@ watch(activeTab, (tab) => {
     scheduleMediaPoll()
   }
   if (tab === 'archive') {
+    if (hasCredential.value) {
+      void loadMediaTasks()
+    }
     void loadAdminShares()
   }
 })
@@ -1060,6 +1180,15 @@ async function loadMediaTasks() {
   }
 }
 
+async function refreshArchive() {
+  if (hasCredential.value) {
+    await loadMediaTasks()
+  }
+  if (adminReady.value) {
+    await loadAdminShares()
+  }
+}
+
 async function openMediaTask(taskId) {
   if (!requireCredential()) return
   try {
@@ -1069,9 +1198,32 @@ async function openMediaTask(taskId) {
     const data = await safeJson(res)
     if (!res.ok) throw new Error(data.error || '读取任务详情失败')
     currentMediaTask.value = data
+    return data
   } catch (err) {
     ElMessage.error(err.message || '读取任务详情失败')
+    return null
   }
+}
+
+function openUnsharedTask(task) {
+  currentMediaTask.value = task
+  activeTab.value = 'media'
+}
+
+function saveUnsharedTask(task) {
+  currentMediaTask.value = task
+  openShareDialog('media')
+}
+
+async function saveTaskFromList(task) {
+  if (!task?.task_id) return
+  if (!task.result && !task.content_type) {
+    const detail = await openMediaTask(task.task_id)
+    if (!detail) return
+  } else {
+    currentMediaTask.value = task
+  }
+  openShareDialog('media')
 }
 
 async function pollCurrentMediaTask() {
@@ -1128,6 +1280,11 @@ async function downloadCurrentMedia() {
   } catch (err) {
     ElMessage.error(err.message || '下载失败')
   }
+}
+
+async function downloadTask(task) {
+  currentMediaTask.value = task
+  await downloadCurrentMedia()
 }
 
 function resetMediaForm() {
@@ -1286,7 +1443,7 @@ function buildShareDraft(source) {
       }
       return {
         sourceLabel: '媒体任务',
-        title: buildShareTitle(currentMediaTask.value.model || '媒体结果', currentMediaTask.value.prompt || mediaForm.value.prompt),
+        title: buildShareTitle(currentMediaTask.value.model || '媒体结果', taskPrompt(currentMediaTask.value) || mediaForm.value.prompt),
         summary: buildMediaShareSummary(currentMediaTask.value, mediaAssets.value),
         resultType: inferShareTypeFromTask(currentMediaTask.value, mediaAssets.value),
         model: currentMediaTask.value.model || mediaForm.value.model,
@@ -1358,6 +1515,7 @@ async function submitResultShare() {
     latestShare.value = data
     createShareVisible.value = false
     activeTab.value = 'archive'
+    rememberSharedTaskId(shareDraft.value.payload?.task_id)
     ElMessage.success('MiniMax 结果已保存为分享页')
     if (adminReady.value) {
       await loadAdminShares()
@@ -1412,6 +1570,7 @@ async function inspectAdminShare(id) {
     const data = await safeJson(res)
     if (!res.ok) throw new Error(data.error || '加载分享详情失败')
     adminEditingShare.value = data
+    rememberSharedTaskIds(data.payload)
     adminForm.value = {
       title: data.title || '',
       summary: data.summary || '',
@@ -1500,12 +1659,76 @@ function buildShareTitle(prefix, raw) {
 }
 
 function buildMediaShareSummary(task, assets) {
-  const prompt = String(task?.prompt || mediaForm.value.prompt || '').trim()
+  const prompt = String(taskPrompt(task) || mediaForm.value.prompt || '').trim()
   const assetCount = assets?.length || 0
   if (!prompt) {
     return `模型 ${task?.model || mediaForm.value.model} 的媒体结果，共 ${assetCount} 个资产`
   }
   return `${prompt.slice(0, 60)}${prompt.length > 60 ? '…' : ''} · ${assetCount} 个资产`
+}
+
+function loadLocalSharedTaskIds() {
+  try {
+    return JSON.parse(localStorage.getItem('minimax_studio_shared_task_ids') || '[]')
+  } catch {
+    return []
+  }
+}
+
+function saveLocalSharedTaskIds(ids) {
+  localStorage.setItem('minimax_studio_shared_task_ids', JSON.stringify(Array.from(new Set(ids)).slice(-300)))
+}
+
+function rememberSharedTaskId(taskId) {
+  if (!taskId) return
+  const ids = Array.from(new Set([...localSharedTaskIds.value, taskId]))
+  localSharedTaskIds.value = ids
+  saveLocalSharedTaskIds(ids)
+}
+
+function rememberSharedTaskIds(value) {
+  const ids = new Set(localSharedTaskIds.value)
+  collectTaskIds(value, ids)
+  localSharedTaskIds.value = Array.from(ids)
+  saveLocalSharedTaskIds(localSharedTaskIds.value)
+}
+
+function collectTaskIds(value, ids) {
+  if (!value) return
+  if (typeof value === 'string') {
+    if (value.startsWith('mmt_')) ids.add(value)
+    return
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectTaskIds(item, ids))
+    return
+  }
+  if (typeof value === 'object') {
+    if (typeof value.task_id === 'string') {
+      ids.add(value.task_id)
+    }
+    if (typeof value.taskId === 'string') {
+      ids.add(value.taskId)
+    }
+    Object.values(value).forEach(item => collectTaskIds(item, ids))
+  }
+}
+
+function taskPrompt(task) {
+  if (!task) return ''
+  if (task.prompt) return String(task.prompt)
+  const request = parseTaskRequest(task.request)
+  return String(request.prompt || request.text || '')
+}
+
+function parseTaskRequest(raw) {
+  if (!raw) return {}
+  if (typeof raw === 'object') return raw
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return {}
+  }
 }
 
 function inferShareTypeFromTask(task, assets) {
@@ -1846,6 +2069,47 @@ async function safeJson(res) {
   gap: 10px;
 }
 
+.archive-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 18px;
+}
+
+.archive-secondary {
+  margin-top: 18px;
+}
+
+.archive-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stat-tile {
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.stat-tile span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.stat-tile strong {
+  display: block;
+  margin-top: 6px;
+  color: #0f172a;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.archive-filter {
+  width: 138px;
+}
+
 .archive-alert {
   margin-top: 14px;
 }
@@ -1855,6 +2119,30 @@ async function safeJson(res) {
   padding: 18px;
   border-radius: 20px;
   background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(30, 64, 175, 0.08));
+}
+
+.unshared-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.unshared-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.unshared-main p {
+  margin: 8px 0 6px;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .share-highlight-top {
@@ -2028,7 +2316,8 @@ async function safeJson(res) {
 
 @media (max-width: 1120px) {
   .studio-hero,
-  .panel-grid {
+  .panel-grid,
+  .archive-overview {
     grid-template-columns: 1fr;
   }
 
@@ -2054,18 +2343,28 @@ async function safeJson(res) {
   .capability-grid,
   .inline-fields,
   .asset-grid,
-  .share-draft-grid {
+  .share-draft-grid,
+  .archive-stats {
     grid-template-columns: 1fr;
   }
 
   .credential-actions,
   .panel-actions,
   .inline-actions,
-  .share-highlight-top {
+  .share-highlight-top,
+  .unshared-item {
     flex-wrap: wrap;
   }
 
+  .unshared-item {
+    display: flex;
+  }
+
   .admin-filter {
+    width: 100%;
+  }
+
+  .archive-filter {
     width: 100%;
   }
 }
