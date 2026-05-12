@@ -75,7 +75,7 @@
               <el-button type="primary" :icon="MagicStick" :loading="loading" @click="runTutor">
                 AI 处理
               </el-button>
-              <el-button :icon="Microphone" :loading="speaking" @click="speak(inputText)">
+              <el-button :icon="speakingKey === 'input' ? CircleClose : Microphone" :loading="isSpeaking('input')" @click="toggleSpeak('input', inputText)">
                 朗读输入
               </el-button>
               <el-button :icon="Delete" @click="clearAll">清空</el-button>
@@ -103,17 +103,38 @@
             </button>
           </div>
         </el-card>
+
+        <el-card class="panel-card history-card">
+          <template #header>
+            <div class="card-header">
+              <span>学习历史</span>
+            </div>
+          </template>
+          <div v-if="history.length" class="history-list">
+            <button
+              v-for="item in history"
+              :key="item.id"
+              class="history-item"
+              type="button"
+              @click="restoreHistory(item)"
+            >
+              <span>{{ item.modeLabel }}</span>
+              <small>{{ item.text }}</small>
+            </button>
+          </div>
+          <el-empty v-else description="暂无历史" />
+        </el-card>
       </section>
 
       <section class="right-panel">
         <el-card class="panel-card result-card">
           <template #header>
             <div class="card-header">
-              <span>学习结果</span>
+              <span>学习卡片</span>
               <div class="card-actions">
                 <el-button text size="small" :icon="DocumentCopy" @click="copyResult">复制</el-button>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(resultSpeechText)">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'summary' ? CircleClose : Microphone" :loading="isSpeaking('summary')" @click="toggleSpeak('summary', resultSpeechText)">
+                  {{ speakingKey === 'summary' ? '停止' : '朗读' }}
                 </el-button>
               </div>
             </div>
@@ -131,8 +152,8 @@
                   <el-icon><Switch /></el-icon>
                   <span>翻译</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('translation'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'translation' ? CircleClose : Microphone" :loading="isSpeaking('translation')" @click="toggleSpeak('translation', sectionSpeechText('translation'))">
+                  {{ speakingKey === 'translation' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <p v-if="result.translation" class="translation-text">{{ result.translation }}</p>
@@ -145,8 +166,8 @@
                   <el-icon><Headset /></el-icon>
                   <span>音标与拼读</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('pronunciation'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'pronunciation' ? CircleClose : Microphone" :loading="isSpeaking('pronunciation')" @click="toggleSpeak('pronunciation', sectionSpeechText('pronunciation'))">
+                  {{ speakingKey === 'pronunciation' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <div class="pronunciation-grid">
@@ -177,8 +198,8 @@
                   <el-icon><Reading /></el-icon>
                   <span>重点理解</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('key_points'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'key_points' ? CircleClose : Microphone" :loading="isSpeaking('key_points')" @click="toggleSpeak('key_points', sectionSpeechText('key_points'))">
+                  {{ speakingKey === 'key_points' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <ul class="clean-list">
@@ -192,15 +213,15 @@
                   <el-icon><Collection /></el-icon>
                   <span>词汇拆解</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('vocabulary'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'vocabulary' ? CircleClose : Microphone" :loading="isSpeaking('vocabulary')" @click="toggleSpeak('vocabulary', sectionSpeechText('vocabulary'))">
+                  {{ speakingKey === 'vocabulary' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <div class="vocab-list">
                 <div v-for="item in asList(result.vocabulary)" :key="vocabKey(item)" class="vocab-item">
                   <div class="item-title-row">
                     <strong>{{ item.word || item }}</strong>
-                    <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('vocabulary', item))" />
+                    <el-button text size="small" :icon="Microphone" :loading="isSpeaking(`vocab-${vocabKey(item)}`)" @click="toggleSpeak(`vocab-${vocabKey(item)}`, itemSpeechText('vocabulary', item))" />
                   </div>
                   <span>{{ item.meaning || item.explain || '' }}</span>
                   <small>{{ item.example || '' }}</small>
@@ -214,15 +235,15 @@
                   <el-icon><ChatLineSquare /></el-icon>
                   <span>例句</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('examples'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'examples' ? CircleClose : Microphone" :loading="isSpeaking('examples')" @click="toggleSpeak('examples', sectionSpeechText('examples'))">
+                  {{ speakingKey === 'examples' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <div class="example-list">
                 <div v-for="item in asList(result.examples)" :key="exampleKey(item)" class="example-item">
                   <div class="item-title-row">
                     <p>{{ item.english || item }}</p>
-                    <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('examples', item))" />
+                    <el-button text size="small" :icon="Microphone" :loading="isSpeaking(`example-${exampleKey(item)}`)" @click="toggleSpeak(`example-${exampleKey(item)}`, itemSpeechText('examples', item))" />
                   </div>
                   <span>{{ item.chinese || item.translation || '' }}</span>
                 </div>
@@ -235,8 +256,8 @@
                   <el-icon><EditPen /></el-icon>
                   <span>纠错建议</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('correction'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'correction' ? CircleClose : Microphone" :loading="isSpeaking('correction')" @click="toggleSpeak('correction', sectionSpeechText('correction'))">
+                  {{ speakingKey === 'correction' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <div class="correction-grid">
@@ -260,15 +281,15 @@
                   <el-icon><QuestionFilled /></el-icon>
                   <span>练习</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('practice'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'practice' ? CircleClose : Microphone" :loading="isSpeaking('practice')" @click="toggleSpeak('practice', sectionSpeechText('practice'))">
+                  {{ speakingKey === 'practice' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <div class="practice-list">
                 <div v-for="(item, index) in asList(result.practice)" :key="index" class="practice-item">
                   <div class="item-title-row">
                     <strong>{{ index + 1 }}. {{ item.question || item }}</strong>
-                    <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('practice', item))" />
+                    <el-button text size="small" :icon="Microphone" :loading="isSpeaking(`practice-${index}`)" @click="toggleSpeak(`practice-${index}`, itemSpeechText('practice', item))" />
                   </div>
                   <span v-if="item.answer">参考：{{ item.answer }}</span>
                 </div>
@@ -281,8 +302,8 @@
                   <el-icon><Aim /></el-icon>
                   <span>引导学习</span>
                 </span>
-                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('guide'))">
-                  朗读
+                <el-button text size="small" :icon="speakingKey === 'guide' ? CircleClose : Microphone" :loading="isSpeaking('guide')" @click="toggleSpeak('guide', sectionSpeechText('guide'))">
+                  {{ speakingKey === 'guide' ? '停止' : '朗读' }}
                 </el-button>
               </div>
               <div v-if="asList(result.guided_plan).length" class="guide-steps">
@@ -291,7 +312,7 @@
                   <div class="guide-step-body">
                     <div class="item-title-row">
                       <strong>{{ item.step || `第 ${index + 1} 步` }}</strong>
-                      <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('guide', item))" />
+                      <el-button text size="small" :icon="Microphone" :loading="isSpeaking(`guide-${index}`)" @click="toggleSpeak(`guide-${index}`, itemSpeechText('guide', item))" />
                     </div>
                     <p v-if="item.goal">{{ item.goal }}</p>
                     <span v-if="item.task">{{ item.task }}</span>
@@ -307,53 +328,55 @@
             </section>
           </div>
 
-          <pre v-else-if="rawResult" class="raw-result">{{ rawResult }}</pre>
+          <div v-else-if="rawResult" class="result-sections">
+            <section class="result-section primary-result fallback-result">
+              <div class="section-title">
+                <span class="section-title-label">
+                  <el-icon><Reading /></el-icon>
+                  <span>学习解析</span>
+                </span>
+                <el-button text size="small" :icon="speakingKey === 'fallback' ? CircleClose : Microphone" :loading="isSpeaking('fallback')" @click="toggleSpeak('fallback', rawResult)">
+                  {{ speakingKey === 'fallback' ? '停止' : '朗读' }}
+                </el-button>
+              </div>
+              <div class="fallback-content">
+                <p v-for="(line, index) in fallbackLines" :key="index">{{ line }}</p>
+              </div>
+            </section>
+          </div>
         </el-card>
 
-        <el-card class="panel-card api-card">
-          <template #header>
-            <div class="card-header">
-              <span>公开接口</span>
-              <el-button text size="small" :icon="DocumentCopy" @click="copyCurl">复制 cURL</el-button>
-            </div>
-          </template>
-          <el-tabs v-model="apiTab">
-            <el-tab-pane label="请求体" name="body">
-              <pre class="code-box">{{ requestPreview }}</pre>
-            </el-tab-pane>
-            <el-tab-pane label="cURL" name="curl">
-              <pre class="code-box">{{ curlPreview }}</pre>
-            </el-tab-pane>
-            <el-tab-pane label="限制" name="limits">
-              <el-descriptions :column="1" border>
-                <el-descriptions-item label="接口">POST /api/english-tutor</el-descriptions-item>
-                <el-descriptions-item label="单次文本">{{ limits.max_text_chars }} 字符</el-descriptions-item>
-                <el-descriptions-item label="自定义要求">{{ limits.max_custom_instruction_chars }} 字符</el-descriptions-item>
-                <el-descriptions-item label="频控">{{ limits.rate_limit_per_minute }}/分钟/IP，{{ limits.rate_limit_per_hour }}/小时/IP</el-descriptions-item>
-                <el-descriptions-item label="说明">后端固定学习提示词和模型，不暴露 AI Gateway Key，不支持通用 AI 调用。</el-descriptions-item>
-              </el-descriptions>
-            </el-tab-pane>
-            <el-tab-pane label="历史" name="history">
-              <div v-if="history.length" class="history-list">
-                <button
-                  v-for="item in history"
-                  :key="item.id"
-                  class="history-item"
-                  type="button"
-                  @click="restoreHistory(item)"
-                >
-                  <span>{{ item.modeLabel }}</span>
-                  <small>{{ item.text }}</small>
-                </button>
+        <el-collapse class="developer-collapse">
+          <el-collapse-item name="developer">
+            <template #title>
+              <div class="developer-title">
+                <span>开发接入</span>
+                <el-button text size="small" :icon="DocumentCopy" @click.stop="copyCurl">复制 cURL</el-button>
               </div>
-              <el-empty v-else description="暂无历史" />
-            </el-tab-pane>
-          </el-tabs>
-        </el-card>
+            </template>
+            <el-tabs v-model="apiTab">
+              <el-tab-pane label="限制" name="limits">
+                <el-descriptions :column="1" border>
+                  <el-descriptions-item label="接口">POST /api/english-tutor</el-descriptions-item>
+                  <el-descriptions-item label="单次文本">{{ limits.max_text_chars }} 字符</el-descriptions-item>
+                  <el-descriptions-item label="自定义要求">{{ limits.max_custom_instruction_chars }} 字符</el-descriptions-item>
+                  <el-descriptions-item label="频控">{{ limits.rate_limit_per_minute }}/分钟/IP，{{ limits.rate_limit_per_hour }}/小时/IP</el-descriptions-item>
+                  <el-descriptions-item label="说明">后端固定学习提示词和模型，不暴露 AI Gateway Key，不支持通用 AI 调用。</el-descriptions-item>
+                </el-descriptions>
+              </el-tab-pane>
+              <el-tab-pane label="请求体" name="body">
+                <pre class="code-box">{{ requestPreview }}</pre>
+              </el-tab-pane>
+              <el-tab-pane label="cURL" name="curl">
+                <pre class="code-box">{{ curlPreview }}</pre>
+              </el-tab-pane>
+            </el-tabs>
+          </el-collapse-item>
+        </el-collapse>
       </section>
     </div>
 
-    <audio ref="audioPlayer" :src="audioUrl" controls class="audio-player" />
+    <audio ref="audioPlayer" :src="audioUrl" controls class="audio-player" @ended="stopSpeak" @error="stopSpeak" />
   </div>
 </template>
 
@@ -361,6 +384,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
+  CircleClose,
   ChatLineSquare,
   Collection,
   Delete,
@@ -390,8 +414,9 @@ const loading = ref(false)
 const result = ref(null)
 const rawResult = ref('')
 const history = ref([])
-const apiTab = ref('body')
+const apiTab = ref('limits')
 const speaking = ref(false)
+const speakingKey = ref('')
 const audioUrl = ref('')
 const audioPlayer = ref(null)
 const limits = ref({
@@ -440,6 +465,35 @@ const resultSpeechText = computed(() => {
   if (result.value?.examples?.[0]?.english) return result.value.examples[0].english
   if (result.value?.translation) return result.value.translation
   return inputText.value
+})
+
+const fallbackLines = computed(() => formatLearningText(rawResult.value))
+
+const resultPlainText = computed(() => {
+  if (!result.value) return rawResult.value
+  const sections = []
+  if (result.value.translation) sections.push(`翻译：${result.value.translation}`)
+  if (result.value.polished_translation) sections.push(`自然表达：${result.value.polished_translation}`)
+  if (result.value.pronunciation?.ipa || result.value.pronunciation?.syllables || result.value.pronunciation?.stress) {
+    sections.push(sectionSpeechText('pronunciation'))
+  }
+  if (asList(result.value.key_points).length) {
+    sections.push(`重点理解：\n${asList(result.value.key_points).map(item => `- ${item}`).join('\n')}`)
+  }
+  if (asList(result.value.vocabulary).length) {
+    sections.push(`词汇拆解：\n${asList(result.value.vocabulary).map(item => `- ${itemSpeechText('vocabulary', item)}`).join('\n')}`)
+  }
+  if (asList(result.value.examples).length) {
+    sections.push(`例句：\n${asList(result.value.examples).map(item => `- ${itemSpeechText('examples', item)}`).join('\n')}`)
+  }
+  if (result.value.correction) sections.push(`纠错建议：${sectionSpeechText('correction')}`)
+  if (asList(result.value.practice).length) {
+    sections.push(`练习：\n${asList(result.value.practice).map(item => `- ${itemSpeechText('practice', item)}`).join('\n')}`)
+  }
+  if (asList(result.value.guided_plan).length || result.value.next_prompt) {
+    sections.push(`引导学习：\n${sectionSpeechText('guide')}`)
+  }
+  return sections.filter(Boolean).join('\n\n')
 })
 
 function loadSettings() {
@@ -503,7 +557,7 @@ async function runTutor() {
     if (parsed) {
       result.value = normalizeResult(parsed)
     } else {
-      rawResult.value = data.content || JSON.stringify(data, null, 2)
+      rawResult.value = normalizeRawLearningText(data.content || data)
     }
     pushHistory()
   } catch (err) {
@@ -531,6 +585,37 @@ function parseJsonContent(content) {
       return null
     }
   }
+}
+
+function normalizeRawLearningText(value) {
+  if (!value) return ''
+  if (typeof value !== 'string') return JSON.stringify(value, null, 2)
+  const parsed = parseJsonContent(value)
+  if (parsed) {
+    result.value = normalizeResult(parsed)
+    return ''
+  }
+  return value
+}
+
+function formatLearningText(value) {
+  const text = String(value || '')
+    .replace(/^```[\w-]*\s*/i, '')
+    .replace(/```$/i, '')
+    .replace(/^\s*HTTP\/1\.\d[\s\S]*?\r?\n\r?\n/i, '')
+    .trim()
+
+  if (!text) return []
+  const lines = text
+    .split(/\r?\n+/)
+    .map(line => line.replace(/^[-*]\s+/, '').trim())
+    .filter(Boolean)
+
+  if (lines.length > 1) return lines
+  return text
+    .split(/(?<=[。！？.!?])\s+/)
+    .map(line => line.trim())
+    .filter(Boolean)
 }
 
 function normalizeResult(value) {
@@ -688,49 +773,90 @@ async function copyText(text, message = '已复制') {
 }
 
 function copyResult() {
-  const text = result.value ? JSON.stringify(result.value, null, 2) : rawResult.value
-  copyText(text)
+  copyText(resultPlainText.value || rawResult.value)
 }
 
 function copyCurl() {
   copyText(curlPreview.value, 'cURL 已复制')
 }
 
-async function speak(text) {
+function isSpeaking(key) {
+  return speaking.value && speakingKey.value === key
+}
+
+function stopSpeak() {
+  speaking.value = false
+  speakingKey.value = ''
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel()
+  }
+  if (audioPlayer.value) {
+    audioPlayer.value.pause()
+    audioPlayer.value.currentTime = 0
+  }
+}
+
+function chooseVoice(text) {
+  return /[\u4e00-\u9fff]/.test(text) ? 'zh-CN-XiaoxiaoNeural' : 'en-US-JennyNeural'
+}
+
+async function toggleSpeak(key, text) {
+  if (speakingKey.value === key) {
+    stopSpeak()
+    return
+  }
+  await speak(text, key)
+}
+
+async function speak(text, key = 'manual') {
   const content = (text || '').trim()
   if (!content) {
     ElMessage.warning('没有可朗读的内容')
     return
   }
 
+  stopSpeak()
   speaking.value = true
+  speakingKey.value = key
   try {
     const res = await fetch('/api/edge-tts/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: content.slice(0, 500),
-        voice: 'en-US-JennyNeural'
+        voice: chooseVoice(content)
       })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'TTS 合成失败')
-    audioUrl.value = `/api/chat/uploads/${data.filename}`
+    audioUrl.value = data.url || `/api/chat/uploads/${data.filename}`
     setTimeout(() => {
-      audioPlayer.value?.play?.()
+      if (speakingKey.value === key) {
+        audioPlayer.value?.play?.().catch(() => {
+          speaking.value = false
+          speakingKey.value = ''
+        })
+      }
     }, 80)
   } catch (err) {
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(content.slice(0, 500))
-      utterance.lang = 'en-US'
+      utterance.lang = /[\u4e00-\u9fff]/.test(content) ? 'zh-CN' : 'en-US'
+      utterance.onend = () => {
+        if (speakingKey.value === key) {
+          speaking.value = false
+          speakingKey.value = ''
+        }
+      }
+      utterance.onerror = utterance.onend
       window.speechSynthesis.cancel()
       window.speechSynthesis.speak(utterance)
       ElMessage.info('Edge TTS 不可用，已使用浏览器朗读')
     } else {
       ElMessage.error(err.message || '朗读失败')
+      speaking.value = false
+      speakingKey.value = ''
     }
-  } finally {
-    speaking.value = false
   }
 }
 
@@ -1093,16 +1219,49 @@ onMounted(() => {
 }
 
 .code-box,
-.raw-result {
+.fallback-content {
   margin: 0;
   padding: 14px;
   border-radius: 8px;
-  background: var(--code-bg);
-  color: var(--code-text);
   overflow: auto;
   max-height: 360px;
-  font-size: 12px;
   line-height: 1.6;
+}
+
+.code-box {
+  background: var(--code-bg);
+  color: var(--code-text);
+  font-size: 12px;
+}
+
+.fallback-content {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.fallback-content p {
+  margin: 0 0 10px;
+}
+
+.fallback-content p:last-child {
+  margin-bottom: 0;
+}
+
+.developer-collapse {
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.developer-title {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 12px;
 }
 
 .history-list {
