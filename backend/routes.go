@@ -529,6 +529,10 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	// 内部免认证聊天接口（同域浏览器调用）
 	api.POST("/internal/chat", createRateLimiter.Middleware(), h.aiGatewayHandler.InternalChat)
 
+	// 公开英语学习工具：服务端内部调用 AI 能力，前端不暴露 Gateway Key
+	api.GET("/english-tutor/meta", h.aiGatewayHandler.EnglishTutorMeta)
+	api.POST("/english-tutor", h.aiGatewayHandler.EnglishTutor)
+
 	// Anthropic 协议代理 — 通用端点（根据 model 自动路由到配置的下游提供商）
 	api.POST("/anthropic/v1/messages", h.aiGatewayHandler.ProxyAnthropicGeneric)
 	api.GET("/anthropic/v1/models", h.aiGatewayHandler.ProxyAnthropicModels)

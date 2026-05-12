@@ -419,6 +419,18 @@ const toolRoutes = [
     }
   },
   {
+    path: '/english-tutor',
+    name: 'EnglishTutor',
+    component: () => import('../views/ai/EnglishTutorTool.vue'),
+    meta: {
+      title: 'AI 学英语',
+      icon: 'Reading',
+      category: 'ai',
+      shortcut: true,
+      description: '翻译、拼读、音标、例句和纠错练习'
+    }
+  },
+  {
     path: '/minimax-studio',
     name: 'MiniMaxStudio',
     component: () => import('../views/ai/MiniMaxStudioTool.vue'),
