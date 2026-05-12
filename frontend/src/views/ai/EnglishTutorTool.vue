@@ -127,8 +127,13 @@
           <div v-if="result" class="result-sections">
             <section v-if="result.translation || result.polished_translation" class="result-section primary-result">
               <div class="section-title">
-                <el-icon><Switch /></el-icon>
-                <span>翻译</span>
+                <span class="section-title-label">
+                  <el-icon><Switch /></el-icon>
+                  <span>翻译</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('translation'))">
+                  朗读
+                </el-button>
               </div>
               <p v-if="result.translation" class="translation-text">{{ result.translation }}</p>
               <p v-if="result.polished_translation" class="muted-text">{{ result.polished_translation }}</p>
@@ -136,8 +141,13 @@
 
             <section v-if="result.pronunciation" class="result-section">
               <div class="section-title">
-                <el-icon><Headset /></el-icon>
-                <span>音标与拼读</span>
+                <span class="section-title-label">
+                  <el-icon><Headset /></el-icon>
+                  <span>音标与拼读</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('pronunciation'))">
+                  朗读
+                </el-button>
               </div>
               <div class="pronunciation-grid">
                 <div class="pron-card">
@@ -163,8 +173,13 @@
 
             <section v-if="asList(result.key_points).length" class="result-section">
               <div class="section-title">
-                <el-icon><Reading /></el-icon>
-                <span>重点理解</span>
+                <span class="section-title-label">
+                  <el-icon><Reading /></el-icon>
+                  <span>重点理解</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('key_points'))">
+                  朗读
+                </el-button>
               </div>
               <ul class="clean-list">
                 <li v-for="item in asList(result.key_points)" :key="item">{{ item }}</li>
@@ -173,12 +188,20 @@
 
             <section v-if="asList(result.vocabulary).length" class="result-section">
               <div class="section-title">
-                <el-icon><Collection /></el-icon>
-                <span>词汇拆解</span>
+                <span class="section-title-label">
+                  <el-icon><Collection /></el-icon>
+                  <span>词汇拆解</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('vocabulary'))">
+                  朗读
+                </el-button>
               </div>
               <div class="vocab-list">
                 <div v-for="item in asList(result.vocabulary)" :key="vocabKey(item)" class="vocab-item">
-                  <strong>{{ item.word || item }}</strong>
+                  <div class="item-title-row">
+                    <strong>{{ item.word || item }}</strong>
+                    <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('vocabulary', item))" />
+                  </div>
                   <span>{{ item.meaning || item.explain || '' }}</span>
                   <small>{{ item.example || '' }}</small>
                 </div>
@@ -187,12 +210,20 @@
 
             <section v-if="asList(result.examples).length" class="result-section">
               <div class="section-title">
-                <el-icon><ChatLineSquare /></el-icon>
-                <span>例句</span>
+                <span class="section-title-label">
+                  <el-icon><ChatLineSquare /></el-icon>
+                  <span>例句</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('examples'))">
+                  朗读
+                </el-button>
               </div>
               <div class="example-list">
                 <div v-for="item in asList(result.examples)" :key="exampleKey(item)" class="example-item">
-                  <p>{{ item.english || item }}</p>
+                  <div class="item-title-row">
+                    <p>{{ item.english || item }}</p>
+                    <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('examples', item))" />
+                  </div>
                   <span>{{ item.chinese || item.translation || '' }}</span>
                 </div>
               </div>
@@ -200,8 +231,13 @@
 
             <section v-if="result.correction" class="result-section">
               <div class="section-title">
-                <el-icon><EditPen /></el-icon>
-                <span>纠错建议</span>
+                <span class="section-title-label">
+                  <el-icon><EditPen /></el-icon>
+                  <span>纠错建议</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('correction'))">
+                  朗读
+                </el-button>
               </div>
               <div class="correction-grid">
                 <div v-if="result.correction.original">
@@ -220,14 +256,53 @@
 
             <section v-if="asList(result.practice).length" class="result-section">
               <div class="section-title">
-                <el-icon><QuestionFilled /></el-icon>
-                <span>练习</span>
+                <span class="section-title-label">
+                  <el-icon><QuestionFilled /></el-icon>
+                  <span>练习</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('practice'))">
+                  朗读
+                </el-button>
               </div>
               <div class="practice-list">
                 <div v-for="(item, index) in asList(result.practice)" :key="index" class="practice-item">
-                  <strong>{{ index + 1 }}. {{ item.question || item }}</strong>
+                  <div class="item-title-row">
+                    <strong>{{ index + 1 }}. {{ item.question || item }}</strong>
+                    <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('practice', item))" />
+                  </div>
                   <span v-if="item.answer">参考：{{ item.answer }}</span>
                 </div>
+              </div>
+            </section>
+
+            <section v-if="asList(result.guided_plan).length || result.next_prompt" class="result-section guide-section">
+              <div class="section-title">
+                <span class="section-title-label">
+                  <el-icon><Aim /></el-icon>
+                  <span>引导学习</span>
+                </span>
+                <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(sectionSpeechText('guide'))">
+                  朗读
+                </el-button>
+              </div>
+              <div v-if="asList(result.guided_plan).length" class="guide-steps">
+                <div v-for="(item, index) in asList(result.guided_plan)" :key="index" class="guide-step">
+                  <div class="guide-step-index">{{ index + 1 }}</div>
+                  <div class="guide-step-body">
+                    <div class="item-title-row">
+                      <strong>{{ item.step || `第 ${index + 1} 步` }}</strong>
+                      <el-button text size="small" :icon="Microphone" :loading="speaking" @click="speak(itemSpeechText('guide', item))" />
+                    </div>
+                    <p v-if="item.goal">{{ item.goal }}</p>
+                    <span v-if="item.task">{{ item.task }}</span>
+                    <small v-if="item.expected_answer">参考：{{ item.expected_answer }}</small>
+                    <small v-if="item.feedback">反馈：{{ item.feedback }}</small>
+                  </div>
+                </div>
+              </div>
+              <div v-if="result.next_prompt" class="next-prompt">
+                <span>下一步</span>
+                <p>{{ result.next_prompt }}</p>
               </div>
             </section>
           </div>
@@ -292,6 +367,7 @@ import {
   DocumentCopy,
   EditPen,
   Headset,
+  Aim,
   MagicStick,
   Microphone,
   QuestionFilled,
@@ -331,6 +407,7 @@ const modes = [
   { value: 'explain', label: '精讲' },
   { value: 'correct', label: '纠错' },
   { value: 'dialogue', label: '对话' },
+  { value: 'guide', label: '引导' },
   { value: 'api', label: '接口请求' }
 ]
 
@@ -341,7 +418,8 @@ const quickTemplates = [
   { title: '单词拼读', mode: 'pronounce', text: 'comfortable', instruction: '' },
   { title: '句子翻译', mode: 'translate', text: '我想把这个接口接入到现有系统里。', instruction: '' },
   { title: '表达纠错', mode: 'correct', text: 'I very like learn English by AI tool.', instruction: '' },
-  { title: '面试对话', mode: 'dialogue', text: 'Introduce a backend project that uses Go and Vue.', instruction: '' }
+  { title: '面试对话', mode: 'dialogue', text: 'Introduce a backend project that uses Go and Vue.', instruction: '' },
+  { title: '引导学习', mode: 'guide', text: 'I used to be nervous about speaking English, but now I practice a little every day.', instruction: '' }
 ]
 
 const requestPayload = computed(() => ({
@@ -464,7 +542,9 @@ function normalizeResult(value) {
     vocabulary: value.vocabulary || value.words || [],
     examples: value.examples || [],
     correction: value.correction || null,
-    practice: value.practice || value.exercises || []
+    practice: value.practice || value.exercises || [],
+    guided_plan: value.guided_plan || value.learning_steps || value.steps || [],
+    next_prompt: value.next_prompt || value.next_question || ''
   }
 }
 
@@ -479,6 +559,84 @@ function vocabKey(item) {
 
 function exampleKey(item) {
   return typeof item === 'string' ? item : `${item.english || ''}-${item.chinese || ''}`
+}
+
+function joinSpeechParts(parts) {
+  return parts
+    .map(item => (item == null ? '' : String(item).trim()))
+    .filter(Boolean)
+    .join('。')
+}
+
+function itemSpeechText(type, item) {
+  if (!item) return ''
+  if (typeof item === 'string') return item
+
+  if (type === 'vocabulary') {
+    return joinSpeechParts([item.word, item.meaning || item.explain, item.example])
+  }
+  if (type === 'examples') {
+    return joinSpeechParts([item.english, item.chinese || item.translation])
+  }
+  if (type === 'practice') {
+    return joinSpeechParts([item.question, item.answer ? `参考答案：${item.answer}` : ''])
+  }
+  if (type === 'guide') {
+    return joinSpeechParts([
+      item.step,
+      item.goal,
+      item.task,
+      item.expected_answer ? `参考答案：${item.expected_answer}` : '',
+      item.feedback ? `反馈标准：${item.feedback}` : ''
+    ])
+  }
+  return joinSpeechParts(Object.values(item))
+}
+
+function sectionSpeechText(type) {
+  const data = result.value
+  if (!data) return ''
+
+  if (type === 'translation') {
+    return joinSpeechParts([data.translation, data.polished_translation])
+  }
+  if (type === 'pronunciation') {
+    const p = data.pronunciation || {}
+    return joinSpeechParts([
+      p.ipa ? `音标：${p.ipa}` : '',
+      p.syllables ? `音节：${p.syllables}` : '',
+      p.stress ? `重音：${p.stress}` : '',
+      asList(p.phonics).join('。'),
+      p.tip
+    ])
+  }
+  if (type === 'key_points') {
+    return asList(data.key_points).join('。')
+  }
+  if (type === 'vocabulary') {
+    return asList(data.vocabulary).map(item => itemSpeechText('vocabulary', item)).join('。')
+  }
+  if (type === 'examples') {
+    return asList(data.examples).map(item => itemSpeechText('examples', item)).join('。')
+  }
+  if (type === 'correction') {
+    const correction = data.correction || {}
+    return joinSpeechParts([
+      correction.original ? `原文：${correction.original}` : '',
+      correction.corrected ? `修正：${correction.corrected}` : '',
+      asList(correction.notes).join('。')
+    ])
+  }
+  if (type === 'practice') {
+    return asList(data.practice).map(item => itemSpeechText('practice', item)).join('。')
+  }
+  if (type === 'guide') {
+    return joinSpeechParts([
+      asList(data.guided_plan).map(item => itemSpeechText('guide', item)).join('。'),
+      data.next_prompt ? `下一步：${data.next_prompt}` : ''
+    ])
+  }
+  return resultSpeechText.value
 }
 
 function pushHistory() {
@@ -731,10 +889,33 @@ onMounted(() => {
 .section-title {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   margin-bottom: 10px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.section-title-label,
+.item-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.section-title-label {
+  flex: 1;
+}
+
+.item-title-row {
+  justify-content: space-between;
+}
+
+.item-title-row strong,
+.item-title-row p {
+  min-width: 0;
+  flex: 1;
 }
 
 .translation-text {
@@ -821,6 +1002,75 @@ onMounted(() => {
   display: block;
   color: var(--text-secondary);
   line-height: 1.5;
+}
+
+.guide-section {
+  border-color: rgba(64, 158, 255, 0.35);
+}
+
+.guide-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.guide-step {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 10px;
+  border: 1px solid var(--border-lighter);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+}
+
+.guide-step-index {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 700;
+}
+
+.guide-step-body strong,
+.guide-step-body p,
+.guide-step-body span,
+.guide-step-body small {
+  display: block;
+}
+
+.guide-step-body strong {
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.guide-step-body p,
+.guide-step-body span,
+.next-prompt p {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.guide-step-body small {
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+
+.next-prompt {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg-active);
+}
+
+.next-prompt span {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .vocab-item small {
@@ -931,6 +1181,14 @@ onMounted(() => {
   .pronunciation-grid,
   .correction-grid {
     grid-template-columns: 1fr;
+  }
+
+  .section-title {
+    align-items: flex-start;
+  }
+
+  .section-title .el-button {
+    flex-shrink: 0;
   }
 }
 </style>

@@ -147,7 +147,11 @@ func (h *AIGatewayHandler) GetChatTask(c *gin.Context) {
 // runAsyncChatTask 后台执行 LLM 调用，更新任务状态
 
 func (h *AIGatewayHandler) runAsyncChatTask(taskID string, req ChatCompletionRequest) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runAsyncChatTask: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runAsyncChatTask: %v", r)
+		}
+	}()
 	task, err := h.db.GetLLMTask(taskID)
 	if err != nil {
 		return
@@ -369,11 +373,11 @@ func (h *AIGatewayHandler) callDeepSeek(req ChatCompletionRequest) (gin.H, map[s
 }
 
 func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
-	bodyMap := map[string]interface{}{
-		"model":      req.Model,
-		"messages":   req.Messages,
-		"max_tokens": valueOrDefaultInt(req.MaxTokens, 1024),
+	if strings.TrimSpace(h.cfg.MiniMax.APIKey) == "" {
+		return nil, nil, fmt.Errorf("未配置 minimax.api_key 或 MINIMAX_API_KEY")
 	}
+
+	bodyMap := buildMiniMaxAnthropicBody(req)
 	if req.Temperature != nil {
 		bodyMap["temperature"] = *req.Temperature
 	}
@@ -381,7 +385,7 @@ func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[st
 		bodyMap["top_p"] = *req.TopP
 	}
 
-	raw, err := h.doJSONRequest("https://api.minimaxi.com/anthropic/v1/messages", h.cfg.MiniMax.APIKey, bodyMap)
+	raw, err := h.doMiniMaxAnthropicRequest("https://api.minimaxi.com/anthropic/v1/messages", h.cfg.MiniMax.APIKey, bodyMap)
 	if err != nil {
 		return nil, raw, err
 	}
@@ -403,9 +407,107 @@ func (h *AIGatewayHandler) callMiniMax(req ChatCompletionRequest) (gin.H, map[st
 			},
 		},
 		"content":      content,
+		"usage":        raw["usage"],
 		"raw_response": raw,
 	}
 	return result, raw, nil
+}
+
+func buildMiniMaxAnthropicBody(req ChatCompletionRequest) map[string]interface{} {
+	bodyMap := map[string]interface{}{
+		"model":      req.Model,
+		"messages":   normalizeAnthropicMessages(req.Messages),
+		"max_tokens": valueOrDefaultInt(req.MaxTokens, 1024),
+	}
+	if system := collectAnthropicSystemPrompt(req.Messages); system != "" {
+		bodyMap["system"] = system
+	}
+	if req.Stop != nil {
+		bodyMap["stop_sequences"] = req.Stop
+	}
+	return bodyMap
+}
+
+func collectAnthropicSystemPrompt(messages []map[string]interface{}) string {
+	parts := make([]string, 0, 1)
+	for _, msg := range messages {
+		if strings.EqualFold(fmt.Sprint(msg["role"]), "system") {
+			if text := messageContentToString(msg["content"]); text != "" {
+				parts = append(parts, text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func normalizeAnthropicMessages(messages []map[string]interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(messages))
+	for _, msg := range messages {
+		role := strings.ToLower(strings.TrimSpace(fmt.Sprint(msg["role"])))
+		if role == "system" {
+			continue
+		}
+		if role != "assistant" {
+			role = "user"
+		}
+		content := msg["content"]
+		if content == nil {
+			content = ""
+		}
+		result = append(result, map[string]interface{}{
+			"role":    role,
+			"content": content,
+		})
+	}
+	if len(result) == 0 {
+		result = append(result, map[string]interface{}{"role": "user", "content": ""})
+	}
+	return result
+}
+
+func messageContentToString(content interface{}) string {
+	switch v := content.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []interface{}:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if block, ok := item.(map[string]interface{}); ok {
+				if text, _ := block["text"].(string); text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
+}
+
+func (h *AIGatewayHandler) doMiniMaxAnthropicRequest(url, apiKey string, bodyMap map[string]interface{}) (map[string]interface{}, error) {
+	body, _ := json.Marshal(bodyMap)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := h.noProxyClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var payload map[string]interface{}
+	_ = json.Unmarshal(respBody, &payload)
+	if resp.StatusCode >= 400 {
+		return payload, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+	}
+	return payload, nil
 }
 
 // ProxyMinimaxAnthropic 转发 Anthropic 协议格式的请求到 MiniMax Anthropic 兼容端点
