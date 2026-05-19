@@ -1,4 +1,4 @@
-FROM docker.m.daocloud.io/library/node:20-alpine AS frontend-builder
+FROM docker.m.daocloud.io/library/node:26-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
