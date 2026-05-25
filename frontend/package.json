@@ -71,7 +71,7 @@
     "lightningcss-linux-arm64-gnu": "1.31.1",
     "lightningcss-linux-arm64-musl": "1.31.1",
     "lightningcss-linux-x64-gnu": "1.31.1",
-    "lightningcss-linux-x64-musl": "1.31.1",
+    "lightningcss-linux-x64-musl": "1.32.0",
     "lightningcss-win32-arm64-msvc": "1.31.1",
     "lightningcss-win32-x64-msvc": "1.31.1",
     "@tailwindcss/oxide-android-arm64": "4.2.1",
