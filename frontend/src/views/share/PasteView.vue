@@ -685,18 +685,23 @@ const submitPassword = async () => {
   await fetchPaste(password.value)
 }
 
+const restoreMediaTags = (html) => {
+  return html.replace(
+    /&lt;(audio|video)\s+controls\s+src=&quot;(https?:\/\/[^&"]+)&quot;&gt;&lt;\/(audio|video)&gt;/gi,
+    '<$1 controls src="$2"></$3>'
+  )
+}
+
 const highlightedContent = computed(() => {
   if (!paste.value) return ''
   const contentType = paste.value.content_type || 'text'
   const lang = paste.value.language
   const content = pasteDisplayContent.value
 
-  // 如果是 Markdown 类型，渲染 Markdown
   if (contentType === 'markdown') {
-    return md.render(content)
+    return restoreMediaTags(md.render(content))
   }
 
-  // 否则进行代码高亮
   if (lang && hljs.getLanguage(lang)) {
     try {
       return hljs.highlight(content, { language: lang, ignoreIllegals: true }).value
@@ -1924,5 +1929,14 @@ onMounted(() => {
   background-color: #fff3cd;
   padding: 0.2em 0.4em;
   border-radius: 2px;
+}
+
+.markdown-content audio,
+.markdown-content video {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  margin: 12px 0;
+  border-radius: 8px;
 }
 </style>
