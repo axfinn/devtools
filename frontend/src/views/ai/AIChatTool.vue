@@ -1,5 +1,28 @@
 <template>
   <div class="tool-container ai-chat-page">
+    <!-- Password gate -->
+    <div v-if="!authenticated" class="auth-gate">
+      <div class="auth-card">
+        <div class="auth-icon">🔒</div>
+        <h3>AI Chat 需要密码访问</h3>
+        <p>请输入访问密码以使用 AI 对话功能</p>
+        <el-form @submit.prevent="login" class="auth-form">
+          <el-input
+            v-model="passwordInput"
+            type="password"
+            show-password
+            placeholder="请输入访问密码"
+            size="large"
+            @keyup.enter="login"
+          />
+          <el-button type="primary" size="large" :loading="loggingIn" @click="login" style="width:100%;margin-top:12px">
+            进入
+          </el-button>
+        </el-form>
+      </div>
+    </div>
+
+    <template v-else>
     <div class="tool-header">
       <div class="header-row">
         <div>
@@ -113,6 +136,7 @@
         </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -125,6 +149,56 @@ import { API_BASE } from '../../api.js'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
+const AUTH_KEY = 'ai-chat-access-token'
+const authenticated = ref(false)
+const passwordInput = ref('')
+const loggingIn = ref(false)
+
+onMounted(() => {
+  const saved = localStorage.getItem(AUTH_KEY)
+  if (saved) {
+    authenticated.value = true
+    initChat()
+  }
+})
+
+async function login() {
+  if (!passwordInput.value.trim()) {
+    ElMessage.warning('请输入密码')
+    return
+  }
+  loggingIn.value = true
+  try {
+    const resp = await fetch(`${API_BASE}/api/ai-chat/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: passwordInput.value })
+    })
+    const data = await resp.json().catch(() => ({}))
+    if (!resp.ok || data.error) {
+      throw new Error(data.error || '密码错误')
+    }
+    localStorage.setItem(AUTH_KEY, passwordInput.value)
+    authenticated.value = true
+    ElMessage.success('验证通过')
+    initChat()
+  } catch (err) {
+    ElMessage.error(err.message || '验证失败')
+  } finally {
+    loggingIn.value = false
+  }
+}
+
+function initChat() {
+  loadConversations()
+  if (conversations.value.length === 0) {
+    newConversation()
+  } else {
+    currentConvId.value = conversations.value[0].id
+    loadMessages()
+  }
+}
+
 const selectedModel = ref('MiniMax-M2.7')
 const systemPrompt = ref('')
 const temperature = ref(0.7)
@@ -136,16 +210,6 @@ const messagesRef = ref(null)
 const currentConvId = ref('')
 const conversations = ref([])
 let abortController = null
-
-onMounted(() => {
-  loadConversations()
-  if (conversations.value.length === 0) {
-    newConversation()
-  } else {
-    currentConvId.value = conversations.value[0].id
-    loadMessages()
-  }
-})
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -324,6 +388,26 @@ watch(messages, () => {
 </script>
 
 <style scoped>
+.auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+}
+.auth-card {
+  text-align: center;
+  padding: 40px;
+  border-radius: 16px;
+  background: var(--bg-card, #fff);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+  max-width: 360px;
+  width: 100%;
+}
+.auth-icon { font-size: 48px; margin-bottom: 16px; }
+.auth-card h3 { margin: 0 0 8px; font-size: 18px; color: var(--text-primary, #1f2937); }
+.auth-card p { margin: 0 0 20px; font-size: 13px; color: var(--text-secondary, #6b7280); }
+.auth-form { max-width: 280px; margin: 0 auto; }
+
 .ai-chat-page {
   height: calc(100vh - 60px);
   display: flex;

@@ -533,6 +533,9 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	// AskIt 扩展下载
 	api.GET("/askit/extension", h.aiGatewayHandler.AskitExtensionDownload)
 
+	// AI Chat 密码验证
+	api.POST("/ai-chat/verify", h.aiGatewayHandler.AIChatVerify)
+
 	// 公开英语学习工具：服务端内部调用 AI 能力，前端不暴露 Gateway Key
 	api.GET("/english-tutor/meta", h.aiGatewayHandler.EnglishTutorMeta)
 	api.POST("/english-tutor", h.aiGatewayHandler.EnglishTutor)
