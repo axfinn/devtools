@@ -78,15 +78,20 @@ function renderContent(content, role) {
   if (role === 'user') {
     return escapeHtml(content).replace(/\n/g, '<br>')
   }
-  let rendered = md.render(content)
-  rendered = rendered.replace(
-    /&lt;audio\s+controls\s+src=&quot;([^&]+)&quot;&gt;&lt;\/audio&gt;/gi,
-    '<div class="audio-player"><div class="audio-icon">🎵</div><audio controls src="$1"></audio></div>'
-  )
-  rendered = rendered.replace(
-    /&lt;video\s+controls\s+src=&quot;([^&]+)&quot;&gt;&lt;\/video&gt;/gi,
-    '<video controls src="$1" class="chat-video"></video>'
-  )
+  const mediaPlaceholders = []
+  let processedContent = content.replace(/<audio\s+controls\s+src="([^"]+)"><\/audio>/gi, (_, url) => {
+    const idx = mediaPlaceholders.length
+    mediaPlaceholders.push(`<div class="audio-player"><div class="audio-icon">🎵</div><audio controls src="${url}"></audio></div>`)
+    return `ASKIT_MEDIA_${idx}`
+  })
+  processedContent = processedContent.replace(/<video\s+controls\s+src="([^"]+)"><\/video>/gi, (_, url) => {
+    const idx = mediaPlaceholders.length
+    mediaPlaceholders.push(`<video controls src="${url}" class="chat-video"></video>`)
+    return `ASKIT_MEDIA_${idx}`
+  })
+
+  let rendered = md.render(processedContent)
+  rendered = rendered.replace(/ASKIT_MEDIA_(\d+)/g, (_, idx) => mediaPlaceholders[parseInt(idx)])
   return rendered
 }
 
