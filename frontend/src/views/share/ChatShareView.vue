@@ -29,6 +29,7 @@
         >
           <div class="bubble-avatar">{{ msg.role === 'user' ? '👤' : '✨' }}</div>
           <div class="bubble-content" :class="msg.role">
+            <img v-if="msg.imageUrl" :src="msg.imageUrl" class="bubble-user-image" alt="用户图片" />
             <div class="bubble-body" v-html="renderContent(msg.content, msg.role)"></div>
             <div v-if="msg.timestamp" class="bubble-time">{{ formatTime(msg.timestamp) }}</div>
           </div>
@@ -281,6 +282,14 @@ function parseMarkdownChat(content, title) {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.bubble-user-image {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .bubble-body {
