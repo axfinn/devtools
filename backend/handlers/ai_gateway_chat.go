@@ -675,7 +675,7 @@ func (h *AIGatewayHandler) resolveChatProvider(model string) string {
 	switch model {
 	case fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"), "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-coder":
 		return "deepseek"
-	case fallbackString(h.cfg.MiniMax.Model, "abab6.5s-chat"), "abab6.5s-chat", "MiniMax-M2.5", "MiniMax-M2.7", "MiniMax-Text-01":
+	case fallbackString(h.cfg.MiniMax.Model, "abab6.5s-chat"), "abab6.5s-chat", "MiniMax-M2.5", "MiniMax-M2.7":
 		return "minimax"
 	default:
 		if h.hasProxyConfig() && h.isProxyModel(model) {
