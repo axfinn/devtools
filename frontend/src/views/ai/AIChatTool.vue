@@ -120,8 +120,10 @@
 import { ref, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download, Plus, Delete, Setting } from '@element-plus/icons-vue'
-import { marked } from 'marked'
+import MarkdownIt from 'markdown-it'
 import { API_BASE } from '@/api.js'
+
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 const selectedModel = ref('MiniMax-M2.7')
 const systemPrompt = ref('')
@@ -196,7 +198,7 @@ function deleteConversation(id) {
 
 function renderMarkdown(text) {
   if (!text) return ''
-  return marked.parse(text, { breaks: true })
+  return md.render(text)
 }
 
 function scrollToBottom() {
