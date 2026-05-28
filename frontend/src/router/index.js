@@ -548,6 +548,12 @@ const toolRoutes = [
     meta: { title: '查看分享', icon: 'DocumentCopy', hideSidebar: true }
   },
   {
+    path: '/chat/:id',
+    name: 'ChatShareView',
+    component: () => import('../views/share/ChatShareView.vue'),
+    meta: { title: '对话分享', icon: 'ChatLineSquare', hideSidebar: true }
+  },
+  {
     path: '/draw/:id',
     name: 'ExcalidrawShare',
     component: () => import('../views/share/ExcalidrawShareView.vue'),
