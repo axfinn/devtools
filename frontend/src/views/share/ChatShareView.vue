@@ -106,6 +106,22 @@ function formatDate(dateStr) {
   return new Date(dateStr).toLocaleString('zh-CN')
 }
 
+function unescapeHtmlEntities(str) {
+  const textarea = document.createElement('textarea')
+  textarea.innerHTML = str
+  return textarea.value
+}
+
+function filterSystemMessages(messages) {
+  return messages.filter(m => {
+    if (!m.content) return false
+    if (m.content.startsWith('📤 对话已分享')) return false
+    if (m.content.startsWith('📤 正在生成分享链接')) return false
+    if (m.content.includes('正在搜索...') && m.content.trim() === '🔍 正在搜索...') return false
+    return true
+  })
+}
+
 onMounted(async () => {
   const id = route.params.id
   if (!id) { error.value = '无效的分享链接'; loading.value = false; return }
@@ -116,7 +132,9 @@ onMounted(async () => {
     const data = await resp.json()
 
     if (data.language === 'askit-chat') {
-      const parsed = JSON.parse(data.content)
+      const content = unescapeHtmlEntities(data.content)
+      const parsed = JSON.parse(content)
+      parsed.messages = filterSystemMessages(parsed.messages)
       chatData.value = parsed
     } else if (data.content_type === 'markdown' || data.language === 'markdown') {
       chatData.value = parseMarkdownChat(data.content, data.title)
