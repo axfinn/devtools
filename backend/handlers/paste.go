@@ -298,10 +298,6 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// 对内容进行XSS防护消毒
-	req.Content = utils.SanitizeContent(req.Content)
-	req.Title = utils.SanitizeContent(req.Title)
-
 	ip := c.ClientIP()
 
 	// 检查 IP 限流
@@ -338,6 +334,14 @@ func (h *PasteHandler) Create(c *gin.Context) {
 			req.Language = "markdown"
 		}
 	}
+
+	// 对内容进行XSS防护消毒。HTML 粘贴需要保留原始标记用于 iframe 渲染，
+	// 前面的安全扫描会拒绝明显危险内容，查看页再通过 sandbox 隔离执行环境。
+	if req.Language != "html" {
+		req.Content = utils.SanitizeContent(req.Content)
+	}
+	req.Title = utils.SanitizeContent(req.Title)
+
 	if req.ExpiresIn <= 0 {
 		req.ExpiresIn = 24
 	}

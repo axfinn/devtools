@@ -60,17 +60,41 @@
       <div class="editor-panel" v-if="paste.content">
         <div class="panel-header">
           <div class="panel-title-left">
-            <span>{{ paste.content_type === 'markdown' ? 'Markdown 文档' : '代码内容' }}</span>
+            <span>{{ contentPanelTitle }}</span>
             <el-tag v-if="paste.language" size="small" type="info">{{ paste.language }}</el-tag>
           </div>
           <div class="actions">
-            <el-button v-if="paste.content_type === 'code'" size="small" @click="toggleLineNumbers">
+            <el-button-group v-if="isHtmlPaste" size="small">
+              <el-button :type="htmlViewMode === 'preview' ? 'primary' : 'default'" @click="htmlViewMode = 'preview'">
+                <el-icon><View /></el-icon>
+                预览
+              </el-button>
+              <el-button :type="htmlViewMode === 'source' ? 'primary' : 'default'" @click="htmlViewMode = 'source'">
+                <el-icon><Document /></el-icon>
+                源码
+              </el-button>
+            </el-button-group>
+            <el-button-group v-if="isJsonPaste" size="small">
+              <el-button :type="jsonViewMode === 'tree' ? 'primary' : 'default'" @click="jsonViewMode = 'tree'">
+                <el-icon><List /></el-icon>
+                树形
+              </el-button>
+              <el-button :type="jsonViewMode === 'source' ? 'primary' : 'default'" @click="jsonViewMode = 'source'">
+                <el-icon><Document /></el-icon>
+                源码
+              </el-button>
+            </el-button-group>
+            <el-button v-if="showLineNumberBtn" size="small" @click="toggleLineNumbers">
               <el-icon><List /></el-icon>
               {{ showLineNumbers ? '隐藏行号' : '显示行号' }}
             </el-button>
-            <el-button v-if="paste.content_type === 'code'" size="small" @click="toggleSearch">
+            <el-button v-if="showSearchBtn" size="small" @click="toggleSearch">
               <el-icon><Search /></el-icon>
               搜索
+            </el-button>
+            <el-button v-if="canFormatPasteContent && (!isHtmlPaste || htmlViewMode === 'source')" size="small" @click="toggleFormattedPasteContent">
+              <el-icon><Document /></el-icon>
+              {{ showFormattedPasteContent ? '原文' : '格式化' }}
             </el-button>
             <el-button size="small" @click="copyContent">
               <el-icon><CopyDocument /></el-icon>
@@ -84,7 +108,7 @@
         </div>
 
         <!-- 搜索框 -->
-        <div v-if="showSearchBox && paste.content_type === 'code'" class="search-box">
+        <div v-if="showSearchBox && showSearchBtn" class="search-box">
           <el-input
             v-model="searchText"
             placeholder="搜索代码... (Enter 搜索, Esc 关闭)"
@@ -103,7 +127,7 @@
         </div>
 
         <!-- 代码分析信息 -->
-        <div v-if="paste.content_type === 'code' && codeStats" class="code-stats">
+        <div v-if="showLineNumberBtn && codeStats" class="code-stats">
           <el-tag size="small">行数: {{ codeStats.lines }}</el-tag>
           <el-tag size="small" type="success">代码: {{ codeStats.code_lines }}</el-tag>
           <el-tag size="small" type="info">注释: {{ codeStats.comment_lines }}</el-tag>
@@ -112,6 +136,25 @@
 
         <!-- Markdown 渲染 -->
         <div v-if="paste.content_type === 'markdown'" class="markdown-content" v-html="highlightedContent"></div>
+        <!-- HTML 渲染预览 -->
+        <div v-else-if="isHtmlPaste && htmlViewMode === 'preview'" class="html-preview-wrap">
+          <iframe
+            class="html-preview-frame"
+            :srcdoc="htmlPreviewDocument"
+            title="HTML 渲染预览"
+            sandbox="allow-scripts allow-forms allow-modals allow-popups"
+            referrerpolicy="no-referrer"
+          ></iframe>
+        </div>
+        <!-- JSON 树形视图 -->
+        <div v-else-if="isJsonPaste && jsonViewMode === 'tree'" class="json-tree-wrap">
+          <JsonTreeViewer
+            :json-string="editedJsonContent"
+            :search-text="searchText"
+            :highlight-paths="jsonSearchPaths"
+            @update:json-string="onJsonContentUpdate"
+          />
+        </div>
         <!-- 代码高亮显示 -->
         <div v-else class="code-wrapper">
           <!-- 带行号显示 -->
@@ -178,6 +221,15 @@
               </el-button>
             </div>
             <!-- 代码文件预览 -->
+            <div v-else-if="isHtmlFile(file)" class="file-preview-code" @click="previewHtmlFile(file)">
+              <el-icon :size="48"><View /></el-icon>
+              <span class="doc-label">HTML 页面</span>
+              <el-button size="small" type="primary">
+                <el-icon><View /></el-icon>
+                页面预览
+              </el-button>
+            </div>
+            <!-- 代码文件预览 -->
             <div v-else-if="isCodeFile(file)" class="file-preview-code" @click="previewCodeFile(file)">
               <el-icon :size="48"><Document /></el-icon>
               <span class="doc-label">{{ getCodeFileLanguage(file) }} 代码</span>
@@ -232,12 +284,64 @@
               <el-icon><CopyDocument /></el-icon>
               复制
             </el-button>
+            <el-button size="small" @click="toggleFormattedCodeFileContent">
+              <el-icon><Document /></el-icon>
+              {{ showFormattedCodeFileContent ? '原文' : '格式化' }}
+            </el-button>
             <el-button size="small" @click="downloadCodeFile">
               <el-icon><Download /></el-icon>
               下载
             </el-button>
           </div>
           <pre class="code-preview-content"><code v-html="highlightedCodeContent"></code></pre>
+        </div>
+      </el-dialog>
+
+      <!-- HTML附件预览弹窗 -->
+      <el-dialog
+        v-model="showHtmlFilePreview"
+        :title="currentHtmlFile?.original_name || currentHtmlFile?.filename || 'HTML 页面预览'"
+        width="90%"
+        :close-on-click-modal="true"
+        destroy-on-close
+        fullscreen
+        @close="closeHtmlFilePreview"
+      >
+        <div class="html-file-preview-dialog">
+          <div class="code-preview-header">
+            <el-tag size="small">HTML</el-tag>
+            <el-button-group size="small">
+              <el-button :type="htmlFileViewMode === 'preview' ? 'primary' : 'default'" @click="htmlFileViewMode = 'preview'">
+                <el-icon><View /></el-icon>
+                预览
+              </el-button>
+              <el-button :type="htmlFileViewMode === 'source' ? 'primary' : 'default'" @click="htmlFileViewMode = 'source'">
+                <el-icon><Document /></el-icon>
+                源码
+              </el-button>
+            </el-button-group>
+            <el-button size="small" @click="toggleFormattedHtmlFileContent">
+              <el-icon><Document /></el-icon>
+              {{ showFormattedHtmlFileContent ? '原文' : '格式化' }}
+            </el-button>
+            <el-button size="small" @click="copyHtmlFileContent">
+              <el-icon><CopyDocument /></el-icon>
+              复制
+            </el-button>
+            <el-button size="small" @click="downloadHtmlFile">
+              <el-icon><Download /></el-icon>
+              下载
+            </el-button>
+          </div>
+          <iframe
+            v-if="htmlFileViewMode === 'preview'"
+            class="html-file-preview-frame"
+            :srcdoc="htmlFilePreviewDocument"
+            title="HTML 附件预览"
+            sandbox="allow-scripts allow-forms allow-modals allow-popups"
+            referrerpolicy="no-referrer"
+          ></iframe>
+          <pre v-else class="code-preview-content"><code v-html="highlightedHtmlFileContent"></code></pre>
         </div>
       </el-dialog>
 
@@ -296,7 +400,7 @@
 import { ref, onMounted, computed, defineAsyncComponent } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Loading, Lock, Back, Picture, Download, ZoomIn, Document, Folder, Files, Headset, View, VideoPlay, Search, List } from '@element-plus/icons-vue'
+import { Loading, Lock, Back, Picture, Download, ZoomIn, Document, CopyDocument, Folder, Files, Headset, View, VideoPlay, Search, List } from '@element-plus/icons-vue'
 import hljs from '../../utils/highlight'
 import MarkdownIt from 'markdown-it'
 import footnote from 'markdown-it-footnote'
@@ -307,6 +411,7 @@ import { API_BASE } from '../../api'
 
 const PdfViewer = defineAsyncComponent(() => import('../../components/PdfViewer.vue'))
 const ZipViewer = defineAsyncComponent(() => import('../../components/ZipViewer.vue'))
+const JsonTreeViewer = defineAsyncComponent(() => import('../../components/JsonTreeViewer.vue'))
 
 // 初始化 markdown-it
 const md = new MarkdownIt({
@@ -347,6 +452,10 @@ const archiveUrl = ref('')
 const currentArchiveFile = ref(null)
 const showVideoPreview = ref(false)
 const currentVideoFile = ref(null)
+const htmlViewMode = ref('preview')
+const showFormattedPasteContent = ref(false)
+const jsonViewMode = ref('tree')
+const editedJsonContent = ref('')
 
 // 代码预览增强功能
 const showLineNumbers = ref(true)
@@ -361,6 +470,166 @@ const showCodePreview = ref(false)
 const codeFileContent = ref('')
 const codeFileLanguage = ref('')
 const currentCodeFile = ref(null)
+const showFormattedCodeFileContent = ref(false)
+
+// HTML 附件预览
+const showHtmlFilePreview = ref(false)
+const htmlFileContent = ref('')
+const currentHtmlFile = ref(null)
+const htmlFileViewMode = ref('preview')
+const showFormattedHtmlFileContent = ref(false)
+
+const isHtmlPaste = computed(() => {
+  if (!paste.value) return false
+  return paste.value.content_type === 'html' || paste.value.language === 'html'
+})
+
+const isJsonPaste = computed(() => {
+  if (!paste.value) return false
+  return paste.value.language === 'json' || paste.value.content_type === 'json'
+})
+
+const contentPanelTitle = computed(() => {
+  if (!paste.value) return '内容'
+  if (paste.value.content_type === 'markdown') return 'Markdown 文档'
+  if (isHtmlPaste.value) return 'HTML 页面'
+  if (isJsonPaste.value) return 'JSON 数据'
+  return '代码内容'
+})
+
+const htmlPreviewDocument = computed(() => {
+  if (!paste.value) return ''
+  return normalizeHtmlPreviewContent(paste.value.content || '')
+})
+
+const pasteDisplayContent = computed(() => {
+  if (!paste.value) return ''
+  const content = isJsonPaste.value ? (editedJsonContent.value || paste.value.content || '') : (paste.value.content || '')
+  return showFormattedPasteContent.value ? formatCode(content, paste.value.language || paste.value.content_type) : content
+})
+
+const canFormatPasteContent = computed(() => {
+  if (!paste.value) return false
+  return canFormatLanguage(paste.value.language || paste.value.content_type)
+})
+
+const showLineNumberBtn = computed(() => {
+  if (!paste.value) return false
+  if (isJsonPaste.value && jsonViewMode.value === 'tree') return false
+  return paste.value.content_type === 'code' || isJsonPaste.value
+})
+
+const showSearchBtn = computed(() => {
+  if (!paste.value) return false
+  if (isJsonPaste.value && jsonViewMode.value === 'tree') return false
+  return paste.value.content_type === 'code' || isJsonPaste.value || paste.value.content_type === 'markdown'
+})
+
+function onJsonContentUpdate(newJson) {
+  editedJsonContent.value = newJson
+}
+
+const jsonSearchPaths = computed(() => {
+  if (!searchText.value || !paste.value) return []
+  const content = isJsonPaste.value ? editedJsonContent.value : ''
+  if (!content) return []
+
+  const results = []
+  const lines = content.split('\n')
+  const searchLower = searchText.value.toLowerCase()
+
+  // Walk through JSON content line by line, map matches to approximate JSON paths
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const idx = line.toLowerCase().indexOf(searchLower)
+    if (idx !== -1) {
+      // Extract key context from the line for path building
+      const keyMatch = line.match(/"([^"]+)"\s*:/)
+      if (keyMatch) {
+        results.push([keyMatch[1]])
+      }
+    }
+  }
+  return results
+})
+
+const normalizeHtmlPreviewContent = (content) => {
+  let normalized = unwrapHtmlCodeFence(content)
+
+  for (let i = 0; i < 5 && shouldDecodeEscapedHtml(normalized); i++) {
+    const decoded = decodeHtmlEntities(normalized)
+    if (decoded === normalized) break
+    normalized = unwrapHtmlCodeFence(decoded)
+  }
+
+  return normalized
+}
+
+const unwrapHtmlCodeFence = (content) => {
+  const trimmed = content.trim()
+  const match = trimmed.match(/^```(?:html)?\s*\n?([\s\S]*?)\n?```$/i)
+  return match ? match[1].trim() : content
+}
+
+const shouldDecodeEscapedHtml = (content) => {
+  const rawHtmlPattern = /<(!doctype\s+html|html|head|body|div|section|main|style|p|h[1-6]|table|span|a|img|meta|link)\b/i
+  const escapedHtmlPattern = /&(amp;)*lt;(!doctype\s+html|html|head|body|div|section|main|style|p|h[1-6]|table|span|a|img|meta|link)\b/i
+  return escapedHtmlPattern.test(content) && !rawHtmlPattern.test(content)
+}
+
+const decodeHtmlEntities = (content) => {
+  const textarea = document.createElement('textarea')
+  textarea.innerHTML = content
+  return textarea.value
+}
+
+const FORMATTABLE_LANGUAGES = new Set(['json', 'html', 'css', 'javascript', 'js', 'xml', 'svg'])
+
+const canFormatLanguage = (lang) => {
+  if (!lang) return false
+  return FORMATTABLE_LANGUAGES.has(lang.toLowerCase())
+}
+
+const formatCode = (content, lang) => {
+  if (!content || !lang) return content
+  const l = lang.toLowerCase()
+
+  if (l === 'json') {
+    try {
+      return JSON.stringify(JSON.parse(content), null, 2)
+    } catch { return content }
+  }
+
+  if (l === 'html' || l === 'xml' || l === 'svg') {
+    try {
+      const parser = new DOMParser()
+      const doc = parser.parseFromString(content, 'text/html')
+      const serializer = new XMLSerializer()
+      let formatted = serializer.serializeToString(doc)
+      let indent = 0
+      const result = []
+      const tags = formatted.replace(/>\s*</g, '>\n<').split('\n')
+      for (const tag of tags) {
+        if (tag.match(/^<\/\w/)) indent = Math.max(0, indent - 1)
+        result.push('  '.repeat(indent) + tag.trim())
+        if (tag.match(/^<\w[^>]*[^/]>$/) && !tag.match(/<(meta|link|br|hr|img|input|area|base|col|embed|source|track|wbr)\b/i)) indent++
+      }
+      return result.join('\n')
+    } catch { return content }
+  }
+
+  if (l === 'css') {
+    return content
+      .replace(/}\s*/g, '}\n')
+      .replace(/\s*{\s*/g, ' {\n  ')
+      .replace(/;\s*/g, ';\n  ')
+      .replace(/\n\s*\n/g, '\n')
+      .replace(/\s*}\s*/g, '\n}\n')
+      .trim()
+  }
+
+  return content
+}
 
 const fetchPaste = async (pwd = '') => {
   const id = route.params.id
@@ -390,6 +659,11 @@ const fetchPaste = async (pwd = '') => {
       error.value = data.error || '加载失败'
     } else {
       paste.value = data
+      htmlViewMode.value = (data.content_type === 'html' || data.language === 'html') ? 'preview' : 'source'
+      if (data.language === 'json' || data.content_type === 'json') {
+        jsonViewMode.value = 'tree'
+        editedJsonContent.value = data.content || ''
+      }
       needPassword.value = false
       if (pwd) localStorage.setItem(`paste_password_${id}`, pwd)
     }
@@ -415,7 +689,7 @@ const highlightedContent = computed(() => {
   if (!paste.value) return ''
   const contentType = paste.value.content_type || 'text'
   const lang = paste.value.language
-  const content = paste.value.content
+  const content = pasteDisplayContent.value
 
   // 如果是 Markdown 类型，渲染 Markdown
   if (contentType === 'markdown') {
@@ -436,7 +710,7 @@ const highlightedContent = computed(() => {
 // 获取带行号的内容
 const contentWithLineNumbers = computed(() => {
   if (!paste.value) return []
-  const content = paste.value.content || ''
+  const content = pasteDisplayContent.value || ''
   return content.split('\n')
 })
 
@@ -453,13 +727,25 @@ const formatDate = (dateStr) => {
 // 行数统计
 const lineCount = computed(() => {
   if (!paste.value) return 0
-  const content = paste.value.content || ''
+  const content = pasteDisplayContent.value || ''
   return content.split('\n').length
 })
 
 // 切换行号显示
 const toggleLineNumbers = () => {
   showLineNumbers.value = !showLineNumbers.value
+}
+
+const toggleFormattedPasteContent = () => {
+  showFormattedPasteContent.value = !showFormattedPasteContent.value
+}
+
+const toggleFormattedCodeFileContent = () => {
+  showFormattedCodeFileContent.value = !showFormattedCodeFileContent.value
+}
+
+const toggleFormattedHtmlFileContent = () => {
+  showFormattedHtmlFileContent.value = !showFormattedHtmlFileContent.value
 }
 
 // 切换搜索框
@@ -546,6 +832,12 @@ const fetchCodeStats = async () => {
   }
 }
 
+// 检查是否为 HTML 文件
+const isHtmlFile = (file) => {
+  const filename = (file.original_name || file.filename || '').toLowerCase()
+  return filename.endsWith('.html') || filename.endsWith('.htm')
+}
+
 // 检查是否为代码文件
 const isCodeFile = (file) => {
   const filename = (file.original_name || file.filename || '').toLowerCase()
@@ -602,9 +894,57 @@ const closeCodePreview = () => {
   currentCodeFile.value = null
 }
 
+// 预览 HTML 文件
+const previewHtmlFile = async (file) => {
+  currentHtmlFile.value = file
+  try {
+    const response = await fetch(API_BASE + file.url)
+    const text = await response.text()
+    if (text.length > 100 * 1024) {
+      ElMessage.warning('文件过大，仅显示前 100KB')
+      htmlFileContent.value = text.substring(0, 100 * 1024)
+    } else {
+      htmlFileContent.value = text
+    }
+    htmlFileViewMode.value = 'preview'
+    showHtmlFilePreview.value = true
+  } catch (e) {
+    ElMessage.error('无法加载文件内容')
+  }
+}
+
+// 关闭 HTML 预览
+const closeHtmlFilePreview = () => {
+  showHtmlFilePreview.value = false
+  htmlFileContent.value = ''
+  currentHtmlFile.value = null
+}
+
+// 复制 HTML 内容
+const copyHtmlFileContent = async () => {
+  try {
+    await navigator.clipboard.writeText(htmlFileContent.value)
+    ElMessage.success('已复制到剪贴板')
+  } catch (e) {
+    ElMessage.error('复制失败')
+  }
+}
+
+// 下载 HTML 文件
+const downloadHtmlFile = () => {
+  const blob = new Blob([htmlFileContent.value], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = currentHtmlFile.value?.original_name || currentHtmlFile.value?.filename || 'page.html'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 const copyContent = async () => {
   try {
-    await navigator.clipboard.writeText(paste.value.content)
+    const content = isJsonPaste.value ? editedJsonContent.value : paste.value.content
+    await navigator.clipboard.writeText(content)
     ElMessage.success('已复制到剪贴板')
   } catch (e) {
     ElMessage.error('复制失败')
@@ -612,11 +952,13 @@ const copyContent = async () => {
 }
 
 const downloadContent = () => {
-  const blob = new Blob([paste.value.content], { type: 'text/plain' })
+  const content = isJsonPaste.value ? editedJsonContent.value : paste.value.content
+  const ext = isJsonPaste.value ? 'json' : 'txt'
+  const blob = new Blob([content], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${paste.value.title || paste.value.id}.txt`
+  a.download = `${paste.value.title || paste.value.id}.${ext}`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -628,12 +970,37 @@ const highlightedCodeContent = computed(() => {
   const lang = codeFileLanguage.value.toLowerCase()
   if (lang && hljs.getLanguage(lang)) {
     try {
-      return hljs.highlight(codeFileContent.value, { language: lang, ignoreIllegals: true }).value
+      const content = showFormattedCodeFileContent.value
+        ? formatCode(codeFileContent.value, lang)
+        : codeFileContent.value
+      return hljs.highlight(content, { language: lang, ignoreIllegals: true }).value
     } catch (e) {
       return escapeHtml(codeFileContent.value)
     }
   }
   return escapeHtml(codeFileContent.value)
+})
+
+// HTML 文件 iframe 预览文档
+const htmlFilePreviewDocument = computed(() => {
+  if (!htmlFileContent.value) return ''
+  return normalizeHtmlPreviewContent(htmlFileContent.value)
+})
+
+// HTML 文件源码高亮
+const highlightedHtmlFileContent = computed(() => {
+  if (!htmlFileContent.value) return ''
+  const content = showFormattedHtmlFileContent.value
+    ? formatCode(htmlFileContent.value, 'html')
+    : htmlFileContent.value
+  if (hljs.getLanguage('html')) {
+    try {
+      return hljs.highlight(content, { language: 'html', ignoreIllegals: true }).value
+    } catch (e) {
+      return escapeHtml(content)
+    }
+  }
+  return escapeHtml(content)
 })
 
 // 复制代码内容
@@ -1331,6 +1698,68 @@ onMounted(() => {
   font-family: var(--font-family-mono);
   background: transparent;
   padding: 0;
+}
+
+.html-preview-wrap {
+  background: #f5f7fa;
+  min-height: 70vh;
+  height: calc(100vh - 210px);
+  padding: 12px;
+}
+
+.html-preview-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 70vh;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.json-tree-wrap {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+@media (max-width: 768px) {
+  .html-preview-wrap {
+    height: auto;
+    min-height: 50vh;
+  }
+
+  .html-preview-frame {
+    height: 50vh;
+    min-height: 50vh;
+  }
+}
+
+.html-file-preview-dialog {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 160px);
+  min-height: 60vh;
+}
+
+.html-file-preview-frame {
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+@media (max-width: 768px) {
+  .html-file-preview-dialog {
+    height: auto;
+    min-height: 60vh;
+  }
+
+  .html-file-preview-frame {
+    height: 50vh;
+  }
 }
 
 /* Markdown 样式 */

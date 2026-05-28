@@ -642,6 +642,43 @@ func TestPasteHandler_ContentTypes(t *testing.T) {
 	}
 }
 
+func TestPasteHandler_CreatePreservesHTMLContent(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	h := setupTestHandler(db)
+
+	htmlContent := `<!DOCTYPE html><html><head><title>Demo</title><style>body{color:#123}</style></head><body><h1>Hello</h1></body></html>`
+	w := httptest.NewRecorder()
+	c := createTestContext(w)
+
+	body := map[string]interface{}{
+		"content":    htmlContent,
+		"language":   "html",
+		"expires_in": 24,
+	}
+	jsonBody, _ := json.Marshal(body)
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonBody))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.RemoteAddr = "127.0.0.1:1234"
+
+	h.Create(c)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("Create() status = %v, want %v, body: %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	pastes, err := db.GetAllPastes(10, 0)
+	if err != nil {
+		t.Fatalf("GetAllPastes() error = %v", err)
+	}
+	if len(pastes) == 0 {
+		t.Fatal("expected created paste")
+	}
+	if pastes[0].Content != htmlContent {
+		t.Fatalf("HTML content was not preserved:\ngot  %q\nwant %q", pastes[0].Content, htmlContent)
+	}
+}
+
 // TestPasteHandler_Expiration tests paste expiration functionality
 func TestPasteHandler_Expiration(t *testing.T) {
 	db := setupTestDB(t)
