@@ -121,7 +121,7 @@ import { ref, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download, Plus, Delete, Setting } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
-import { API_BASE } from '@/api.js'
+import { API_BASE } from '../../api.js'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
