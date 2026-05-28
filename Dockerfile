@@ -12,6 +12,16 @@ COPY frontend/ ./
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build
 
+# Build AskIt Chrome extension
+FROM docker.m.daocloud.io/library/node:20-alpine AS askit-builder
+
+RUN apk add --no-cache git zip
+WORKDIR /app/askit
+RUN git clone --depth 1 https://github.com/axfinn/Askit.git .
+RUN npm install
+RUN npm run build
+RUN cd dist && zip -r /app/askit-extension.zip .
+
 FROM docker.m.daocloud.io/library/golang:1.22-alpine AS backend-builder
 
 WORKDIR /app/backend
@@ -87,6 +97,7 @@ RUN addgroup -g 1001 autodev && \
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=proxy-client-builder /app/proxy-client/dist ./proxy-client-bins/
 COPY --from=frontend-builder /app/frontend/dist ./dist
+COPY --from=askit-builder /app/askit-extension.zip ./askit-extension.zip
 COPY entrypoint.sh ./entrypoint.sh
 COPY tts-service/server.py ./tts_server.py
 RUN chmod +x ./entrypoint.sh

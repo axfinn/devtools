@@ -356,6 +356,32 @@ build_frontend() {
     log_success "静态文件复制完成"
 }
 
+build_askit() {
+    local ASKIT_DIR="${ASKIT_DIR:-$SCRIPT_DIR/../Askit}"
+    local ASKIT_DATA_DIR="$BACKEND_DIR/data/askit"
+
+    if [ ! -d "$ASKIT_DIR" ]; then
+        log_info "克隆 AskIt 仓库..."
+        git clone --depth 1 https://github.com/axfinn/Askit.git "$ASKIT_DIR"
+    fi
+
+    if [ ! -d "$ASKIT_DIR/node_modules" ]; then
+        log_info "安装 AskIt 依赖..."
+        cd "$ASKIT_DIR"
+        npm install
+    fi
+
+    log_info "构建 AskIt 扩展..."
+    cd "$ASKIT_DIR"
+    npm run build
+
+    log_info "打包 AskIt 扩展 zip..."
+    mkdir -p "$ASKIT_DATA_DIR"
+    cd "$ASKIT_DIR/dist"
+    zip -r "$ASKIT_DATA_DIR/askit-extension.zip" .
+    log_success "AskIt 扩展打包完成: $ASKIT_DATA_DIR/askit-extension.zip"
+}
+
 build_backend() {
     log_info "构建后端..."
     cd "$BACKEND_DIR"
@@ -366,6 +392,7 @@ build_backend() {
 build() {
     build_frontend
     build_backend
+    build_askit
     log_success "全部构建完成！"
 }
 

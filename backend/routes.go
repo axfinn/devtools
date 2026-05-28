@@ -528,6 +528,10 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 
 	// 内部免认证聊天接口（同域浏览器调用）
 	api.POST("/internal/chat", createRateLimiter.Middleware(), h.aiGatewayHandler.InternalChat)
+	api.POST("/internal/chat/stream", createRateLimiter.Middleware(), h.aiGatewayHandler.InternalChatStream)
+
+	// AskIt 扩展下载
+	api.GET("/askit/extension", h.aiGatewayHandler.AskitExtensionDownload)
 
 	// 公开英语学习工具：服务端内部调用 AI 能力，前端不暴露 Gateway Key
 	api.GET("/english-tutor/meta", h.aiGatewayHandler.EnglishTutorMeta)

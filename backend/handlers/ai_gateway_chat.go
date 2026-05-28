@@ -33,6 +33,12 @@ func (h *AIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	// 流式请求走独立处理路径
+	if req.Stream {
+		h.StreamChatCompletions(c, req)
+		return
+	}
+
 	start := time.Now()
 	statusCode := http.StatusOK
 	rawRequest := sanitizeJSON(req)
@@ -248,6 +254,25 @@ func requireSameOrigin(c *gin.Context) bool {
 	}
 	c.JSON(http.StatusForbidden, gin.H{"error": "此接口仅限项目内部调用，不允许外部直接请求", "code": 403})
 	return false
+}
+
+// InternalChatStream 内部免 API Key 流式聊天接口，仅限同域浏览器调用
+// POST /api/internal/chat/stream
+
+func (h *AIGatewayHandler) InternalChatStream(c *gin.Context) {
+	if !requireSameOrigin(c) {
+		return
+	}
+	var req ChatCompletionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数解析失败"})
+		return
+	}
+	if req.Model == "" {
+		req.Model = fallbackString(h.cfg.MiniMax.Model, "MiniMax-M2.5")
+	}
+	req.Stream = true
+	h.StreamChatCompletions(c, req)
 }
 
 // InternalQwenVision 内部免 API Key 图像理解接口（qwen3.5-plus 视觉能力）

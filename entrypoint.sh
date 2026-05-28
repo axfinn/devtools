@@ -142,6 +142,13 @@ if [ -d "${CONFIG_SRC_DIR}" ]; then
     fi
 fi
 
+# Seed AskIt extension zip into data volume (updated on each image rebuild)
+if [ -f /app/askit-extension.zip ]; then
+    mkdir -p /app/data/askit
+    cp /app/askit-extension.zip /app/data/askit/askit-extension.zip
+    echo "[entrypoint] AskIt extension zip seeded to /app/data/askit/"
+fi
+
 # Start TTS HTTP service in background (edge-tts via FastAPI on 127.0.0.1:8083)
 echo "[entrypoint] Starting TTS service on port 8083..."
 TTS_OUTPUT_DIR=/app/data/uploads /app/tts-venv/bin/python /app/tts_server.py &

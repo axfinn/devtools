@@ -408,6 +408,19 @@ const toolRoutes = [
     }
   },
   {
+    path: '/ai-chat',
+    name: 'AIChat',
+    component: () => import('../views/ai/AIChatTool.vue'),
+    meta: {
+      title: 'AI Chat',
+      icon: 'ChatDotRound',
+      category: 'ai',
+      shortcut: true,
+      shortcutPriority: 95,
+      description: '多模型智能对话 + AskIt 浏览器扩展'
+    }
+  },
+  {
     path: '/ai-gateway',
     name: 'AIGateway',
     component: () => import('../views/ai/AIGatewayTool.vue'),
