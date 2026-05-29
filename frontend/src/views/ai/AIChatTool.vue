@@ -244,6 +244,58 @@ function mediaHeaders() {
   return { 'Content-Type': 'application/json', 'X-Super-Admin-Password': pw }
 }
 
+function collectMediaUrls(value, bucket) {
+  if (!value) return
+  if (typeof value === 'string') {
+    if (value.startsWith('http://') || value.startsWith('https://')) bucket.push(value)
+    return
+  }
+  if (Array.isArray(value)) { value.forEach(v => collectMediaUrls(v, bucket)); return }
+  if (typeof value === 'object') Object.values(value).forEach(v => collectMediaUrls(v, bucket))
+}
+
+function extractTaskUrls(task) {
+  const urls = Array.isArray(task.result_urls) ? [...task.result_urls] : []
+  collectMediaUrls(task.primary_asset, urls)
+  collectMediaUrls(task.result, urls)
+  return Array.from(new Set(urls))
+}
+
+// 异步媒体模型（图片/音乐/视频）需轮询任务直到完成
+async function submitAndPollMediaTask(body, { interval = 4000, timeout = 480000 } = {}) {
+  const resp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
+    method: 'POST',
+    headers: mediaHeaders(),
+    body: JSON.stringify(body)
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(data.base_resp?.status_msg || data.error || '任务提交失败')
+
+  // 同步返回（部分模型直接给出 URL）
+  const inlineUrls = extractTaskUrls(data)
+  if (inlineUrls.length > 0) return inlineUrls
+
+  const taskId = data.task_id
+  if (!taskId) throw new Error('未返回任务ID')
+
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, interval))
+    const tResp = await fetch(`${API_BASE}/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}`, {
+      headers: mediaHeaders()
+    })
+    const tData = await tResp.json().catch(() => ({}))
+    if (!tResp.ok) continue
+    if (tData.status === 'succeeded') {
+      const urls = extractTaskUrls(tData)
+      if (urls.length === 0) throw new Error('任务完成但未返回媒体URL')
+      return urls
+    }
+    if (tData.status === 'failed') throw new Error(tData.error || '任务执行失败')
+  }
+  throw new Error('任务超时未完成')
+}
+
 onMounted(() => {
   const saved = localStorage.getItem(AUTH_KEY)
   if (saved) {
@@ -436,16 +488,11 @@ async function handleFeature(feature, text) {
 
 async function handleImageGen(prompt) {
   featureLoadingText.value = '🎨 正在生成图片...'
-  const resp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
-    method: 'POST',
-    headers: mediaHeaders(),
-    body: JSON.stringify({ model: 'image-01', prompt, aspect_ratio: '1:1', n: 1, prompt_optimizer: true })
-  })
-  const data = await resp.json()
-  if (!resp.ok) throw new Error(data.base_resp?.status_msg || data.error || '图片生成失败')
-  const url = data.data?.image_urls?.[0]
-  if (!url) throw new Error('未返回图片URL')
-  messages.value.push({ id: generateId(), role: 'assistant', content: `![生成的图片](${url})` })
+  const urls = await submitAndPollMediaTask(
+    { model: 'image-01', prompt, aspect_ratio: '1:1', n: 1, prompt_optimizer: true, response_format: 'url' },
+    { interval: 3000, timeout: 300000 }
+  )
+  messages.value.push({ id: generateId(), role: 'assistant', content: `![生成的图片](${urls[0]})` })
 }
 
 async function handleVision(prompt, imageDataUrl) {
@@ -465,7 +512,7 @@ async function handleVision(prompt, imageDataUrl) {
 async function handleTTS(text) {
   if (!text) throw new Error('请输入要朗读的文本')
   featureLoadingText.value = '🔊 正在合成语音...'
-  const resp = await fetch(`${API_BASE}/api/minimax/ts/v1/generations`, {
+  const resp = await fetch(`${API_BASE}/api/minimax/tts/v1/generations`, {
     method: 'POST',
     headers: mediaHeaders(),
     body: JSON.stringify({ model: 'speech-2.8-hd', text, voice: 'shanghai', speed: 1.0, audio_format: 'mp3' })
@@ -484,25 +531,17 @@ async function handleMusic(prompt) {
     body: JSON.stringify({ mode: 'write_full_song', prompt })
   })
   const lyricsData = await lyricsResp.json()
-  if (!lyricsResp.ok) throw new Error(lyricsData.base_resp?.status_msg || '歌词生成失败')
-  const lyrics = lyricsData.data?.lyrics || ''
-  const title = lyricsData.data?.title || '未命名'
+  if (!lyricsResp.ok || lyricsData.base_resp?.status_code) throw new Error(lyricsData.base_resp?.status_msg || lyricsData.error || '歌词生成失败')
+  const lyrics = lyricsData.lyrics || lyricsData.data?.lyrics || ''
+  const title = lyricsData.song_title || lyricsData.data?.title || '未命名'
 
   featureLoadingText.value = '🎵 正在创作音乐...'
-  const musicResp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
-    method: 'POST',
-    headers: mediaHeaders(),
-    body: JSON.stringify({
-      model: 'music-2.6', prompt, lyrics,
-      audio_setting: { format: 'mp3', sample_rate: 44100, bitrate: 256000 },
-      output_format: 'url'
-    })
-  })
-  const musicData = await musicResp.json()
-  if (!musicResp.ok) throw new Error(musicData.base_resp?.status_msg || '音乐生成失败')
-  const audioUrl = musicData.data?.audio
-  if (!audioUrl) throw new Error('未返回音频URL')
-  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎵 ${title}**\n\n${lyrics}\n\n<audio controls src="${audioUrl}"></audio>` })
+  const urls = await submitAndPollMediaTask({
+    model: 'music-2.6', prompt, lyrics,
+    audio_setting: { format: 'mp3', sample_rate: 44100, bitrate: 256000 },
+    output_format: 'url'
+  }, { interval: 4000, timeout: 480000 })
+  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎵 ${title}**\n\n${lyrics}\n\n<audio controls src="${urls[0]}"></audio>` })
 }
 
 async function handleMusicCover(text) {
@@ -518,27 +557,19 @@ async function handleMusicCover(text) {
     body: JSON.stringify({ model: 'music-cover', audio_url: audioUrl })
   })
   const preData = await preResp.json()
-  if (!preResp.ok) throw new Error(preData.base_resp?.status_msg || '音频预处理失败')
-  const coverFeatureId = preData.data?.cover_feature_id
-  const formattedLyrics = preData.data?.formatted_lyrics || ''
+  if (!preResp.ok || preData.base_resp?.status_code) throw new Error(preData.base_resp?.status_msg || preData.error || '音频预处理失败')
+  const coverFeatureId = preData.cover_feature_id || preData.data?.cover_feature_id
+  const formattedLyrics = preData.formatted_lyrics || preData.data?.formatted_lyrics || ''
   if (!coverFeatureId) throw new Error('未返回特征ID')
 
   featureLoadingText.value = '🎤 正在生成翻唱...'
-  const coverResp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
-    method: 'POST',
-    headers: mediaHeaders(),
-    body: JSON.stringify({
-      model: 'music-cover', cover_feature_id: coverFeatureId,
-      lyrics: formattedLyrics, prompt,
-      audio_setting: { format: 'mp3', sample_rate: 44100, bitrate: 256000 },
-      output_format: 'url'
-    })
-  })
-  const coverData = await coverResp.json()
-  if (!coverResp.ok) throw new Error(coverData.base_resp?.status_msg || '翻唱生成失败')
-  const coverUrl = coverData.data?.audio
-  if (!coverUrl) throw new Error('未返回翻唱音频URL')
-  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎤 翻唱生成完成**\n\n<audio controls src="${coverUrl}"></audio>` })
+  const urls = await submitAndPollMediaTask({
+    model: 'music-cover', cover_feature_id: coverFeatureId,
+    lyrics: formattedLyrics, prompt,
+    audio_setting: { format: 'mp3', sample_rate: 44100, bitrate: 256000 },
+    output_format: 'url'
+  }, { interval: 4000, timeout: 480000 })
+  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎤 翻唱生成完成**\n\n<audio controls src="${urls[0]}"></audio>` })
 }
 
 function downloadExtension() { window.open(`${API_BASE}/api/askit/extension`, '_blank') }
