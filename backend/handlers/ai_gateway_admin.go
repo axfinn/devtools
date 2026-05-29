@@ -928,11 +928,15 @@ func (h *AIGatewayHandler) authenticateAdminOrAPIKey(c *gin.Context, scope strin
 		adminPassword = c.Query("super_admin_password")
 	}
 
-	// 2. 如果有超级管理员密码，验证它
+	// 2. 如果有超级管理员密码，验证它（支持 AIGateway 超管密码或 Console 管理密码）
 	if adminPassword != "" {
 		if strings.TrimSpace(h.cfg.AIGateway.SuperAdminPassword) != "" &&
 			adminPassword == h.cfg.AIGateway.SuperAdminPassword {
-			return nil, true // 超级管理员认证成功
+			return nil, true
+		}
+		if strings.TrimSpace(h.cfg.Console.AdminPassword) != "" &&
+			adminPassword == h.cfg.Console.AdminPassword {
+			return nil, true
 		}
 	}
 

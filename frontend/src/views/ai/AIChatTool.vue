@@ -239,6 +239,11 @@ const canSend = computed(() => {
   return !!inputText.value.trim()
 })
 
+function mediaHeaders() {
+  const pw = localStorage.getItem(AUTH_KEY) || ''
+  return { 'Content-Type': 'application/json', 'X-Super-Admin-Password': pw }
+}
+
 onMounted(() => {
   const saved = localStorage.getItem(AUTH_KEY)
   if (saved) {
@@ -433,7 +438,7 @@ async function handleImageGen(prompt) {
   featureLoadingText.value = '🎨 正在生成图片...'
   const resp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mediaHeaders(),
     body: JSON.stringify({ model: 'image-01', prompt, aspect_ratio: '1:1', n: 1, prompt_optimizer: true })
   })
   const data = await resp.json()
@@ -449,7 +454,7 @@ async function handleVision(prompt, imageDataUrl) {
   const base64 = imageDataUrl.replace(/^data:image\/\w+;base64,/, '')
   const resp = await fetch(`${API_BASE}/api/ai-gateway/v1/image/understanding`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mediaHeaders(),
     body: JSON.stringify({ prompt: prompt || '请描述图片内容', image: base64 })
   })
   const data = await resp.json()
@@ -462,7 +467,7 @@ async function handleTTS(text) {
   featureLoadingText.value = '🔊 正在合成语音...'
   const resp = await fetch(`${API_BASE}/api/minimax/ts/v1/generations`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mediaHeaders(),
     body: JSON.stringify({ model: 'speech-2.8-hd', text, voice: 'shanghai', speed: 1.0, audio_format: 'mp3' })
   })
   if (!resp.ok) { const d = await resp.json().catch(() => ({})); throw new Error(d.error || '语音合成失败') }
@@ -475,7 +480,7 @@ async function handleMusic(prompt) {
   featureLoadingText.value = '🎵 正在生成歌词...'
   const lyricsResp = await fetch(`${API_BASE}/api/minimax/music/v1/lyrics_generation`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mediaHeaders(),
     body: JSON.stringify({ mode: 'write_full_song', prompt })
   })
   const lyricsData = await lyricsResp.json()
@@ -486,7 +491,7 @@ async function handleMusic(prompt) {
   featureLoadingText.value = '🎵 正在创作音乐...'
   const musicResp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mediaHeaders(),
     body: JSON.stringify({
       model: 'music-2.6', prompt, lyrics,
       audio_setting: { format: 'mp3', sample_rate: 44100, bitrate: 256000 },
@@ -509,7 +514,7 @@ async function handleMusicCover(text) {
   featureLoadingText.value = '🎤 正在提取音频特征...'
   const preResp = await fetch(`${API_BASE}/api/minimax/music/v1/cover_preprocess`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mediaHeaders(),
     body: JSON.stringify({ model: 'music-cover', audio_url: audioUrl })
   })
   const preData = await preResp.json()
@@ -521,7 +526,7 @@ async function handleMusicCover(text) {
   featureLoadingText.value = '🎤 正在生成翻唱...'
   const coverResp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: mediaHeaders(),
     body: JSON.stringify({
       model: 'music-cover', cover_feature_id: coverFeatureId,
       lyrics: formattedLyrics, prompt,

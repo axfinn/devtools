@@ -23,7 +23,7 @@ type apiGatewayImageRequest struct {
 }
 
 func (h *AIGatewayHandler) ImageUnderstanding(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -73,7 +73,7 @@ func (h *AIGatewayHandler) ImageUnderstanding(c *gin.Context) {
 }
 
 func (h *AIGatewayHandler) ImageUnderstandingFile(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -135,7 +135,7 @@ func (h *AIGatewayHandler) ImageUnderstandingFile(c *gin.Context) {
 }
 
 func (h *AIGatewayHandler) ImageUnderstandingSSE(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
@@ -204,7 +204,7 @@ func (h *AIGatewayHandler) ImageUnderstandingSSE(c *gin.Context) {
 }
 
 func (h *AIGatewayHandler) ImageUnderstandingSSEFile(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
+	key, ok := h.authenticateAdminOrAPIKey(c, "media")
 	if !ok {
 		return
 	}
