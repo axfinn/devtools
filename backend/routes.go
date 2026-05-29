@@ -478,6 +478,8 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		// Qwen 视觉理解（内部免 API Key，使用服务端 DashScope 配置）
 		imageUnderstanding.POST("/qwen-vision", createRateLimiter.Middleware(), h.aiGatewayHandler.InternalQwenVision)
 		imageUnderstanding.GET("/qwen-vision/logs", h.aiGatewayHandler.AdminListQwenVisionLogs)
+		// MiniMax 视觉理解（内部免 API Key，直连 MiniMax VLM，无 MCP 子进程）
+		imageUnderstanding.POST("/minimax-vision", createRateLimiter.Middleware(), h.aiGatewayHandler.InternalMinimaxVision)
 	}
 
 	// 百炼图片模型

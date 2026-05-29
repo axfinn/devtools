@@ -515,10 +515,10 @@ async function handleImageGen(prompt) {
 async function handleVision(prompt, imageDataUrl) {
   if (!imageDataUrl) throw new Error('请先上传图片')
   featureLoadingText.value = '👁️ 正在分析图片...'
-  const resp = await fetch(`${API_BASE}/api/image-understanding/qwen-vision`, {
+  const resp = await fetch(`${API_BASE}/api/image-understanding/minimax-vision`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ images: [imageDataUrl], prompt: prompt || '请描述图片内容' })
+    body: JSON.stringify({ image: imageDataUrl, prompt: prompt || '请描述图片内容' })
   })
   const data = await resp.json().catch(() => ({}))
   if (!resp.ok) throw new Error(data.error || `图片分析失败 (HTTP ${resp.status})`)
