@@ -28,7 +28,7 @@ export default defineConfig({
     exclude: []
   },
   build: {
-    outDir: '../backend/dist',
+    outDir: 'dist',
     assetsDir: 'assets',
     // 代码分割配置
     rollupOptions: {
