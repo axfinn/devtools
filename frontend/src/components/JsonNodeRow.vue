@@ -101,6 +101,62 @@
           </div>
         </el-popover>
       </template>
+
+      <!-- Node actions (hover) -->
+      <span class="node-actions">
+        <el-button text size="small" @click.stop="copyValue" title="复制值">
+          <el-icon :size="12"><CopyDocument /></el-icon>
+        </el-button>
+        <el-button text size="small" @click.stop="copyPath" title="复制路径">
+          <el-icon :size="12"><Link /></el-icon>
+        </el-button>
+        <template v-if="node.type === 'object' || node.type === 'array'">
+          <el-button text size="small" @click.stop="startEditNode" title="编辑">
+            <el-icon :size="12"><Edit /></el-icon>
+          </el-button>
+          <el-button text size="small" @click.stop="$emit('addChild', node.path)" title="添加">
+            <el-icon :size="12"><Plus /></el-icon>
+          </el-button>
+          <el-button text size="small" @click.stop="$emit('deleteNode', node.path)" title="删除" v-if="node.depth > 0">
+            <el-icon :size="12"><Delete /></el-icon>
+          </el-button>
+        </template>
+        <template v-else>
+          <el-button text size="small" @click.stop="$emit('deleteNode', node.path)" title="删除" v-if="node.depth > 0">
+            <el-icon :size="12"><Delete /></el-icon>
+          </el-button>
+        </template>
+      </span>
+
+      <!-- Object/Array edit popover -->
+      <el-popover
+        v-if="node.type === 'object' || node.type === 'array'"
+        v-model:visible="nodeEditVisible"
+        placement="right"
+        trigger="manual"
+        :width="420"
+        :show-arrow="true"
+        popper-class="json-edit-popover"
+      >
+        <div class="edit-form">
+          <div class="edit-form-header">
+            <span class="edit-path">{{ '$.' + node.path.join('.') }}</span>
+            <el-tag size="small">{{ node.type }}</el-tag>
+          </div>
+          <el-input
+            v-model="nodeEditJson"
+            type="textarea"
+            :rows="10"
+            placeholder="编辑 JSON"
+            class="node-edit-textarea"
+          />
+          <div v-if="nodeEditError" class="edit-error">{{ nodeEditError }}</div>
+          <div class="edit-actions">
+            <el-button size="small" @click="nodeEditVisible = false">取消</el-button>
+            <el-button size="small" type="primary" @click="saveNodeEdit">保存</el-button>
+          </div>
+        </div>
+      </el-popover>
     </div>
 
     <!-- Children (recursive) -->
@@ -117,6 +173,9 @@
         @save-edit="(id, val) => $emit('saveEdit', id, val)"
         @cancel-edit="(id) => $emit('cancelEdit', id)"
         @load-more="(p) => $emit('loadMore', p)"
+        @delete-node="(p) => $emit('deleteNode', p)"
+        @add-child="(p) => $emit('addChild', p)"
+        @edit-node="(p, json) => $emit('editNode', p, json)"
       />
     </template>
 
@@ -147,7 +206,8 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { ArrowRight } from '@element-plus/icons-vue'
+import { ArrowRight, CopyDocument, Link, Edit, Plus, Delete } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 const props = defineProps({
   node: { type: Object, required: true },
@@ -157,10 +217,13 @@ const props = defineProps({
   truncationMap: { type: Object, default: () => ({}) }
 })
 
-const emit = defineEmits(['toggle', 'edit', 'saveEdit', 'cancelEdit', 'loadMore'])
+const emit = defineEmits(['toggle', 'edit', 'saveEdit', 'cancelEdit', 'loadMore', 'deleteNode', 'addChild', 'editNode'])
 
 const editVisible = ref(false)
 const editValue = ref('')
+const nodeEditVisible = ref(false)
+const nodeEditJson = ref('')
+const nodeEditError = ref('')
 
 const nodePathStr = computed(() => {
   return props.node.path.length === 0 ? '$' : '$.' + props.node.path.join('.')
@@ -237,6 +300,51 @@ function convertNull(toType) {
   if (toType === 'string') editValue.value = ''
   else if (toType === 'number') editValue.value = '0'
   else if (toType === 'boolean') editValue.value = 'false'
+}
+
+function reconstructNodeValue(node) {
+  if (node.type === 'object') {
+    const obj = {}
+    for (const child of node.children) {
+      obj[child.key] = reconstructNodeValue(child)
+    }
+    return obj
+  }
+  if (node.type === 'array') {
+    return node.children.map(c => reconstructNodeValue(c))
+  }
+  return node.value
+}
+
+function copyValue() {
+  const val = reconstructNodeValue(props.node)
+  const text = typeof val === 'string' ? val : JSON.stringify(val, null, 2)
+  navigator.clipboard.writeText(text)
+  ElMessage.success('已复制值')
+}
+
+function copyPath() {
+  const path = props.node.path.length === 0 ? '$' : '$.' + props.node.path.join('.')
+  navigator.clipboard.writeText(path)
+  ElMessage.success('已复制路径')
+}
+
+function startEditNode() {
+  const val = reconstructNodeValue(props.node)
+  nodeEditJson.value = JSON.stringify(val, null, 2)
+  nodeEditError.value = ''
+  nodeEditVisible.value = true
+}
+
+function saveNodeEdit() {
+  try {
+    JSON.parse(nodeEditJson.value)
+  } catch (e) {
+    nodeEditError.value = 'JSON 格式错误: ' + e.message
+    return
+  }
+  emit('editNode', props.node.path, nodeEditJson.value)
+  nodeEditVisible.value = false
 }
 </script>
 
@@ -335,6 +443,29 @@ function convertNull(toType) {
 
 .show-more-row {
   cursor: pointer;
+}
+
+.node-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.json-node-line:hover > .node-actions {
+  opacity: 1;
+}
+
+.node-edit-textarea :deep(.el-textarea__inner) {
+  font-family: var(--font-family-mono, 'Consolas', monospace);
+  font-size: 12px;
+}
+
+.edit-error {
+  color: #f56c6c;
+  font-size: 12px;
 }
 
 /* Edit popover */

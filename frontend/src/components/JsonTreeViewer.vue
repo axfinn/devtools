@@ -28,6 +28,9 @@
         @toggle="handleToggle"
         @save-edit="handleSaveEdit"
         @load-more="handleLoadMore"
+        @delete-node="handleDeleteNode"
+        @add-child="handleAddChild"
+        @edit-node="handleEditNode"
       />
     </div>
 
@@ -276,6 +279,90 @@ function handleLoadMore(path) {
 
   delete truncationMap.value[jsonPath(path)]
   refreshRoot()
+}
+
+function handleDeleteNode(path) {
+  if (!props.jsonString || path.length === 0) return
+  let parsed
+  try { parsed = JSON.parse(props.jsonString) } catch { return }
+
+  let parent = parsed
+  for (let i = 0; i < path.length - 1; i++) {
+    parent = Array.isArray(parent) ? parent[Number(path[i])] : parent[path[i]]
+    if (parent === undefined || parent === null) return
+  }
+
+  const lastKey = path[path.length - 1]
+  if (Array.isArray(parent)) {
+    parent.splice(Number(lastKey), 1)
+  } else {
+    delete parent[lastKey]
+  }
+
+  const json = JSON.stringify(parsed, null, 2)
+  emit('update:jsonString', json)
+  parsedRoot.value = parseJsonToTree(json, expandDepth.value)
+  ElMessage.success('已删除')
+}
+
+function handleAddChild(path) {
+  if (!props.jsonString) return
+  let parsed
+  try { parsed = JSON.parse(props.jsonString) } catch { return }
+
+  let target = parsed
+  for (const seg of path) {
+    target = Array.isArray(target) ? target[Number(seg)] : target[seg]
+    if (target === undefined || target === null) return
+  }
+
+  if (Array.isArray(target)) {
+    target.push(null)
+  } else if (typeof target === 'object') {
+    let newKey = 'newKey'
+    let i = 1
+    while (newKey in target) { newKey = `newKey${i++}` }
+    target[newKey] = null
+  }
+
+  const json = JSON.stringify(parsed, null, 2)
+  emit('update:jsonString', json)
+  parsedRoot.value = parseJsonToTree(json, expandDepth.value)
+
+  const node = findNode(parsedRoot.value, path)
+  if (node) node.collapsed = false
+  refreshRoot()
+  ElMessage.success('已添加')
+}
+
+function handleEditNode(path, newJsonStr) {
+  if (!props.jsonString) return
+  let parsed
+  try { parsed = JSON.parse(props.jsonString) } catch { return }
+
+  let newValue
+  try { newValue = JSON.parse(newJsonStr) } catch { return }
+
+  if (path.length === 0) {
+    parsed = newValue
+  } else {
+    let parent = parsed
+    for (let i = 0; i < path.length - 1; i++) {
+      parent = Array.isArray(parent) ? parent[Number(path[i])] : parent[path[i]]
+      if (parent === undefined || parent === null) return
+    }
+    const lastKey = path[path.length - 1]
+    if (Array.isArray(parent)) {
+      parent[Number(lastKey)] = newValue
+    } else {
+      parent[lastKey] = newValue
+    }
+  }
+
+  const json = JSON.stringify(parsed, null, 2)
+  emit('update:jsonString', json)
+  parsedRoot.value = parseJsonToTree(json, expandDepth.value)
+  ElMessage.success('已更新')
 }
 
 // ---- Expand / Collapse ----
