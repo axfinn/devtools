@@ -273,7 +273,7 @@ async function submitAndPollMediaTask(body, { interval = 4000, timeout = 480000 
 
   // 同步返回（部分模型直接给出 URL）
   const inlineUrls = extractTaskUrls(data)
-  if (inlineUrls.length > 0) return inlineUrls
+  if (inlineUrls.length > 0) return { urls: inlineUrls, taskId: data.task_id || '' }
 
   const taskId = data.task_id
   if (!taskId) throw new Error('未返回任务ID')
@@ -289,11 +289,28 @@ async function submitAndPollMediaTask(body, { interval = 4000, timeout = 480000 
     if (tData.status === 'succeeded') {
       const urls = extractTaskUrls(tData)
       if (urls.length === 0) throw new Error('任务完成但未返回媒体URL')
-      return urls
+      return { urls, taskId }
     }
     if (tData.status === 'failed') throw new Error(tData.error || '任务执行失败')
   }
   throw new Error('任务超时未完成')
+}
+
+// MiniMax 音频是带签名/无后缀的 CDN 链接，直接放进 <audio src> 常因过期/跨域/octet-stream 无法播放。
+// 经后端下载代理拉成 blob（强制 audio/mpeg、同源、无过期）后再播放。
+async function fetchTaskAudioBlobUrl(taskId, fallbackUrl) {
+  if (taskId) {
+    try {
+      const resp = await fetch(`${API_BASE}/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}/download`, {
+        headers: mediaHeaders()
+      })
+      if (resp.ok) {
+        const blob = await resp.blob()
+        return URL.createObjectURL(blob)
+      }
+    } catch {}
+  }
+  return fallbackUrl
 }
 
 onMounted(() => {
@@ -488,7 +505,7 @@ async function handleFeature(feature, text) {
 
 async function handleImageGen(prompt) {
   featureLoadingText.value = '🎨 正在生成图片...'
-  const urls = await submitAndPollMediaTask(
+  const { urls } = await submitAndPollMediaTask(
     { model: 'image-01', prompt, aspect_ratio: '1:1', n: 1, prompt_optimizer: true, response_format: 'url' },
     { interval: 3000, timeout: 300000 }
   )
@@ -498,11 +515,10 @@ async function handleImageGen(prompt) {
 async function handleVision(prompt, imageDataUrl) {
   if (!imageDataUrl) throw new Error('请先上传图片')
   featureLoadingText.value = '👁️ 正在分析图片...'
-  const base64 = imageDataUrl.replace(/^data:image\/\w+;base64,/, '')
-  const resp = await fetch(`${API_BASE}/api/ai-gateway/v1/image/understanding`, {
+  const resp = await fetch(`${API_BASE}/api/image-understanding/qwen-vision`, {
     method: 'POST',
-    headers: mediaHeaders(),
-    body: JSON.stringify({ prompt: prompt || '请描述图片内容', image: base64 })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ images: [imageDataUrl], prompt: prompt || '请描述图片内容' })
   })
   const data = await resp.json().catch(() => ({}))
   if (!resp.ok) throw new Error(data.error || `图片分析失败 (HTTP ${resp.status})`)
@@ -536,12 +552,13 @@ async function handleMusic(prompt) {
   const title = lyricsData.song_title || lyricsData.data?.title || '未命名'
 
   featureLoadingText.value = '🎵 正在创作音乐...'
-  const urls = await submitAndPollMediaTask({
+  const { urls, taskId } = await submitAndPollMediaTask({
     model: 'music-2.6', prompt, lyrics,
     audio_setting: { format: 'mp3', sample_rate: 44100, bitrate: 256000 },
     output_format: 'url'
   }, { interval: 4000, timeout: 480000 })
-  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎵 ${title}**\n\n${lyrics}\n\n<audio controls src="${urls[0]}"></audio>` })
+  const audioSrc = await fetchTaskAudioBlobUrl(taskId, urls[0])
+  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎵 ${title}**\n\n${lyrics}\n\n<audio controls src="${audioSrc}"></audio>` })
 }
 
 async function handleMusicCover(text) {
@@ -563,13 +580,14 @@ async function handleMusicCover(text) {
   if (!coverFeatureId) throw new Error('未返回特征ID')
 
   featureLoadingText.value = '🎤 正在生成翻唱...'
-  const urls = await submitAndPollMediaTask({
+  const { urls, taskId } = await submitAndPollMediaTask({
     model: 'music-cover', cover_feature_id: coverFeatureId,
     lyrics: formattedLyrics, prompt,
     audio_setting: { format: 'mp3', sample_rate: 44100, bitrate: 256000 },
     output_format: 'url'
   }, { interval: 4000, timeout: 480000 })
-  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎤 翻唱生成完成**\n\n<audio controls src="${urls[0]}"></audio>` })
+  const audioSrc = await fetchTaskAudioBlobUrl(taskId, urls[0])
+  messages.value.push({ id: generateId(), role: 'assistant', content: `**🎤 翻唱生成完成**\n\n<audio controls src="${audioSrc}"></audio>` })
 }
 
 function downloadExtension() { window.open(`${API_BASE}/api/askit/extension`, '_blank') }
