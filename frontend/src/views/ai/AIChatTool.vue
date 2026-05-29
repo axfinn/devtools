@@ -504,8 +504,8 @@ async function handleVision(prompt, imageDataUrl) {
     headers: mediaHeaders(),
     body: JSON.stringify({ prompt: prompt || '请描述图片内容', image: base64 })
   })
-  const data = await resp.json()
-  if (!resp.ok) throw new Error(data.error || '图片分析失败')
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(data.error || `图片分析失败 (HTTP ${resp.status})`)
   messages.value.push({ id: generateId(), role: 'assistant', content: data.text || '无法分析图片' })
 }
 
@@ -589,8 +589,8 @@ async function shareChat() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: payload, title, language: 'askit-chat', expires_in: 72 })
     })
-    const data = await resp.json()
-    if (!resp.ok) throw new Error(data.error || '分享失败')
+    const data = await resp.json().catch(() => ({}))
+    if (!resp.ok) throw new Error(data.error || `分享失败 (HTTP ${resp.status})`)
     const shareUrl = `${location.origin}/chat/${data.id}`
     await navigator.clipboard.writeText(shareUrl)
     ElMessage.success(`分享链接已复制: ${shareUrl}`)
