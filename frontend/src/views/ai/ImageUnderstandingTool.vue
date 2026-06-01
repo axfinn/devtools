@@ -479,6 +479,7 @@ const submitQwen = async () => {
   qwenSubmitting.value = true
   qwenResultText.value = ''
   qwenUsedModel.value = ''
+  qwenResultTab.value = 'render'
   try {
     const images = qwenImages.value.map((img) => img.data)
     const resp = await fetch('/api/image-understanding/qwen-vision', {
@@ -487,16 +488,49 @@ const submitQwen = async () => {
       body: JSON.stringify({
         images,
         prompt: qwenPrompt.value || undefined,
-        model: qwenModel.value
+        model: qwenModel.value,
+        stream: true
       })
     })
-    const data = await parseJsonSafe(resp)
     if (!resp.ok) {
+      const data = await parseJsonSafe(resp)
       throw new Error(data.error || '识别失败')
     }
-    qwenResultText.value = data.text || ''
-    qwenUsedModel.value = data.model || qwenModel.value
-    qwenResultTab.value = 'render'
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let streamErr = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const payload = line.slice(6)
+        let evt
+        try {
+          evt = JSON.parse(payload)
+        } catch {
+          continue
+        }
+        if (evt.delta) {
+          qwenResultText.value += evt.delta
+        } else if (evt.error) {
+          streamErr = evt.error
+        } else if (evt.done && evt.model) {
+          qwenUsedModel.value = evt.model
+        }
+      }
+    }
+    if (streamErr) {
+      throw new Error(streamErr)
+    }
+    if (!qwenUsedModel.value) {
+      qwenUsedModel.value = qwenModel.value
+    }
     if (!qwenResultText.value) {
       ElMessage.warning('已返回结果，但未解析到文本')
     }
