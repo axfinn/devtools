@@ -1632,14 +1632,20 @@ const uploadFileDirectly = async (fileObj) => {
     fileObj.uploadProgress = 100
     fileObj.uploading = false
 
+    if (data.zipped) {
+      const origName = fileObj.name
+      fileObj.type = 'archive'
+      fileObj.name = data.original_name || `${origName}.zip`
+      fileObj.zipped = true
+      ElMessage.success(`文件 ${origName} 不支持直接上传，已自动压缩为 ZIP`)
+    }
+
     return data.id
   } catch (err) {
     fileObj.uploading = false
     throw new Error(`文件 ${fileObj.name} 上传失败: ${err.message}`)
   }
 }
-
-// 分片上传大文件
 const uploadFileInChunks = async (fileObj) => {
   const file = fileObj.file
   const totalSize = file.size
@@ -1705,6 +1711,14 @@ const uploadFileInChunks = async (fileObj) => {
 
     fileObj.uploadProgress = 100
     fileObj.uploading = false
+
+    if (mergeData.zipped) {
+      const origName = fileObj.name
+      fileObj.type = 'archive'
+      fileObj.name = mergeData.original_name || `${origName}.zip`
+      fileObj.zipped = true
+      ElMessage.success(`文件 ${origName} 不支持直接上传，已自动压缩为 ZIP`)
+    }
 
     return mergeData.id
   } catch (err) {

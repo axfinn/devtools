@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -208,26 +209,43 @@ func (h *PasteHandler) UploadFile(c *gin.Context) {
 	file.Seek(0, 0)
 
 	detectedType := detectFileType(magicBytes)
+
+	// 生成随机文件 ID
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
+		return
+	}
+	fileID := hex.EncodeToString(randomBytes)
+
+	// 不支持的文件类型：透明打包成 zip 后存储，而不是直接失败
 	if detectedType == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的文件类型", "code": 400})
+		file.Seek(0, 0)
+		finalFilename, zipName, zipSize, err := zipUnsupportedFile(file, header.Filename, fileID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败", "code": 500})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"id":            finalFilename,
+			"url":           "/api/paste/files/" + finalFilename,
+			"filename":      finalFilename,
+			"original_name": zipName,
+			"type":          "archive",
+			"size":          zipSize,
+			"zipped":        true,
+		})
 		return
 	}
 
 	// 确定文件类别
 	fileCategory := getFileCategory(detectedType)
 
-	// 生成随机文件名
-	randomBytes := make([]byte, 16)
-	if _, err := rand.Read(randomBytes); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
-		return
-	}
-
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	if ext == "" {
 		ext = getExtFromMimeType(detectedType)
 	}
-	filename := fmt.Sprintf("%s%s", hex.EncodeToString(randomBytes), ext)
+	filename := fmt.Sprintf("%s%s", fileID, ext)
 
 	// 确保上传目录存在
 	if err := os.MkdirAll(pasteUploadDir, 0755); err != nil {
@@ -921,9 +939,46 @@ func (h *PasteHandler) MergeChunks(c *gin.Context) {
 	}
 
 	detectedType := detectFileType(magicBytes)
+
+	// 不支持的文件类型：将合并后的分片透明打包为 zip 后存储
 	if detectedType == "" {
+		readers := make([]io.Reader, 0, uploadInfo.TotalChunks)
+		closers := make([]io.Closer, 0, uploadInfo.TotalChunks)
+		for i := 0; i < uploadInfo.TotalChunks; i++ {
+			chunkPath := filepath.Join(chunkDir, fileID, fmt.Sprintf("%d", i))
+			f, err := os.Open(chunkPath)
+			if err != nil {
+				for _, c := range closers {
+					c.Close()
+				}
+				h.CleanupChunkUpload(fileID)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "读取分片失败", "code": 500})
+				return
+			}
+			readers = append(readers, f)
+			closers = append(closers, f)
+		}
+
+		finalFilename, zipName, zipSize, err := zipUnsupportedFile(io.MultiReader(readers...), uploadInfo.FileName, fileID)
+		for _, c := range closers {
+			c.Close()
+		}
 		h.CleanupChunkUpload(fileID)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "不支持的文件类型", "code": 400})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败", "code": 500})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"id":            finalFilename,
+			"url":           "/api/paste/files/" + finalFilename,
+			"filename":      finalFilename,
+			"original_name": zipName,
+			"type":          "archive",
+			"size":          zipSize,
+			"zipped":        true,
+			"message":       "文件合并成功",
+		})
 		return
 	}
 
@@ -1032,6 +1087,61 @@ func (h *PasteHandler) cleanupPasteFiles(filesJSON string) {
 		filePath := filepath.Join(pasteUploadDir, file.Filename)
 		os.Remove(filePath)
 	}
+}
+
+// zipUnsupportedFile 将不被识别的文件流式打包为 zip 后存储。
+// 返回最终文件名、原始文件名(带 .zip 后缀)和文件大小。
+func zipUnsupportedFile(src io.Reader, originalName, fileID string) (string, string, int64, error) {
+	if err := os.MkdirAll(pasteUploadDir, 0755); err != nil {
+		return "", "", 0, err
+	}
+
+	// zip 内部条目名：清理原始文件名，缺省回退到 fileID
+	entryName := utils.SanitizeFilename(originalName)
+	if entryName == "" {
+		entryName = fileID
+	}
+
+	finalFilename := fileID + ".zip"
+	finalPath := filepath.Join(pasteUploadDir, finalFilename)
+
+	out, err := os.Create(finalPath)
+	if err != nil {
+		return "", "", 0, err
+	}
+
+	zw := zip.NewWriter(out)
+	w, err := zw.Create(entryName)
+	if err != nil {
+		zw.Close()
+		out.Close()
+		os.Remove(finalPath)
+		return "", "", 0, err
+	}
+	if _, err := io.Copy(w, src); err != nil {
+		zw.Close()
+		out.Close()
+		os.Remove(finalPath)
+		return "", "", 0, err
+	}
+	if err := zw.Close(); err != nil {
+		out.Close()
+		os.Remove(finalPath)
+		return "", "", 0, err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(finalPath)
+		return "", "", 0, err
+	}
+
+	info, err := os.Stat(finalPath)
+	if err != nil {
+		os.Remove(finalPath)
+		return "", "", 0, err
+	}
+
+	zipName := entryName + ".zip"
+	return finalFilename, zipName, info.Size(), nil
 }
 
 // AnalyzeCode 分析代码内容（使用 analysis.go 中的 AnalyzeCodeRequest）
