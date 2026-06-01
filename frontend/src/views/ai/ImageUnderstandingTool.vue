@@ -318,9 +318,10 @@ const resultTab = ref('render')
 const isListening = ref(false)
 
 // ---- Qwen 大模型理解 ----
-const qwenModel = ref('qwen3.5-plus')
+const qwenModel = ref('MiniMax-M3')
 const qwenModelOptions = [
-  { value: 'qwen3.5-plus', label: 'qwen3.5-plus', hint: '推荐，深度思考 + 视觉理解。' },
+  { value: 'MiniMax-M3', label: 'MiniMax-M3 (多模态·1M)', hint: '推荐，原生多模态、1M 上下文。' },
+  { value: 'qwen3.5-plus', label: 'qwen3.5-plus', hint: '深度思考 + 视觉理解。' },
   { value: 'kimi-k2.5', label: 'kimi-k2.5', hint: 'Kimi 视觉理解。' }
 ]
 const qwenPrompt = ref('')

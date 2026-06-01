@@ -840,6 +840,9 @@ func (db *DB) InitAnthropicProviders() error {
 	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'deepseek-v4-pro' WHERE name = 'DeepSeek' AND default_model = ''`)
 	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'claude-sonnet-4-6' WHERE name = 'PackyAPI' AND default_model = ''`)
 	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'claude-sonnet-4-6' WHERE name = 'OpenClaudeCode' AND default_model = ''`)
+	// Backfill: register MiniMax-M3 (multimodal, 1M context) on existing rows seeded before M3 launch.
+	// JSON arrays here are flat, so the only `["` occurs at the front — inserting M3 as the first entry.
+	db.conn.Exec(`UPDATE anthropic_providers SET models = REPLACE(models, '["', '["MiniMax-M3",') WHERE name IN ('MiniMax', 'DashScope') AND models NOT LIKE '%MiniMax-M3%'`)
 	// Seed builtin providers if table is empty
 	var count int
 	db.conn.QueryRow(`SELECT COUNT(*) FROM anthropic_providers`).Scan(&count)
@@ -853,8 +856,8 @@ func (db *DB) InitAnthropicProviders() error {
 			IsDefault    bool
 			DefaultModel string
 		}{
-			{"MiniMax", "https://api.minimaxi.com/anthropic", "", `["MiniMax-M2.5","MiniMax-M2.5-highspeed","MiniMax-M2.1","MiniMax-M2.1-highspeed","MiniMax-M2","MiniMax-M2.7"]`, "[]", false, "MiniMax-M2.5"},
-			{"DashScope", "https://coding.dashscope.aliyuncs.com/apps/anthropic", "", `["qwen3.5-plus","qwen3-max-2026-01-23","qwen3-coder-next","qwen3-coder-plus","glm-5","glm-4.7","kimi-k2.5","MiniMax-M2.5"]`, "[]", false, "qwen3.5-plus"},
+			{"MiniMax", "https://api.minimaxi.com/anthropic", "", `["MiniMax-M3","MiniMax-M3-highspeed","MiniMax-M2.5","MiniMax-M2.5-highspeed","MiniMax-M2.1","MiniMax-M2.1-highspeed","MiniMax-M2","MiniMax-M2.7"]`, "[]", false, "MiniMax-M3"},
+			{"DashScope", "https://coding.dashscope.aliyuncs.com/apps/anthropic", "", `["qwen3.5-plus","qwen3-max-2026-01-23","qwen3-coder-next","qwen3-coder-plus","glm-5","glm-4.7","kimi-k2.5","MiniMax-M3","MiniMax-M2.5"]`, "[]", false, "qwen3.5-plus"},
 			{"DeepSeek", "https://api.deepseek.com/anthropic", "", `["deepseek-chat","deepseek-reasoner","deepseek-v4-flash","deepseek-v4-pro"]`, "[]", true, "deepseek-v4-pro"},
 			{"PackyAPI", "https://www.packyapi.com", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},
 			{"OpenClaudeCode", "https://www.openclaudecode.cn", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},

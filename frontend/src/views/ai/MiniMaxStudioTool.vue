@@ -749,7 +749,7 @@ const textLoading = ref(false)
 const textRaw = ref(null)
 const textResult = ref('')
 const textForm = ref({
-  model: 'MiniMax-M2.5',
+  model: 'MiniMax-M3',
   system: '你是一个严谨、直接、中文优先的智能助手。',
   prompt: '',
   temperature: 0.4,
@@ -826,6 +826,8 @@ const adminForm = ref({
 })
 
 const textModels = [
+  { name: 'MiniMax-M3', deprecated: false },
+  { name: 'MiniMax-M3-highspeed', deprecated: false },
   { name: 'MiniMax-M2.5', deprecated: false },
   { name: 'MiniMax-M2.5-highspeed', deprecated: false },
   { name: 'MiniMax-M2.1', deprecated: false },

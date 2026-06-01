@@ -65,6 +65,7 @@
         <div class="chat-settings">
           <el-select v-model="selectedModel" placeholder="选择模型" size="small" class="model-select">
             <el-option-group label="MiniMax">
+              <el-option value="MiniMax-M3" label="MiniMax-M3 (多模态·1M)" />
               <el-option value="MiniMax-M2.7" label="MiniMax-M2.7" />
               <el-option value="MiniMax-M2.5" label="MiniMax-M2.5" />
             </el-option-group>
@@ -216,7 +217,7 @@ const authenticated = ref(false)
 const passwordInput = ref('')
 const loggingIn = ref(false)
 
-const selectedModel = ref('MiniMax-M2.7')
+const selectedModel = ref('MiniMax-M3')
 const systemPrompt = ref('')
 const temperature = ref(0.7)
 const inputText = ref('')

@@ -46,23 +46,18 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "图片数量不能超过 10 张"})
 		return
 	}
-	if strings.TrimSpace(h.cfg.DashScope.APIKey) == "" {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 DashScope API Key，请联系管理员"})
-		return
-	}
-
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
-		model = "qwen3.5-plus"
+		model = "MiniMax-M3"
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		prompt = "请简洁描述图片内容，提取关键对象、场景和文字信息。"
 	}
 
-	// 处理每张图：HTTP URL 下载转 base64，data URL 直接使用
+	// 归一化每张图：HTTP URL 下载转 base64 data URL，data URL 原样保留
+	dataURLs := make([]string, 0, len(imgs))
 	logSources := make([]string, 0, len(imgs))
-	contentParts := make([]map[string]interface{}, 0, len(imgs)+1)
 	totalSizeKB := 0
 	for i, img := range imgs {
 		if strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://") {
@@ -78,33 +73,31 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 			totalSizeKB += sizeKB
 			logSources = append(logSources, fmt.Sprintf("[%d]%s~%dKB", i+1, mime, sizeKB))
 		}
-		contentParts = append(contentParts, map[string]interface{}{
-			"type":      "image_url",
-			"image_url": map[string]interface{}{"url": img},
-		})
-	}
-	contentParts = append(contentParts, map[string]interface{}{"type": "text", "text": prompt})
-
-	chatReq := ChatCompletionRequest{
-		Model: model,
-		Messages: []map[string]interface{}{
-			{"role": "user", "content": contentParts},
-		},
+		dataURLs = append(dataURLs, img)
 	}
 
+	var (
+		content    string
+		rawPayload map[string]interface{}
+		callErr    error
+		provider   string
+	)
 	start := time.Now()
-	result, _, err := h.callDashScope(chatReq)
+	if strings.HasPrefix(model, "MiniMax") {
+		provider = "minimax"
+		content, rawPayload, callErr = h.callMiniMaxVision(model, prompt, dataURLs)
+	} else {
+		provider = "dashscope"
+		content, rawPayload, callErr = h.callDashScopeVision(model, prompt, dataURLs)
+	}
 	latency := time.Since(start)
 
 	statusCode := http.StatusOK
-	success := err == nil
+	success := callErr == nil
 	errMsg := ""
-	content := ""
-	if err != nil {
+	if callErr != nil {
 		statusCode = http.StatusBadGateway
-		errMsg = err.Error()
-	} else {
-		content, _ = result["content"].(string)
+		errMsg = callErr.Error()
 	}
 
 	// 记录请求流水
@@ -118,7 +111,7 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 	_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
 		APIKeyID:     internalQwenVisionKeyID,
 		Model:        model,
-		Provider:     "dashscope",
+		Provider:     provider,
 		Endpoint:     "/api/image-understanding/qwen-vision",
 		RequestType:  "vision",
 		StatusCode:   statusCode,
@@ -130,7 +123,7 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 		LatencyMS:    latency.Milliseconds(),
 	})
 
-	if err != nil {
+	if callErr != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": errMsg})
 		return
 	}
@@ -138,14 +131,105 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"text":   content,
 		"model":  model,
-		"result": result,
+		"result": rawPayload,
 	})
+}
+
+// visionMaxTokens 视觉理解回复的最大 token 数
+const visionMaxTokens = 2048
+
+// minimaxAnthropicMessagesURL MiniMax Anthropic 兼容端点
+const minimaxAnthropicMessagesURL = "https://api.minimaxi.com/anthropic/v1/messages"
+
+// callMiniMaxVision 使用 MiniMax-M3 原生多模态（Anthropic image blocks）理解图片
+func (h *AIGatewayHandler) callMiniMaxVision(model, prompt string, dataURLs []string) (string, map[string]interface{}, error) {
+	if strings.TrimSpace(h.cfg.MiniMax.APIKey) == "" {
+		return "", nil, fmt.Errorf("未配置 minimax.api_key 或 MINIMAX_API_KEY")
+	}
+	contentBlocks := make([]map[string]interface{}, 0, len(dataURLs)+1)
+	for i, du := range dataURLs {
+		mime, b64 := splitDataURL(du)
+		if b64 == "" {
+			return "", nil, fmt.Errorf("图片 %d 不是合法的 data URL", i+1)
+		}
+		contentBlocks = append(contentBlocks, map[string]interface{}{
+			"type": "image",
+			"source": map[string]interface{}{
+				"type":       "base64",
+				"media_type": mime,
+				"data":       b64,
+			},
+		})
+	}
+	contentBlocks = append(contentBlocks, map[string]interface{}{"type": "text", "text": prompt})
+
+	bodyMap := map[string]interface{}{
+		"model":      model,
+		"max_tokens": visionMaxTokens,
+		"messages": []map[string]interface{}{
+			{"role": "user", "content": contentBlocks},
+		},
+	}
+	raw, err := h.doMiniMaxAnthropicRequest(minimaxAnthropicMessagesURL, h.cfg.MiniMax.APIKey, bodyMap)
+	if err != nil {
+		return "", raw, err
+	}
+	return extractMiniMaxText(raw), raw, nil
+}
+
+// callDashScopeVision 使用 DashScope OpenAI 兼容视觉模型（qwen/kimi）理解图片
+func (h *AIGatewayHandler) callDashScopeVision(model, prompt string, dataURLs []string) (string, map[string]interface{}, error) {
+	if strings.TrimSpace(h.cfg.DashScope.APIKey) == "" {
+		return "", nil, fmt.Errorf("未配置 DashScope API Key，请联系管理员")
+	}
+	contentParts := make([]map[string]interface{}, 0, len(dataURLs)+1)
+	for _, du := range dataURLs {
+		contentParts = append(contentParts, map[string]interface{}{
+			"type":      "image_url",
+			"image_url": map[string]interface{}{"url": du},
+		})
+	}
+	contentParts = append(contentParts, map[string]interface{}{"type": "text", "text": prompt})
+
+	chatReq := ChatCompletionRequest{
+		Model: model,
+		Messages: []map[string]interface{}{
+			{"role": "user", "content": contentParts},
+		},
+	}
+	result, raw, err := h.callDashScope(chatReq)
+	if err != nil {
+		return "", raw, err
+	}
+	content, _ := result["content"].(string)
+	return content, raw, nil
+}
+
+// splitDataURL 拆分 data:<mime>;base64,<data>，返回 mime 与裸 base64 数据
+func splitDataURL(dataURL string) (mime, b64 string) {
+	if !strings.HasPrefix(dataURL, "data:") {
+		return "", ""
+	}
+	comma := strings.Index(dataURL, ",")
+	if comma < 0 {
+		return "", ""
+	}
+	header := dataURL[5:comma]
+	b64 = dataURL[comma+1:]
+	if semi := strings.Index(header, ";"); semi >= 0 {
+		mime = header[:semi]
+	} else {
+		mime = header
+	}
+	if mime == "" {
+		mime = "image/png"
+	}
+	return mime, b64
 }
 
 // AdminListQwenVisionLogs 管理员查看 Qwen 视觉理解请求流水
 // GET /api/image-understanding/qwen-vision/logs
 // 认证: X-Image-Admin-Password header 或 admin_password query（独立于 super_admin_password）
-
 func (h *AIGatewayHandler) AdminListQwenVisionLogs(c *gin.Context) {
 	if !h.requireImageUnderstandingAdmin(c) {
 		return

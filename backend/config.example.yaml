@@ -448,6 +448,8 @@ ai_gateway:
       api_url: "https://api.minimaxi.com/anthropic"
       api_key: ""   # 留空时复用 minimax.api_key
       models:
+        - "MiniMax-M3"
+        - "MiniMax-M3-highspeed"
         - "MiniMax-M2.5"
         - "MiniMax-M2.5-highspeed"
         - "MiniMax-M2.1"
@@ -465,6 +467,7 @@ ai_gateway:
         - "glm-5"
         - "glm-4.7"
         - "kimi-k2.5"
+        - "MiniMax-M3"
         - "MiniMax-M2.5"
     - name: "DeepSeek"
       api_url: "https://api.deepseek.com/anthropic"

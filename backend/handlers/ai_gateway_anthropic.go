@@ -33,13 +33,13 @@ func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProvide
 			Name:   "MiniMax",
 			APIURL: "https://api.minimaxi.com/anthropic",
 			APIKey: h.cfg.MiniMax.APIKey,
-			Models: []string{"MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2", "MiniMax-M2.7"},
+			Models: []string{"MiniMax-M3", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2", "MiniMax-M2.7"},
 		},
 		{
 			Name:   "DashScope",
 			APIURL: "https://coding.dashscope.aliyuncs.com/apps/anthropic",
 			APIKey: h.cfg.DashScope.APIKey,
-			Models: []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M2.5"},
+			Models: []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M3", "MiniMax-M2.5"},
 		},
 		{
 			Name:   "DeepSeek",
@@ -234,15 +234,15 @@ func (h *AIGatewayHandler) fallbackAPIKeyForProvider(name string) string {
 // ProxyMinimaxAnthropic 转发 Anthropic 协议格式的请求到 MiniMax Anthropic 兼容端点
 // POST /api/minimax/anthropic/v1/messages
 func (h *AIGatewayHandler) ProxyMinimaxAnthropic(c *gin.Context) {
-	p := h.resolveProviderByNameOrModel("MiniMax", "MiniMax-M2.5")
-	h.proxyAnthropic(c, p, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2", "MiniMax-M2.7"})
+	p := h.resolveProviderByNameOrModel("MiniMax", "MiniMax-M3")
+	h.proxyAnthropic(c, p, "/api/minimax/anthropic/v1/messages", []string{"MiniMax-M3", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2", "MiniMax-M2.7"})
 }
 
 // ProxyDashScopeAnthropic 转发 Anthropic 协议格式的请求到 DashScope Anthropic 兼容端点
 // POST /api/dashscope/anthropic/v1/messages
 func (h *AIGatewayHandler) ProxyDashScopeAnthropic(c *gin.Context) {
 	p := h.resolveProviderByNameOrModel("DashScope", "qwen3.5-plus")
-	h.proxyAnthropic(c, p, "/api/dashscope/anthropic/v1/messages", []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M2.5"})
+	h.proxyAnthropic(c, p, "/api/dashscope/anthropic/v1/messages", []string{"qwen3.5-plus", "qwen3-max-2026-01-23", "qwen3-coder-next", "qwen3-coder-plus", "glm-5", "glm-4.7", "kimi-k2.5", "MiniMax-M3", "MiniMax-M2.5"})
 }
 
 // ProxyDeepSeekAnthropic 转发 Anthropic 协议格式的请求到 DeepSeek Anthropic 兼容端点
