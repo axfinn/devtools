@@ -47,7 +47,8 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 		return
 	}
 	model := strings.TrimSpace(req.Model)
-	if model == "" {
+	// 图片理解统一走 MiniMax-M3 原生多模态（不再使用 qwen/DashScope，避免会员失效导致请求挂起超时）
+	if !strings.HasPrefix(model, "MiniMax") {
 		model = "MiniMax-M3"
 	}
 	prompt := strings.TrimSpace(req.Prompt)
@@ -80,16 +81,10 @@ func (h *AIGatewayHandler) InternalQwenVision(c *gin.Context) {
 		content    string
 		rawPayload map[string]interface{}
 		callErr    error
-		provider   string
 	)
+	const provider = "minimax"
 	start := time.Now()
-	if strings.HasPrefix(model, "MiniMax") {
-		provider = "minimax"
-		content, rawPayload, callErr = h.callMiniMaxVision(model, prompt, dataURLs)
-	} else {
-		provider = "dashscope"
-		content, rawPayload, callErr = h.callDashScopeVision(model, prompt, dataURLs)
-	}
+	content, rawPayload, callErr = h.callMiniMaxVision(model, prompt, dataURLs)
 	latency := time.Since(start)
 
 	statusCode := http.StatusOK
@@ -175,34 +170,6 @@ func (h *AIGatewayHandler) callMiniMaxVision(model, prompt string, dataURLs []st
 		return "", raw, err
 	}
 	return extractMiniMaxText(raw), raw, nil
-}
-
-// callDashScopeVision 使用 DashScope OpenAI 兼容视觉模型（qwen/kimi）理解图片
-func (h *AIGatewayHandler) callDashScopeVision(model, prompt string, dataURLs []string) (string, map[string]interface{}, error) {
-	if strings.TrimSpace(h.cfg.DashScope.APIKey) == "" {
-		return "", nil, fmt.Errorf("未配置 DashScope API Key，请联系管理员")
-	}
-	contentParts := make([]map[string]interface{}, 0, len(dataURLs)+1)
-	for _, du := range dataURLs {
-		contentParts = append(contentParts, map[string]interface{}{
-			"type":      "image_url",
-			"image_url": map[string]interface{}{"url": du},
-		})
-	}
-	contentParts = append(contentParts, map[string]interface{}{"type": "text", "text": prompt})
-
-	chatReq := ChatCompletionRequest{
-		Model: model,
-		Messages: []map[string]interface{}{
-			{"role": "user", "content": contentParts},
-		},
-	}
-	result, raw, err := h.callDashScope(chatReq)
-	if err != nil {
-		return "", raw, err
-	}
-	content, _ := result["content"].(string)
-	return content, raw, nil
 }
 
 // splitDataURL 拆分 data:<mime>;base64,<data>，返回 mime 与裸 base64 数据

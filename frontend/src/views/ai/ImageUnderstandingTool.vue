@@ -2,7 +2,7 @@
   <div class="tool-container image-understanding-page">
     <div class="tool-header">
       <h2>图像理解</h2>
-      <p>支持 MiniMax MCP 和 Qwen 大模型两种图像理解方式。</p>
+      <p>支持 MiniMax MCP 和 MiniMax-M3 大模型两种图像理解方式。</p>
     </div>
 
     <el-tabs v-model="activeMode" class="mode-tabs">
@@ -117,7 +117,7 @@
       <el-tab-pane name="qwen">
         <template #label>
           <span>大模型理解</span>
-          <el-tag size="small" type="success" class="ml-1">Qwen</el-tag>
+          <el-tag size="small" type="success" class="ml-1">M3</el-tag>
         </template>
         <div class="tool-grid">
           <el-card class="panel-card">
@@ -239,7 +239,7 @@
       </el-tab-pane>
 
       <!-- 请求流水对话框 -->
-      <el-dialog v-model="showLogsDialog" title="Qwen 视觉请求流水" width="800px" top="5vh">
+      <el-dialog v-model="showLogsDialog" title="图片理解请求流水" width="800px" top="5vh">
         <div class="logs-toolbar">
           <el-input
             v-model="logsAdminPassword"
@@ -317,12 +317,10 @@ const rawResult = ref('')
 const resultTab = ref('render')
 const isListening = ref(false)
 
-// ---- Qwen 大模型理解 ----
+// ---- 大模型图片理解（MiniMax-M3 原生多模态）----
 const qwenModel = ref('MiniMax-M3')
 const qwenModelOptions = [
-  { value: 'MiniMax-M3', label: 'MiniMax-M3 (多模态·1M)', hint: '推荐，原生多模态、1M 上下文。' },
-  { value: 'qwen3.5-plus', label: 'qwen3.5-plus', hint: '深度思考 + 视觉理解。' },
-  { value: 'kimi-k2.5', label: 'kimi-k2.5', hint: 'Kimi 视觉理解。' }
+  { value: 'MiniMax-M3', label: 'MiniMax-M3 (多模态·1M)', hint: '原生多模态、1M 上下文。' }
 ]
 const qwenPrompt = ref('')
 // qwenImages: { type: 'url'|'file', data: string (base64 or url), preview: string, label: string }
