@@ -882,7 +882,7 @@
                 <strong>{{ comment.author }}</strong>
                 <span>{{ formatDateTime(comment.created_at) }}</span>
               </div>
-              <p>{{ comment.content }}</p>
+              <p class="comment-content" v-html="renderCommentContent(comment.content)"></p>
             </div>
         </div>
         <div v-else class="timeline-empty">还没有进展记录，可以补一句上下文。</div>
@@ -953,7 +953,7 @@
               <strong>{{ comment.author }}</strong>
               <span>{{ formatDateTime(comment.created_at) }}</span>
             </div>
-            <p>{{ comment.content }}</p>
+            <p class="comment-content" v-html="renderCommentContent(comment.content)"></p>
           </div>
           <div v-if="comments.length === 0" class="timeline-empty">
             还没有评论，补一句上下文也行。
@@ -3640,6 +3640,35 @@ function formatDateTime(value) {
   })
 }
 
+const COMMENT_LINK_LABEL_MAX = 48
+
+function escapeCommentHtml(text) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
+
+function renderCommentContent(content) {
+  const raw = (content ?? '').toString()
+  if (!raw) return ''
+  const urlPattern = /(https?:\/\/[^\s<]+)/g
+  let result = ''
+  let lastIndex = 0
+  let match
+  while ((match = urlPattern.exec(raw)) !== null) {
+    result += escapeCommentHtml(raw.slice(lastIndex, match.index))
+    const url = match[0]
+    const safeUrl = escapeCommentHtml(url)
+    const label = url.length > COMMENT_LINK_LABEL_MAX
+      ? escapeCommentHtml(url.slice(0, COMMENT_LINK_LABEL_MAX) + '…')
+      : safeUrl
+    result += `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="comment-link" title="${safeUrl}">${label}</a>`
+    lastIndex = match.index + url.length
+  }
+  result += escapeCommentHtml(raw.slice(lastIndex))
+  return result.replace(/\n/g, '<br>')
+}
+
 watch(activeKind, () => {
   if (profileId.value) {
     refreshBoard()
@@ -4338,6 +4367,19 @@ onBeforeUnmount(() => {
 .activity-item p,
 .ai-card p {
   margin: 8px 0 0;
+}
+
+.comment-content {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.comment-link {
+  color: var(--el-color-primary);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .ai-card-body {
