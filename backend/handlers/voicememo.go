@@ -20,6 +20,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// maxVoiceMemoUploadSize caps a single recording upload. Kept just under the
+// global 200MB ContentSizeLimiter so long meeting recordings still go through.
+const maxVoiceMemoUploadSize = 190 * 1024 * 1024
+
 type VoiceMemoHandler struct {
 	db             *models.DB
 	plannerHandler *PlannerHandler
@@ -140,8 +144,8 @@ func (h *VoiceMemoHandler) Upload(c *gin.Context) {
 		return
 	}
 
-	if file.Size > 50*1024*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "文件大小不能超过 50MB"})
+	if file.Size > maxVoiceMemoUploadSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "文件大小不能超过 190MB"})
 		return
 	}
 
@@ -150,6 +154,7 @@ func (h *VoiceMemoHandler) Upload(c *gin.Context) {
 		return
 	}
 	deviceID := currentVoiceMemoDeviceID(c)
+	plannerTaskID := strings.TrimSpace(c.PostForm("planner_task_id"))
 
 	title := c.PostForm("title")
 	if title == "" {
@@ -190,15 +195,16 @@ func (h *VoiceMemoHandler) Upload(c *gin.Context) {
 	exp := time.Now().Add(14 * 24 * time.Hour)
 	memoID := generateVoiceMemoID()
 	memo := &models.VoiceMemo{
-		ID:          memoID,
-		DeviceID:    deviceID,
-		ProfileID:   profileID,
-		Title:       title,
-		AudioURL:    "/api/voicememo/audio/" + filename,
-		DurationSec: durationSec,
-		FileSize:    file.Size,
-		Status:      "draft",
-		ExpiresAt:   &exp,
+		ID:            memoID,
+		DeviceID:      deviceID,
+		ProfileID:     profileID,
+		Title:         title,
+		AudioURL:      "/api/voicememo/audio/" + filename,
+		DurationSec:   durationSec,
+		FileSize:      file.Size,
+		Status:        "draft",
+		ExpiresAt:     &exp,
+		PlannerTaskID: plannerTaskID,
 	}
 
 	if err := h.db.CreateVoiceMemo(memo); err != nil {
@@ -207,16 +213,26 @@ func (h *VoiceMemoHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	// Recordings bound to a planner task are kept permanently. Cleanup only
+	// removes drafts whose expires_at has passed, so clearing expiry keeps the
+	// memo forever while leaving it transcribable (status stays "draft").
+	if plannerTaskID != "" {
+		if err := h.db.ClearVoiceMemoExpiry(memo.ID); err == nil {
+			memo.ExpiresAt = nil
+		}
+	}
+
 	c.JSON(http.StatusCreated, gin.H{
-		"id":           memo.ID,
-		"title":        memo.Title,
-		"audio_url":    h.publicMemoAudioURL(memo.ID),
-		"duration_sec": memo.DurationSec,
-		"file_size":    memo.FileSize,
-		"status":       memo.Status,
-		"profile_id":   memo.ProfileID,
-		"expires_at":   memo.ExpiresAt,
-		"created_at":   memo.CreatedAt,
+		"id":              memo.ID,
+		"title":           memo.Title,
+		"audio_url":       h.publicMemoAudioURL(memo.ID),
+		"duration_sec":    memo.DurationSec,
+		"file_size":       memo.FileSize,
+		"status":          memo.Status,
+		"profile_id":      memo.ProfileID,
+		"planner_task_id": memo.PlannerTaskID,
+		"expires_at":      memo.ExpiresAt,
+		"created_at":      memo.CreatedAt,
 	})
 }
 
@@ -334,6 +350,30 @@ func (h *VoiceMemoHandler) List(c *gin.Context) {
 		"items": h.serializeMemoList(memos),
 		"total": total,
 	})
+}
+
+// ListByTask returns recordings bound to a specific planner task.
+func (h *VoiceMemoHandler) ListByTask(c *gin.Context) {
+	profileID := strings.TrimSpace(c.Query("profile_id"))
+	profile, ok := h.requirePlannerProfile(c, profileID)
+	if !ok {
+		return
+	}
+
+	taskID := strings.TrimSpace(c.Param("taskId"))
+	task, err := h.db.GetPlannerTask(taskID)
+	if err != nil || task.ProfileID != profile.ID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "事项不存在"})
+		return
+	}
+
+	memos, err := h.db.ListVoiceMemosByTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"items": h.serializeMemoList(memos)})
 }
 
 // Get returns a single voice memo.

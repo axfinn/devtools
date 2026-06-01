@@ -206,6 +206,47 @@ func (db *DB) ListVoiceMemos(profileID, deviceID string, limit, offset int) ([]V
 	return memos, total, nil
 }
 
+// ListVoiceMemosByTask returns all recordings bound to a planner task (oldest first).
+func (db *DB) ListVoiceMemosByTask(taskID string) ([]VoiceMemo, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, device_id, title, audio_url, transcript, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
+		 FROM voice_memos
+		 WHERE planner_task_id = ? AND deleted_at IS NULL
+		 ORDER BY created_at ASC`, taskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	memos := []VoiceMemo{}
+	for rows.Next() {
+		var m VoiceMemo
+		var errorMsg sql.NullString
+		var expiresAt sql.NullTime
+		if err := rows.Scan(&m.ID, &m.DeviceID, &m.Title, &m.AudioURL, &m.Transcript, &m.Language,
+			&m.DurationSec, &m.FileSize, &m.Status, &errorMsg, &m.ProfileID, &m.PlannerTaskID, &expiresAt, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, err
+		}
+		m.ErrorMessage = errorMsg.String
+		if expiresAt.Valid {
+			m.ExpiresAt = &expiresAt.Time
+		}
+		memos = append(memos, m)
+	}
+	return memos, nil
+}
+
+// ClearVoiceMemoExpiry removes the expiry so the memo is kept permanently,
+// without altering its status (so a draft can still be transcribed).
+func (db *DB) ClearVoiceMemoExpiry(id string) error {
+	_, err := db.conn.Exec(
+		`UPDATE voice_memos SET expires_at = NULL, updated_at = ? WHERE id = ?`,
+		time.Now(), id,
+	)
+	return err
+}
+
 // UpdateVoiceMemoTranscript updates transcript after ASR completes.
 func (db *DB) UpdateVoiceMemoTranscript(id, transcript, language, status, errorMessage string) error {
 	_, err := db.conn.Exec(

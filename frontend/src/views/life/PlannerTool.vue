@@ -915,6 +915,38 @@
 
     <el-drawer v-model="commentDrawerVisible" title="事项评论" :size="drawerSize">
       <div class="drawer-stack">
+        <div class="task-recording-block">
+          <div class="task-recording-head">
+            <strong>沟通录音</strong>
+            <el-button
+              v-if="mediaRecorderSupported"
+              size="small"
+              :type="isTaskRecording ? 'danger' : 'primary'"
+              plain
+              @click="toggleTaskRecording"
+            >
+              <el-icon><Microphone /></el-icon>
+              {{ isTaskRecording ? `停止录音 ${formatClock(taskRecordingTime)}` : '开始录音' }}
+            </el-button>
+            <span v-else class="soft-note">当前浏览器不支持录音</span>
+          </div>
+          <p v-if="taskRecordingUploading" class="soft-note">录音上传中…</p>
+          <div v-if="taskRecordings.length > 0" class="task-recording-list">
+            <div v-for="rec in taskRecordings" :key="rec.id" class="task-recording-item">
+              <div class="comment-item-top">
+                <strong>{{ rec.title }}</strong>
+                <span>{{ formatDateTime(rec.created_at) }}{{ rec.duration_sec ? ' · ' + formatClock(rec.duration_sec) : '' }}</span>
+              </div>
+              <audio :src="recordingAudioUrl(rec)" controls preload="none" class="task-recording-audio" />
+              <p v-if="rec.status === 'transcribing'" class="soft-note">转写中…</p>
+              <template v-else-if="rec.transcript">
+                <p class="task-recording-transcript">{{ rec.transcript }}</p>
+                <el-button size="small" link type="primary" @click="recordingToComment(rec)">转为评论</el-button>
+              </template>
+              <el-button v-else size="small" link @click="transcribeTaskRecording(rec)">转写文字</el-button>
+            </div>
+          </div>
+        </div>
         <div class="comment-timeline">
           <div v-for="comment in comments" :key="comment.id" class="comment-item">
             <div class="comment-item-top">
@@ -1637,6 +1669,13 @@ function formatDuration(minutes) {
   return `${m}分钟`
 }
 
+function formatClock(seconds) {
+  const total = Math.max(0, Math.floor(seconds || 0))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+}
+
 const taskForm = reactive({
   id: '',
   kind: 'work',
@@ -1706,6 +1745,10 @@ const comments = ref([])
 const taskCommentsPreview = ref([])
 const taskActivities = ref([])
 const taskActivitiesPreview = ref([])
+const taskRecordings = ref([])
+const isTaskRecording = ref(false)
+const taskRecordingTime = ref(0)
+const taskRecordingUploading = ref(false)
 const aiText = ref('')
 const aiSuggestions = ref([])
 const adminItems = ref([])
@@ -2365,7 +2408,9 @@ async function openCommentDrawer(task) {
   currentCommentTask.value = task
   commentDrawerVisible.value = true
   commentForm.content = ''
+  taskRecordings.value = []
   await loadComments(task.id)
+  await loadTaskRecordings(task.id)
 }
 
 async function openActivityDrawer(task) {
@@ -2383,6 +2428,16 @@ async function loadComments(taskId) {
   }
 }
 
+async function postComment(taskId, content) {
+  await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/${taskId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ content })
+  })
+  await loadComments(taskId)
+  await loadTaskActivities(taskId)
+  await refreshBoard()
+}
+
 async function submitComment() {
   if (!currentCommentTask.value || !commentForm.content.trim()) {
     ElMessage.warning('请输入评论内容')
@@ -2390,19 +2445,158 @@ async function submitComment() {
   }
   savingComment.value = true
   try {
-    await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/${currentCommentTask.value.id}/comments`, {
-      method: 'POST',
-      body: JSON.stringify({ content: commentForm.content })
-    })
+    await postComment(currentCommentTask.value.id, commentForm.content)
     commentForm.content = ''
-    await loadComments(currentCommentTask.value.id)
-    await loadTaskActivities(currentCommentTask.value.id)
-    await refreshBoard()
     ElMessage.success('评论已保存')
   } catch (error) {
     ElMessage.error(error.message)
   } finally {
     savingComment.value = false
+  }
+}
+
+function recordingAudioUrl(rec) {
+  if (!rec || !rec.audio_url) return ''
+  const params = new URLSearchParams()
+  if (profileId.value) params.set('profile_id', profileId.value)
+  if (password.value) params.set('password', password.value)
+  if (creatorKey.value) params.set('creator_key', creatorKey.value)
+  const query = params.toString()
+  return query ? `${rec.audio_url}?${query}` : rec.audio_url
+}
+
+async function loadTaskRecordings(taskId) {
+  try {
+    const response = await plannerFetch(`${API_BASE.replace('/planner', '')}/voicememo/task/${taskId}/list?profile_id=${profileId.value}`)
+    const data = await response.json()
+    taskRecordings.value = data.items || []
+    if (taskRecordings.value.some(r => r.status === 'transcribing')) {
+      startTaskRecordingPoll()
+    }
+  } catch (error) {
+    // recordings are optional context; surface but don't block the drawer
+    taskRecordings.value = []
+  }
+}
+
+function toggleTaskRecording() {
+  if (isTaskRecording.value) {
+    stopTaskRecording()
+  } else {
+    startTaskRecording()
+  }
+}
+
+async function startTaskRecording() {
+  if (!currentCommentTask.value) return
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : 'audio/mp4'
+
+    taskMediaRecorder = new MediaRecorder(stream, { mimeType })
+    taskAudioChunks = []
+
+    taskMediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) taskAudioChunks.push(e.data)
+    }
+    taskMediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop())
+      if (taskAudioChunks.length > 0) {
+        const blob = new Blob(taskAudioChunks, { type: taskMediaRecorder?.mimeType || mimeType })
+        await uploadTaskRecording(blob)
+      }
+    }
+
+    taskMediaRecorder.start(1000)
+    isTaskRecording.value = true
+    taskRecordingTime.value = 0
+    taskRecordingStartTime = Date.now()
+    taskRecordingTimer = setInterval(() => {
+      taskRecordingTime.value = (Date.now() - taskRecordingStartTime) / 1000
+    }, 200)
+  } catch (error) {
+    ElMessage.error('无法访问麦克风，请检查权限设置')
+  }
+}
+
+function stopTaskRecording() {
+  if (taskMediaRecorder && taskMediaRecorder.state !== 'inactive') {
+    taskMediaRecorder.stop()
+  }
+  isTaskRecording.value = false
+  if (taskRecordingTimer) {
+    clearInterval(taskRecordingTimer)
+    taskRecordingTimer = null
+  }
+}
+
+async function uploadTaskRecording(blob) {
+  const task = currentCommentTask.value
+  if (!task) return
+  taskRecordingUploading.value = true
+  try {
+    const form = new FormData()
+    form.append('file', blob, `task_${task.id}_${Date.now()}.webm`)
+    form.append('profile_id', profileId.value)
+    form.append('planner_task_id', task.id)
+    form.append('duration', String(Math.round(taskRecordingTime.value)))
+    await plannerFetch(`${API_BASE.replace('/planner', '')}/voicememo/upload`, {
+      method: 'POST',
+      body: form
+    })
+    await loadTaskRecordings(task.id)
+    ElMessage.success('录音已关联到事项')
+  } catch (error) {
+    ElMessage.error('录音上传失败: ' + error.message)
+  } finally {
+    taskRecordingUploading.value = false
+  }
+}
+
+async function transcribeTaskRecording(rec) {
+  try {
+    await plannerFetch(`${API_BASE.replace('/planner', '')}/voicememo/${rec.id}/transcribe?profile_id=${profileId.value}`, {
+      method: 'POST'
+    })
+    rec.status = 'transcribing'
+    startTaskRecordingPoll()
+    ElMessage.success('已开始语音转文字…')
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
+}
+
+function startTaskRecordingPoll() {
+  if (taskRecordingPollTimer) return
+  taskRecordingPollTimer = setInterval(async () => {
+    const task = currentCommentTask.value
+    if (!task || !commentDrawerVisible.value) {
+      clearInterval(taskRecordingPollTimer)
+      taskRecordingPollTimer = null
+      return
+    }
+    const pending = taskRecordings.value.filter(r => r.status === 'transcribing')
+    if (pending.length === 0) {
+      clearInterval(taskRecordingPollTimer)
+      taskRecordingPollTimer = null
+      return
+    }
+    await loadTaskRecordings(task.id)
+  }, 3000)
+}
+
+async function recordingToComment(rec) {
+  const text = (rec.transcript || '').trim()
+  if (!text || !currentCommentTask.value) return
+  try {
+    await postComment(currentCommentTask.value.id, text)
+    ElMessage.success('转写内容已写入评论')
+  } catch (error) {
+    ElMessage.error(error.message)
   }
 }
 
@@ -2712,6 +2906,12 @@ watch(meetingDialogVisible, (visible) => {
   }
 })
 
+watch(commentDrawerVisible, (visible) => {
+  if (!visible && isTaskRecording.value) {
+    stopTaskRecording()
+  }
+})
+
 watch(
   () => [meetingForm.title, meetingForm.content, meetingForm.summary, meetingForm.actionItems,
          meetingForm.participantsText, meetingForm.tagsText, meetingForm.meetingDate,
@@ -2730,6 +2930,12 @@ let meetingMediaStream = null
 let meetingVoiceChunks = []
 let meetingTranscriptText = ''
 const meetingInterimText = ref('')
+
+let taskMediaRecorder = null
+let taskAudioChunks = []
+let taskRecordingStartTime = 0
+let taskRecordingTimer = null
+let taskRecordingPollTimer = null
 
 function appendTranscriptToMeetingContent(text) {
   const normalized = (text || '').trim()
@@ -3541,6 +3747,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   resetVoiceDraft()
   stopMeetingRecording()
+  stopTaskRecording()
+  if (taskRecordingPollTimer) {
+    clearInterval(taskRecordingPollTimer)
+    taskRecordingPollTimer = null
+  }
   revokeMeetingLocalAudio()
   window.removeEventListener('resize', syncViewportFlags)
   if (beforeInstallPromptHandler) {
@@ -4033,6 +4244,47 @@ onBeforeUnmount(() => {
   color: #75859b;
   display: grid;
   gap: 6px;
+}
+
+.task-recording-block {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.task-recording-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-recording-list {
+  display: grid;
+  gap: 12px;
+}
+
+.task-recording-item {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #edf1f7;
+}
+
+.task-recording-audio {
+  width: 100%;
+  height: 36px;
+}
+
+.task-recording-transcript {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #36435a;
 }
 
 .timeline-group-head h4,
