@@ -64,6 +64,10 @@ func (h *PlannerHandler) AIAdvise(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "provider": provider, "advice": advice})
 }
 
+func plannerParseSystemPrompt() string {
+	return fmt.Sprintf("你是智能整理助手。当前日期是%s，请以此为基准推算相对日期（今天、明天、本周等），日期必须使用当前年份，不要使用训练数据中的旧日期。", time.Now().Format("2006年1月2日"))
+}
+
 func (h *PlannerHandler) parsePlannerText(text, defaultKind string) ([]plannerAITask, string, error) {
 	if strings.TrimSpace(h.cfg.MiniMax.APIKey) == "" {
 		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
@@ -90,7 +94,7 @@ kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title
 	reqBody := map[string]interface{}{
 		"model": plannerFirstNonEmpty(h.cfg.MiniMax.Model, "abab6.5s-chat"),
 		"messages": []map[string]string{
-			{"role": "system", "content": "你是智能整理助手。当前日期是2026年4月25日，日期必须使用2026年，不要使用训练数据中的旧日期。"},
+			{"role": "system", "content": plannerParseSystemPrompt()},
 			{"role": "user", "content": prompt},
 		},
 		"temperature": 0.2,

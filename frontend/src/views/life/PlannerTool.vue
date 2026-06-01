@@ -2408,6 +2408,7 @@ async function openCommentDrawer(task) {
   currentCommentTask.value = task
   commentDrawerVisible.value = true
   commentForm.content = ''
+  comments.value = []
   taskRecordings.value = []
   await loadComments(task.id)
   await loadTaskRecordings(task.id)
@@ -2420,11 +2421,15 @@ async function openActivityDrawer(task) {
 }
 
 async function loadComments(taskId) {
-  const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/${taskId}/comments`)
-  const data = await response.json()
-  comments.value = data.comments || []
-  if (taskForm.id === taskId) {
-    taskCommentsPreview.value = [...comments.value].slice(-3).reverse()
+  try {
+    const response = await plannerFetch(`${API_BASE}/profile/${profileId.value}/tasks/${taskId}/comments`)
+    const data = await response.json()
+    comments.value = data.comments || []
+    if (taskForm.id === taskId) {
+      taskCommentsPreview.value = [...comments.value].slice(-3).reverse()
+    }
+  } catch (error) {
+    comments.value = []
   }
 }
 
