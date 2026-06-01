@@ -383,6 +383,9 @@ nfs_share:
   max_file_size_mb: 0
   # 禁止视频文件直接下载（true = 只允许通过 HLS 播放页访问，false = 允许下载）
   disable_video_download: true
+  # 禁止所有文件直接下载（true = 全部禁止下载；false = 允许下载，视频是否可下载仍受 disable_video_download 控制）
+  # 默认 false：除视频外的文件（图片/音频/PDF/文本/压缩包等）均提供下载按钮
+  disable_download: false
 
   # 挂载点列表（启动时自动挂载，需要系统已安装 nfs-common / cifs-utils）
   mounts:

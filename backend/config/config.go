@@ -532,7 +532,7 @@ func DefaultConfig() *Config {
 			Enabled:              false,
 			MaxFileSizeMB:        0,
 			DisableVideoDownload: true,
-			DisableDownload:      true,
+			DisableDownload:      false,
 			Mounts:               []MountConfig{},
 		},
 		TURN: TURNConfig{
