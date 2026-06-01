@@ -85,6 +85,7 @@ type ProxyConfig struct {
 	TunnelPort          string                         `yaml:"tunnel_port"`          // 独立 CONNECT 代理端口，留空则不启动（用于绕过 nginx）
 	LocalPort           string                         `yaml:"local_port"`           // 本地节点代理端口，固定监听 127.0.0.1:port，留空则随机
 	AlertEmail          string                         `yaml:"alert_email"`          // 代理告警/订阅更新通知收件人
+	AlertEnabled        bool                           `yaml:"alert_enabled"`        // 是否启用告警邮件，默认 false
 	SMTPHost            string                         `yaml:"smtp_host"`            // SMTP 服务器，如 smtp.qq.com
 	SMTPPort            int                            `yaml:"smtp_port"`            // SMTP 端口，如 465（SSL）或 587（STARTTLS）
 	SMTPUser            string                         `yaml:"smtp_user"`            // SMTP 登录用户名（发件人邮箱）

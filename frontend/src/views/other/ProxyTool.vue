@@ -102,6 +102,14 @@
           节点验证：{{ reachabilityCheck.last_check_status }}
           <span v-if="reachabilityCheck.last_check_at"> · 上次执行：{{ reachabilityCheck.last_check_at }}</span>
         </div>
+        <div class="manual-proxy-row">
+          <el-input v-model="manualProxyAddr" placeholder="手动代理地址，如 127.0.0.1:7890"
+            clearable style="max-width:300px" @keyup.enter="startManualProxy" />
+          <el-button type="success" @click="startManualProxy" :loading="startingProxy"
+            :disabled="!manualProxyAddr.trim()">
+            启动手动代理
+          </el-button>
+        </div>
         <div class="action-row">
           <el-button type="primary" @click="loadConfig" :loading="loadingConfig">解析节点</el-button>
           <el-button @click="copyExportConfig">复制配置</el-button>
@@ -467,6 +475,7 @@ const refreshingSubscription = ref(false)
 const nodes = ref([])
 const selectedNode = ref(null)
 
+const manualProxyAddr = ref('')
 const startingProxy = ref(false)
 const stoppingProxy = ref(false)
 const autoStarting = ref(false)
@@ -786,6 +795,28 @@ async function startProxy() {
       proxyURL.value = data.proxy_url
       activeNode.value = data.node
       ElMessage.success(`代理已启动，端口 ${data.http_port}`)
+    }
+  } catch (e) { ElMessage.error('启动失败') }
+  finally { startingProxy.value = false }
+}
+
+async function startManualProxy() {
+  const addr = manualProxyAddr.value.trim()
+  if (!addr) return
+  startingProxy.value = true
+  try {
+    const r = await fetch('/api/proxy/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_password: adminPassword(), manual_addr: addr })
+    })
+    const data = await r.json()
+    if (data.error) ElMessage.error(data.error)
+    else {
+      proxyRunning.value = true
+      httpPort.value = data.http_port
+      proxyURL.value = data.proxy_url
+      activeNode.value = `手动 ${addr}`
+      ElMessage.success(`手动代理已启动 → ${addr}，端口 ${data.http_port}`)
     }
   } catch (e) { ElMessage.error('启动失败') }
   finally { startingProxy.value = false }

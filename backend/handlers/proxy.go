@@ -364,7 +364,7 @@ type mailAttachment struct {
 }
 
 func (h *ProxyHandler) sendManagedRefreshReport(subject, outcome string, attempts []managedRefreshAttempt, extra map[string]interface{}, attachment *mailAttachment) {
-	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" {
+	if !h.alertEnabled || h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" {
 		return
 	}
 
@@ -489,14 +489,30 @@ func (h *ProxyHandler) fetchSubscriptions(sourceURLs []string) (string, []ProxyN
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
+			// 先尝试 Clash 格式
 			fetchURL := subscriptionURLForType(rawURL, "clash")
 			text, err := h.fetchSubscriptionWithFallback(fetchURL)
-			if err != nil {
-				results[idx] = fetchResult{index: idx, url: fetchURL, err: err}
-				return
+			if err == nil {
+				nodes, parseErr := parseClashYAML(text)
+				if parseErr == nil && len(nodes) > 0 {
+					results[idx] = fetchResult{index: idx, url: fetchURL, text: text, nodes: nodes, err: nil}
+					return
+				}
 			}
-			nodes, err := parseClashYAML(text)
-			results[idx] = fetchResult{index: idx, url: fetchURL, text: text, nodes: nodes, err: err}
+			// Clash 失败，回退尝试 Shadowrocket 格式并转换为 Clash YAML
+			srURL := subscriptionURLForType(rawURL, "shadowrocket")
+			srText, srErr := h.fetchRawSubscriptionWithFallback(srURL)
+			if srErr == nil {
+				nodes, parseErr := parseShadowrocketSubscription(srText)
+				if parseErr == nil && len(nodes) > 0 {
+					yamlText, yamlErr := nodesToClashYAML(nodes)
+					if yamlErr == nil {
+						results[idx] = fetchResult{index: idx, url: srURL, text: yamlText, nodes: nodes, err: nil}
+						return
+					}
+				}
+			}
+			results[idx] = fetchResult{index: idx, url: fetchURL, err: fmt.Errorf("clash: %v; shadowrocket: %v", err, srErr)}
 		}(i, sourceURL)
 	}
 	wg.Wait()
@@ -841,6 +857,7 @@ type ProxyHandler struct {
 	npcCmd        *exec.Cmd
 	npcMu         sync.Mutex
 	npsHandler    *NPSHandler // 用于一键创建 NPS 端口映射
+	alertEnabled  bool
 	alertEmail    string
 	smtpHost      string
 	smtpPort      int
@@ -923,6 +940,7 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 		localPort:     cfg.Proxy.LocalPort,
 		npcTunnelPort: cfg.Proxy.TunnelPort,
 		npsHandler:    npsHandler,
+		alertEnabled:  cfg.Proxy.AlertEnabled,
 		alertEmail:    cfg.Proxy.AlertEmail,
 		smtpHost:      cfg.Proxy.SMTPHost,
 		smtpPort:      cfg.Proxy.SMTPPort,
@@ -1813,6 +1831,35 @@ func (h *ProxyHandler) currentSubscriptionByType(subType string) (string, int, s
 	}
 	if subType == "clash" {
 		yamlText, nodeCount, err := currentSubscriptionYAML()
+		if yamlText != "" && err == nil {
+			return yamlText, nodeCount, "", nil
+		}
+		// 没有 Clash YAML 缓存，尝试从节点转换或从 Shadowrocket 源获取
+		globalSession.mu.RLock()
+		hasNodes := len(globalSession.nodes) > 0
+		globalSession.mu.RUnlock()
+		if hasNodes {
+			globalSession.mu.RLock()
+			nodes := make([]ProxyNode, len(globalSession.nodes))
+			copy(nodes, globalSession.nodes)
+			globalSession.mu.RUnlock()
+			yamlText, convErr := nodesToClashYAML(nodes)
+			if convErr == nil {
+				return yamlText, len(nodes), "", nil
+			}
+		}
+		sourceURLs := currentSubscriptionSourceURLs()
+		srSourceURL, srText, srErr := h.fetchSubscriptionByType(sourceURLs, "shadowrocket")
+		if srErr == nil && srText != "" {
+			nodes, parseErr := parseShadowrocketSubscription(srText)
+			if parseErr == nil && len(nodes) > 0 {
+				yamlText, convErr := nodesToClashYAML(nodes)
+				if convErr == nil {
+					saveSubscriptionCacheEntry("shadowrocket", srSourceURL, srText)
+					return yamlText, len(nodes), srSourceURL, nil
+				}
+			}
+		}
 		return yamlText, nodeCount, "", err
 	}
 
@@ -2185,6 +2232,379 @@ func parseClashYAML(data string) ([]ProxyNode, error) {
 	return nodes, nil
 }
 
+// parseShadowrocketSubscription 解析 Shadowrocket 格式订阅（base64 编码的代理 URI 列表）
+func parseShadowrocketSubscription(text string) ([]ProxyNode, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, errors.New("empty subscription")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(text)
+		if err != nil {
+			return nil, fmt.Errorf("base64 decode failed: %w", err)
+		}
+	}
+	lines := strings.Split(string(decoded), "\n")
+	nodes := make([]ProxyNode, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "vmess://"):
+			if n, err := parseVmessURL(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		case strings.HasPrefix(line, "vless://"):
+			if n, err := parseVlessURL(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		case strings.HasPrefix(line, "trojan://"):
+			if n, err := parseTrojanURL(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		case strings.HasPrefix(line, "ss://"):
+			if n, err := parseSSURL(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		case strings.HasPrefix(line, "ssr://"):
+			if n, err := parseSSRURL(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		case strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://"):
+			if n, err := parseHTTPProxyURL(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		case strings.HasPrefix(line, "socks5://"):
+			if n, err := parseSOCKSURL(line); err == nil {
+				nodes = append(nodes, n)
+			}
+		}
+	}
+	if len(nodes) == 0 {
+		return nil, errors.New("no valid proxy nodes found in subscription")
+	}
+	return nodes, nil
+}
+
+func parseSSURL(uri string) (ProxyNode, error) {
+	node := ProxyNode{Type: "ss", Extra: make(map[string]interface{})}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return node, err
+	}
+	userInfo := u.User.String()
+	if userInfo == "" {
+		return node, errors.New("ss: missing user info")
+	}
+	decoded, err := base64.RawStdEncoding.DecodeString(userInfo)
+	if err != nil {
+		decoded, err = base64.StdEncoding.DecodeString(userInfo)
+		if err != nil {
+			return node, fmt.Errorf("ss: base64 decode user info: %w", err)
+		}
+	}
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) < 2 {
+		return node, errors.New("ss: invalid user info format")
+	}
+	node.Extra["cipher"] = parts[0]
+	node.Extra["password"] = parts[1]
+	node.Server = u.Hostname()
+	node.Port = portFromHost(u.Host)
+	node.Name = nodeNameFromFragment(u.Fragment)
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("SS %s:%d", node.Server, node.Port)
+	}
+	node.Extra["plugin"] = u.Query().Get("plugin")
+	return node, nil
+}
+
+func parseSSRURL(uri string) (ProxyNode, error) {
+	node := ProxyNode{Type: "ssr", Extra: make(map[string]interface{})}
+	encoded := strings.TrimPrefix(uri, "ssr://")
+	decoded, err := base64.RawStdEncoding.DecodeString(encoded)
+	if err != nil {
+		decoded, err = base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return node, fmt.Errorf("ssr: base64 decode: %w", err)
+		}
+	}
+	plain := string(decoded)
+	idx := strings.Index(plain, "/?")
+	mainPart := plain
+	queryPart := ""
+	if idx >= 0 {
+		mainPart = plain[:idx]
+		queryPart = plain[idx+2:] // 去掉 "/?" 前缀
+	}
+	parts := strings.SplitN(mainPart, ":", 6)
+	if len(parts) < 6 {
+		return node, fmt.Errorf("ssr: invalid format, got %d parts", len(parts))
+	}
+	node.Server = parts[0]
+	node.Port, _ = strconv.Atoi(parts[1])
+	node.Extra["protocol"] = parts[2]
+	node.Extra["cipher"] = parts[3]
+	node.Extra["obfs"] = parts[4]
+	if pw, err := base64.RawStdEncoding.DecodeString(parts[5]); err == nil {
+		node.Extra["password"] = string(pw)
+	} else if pw, err := base64.StdEncoding.DecodeString(parts[5]); err == nil {
+		node.Extra["password"] = string(pw)
+	} else {
+		node.Extra["password"] = parts[5]
+	}
+	if queryPart != "" {
+		qs, err := url.ParseQuery(queryPart)
+		if err == nil {
+			for k, v := range qs {
+				if len(v) > 0 {
+					node.Extra[k] = v[0]
+				}
+			}
+		}
+	}
+	if remarks, ok := node.Extra["remarks"].(string); ok && remarks != "" {
+		decodedRemarks, err := base64.RawStdEncoding.DecodeString(remarks)
+		if err == nil {
+			node.Name = string(decodedRemarks)
+		} else {
+			node.Name = remarks
+		}
+	}
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("SSR %s:%d", node.Server, node.Port)
+	}
+	return node, nil
+}
+
+func parseVmessURL(uri string) (ProxyNode, error) {
+	node := ProxyNode{Type: "vmess", Extra: make(map[string]interface{})}
+	encoded := strings.TrimPrefix(uri, "vmess://")
+	decoded, err := base64.RawStdEncoding.DecodeString(encoded)
+	if err != nil {
+		decoded, err = base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return node, fmt.Errorf("vmess: base64 decode: %w", err)
+		}
+	}
+	var cfg struct {
+		Ps   string      `json:"ps"`
+		Add  string      `json:"add"`
+		Port interface{} `json:"port"`
+		ID   string      `json:"id"`
+		Aid  interface{} `json:"aid"`
+		Net  string      `json:"net"`
+		Type string      `json:"type"`
+		Host string      `json:"host"`
+		Path string      `json:"path"`
+		TLS  string      `json:"tls"`
+		SNI  string      `json:"sni"`
+		ALPN string      `json:"alpn"`
+	}
+	if err := json.Unmarshal(decoded, &cfg); err != nil {
+		return node, fmt.Errorf("vmess: json decode: %w", err)
+	}
+	node.Name = cfg.Ps
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("VMess %s:%v", cfg.Add, cfg.Port)
+	}
+	node.Server = cfg.Add
+	switch p := cfg.Port.(type) {
+	case float64:
+		node.Port = int(p)
+	case string:
+		node.Port, _ = strconv.Atoi(p)
+	}
+	node.Extra["uuid"] = cfg.ID
+	node.Extra["alterId"] = cfg.Aid
+	node.Extra["network"] = cfg.Net
+	node.Extra["host"] = cfg.Host
+	node.Extra["path"] = cfg.Path
+	node.Extra["tls"] = cfg.TLS
+	node.Extra["sni"] = cfg.SNI
+	node.Extra["alpn"] = cfg.ALPN
+	node.Extra["type"] = cfg.Type
+	return node, nil
+}
+
+func parseVlessURL(uri string) (ProxyNode, error) {
+	node := ProxyNode{Type: "vless", Extra: make(map[string]interface{})}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return node, err
+	}
+	node.Server = u.Hostname()
+	node.Port = portFromHost(u.Host)
+	if u.User != nil {
+		node.Extra["uuid"] = u.User.Username()
+	}
+	for k, v := range u.Query() {
+		if len(v) > 0 {
+			node.Extra[k] = v[0]
+		}
+	}
+	node.Name = nodeNameFromFragment(u.Fragment)
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("VLESS %s:%d", node.Server, node.Port)
+	}
+	return node, nil
+}
+
+func parseTrojanURL(uri string) (ProxyNode, error) {
+	node := ProxyNode{Type: "trojan", Extra: make(map[string]interface{})}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return node, err
+	}
+	node.Server = u.Hostname()
+	node.Port = portFromHost(u.Host)
+	if u.User != nil {
+		node.Extra["password"] = u.User.Username()
+	}
+	for k, v := range u.Query() {
+		if len(v) > 0 {
+			node.Extra[k] = v[0]
+		}
+	}
+	node.Name = nodeNameFromFragment(u.Fragment)
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("Trojan %s:%d", node.Server, node.Port)
+	}
+	return node, nil
+}
+
+func parseHTTPProxyURL(uri string) (ProxyNode, error) {
+	node := ProxyNode{Type: "http", Extra: make(map[string]interface{})}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return node, err
+	}
+	node.Server = u.Hostname()
+	node.Port = portFromHost(u.Host)
+	if u.User != nil {
+		node.Extra["username"] = u.User.Username()
+		if pw, ok := u.User.Password(); ok {
+			node.Extra["password"] = pw
+		}
+	}
+	node.Name = nodeNameFromFragment(u.Fragment)
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("HTTP %s:%d", node.Server, node.Port)
+	}
+	return node, nil
+}
+
+func parseSOCKSURL(uri string) (ProxyNode, error) {
+	node := ProxyNode{Type: "socks5", Extra: make(map[string]interface{})}
+	u, err := url.Parse(uri)
+	if err != nil {
+		return node, err
+	}
+	node.Server = u.Hostname()
+	node.Port = portFromHost(u.Host)
+	if u.User != nil {
+		node.Extra["username"] = u.User.Username()
+		if pw, ok := u.User.Password(); ok {
+			node.Extra["password"] = pw
+		}
+	}
+	node.Name = nodeNameFromFragment(u.Fragment)
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("SOCKS5 %s:%d", node.Server, node.Port)
+	}
+	return node, nil
+}
+
+func portFromHost(host string) int {
+	_, portStr, err := net.SplitHostPort(host)
+	if err != nil {
+		return 443
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 443
+	}
+	return port
+}
+
+func nodeNameFromFragment(fragment string) string {
+	if fragment == "" {
+		return ""
+	}
+	decoded, err := url.QueryUnescape(fragment)
+	if err != nil {
+		return fragment
+	}
+	return strings.TrimSpace(decoded)
+}
+
+func parseManualProxyAddr(addr string) (*ProxyNode, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return nil, errors.New("address is empty")
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		// 没有端口，尝试加默认端口
+		host = addr
+		portStr = "7890"
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		port = 7890
+	}
+	if net.ParseIP(host) == nil {
+		// 不是 IP，也接受（可能是域名）
+	}
+	return &ProxyNode{
+		Name:   fmt.Sprintf("手动 %s:%d", host, port),
+		Type:   "http",
+		Server: host,
+		Port:   port,
+		Extra:  make(map[string]interface{}),
+	}, nil
+}
+
+func nodesToClashYAML(nodes []ProxyNode) (string, error) {
+	if len(nodes) == 0 {
+		return "", errors.New("no nodes to convert")
+	}
+	proxies := make([]map[string]interface{}, len(nodes))
+	for i, n := range nodes {
+		proxy := map[string]interface{}{
+			"name":   n.Name,
+			"type":   n.Type,
+			"server": n.Server,
+			"port":   n.Port,
+		}
+		for k, v := range n.Extra {
+			switch k {
+			case "uuid", "password", "cipher", "network", "host", "path", "tls", "sni", "alpn",
+				"protocol", "obfs", "plugin", "alterId", "username":
+				if v != nil && v != "" {
+					proxy[k] = v
+				}
+			default:
+				proxy[k] = v
+			}
+		}
+		proxies[i] = proxy
+	}
+	out := map[string]interface{}{
+		"proxies": proxies,
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(out); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
 // fetchSubscriptionWithFallback 尝试通过代理（活跃代理 → 配置的 request_proxy_url → 直连）下载订阅
 func (h *ProxyHandler) fetchSubscriptionWithFallback(rawURL string) (string, error) {
 	return h.fetchSubscriptionWithFallbackMode(rawURL, true)
@@ -2267,6 +2687,7 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 		SourceURL        string   `json:"source_url"`
 		SourceURLs       []string `json:"source_urls"`
 		YAMLContent      string   `json:"yaml_content"`
+		ManualProxyAddr  string   `json:"manual_proxy_addr"`
 		RoutingMode      string   `json:"routing_mode"`
 		DefaultNodeName  string   `json:"default_node_name"`
 		DefaultNodeRegex string   `json:"default_node_regex"`
@@ -2324,6 +2745,17 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 			return
 		}
 	}
+	if manualAddr := strings.TrimSpace(req.ManualProxyAddr); manualAddr != "" {
+		manualNode, err := parseManualProxyAddr(manualAddr)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "手动代理地址格式错误: " + err.Error()})
+			return
+		}
+		nodes = append(nodes, *manualNode)
+		if defaultNodeName == "" {
+			defaultNodeName = manualNode.Name
+		}
+	}
 	if len(nodes) == 0 {
 		c.JSON(400, gin.H{"error": "未找到任何节点"})
 		return
@@ -2337,8 +2769,8 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 			}
 		}
 		if !found {
-			c.JSON(400, gin.H{"error": "手动默认线路不存在"})
-			return
+			log.Printf("proxy: 手动默认线路 %q 在新订阅中不存在，已清除", defaultNodeName)
+			defaultNodeName = ""
 		}
 	}
 	if aiNodeName != "" {
@@ -2350,8 +2782,8 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 			}
 		}
 		if !found {
-			c.JSON(400, gin.H{"error": "手动 AI 线路不存在"})
-			return
+			log.Printf("proxy: 手动 AI 线路 %q 在新订阅中不存在，已清除", aiNodeName)
+			aiNodeName = ""
 		}
 	}
 
@@ -2606,6 +3038,7 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 	var req struct {
 		AdminPassword string `json:"admin_password"`
 		NodeName      string `json:"node_name"`
+		ManualAddr    string `json:"manual_addr"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": "参数错误"})
@@ -2616,20 +3049,29 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 		return
 	}
 
-	globalSession.mu.RLock()
 	var target *ProxyNode
-	for i := range globalSession.nodes {
-		if globalSession.nodes[i].Name == req.NodeName {
-			n := globalSession.nodes[i]
-			target = &n
-			break
+	if manualAddr := strings.TrimSpace(req.ManualAddr); manualAddr != "" {
+		n, err := parseManualProxyAddr(manualAddr)
+		if err != nil {
+			c.JSON(400, gin.H{"error": "手动代理地址格式错误: " + err.Error()})
+			return
 		}
-	}
-	globalSession.mu.RUnlock()
+		target = n
+	} else {
+		globalSession.mu.RLock()
+		for i := range globalSession.nodes {
+			if globalSession.nodes[i].Name == req.NodeName {
+				n := globalSession.nodes[i]
+				target = &n
+				break
+			}
+		}
+		globalSession.mu.RUnlock()
 
-	if target == nil {
-		c.JSON(404, gin.H{"error": "节点不存在"})
-		return
+		if target == nil {
+			c.JSON(404, gin.H{"error": "节点不存在"})
+			return
+		}
 	}
 
 	// 停止旧代理（startProxyListener 内部会处理，这里保留以便提前释放）
@@ -3926,7 +4368,7 @@ func writeBase64Lines(dst *strings.Builder, data []byte) {
 // sendAlert 发送告警邮件（SMTP SSL，465 端口）
 func (h *ProxyHandler) sendAlertWithAttachment(subject, body string, attachment *mailAttachment) {
 	defer func() { if r := recover(); r != nil { log.Printf("PANIC in sendAlertWithAttachment: %v", r) } }()
-	if h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" || h.smtpPass == "" {
+	if !h.alertEnabled || h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" || h.smtpPass == "" {
 		return
 	}
 
