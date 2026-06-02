@@ -79,7 +79,7 @@
     "@tailwindcss/oxide-darwin-x64": "4.2.1",
     "@tailwindcss/oxide-freebsd-x64": "4.2.1",
     "@tailwindcss/oxide-linux-arm-gnueabihf": "4.2.1",
-    "@tailwindcss/oxide-linux-arm64-gnu": "4.2.1",
+    "@tailwindcss/oxide-linux-arm64-gnu": "4.3.0",
     "@tailwindcss/oxide-linux-arm64-musl": "4.2.1",
     "@tailwindcss/oxide-linux-x64-gnu": "4.2.1",
     "@tailwindcss/oxide-linux-x64-musl": "4.2.1",
