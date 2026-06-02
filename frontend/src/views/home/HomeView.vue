@@ -155,17 +155,17 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search, Close, ArrowRight, Star } from '@element-plus/icons-vue'
-import { toolRoutes, categories } from '../../router'
+import { categories } from '../../router'
 import { useToolPreferences } from '../../composables/useToolPreferences'
+import { useToolRegistry } from '../../composables/useToolRegistry'
 
 const router = useRouter()
 const searchText = ref('')
 const activeCategory = ref('dev')
 const { recentPaths, favoritePaths, rememberTool, toggleFavorite, isFavorite, sortRoutesByPreference } = useToolPreferences()
+const { visibleTools, loadHiddenRoutes } = useToolRegistry()
 
-const validTools = computed(() =>
-  toolRoutes.filter(t => !t.path.includes('/:') && !t.meta?.hideSidebar)
-)
+const validTools = computed(() => visibleTools.value)
 
 const shortcutTools = computed(() =>
   validTools.value
@@ -223,6 +223,7 @@ function goToFirst() {
 }
 
 onMounted(() => {
+  loadHiddenRoutes()
   const q = new URLSearchParams(location.search).get('q')
   if (q) {
     searchText.value = q

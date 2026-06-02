@@ -304,6 +304,7 @@ import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tool
 import { useTheme } from './composables/useTheme'
 import { useMediaPlayer } from './composables/useMediaPlayer'
 import { useToolPreferences } from './composables/useToolPreferences'
+import { useToolRegistry } from './composables/useToolRegistry'
 
 const router = useRouter()
 const route = useRoute()
@@ -311,10 +312,10 @@ const isCollapse = ref(false)
 const showDrawer = ref(false)
 const isMobile = ref(false)
 const showDonateDialog = ref(false)
-const hiddenRoutes = ref([])
 const viewRefreshKey = ref(0)
 const lastBackgroundAt = ref(Date.now())
 const { recentPaths, favoritePaths, rememberTool, sortRoutesByPreference } = useToolPreferences()
+const { visibleTools, loadHiddenRoutes } = useToolRegistry()
 const currentViewKey = computed(() => `${route.fullPath}:${viewRefreshKey.value}`)
 let idleRefreshTimer = null
 
@@ -349,10 +350,8 @@ function fmtTime(s) {
   return player.fmtTime(s)
 }
 
-// 启动时拉取隐藏路由配置
-fetch('/api/console/settings').then(r => r.json()).then(d => {
-  hiddenRoutes.value = d.hidden_routes || []
-}).catch(() => {})
+// 启动时拉取隐藏路由配置（共享给首页与侧边栏）
+loadHiddenRoutes()
 
 // 主题管理
 const { themeMode, currentTheme, setThemeMode, toggleTheme } = useTheme()
@@ -368,12 +367,7 @@ const currentTitle = computed(() => {
 
 import { categories } from './router'
 
-const menuRoutes = computed(() => {
-  return router.options.routes.filter(route =>
-    route.meta && route.meta.title && !route.path.includes(':') && route.meta.category && route.meta.category !== 'home' &&
-    (route.path === '/console' || !hiddenRoutes.value.includes(route.path))
-  )
-})
+const menuRoutes = computed(() => visibleTools.value)
 
 // 侧边栏搜索（带防抖）
 const sidebarSearch = ref('')

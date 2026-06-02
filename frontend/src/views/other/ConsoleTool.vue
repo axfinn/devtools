@@ -43,12 +43,12 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { useToolRegistry } from '../../composables/useToolRegistry'
 
 const SESSION_KEY = 'console_admin_pass'
 
-const router = useRouter()
+const { allTools, setHiddenRoutes } = useToolRegistry()
 const passwordInput = ref('')
 const isAdmin = ref(false)
 const loginLoading = ref(false)
@@ -60,10 +60,8 @@ const categoryNames = {
   collab: '协作分享', life: '生活工具', other: '其他工具'
 }
 
-// 所有可隐藏的路由（排除 /console 和带参数的路由）
-const allRoutes = router.options.routes.filter(r =>
-  r.meta?.title && !r.path.includes(':') && r.meta?.category && r.meta.category !== 'home' && r.path !== '/console'
-)
+// 所有可隐藏的路由（共享注册表，排除 /console）
+const allRoutes = allTools.value.filter(r => r.path !== '/console')
 
 const groupedRoutes = allRoutes.reduce((acc, r) => {
   const cat = r.meta.category || 'other'
@@ -111,7 +109,8 @@ async function save() {
       body: JSON.stringify({ hidden_routes: hidden })
     })
     if (!res.ok) { ElMessage.error('保存失败'); return }
-    ElMessage.success('已保存，刷新页面生效')
+    setHiddenRoutes(hidden)
+    ElMessage.success('已保存')
   } catch {
     ElMessage.error('请求失败')
   } finally {
