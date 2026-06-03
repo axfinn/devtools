@@ -46,6 +46,22 @@ type Config struct {
 	NPS                 NPSConfig                 `yaml:"nps"`
 	Mermaid             MermaidConfig             `yaml:"mermaid"`
 	Hermes              HermesConfig              `yaml:"hermes"`
+	AskitSync           AskitSyncConfig           `yaml:"askit_sync"`
+}
+
+// AskitSyncConfig AskIt 扩展云同步配置
+type AskitSyncConfig struct {
+	RegistrationMode   string `yaml:"registration_mode"`    // closed | invite | open，默认 closed（不对外开放注册）
+	RequireEmailVerify bool   `yaml:"require_email_verify"` // 注册后是否必须验证邮箱才能登录，默认 true
+	AccessTTLHours     int    `yaml:"access_ttl_hours"`     // access token 有效期（小时），默认 2
+	RefreshTTLHours    int    `yaml:"refresh_ttl_hours"`    // refresh token 有效期（小时），默认 720（30 天）
+	BlobMaxBytes       int64  `yaml:"blob_max_bytes"`       // 单用户同步数据上限（字节），默认 50MB
+	AdminPassword      string `yaml:"admin_password"`       // 邀请码管理密码，为空则禁用邀请码管理接口
+	CodeTTLMinutes     int    `yaml:"code_ttl_minutes"`     // 邮箱验证码/重置码有效期（分钟），默认 30
+	SMTPHost           string `yaml:"smtp_host"`            // SMTP 服务器（验证码/重置邮件），留空则不发邮件
+	SMTPPort           int    `yaml:"smtp_port"`            // SMTP 端口，465=隐式 TLS，其余走 STARTTLS
+	SMTPUser           string `yaml:"smtp_user"`            // SMTP 用户名（发件人）
+	SMTPPass           string `yaml:"smtp_pass"`            // SMTP 授权码/密码
 }
 
 // MermaidConfig Mermaid 图表工具配置
@@ -548,6 +564,15 @@ func DefaultConfig() *Config {
 			APIBaseURL:   "http://host.docker.internal:8642/v1",
 			Model:        "hermes-agent",
 		},
+		AskitSync: AskitSyncConfig{
+			RegistrationMode:   "closed",
+			RequireEmailVerify: true,
+			AccessTTLHours:     2,
+			RefreshTTLHours:    720,
+			BlobMaxBytes:       50 * 1024 * 1024,
+			CodeTTLMinutes:     30,
+			SMTPPort:           465,
+		},
 		Proxy: ProxyConfig{
 			SubscriptionRefresh: ProxySubscriptionRefreshConfig{
 				IntervalHours:    24,
@@ -685,6 +710,46 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Chat.TTSServiceURL == "" {
 		cfg.Chat.TTSServiceURL = "http://127.0.0.1:8083"
+	}
+
+	// AskIt 云同步配置环境变量覆盖
+	if v := os.Getenv("ASKIT_SYNC_REGISTRATION_MODE"); v != "" {
+		cfg.AskitSync.RegistrationMode = v
+	}
+	if v := os.Getenv("ASKIT_SYNC_REQUIRE_EMAIL_VERIFY"); v != "" {
+		cfg.AskitSync.RequireEmailVerify = v == "1" || v == "true" || v == "TRUE"
+	}
+	if v := os.Getenv("ASKIT_SYNC_ADMIN_PASSWORD"); v != "" {
+		cfg.AskitSync.AdminPassword = v
+	}
+	if v := os.Getenv("ASKIT_SYNC_BLOB_MAX_BYTES"); v != "" {
+		if n, convErr := strconv.ParseInt(v, 10, 64); convErr == nil {
+			cfg.AskitSync.BlobMaxBytes = n
+		}
+	}
+	if v := os.Getenv("ASKIT_SYNC_ACCESS_TTL_HOURS"); v != "" {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.AskitSync.AccessTTLHours = n
+		}
+	}
+	if v := os.Getenv("ASKIT_SYNC_REFRESH_TTL_HOURS"); v != "" {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.AskitSync.RefreshTTLHours = n
+		}
+	}
+	if v := os.Getenv("ASKIT_SYNC_SMTP_HOST"); v != "" {
+		cfg.AskitSync.SMTPHost = v
+	}
+	if v := os.Getenv("ASKIT_SYNC_SMTP_PORT"); v != "" {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.AskitSync.SMTPPort = n
+		}
+	}
+	if v := os.Getenv("ASKIT_SYNC_SMTP_USER"); v != "" {
+		cfg.AskitSync.SMTPUser = v
+	}
+	if v := os.Getenv("ASKIT_SYNC_SMTP_PASS"); v != "" {
+		cfg.AskitSync.SMTPPass = v
 	}
 
 	// MiniMax 子模块默认复用主 API Key，只有显式配置时才覆盖。

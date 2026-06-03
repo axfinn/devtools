@@ -39,6 +39,7 @@ type routeHandlers struct {
 	edgeTTSHandler            *handlers.EdgeTTSHandler
 	voiceMemoHandler          *handlers.VoiceMemoHandler
 	gameHandler               *handlers.GameHandler
+	askitSyncHandler          *handlers.AskitSyncHandler
 }
 
 func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter, h *routeHandlers) {
@@ -535,6 +536,29 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 
 	// AskIt 扩展下载
 	api.GET("/askit/extension", h.aiGatewayHandler.AskitExtensionDownload)
+
+	// AskIt 云同步 /api/askit/v1
+	askit := api.Group("/askit/v1")
+	{
+		auth := askit.Group("/auth")
+		{
+			auth.POST("/register", createRateLimiter.Middleware(), h.askitSyncHandler.Register)
+			auth.POST("/verify", createRateLimiter.Middleware(), h.askitSyncHandler.Verify)
+			auth.POST("/login", createRateLimiter.Middleware(), h.askitSyncHandler.Login)
+			auth.POST("/refresh", h.askitSyncHandler.Refresh)
+			auth.POST("/request-reset", createRateLimiter.Middleware(), h.askitSyncHandler.RequestReset)
+			auth.POST("/reset", createRateLimiter.Middleware(), h.askitSyncHandler.Reset)
+			auth.GET("/me", h.askitSyncHandler.AuthMiddleware(), h.askitSyncHandler.Me)
+			auth.POST("/logout", h.askitSyncHandler.AuthMiddleware(), h.askitSyncHandler.Logout)
+		}
+		sync := askit.Group("/sync", h.askitSyncHandler.AuthMiddleware())
+		{
+			sync.GET("/pull", h.askitSyncHandler.Pull)
+			sync.POST("/push", h.askitSyncHandler.Push)
+			sync.GET("/snapshot", h.askitSyncHandler.Snapshot)
+		}
+		askit.POST("/admin/invites", h.askitSyncHandler.CreateInvites)
+	}
 
 	// AI Chat 密码验证
 	api.POST("/ai-chat/verify", h.aiGatewayHandler.AIChatVerify)

@@ -57,6 +57,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
 	gameHandler := handlers.NewGameHandler()
 	voiceMemoHandler := handlers.NewVoiceMemoHandler(db, plannerHandler, envOrDefault("ASR_SERVICE_URL", "http://asr-service:9000"))
+	askitSyncHandler := handlers.NewAskitSyncHandler(db, cfg.AskitSync)
 
 	return &routeHandlers{
 		pasteHandler:              pasteHandler,
@@ -89,6 +90,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		edgeTTSHandler:            edgeTTSHandler,
 		gameHandler:               gameHandler,
 		voiceMemoHandler:          voiceMemoHandler,
+		askitSyncHandler:          askitSyncHandler,
 	}, nil
 }
 
