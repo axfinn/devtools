@@ -142,18 +142,44 @@ func (h *AskitSyncHandler) sendCodeMail(to, subject, body string) error {
 	return client.Quit()
 }
 
-// ── 鉴权接口 ─────────────────────────────────────────────
+// ── 鉴权接口(无密码 · 邮箱验证码登录)─────────────────────────────
+//
+// 登录即注册：输入邮箱 → 收 6 位验证码 → 提交验证码即登录。
+//   · 邮箱已有账号        → 直接登录。
+//   · 邮箱无账号 + open    → 自动注册后登录。
+//   · 邮箱无账号 + invite  → 校验邀请码，通过则自动注册后登录。
+//   · 邮箱无账号 + closed  → 拒绝(registration_closed)。
+// 整个流程不涉及密码;验证码本身即邮箱所有权证明,注册即视为已验证。
 
-type askitRegisterReq struct {
+type askitRequestCodeReq struct {
 	Email      string `json:"email"`
-	Password   string `json:"password"`
 	InviteCode string `json:"inviteCode"`
 }
 
-// Register POST /auth/register —— 受 RegistrationMode 控制。
-// closed：拒绝；invite：校验邀请码；open：直接放行。
-func (h *AskitSyncHandler) Register(c *gin.Context) {
-	var req askitRegisterReq
+// gateNewEmail 按注册模式判定一个「未注册邮箱」能否进入注册流程。
+// 返回 (errorCode, httpStatus);允许时 errorCode 为空。
+func (h *AskitSyncHandler) gateNewEmail(inviteCode string) (string, int) {
+	switch h.cfg.RegistrationMode {
+	case "open":
+		return "", 0
+	case "invite":
+		ok, err := h.db.CheckAskitInviteCode(strings.TrimSpace(inviteCode), askitNowMs())
+		if err != nil {
+			return "server_error", http.StatusInternalServerError
+		}
+		if !ok {
+			return "invalid_invite_code", http.StatusForbidden
+		}
+		return "", 0
+	default: // closed
+		return "registration_closed", http.StatusForbidden
+	}
+}
+
+// RequestCode POST /auth/request-code —— 下发登录验证码。
+// 邮箱无账号时按注册模式门控(closed 直接拒绝),已有账号直接放行下发。
+func (h *AskitSyncHandler) RequestCode(c *gin.Context) {
+	var req askitRequestCodeReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
@@ -163,87 +189,54 @@ func (h *AskitSyncHandler) Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
 		return
 	}
-	if len(req.Password) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "weak_password"})
-		return
-	}
 
-	switch h.cfg.RegistrationMode {
-	case "open":
-		// 放行
-	case "invite":
-		ok, err := h.db.CheckAskitInviteCode(strings.TrimSpace(req.InviteCode), askitNowMs())
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-			return
-		}
-		if !ok {
-			c.JSON(http.StatusForbidden, gin.H{"error": "invalid_invite_code"})
-			return
-		}
-	default: // closed
-		c.JSON(http.StatusForbidden, gin.H{"error": "registration_closed"})
-		return
-	}
-
-	hash, err := utils.HashPassword(req.Password)
+	user, err := h.db.GetAskitUserByEmail(req.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 		return
 	}
-	userID := utils.GenerateHexKey(16)
-	verified := !h.cfg.RequireEmailVerify
-	if err := h.db.CreateAskitUser(userID, req.Email, hash, verified, askitNowMs()); err != nil {
-		if err == models.ErrAskitEmailTaken {
-			c.JSON(http.StatusConflict, gin.H{"error": "email_taken"})
+	// 未注册邮箱:按注册模式决定能否继续(关闭即失败)。
+	if user == nil {
+		if code, status := h.gateNewEmail(req.InviteCode); code != "" {
+			c.JSON(status, gin.H{"error": code})
 			return
 		}
+	}
+
+	code := genNumericCode()
+	exp := time.Now().Add(time.Duration(h.cfg.CodeTTLMinutes) * time.Minute).UnixMilli()
+	if err := h.db.UpsertAskitEmailCode(req.Email, code, "login", exp); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 		return
 	}
-	if h.cfg.RegistrationMode == "invite" {
-		_ = h.db.MarkAskitInviteUsed(strings.TrimSpace(req.InviteCode), userID, askitNowMs())
-	}
-
-	// 需邮箱验证：下发验证码，登录前不签发 token。
-	if h.cfg.RequireEmailVerify {
-		code := genNumericCode()
-		exp := time.Now().Add(time.Duration(h.cfg.CodeTTLMinutes) * time.Minute).UnixMilli()
-		if err := h.db.UpsertAskitEmailCode(req.Email, code, "verify", exp); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-			return
-		}
-		if err := h.sendCodeMail(req.Email, "AskIt 邮箱验证码", fmt.Sprintf("你的验证码是 %s，%d 分钟内有效。", code, h.cfg.CodeTTLMinutes)); err != nil {
-			c.JSON(http.StatusOK, gin.H{"verifyRequired": true, "emailSent": false})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"verifyRequired": true, "emailSent": true})
+	if err := h.sendCodeMail(req.Email, "AskIt 登录验证码", fmt.Sprintf("你的登录验证码是 %s，%d 分钟内有效。若非本人操作请忽略。", code, h.cfg.CodeTTLMinutes)); err != nil {
+		c.JSON(http.StatusOK, gin.H{"emailSent": false})
 		return
 	}
-
-	tokens, err := h.issueTokens(userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
-	}
-	tokens["verifyRequired"] = false
-	c.JSON(http.StatusOK, tokens)
+	c.JSON(http.StatusOK, gin.H{"emailSent": true})
 }
 
-type askitVerifyReq struct {
-	Email string `json:"email"`
-	Code  string `json:"code"`
+type askitLoginCodeReq struct {
+	Email      string `json:"email"`
+	Code       string `json:"code"`
+	InviteCode string `json:"inviteCode"`
 }
 
-// Verify POST /auth/verify —— 校验邮箱验证码，成功后置 verified 并签发 token。
-func (h *AskitSyncHandler) Verify(c *gin.Context) {
-	var req askitVerifyReq
+// LoginCode POST /auth/login-code —— 校验验证码并登录。
+// 邮箱无账号则自动注册(没有就注册);注册再次受门控(关闭就失败)。
+func (h *AskitSyncHandler) LoginCode(c *gin.Context) {
+	var req askitLoginCodeReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	ok, err := h.db.ConsumeAskitEmailCode(req.Email, strings.TrimSpace(req.Code), "verify", askitNowMs())
+	if !askitEmailRe.MatchString(req.Email) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_email"})
+		return
+	}
+
+	ok, err := h.db.ConsumeAskitEmailCode(req.Email, strings.TrimSpace(req.Code), "login", askitNowMs())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 		return
@@ -252,49 +245,41 @@ func (h *AskitSyncHandler) Verify(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_code"})
 		return
 	}
-	if err := h.db.SetAskitUserVerified(req.Email); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
-	}
-	user, err := h.db.GetAskitUserByEmail(req.Email)
-	if err != nil || user == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
-	}
-	tokens, err := h.issueTokens(user.ID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
-	}
-	c.JSON(http.StatusOK, tokens)
-}
 
-type askitLoginReq struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-// Login POST /auth/login
-func (h *AskitSyncHandler) Login(c *gin.Context) {
-	var req askitLoginReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
-		return
-	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	user, err := h.db.GetAskitUserByEmail(req.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 		return
 	}
-	if user == nil || !utils.VerifyPassword(req.Password, user.PasswordHash) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_credentials"})
-		return
+
+	// 没有就注册:验证码已证明邮箱所有权,直接建号并置 verified。
+	if user == nil {
+		if code, status := h.gateNewEmail(req.InviteCode); code != "" {
+			c.JSON(status, gin.H{"error": code})
+			return
+		}
+		userID := utils.GenerateHexKey(16)
+		if err := h.db.CreateAskitUser(userID, req.Email, "", true, askitNowMs()); err != nil {
+			if err == models.ErrAskitEmailTaken {
+				// 并发下已被建号,重新读取继续登录。
+				if u, e := h.db.GetAskitUserByEmail(req.Email); e == nil && u != nil {
+					user = u
+				} else {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+					return
+				}
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+				return
+			}
+		} else {
+			if h.cfg.RegistrationMode == "invite" {
+				_ = h.db.MarkAskitInviteUsed(strings.TrimSpace(req.InviteCode), userID, askitNowMs())
+			}
+			user = &models.AskitUser{ID: userID, Email: req.Email, Verified: true}
+		}
 	}
-	if h.cfg.RequireEmailVerify && !user.Verified {
-		c.JSON(http.StatusForbidden, gin.H{"error": "email_not_verified"})
-		return
-	}
+
 	tokens, err := h.issueTokens(user.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
@@ -354,71 +339,6 @@ func (h *AskitSyncHandler) Logout(c *gin.Context) {
 	token := askitBearerToken(c)
 	if token != "" {
 		_ = h.db.DeleteAskitToken(token)
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-type askitResetReqReq struct {
-	Email string `json:"email"`
-}
-
-// RequestReset POST /auth/request-reset —— 下发重置码(始终返回 200,不暴露邮箱是否存在)。
-func (h *AskitSyncHandler) RequestReset(c *gin.Context) {
-	var req askitResetReqReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
-		return
-	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	user, err := h.db.GetAskitUserByEmail(req.Email)
-	if err == nil && user != nil {
-		code := genNumericCode()
-		exp := time.Now().Add(time.Duration(h.cfg.CodeTTLMinutes) * time.Minute).UnixMilli()
-		if err := h.db.UpsertAskitEmailCode(req.Email, code, "reset", exp); err == nil {
-			_ = h.sendCodeMail(req.Email, "AskIt 密码重置码", fmt.Sprintf("你的密码重置码是 %s，%d 分钟内有效。若非本人操作请忽略。", code, h.cfg.CodeTTLMinutes))
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-type askitResetReq struct {
-	Email       string `json:"email"`
-	Code        string `json:"code"`
-	NewPassword string `json:"newPassword"`
-}
-
-// Reset POST /auth/reset —— 校验重置码并改密,改密后吊销该用户全部 token。
-func (h *AskitSyncHandler) Reset(c *gin.Context) {
-	var req askitResetReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
-		return
-	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	if len(req.NewPassword) < 8 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "weak_password"})
-		return
-	}
-	ok, err := h.db.ConsumeAskitEmailCode(req.Email, strings.TrimSpace(req.Code), "reset", askitNowMs())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
-	}
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_code"})
-		return
-	}
-	hash, err := utils.HashPassword(req.NewPassword)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
-	}
-	if err := h.db.SetAskitUserPassword(req.Email, hash); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
-	}
-	if user, _ := h.db.GetAskitUserByEmail(req.Email); user != nil {
-		_ = h.db.DeleteAskitUserTokens(user.ID) // 改密登出所有设备
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

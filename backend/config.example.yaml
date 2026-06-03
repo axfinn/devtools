@@ -828,3 +828,31 @@ nps:
   # 自动分配端口区间（添加映射时不填端口则自动从此区间分配，0 表示不启用）
   port_range_start: 10000
   port_range_end: 20000
+
+# ============ AskIt 浏览器扩展云同步 ============
+# 把 AskIt 扩展的收藏 / 笔记 / 对话 / 提示词 / 设置同步到本后端，实现跨设备同步。
+# 登录方式：无密码 —— 输入邮箱 → 收 6 位验证码 → 提交验证码即登录，新邮箱自动注册。
+# 接口挂载在 /api/askit/v1，扩展端 syncClient 对接此前缀。
+# 注意：API key 永不上云，由扩展端在同步前剔除，换设备需重新填写。
+askit_sync:
+  # 注册模式：closed=未注册邮箱一律拒绝（仅已有账号可登录）；invite=未注册邮箱需带有效邀请码；open=任意邮箱自动注册
+  registration_mode: "closed"
+  # access token 有效期（小时）
+  access_ttl_hours: 2
+  # refresh token 有效期（小时），默认 720 小时（30 天）
+  refresh_ttl_hours: 720
+  # 单用户同步数据上限（字节），默认 50MB
+  blob_max_bytes: 52428800
+  # 邀请码管理密码（X-Admin-Password 头），留空则禁用 /admin/invites 邀请码生成接口
+  admin_password: ""
+  # 邮箱登录验证码有效期（分钟）
+  code_ttl_minutes: 30
+  # ===== 发登录验证码的 SMTP（留空则不发邮件，验证码无法送达）=====
+  # SMTP 服务器地址，如 smtp.qq.com / smtp.gmail.com
+  smtp_host: ""
+  # SMTP 端口：465=隐式 TLS（推荐），587/25 走 STARTTLS
+  smtp_port: 465
+  # SMTP 用户名，同时作为发件人地址
+  smtp_user: ""
+  # SMTP 授权码 / 密码（多数邮箱需用授权码而非登录密码）
+  smtp_pass: ""

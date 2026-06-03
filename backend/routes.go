@@ -542,12 +542,9 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	{
 		auth := askit.Group("/auth")
 		{
-			auth.POST("/register", createRateLimiter.Middleware(), h.askitSyncHandler.Register)
-			auth.POST("/verify", createRateLimiter.Middleware(), h.askitSyncHandler.Verify)
-			auth.POST("/login", createRateLimiter.Middleware(), h.askitSyncHandler.Login)
+			auth.POST("/request-code", createRateLimiter.Middleware(), h.askitSyncHandler.RequestCode)
+			auth.POST("/login-code", createRateLimiter.Middleware(), h.askitSyncHandler.LoginCode)
 			auth.POST("/refresh", h.askitSyncHandler.Refresh)
-			auth.POST("/request-reset", createRateLimiter.Middleware(), h.askitSyncHandler.RequestReset)
-			auth.POST("/reset", createRateLimiter.Middleware(), h.askitSyncHandler.Reset)
 			auth.GET("/me", h.askitSyncHandler.AuthMiddleware(), h.askitSyncHandler.Me)
 			auth.POST("/logout", h.askitSyncHandler.AuthMiddleware(), h.askitSyncHandler.Logout)
 		}
