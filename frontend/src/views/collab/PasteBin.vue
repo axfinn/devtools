@@ -150,7 +150,7 @@
         <div class="file-upload" v-else @click="selectFiles">
           <el-icon :size="32"><Upload /></el-icon>
           <span>点击上传文件或直接拖拽</span>
-          <span class="upload-hint">支持图片、视频、音频、PDF、Office文档、压缩包等 (最大 200MB)</span>
+          <span class="upload-hint">支持任意类型文件，不支持的格式（如 dmg/exe）会自动打包为 ZIP (最大 200MB)</span>
         </div>
       </div>
 
@@ -366,7 +366,7 @@
         <div class="file-upload" v-else @click="selectFiles">
           <el-icon :size="32"><Upload /></el-icon>
           <span>点击上传文件或直接拖拽</span>
-          <span class="upload-hint">支持图片、视频、音频、PDF、Office文档、压缩包等 (最大 200MB)</span>
+          <span class="upload-hint">支持任意类型文件，不支持的格式（如 dmg/exe）会自动打包为 ZIP (最大 200MB)</span>
         </div>
       </div>
 
@@ -479,11 +479,10 @@
         </ul>
       </div>
 
-      <!-- 共享文件输入框 -->
+      <!-- 共享文件输入框：不限制 accept，任意类型均可选择，后端对不支持类型自动打包 ZIP -->
       <input
         ref="fileInput"
         type="file"
-        accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.7z,.mov"
         multiple
         style="display: none"
         @change="onFileChange"
