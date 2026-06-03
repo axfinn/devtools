@@ -32,7 +32,8 @@ const (
 // Priority: GitHub dist/ (always latest) -> local static file (Docker build time).
 // GET /api/askit/extension
 func (h *AIGatewayHandler) AskitExtensionDownload(c *gin.Context) {
-	data, err := getAskitZipCached()
+	forceRefresh := c.Query("refresh") == "1"
+	data, err := getAskitZipCached(forceRefresh)
 	if err == nil {
 		c.Header("Content-Disposition", "attachment; filename=askit-extension.zip")
 		c.Header("Content-Type", "application/zip")
@@ -51,11 +52,11 @@ func (h *AIGatewayHandler) AskitExtensionDownload(c *gin.Context) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取扩展包失败: %v", err)})
 }
 
-func getAskitZipCached() ([]byte, error) {
+func getAskitZipCached(forceRefresh bool) ([]byte, error) {
 	askitCacheMu.Lock()
 	defer askitCacheMu.Unlock()
 
-	if askitCache != nil && time.Since(askitCacheTime) < askitCacheTTL {
+	if !forceRefresh && askitCache != nil && time.Since(askitCacheTime) < askitCacheTTL {
 		return askitCache, nil
 	}
 

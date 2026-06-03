@@ -697,6 +697,9 @@ help() {
     echo ""
     echo "  help        显示帮助"
     echo ""
+    echo "全局选项:"
+    echo "  --no-cache, -n   Docker 构建时禁用缓存 (等价于 NO_CACHE=1)"
+    echo ""
     echo "环境变量:"
     echo "  PORT        本地服务端口 (默认: 8080)"
     echo "  HOST_PORT   Docker 映射端口 (默认: 8082)"
@@ -707,9 +710,24 @@ help() {
     echo "  ./deploy.sh docker              # Docker 部署"
     echo "  ./deploy.sh docker-logs         # 查看 Docker 日志"
     echo "  PORT=8081 ./deploy.sh start     # 指定端口启动本地服务"
-    echo "  NO_CACHE=1 ./deploy.sh docker   # 无缓存重建 Docker 镜像"
+    echo "  ./deploy.sh docker --no-cache   # 无缓存重建 Docker 镜像"
+    echo "  NO_CACHE=1 ./deploy.sh docker   # 同上 (环境变量写法)"
     echo "  ./deploy.sh docker-warm-asr     # 预热 ASR 镜像和模型缓存"
 }
+
+# 解析全局选项：--no-cache/-n 等价于 NO_CACHE=1，可放在命令前后任意位置
+args=()
+for arg in "$@"; do
+    case "$arg" in
+        --no-cache|-n)
+            NO_CACHE=1
+            ;;
+        *)
+            args+=("$arg")
+            ;;
+    esac
+done
+set -- "${args[@]+"${args[@]}"}"
 
 case "${1:-help}" in
     build)

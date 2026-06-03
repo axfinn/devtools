@@ -33,6 +33,10 @@
           <el-icon><Download /></el-icon>
           下载 AskIt 扩展
         </el-button>
+        <el-button type="success" plain size="small" :loading="refreshingExt" @click="refreshExtension">
+          <el-icon><Refresh /></el-icon>
+          更新最新
+        </el-button>
       </div>
     </div>
 
@@ -189,7 +193,7 @@
 <script setup>
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Download, Plus, Delete, Setting } from '@element-plus/icons-vue'
+import { Download, Plus, Delete, Setting, Refresh } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import { API_BASE } from '../../api.js'
 
@@ -216,6 +220,7 @@ const AUTH_KEY = 'ai-chat-access-token'
 const authenticated = ref(false)
 const passwordInput = ref('')
 const loggingIn = ref(false)
+const refreshingExt = ref(false)
 
 const selectedModel = ref('MiniMax-M3')
 const systemPrompt = ref('')
@@ -592,6 +597,32 @@ async function handleMusicCover(text) {
 }
 
 function downloadExtension() { window.open(`${API_BASE}/api/askit/extension`, '_blank') }
+
+// refreshExtension 强制后端从 GitHub 重新拉取最新 dist 并打包，绕过 10 分钟缓存后下载。
+async function refreshExtension() {
+  refreshingExt.value = true
+  try {
+    const resp = await fetch(`${API_BASE}/api/askit/extension?refresh=1`)
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.error || `HTTP ${resp.status}`)
+    }
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'askit-extension.zip'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    ElMessage.success('已拉取最新扩展并开始下载')
+  } catch (err) {
+    ElMessage.error(`更新失败: ${err.message}`)
+  } finally {
+    refreshingExt.value = false
+  }
+}
 
 async function shareChat() {
   if (messages.value.length === 0) { ElMessage.warning('没有对话记录可分享'); return }
