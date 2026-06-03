@@ -115,6 +115,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/askit-invites',
+    name: 'AskitInvites',
+    component: () => import('../views/other/AskitInviteTool.vue'),
+    meta: {
+      title: 'AskIt 邀请码',
+      icon: 'Ticket',
+      category: 'other',
+      description: 'AskIt 云同步邀请码生成'
+    }
+  },
+  {
     path: '/base64',
     name: 'Base64',
     component: () => import('../views/convert/Base64Tool.vue'),
