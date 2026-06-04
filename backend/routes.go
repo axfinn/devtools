@@ -556,6 +556,9 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 			sync.POST("/push", h.askitSyncHandler.Push)
 			sync.GET("/snapshot", h.askitSyncHandler.Snapshot)
 		}
+		// 笔记图片转存:上传需鉴权,读取公开(文件名随机不可枚举)。
+		askit.POST("/blob/upload", h.askitSyncHandler.AuthMiddleware(), h.askitSyncHandler.BlobUpload)
+		askit.GET("/blob/files/:uid/:name", h.askitSyncHandler.BlobServe)
 		askit.POST("/admin/invites", h.askitSyncHandler.CreateInvites)
 		askit.GET("/admin/users", h.askitSyncHandler.AdminUsersOverview)
 	}
