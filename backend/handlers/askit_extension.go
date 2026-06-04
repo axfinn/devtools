@@ -3,11 +3,10 @@ package handlers
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -23,9 +22,8 @@ var (
 )
 
 const (
-	askitRepoOwner = "axfinn"
-	askitRepoName  = "Askit"
-	askitBranch    = "main"
+	askitRepoSSH = "git@github.com:axfinn/Askit.git"
+	askitBranch  = "main"
 )
 
 // AskitExtensionDownload serves the latest AskIt Chrome extension zip.
@@ -70,83 +68,84 @@ func getAskitZipCached(forceRefresh bool) ([]byte, error) {
 	return data, nil
 }
 
-// buildZipFromGitHub fetches the dist/ tree from GitHub API and builds a zip in memory
-func buildZipFromGitHub() ([]byte, error) {
-	treeURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/git/trees/%s?recursive=1", askitRepoOwner, askitRepoName, askitBranch)
-	client := &http.Client{Timeout: 30 * time.Second}
+// askitSSHCommand builds a GIT_SSH_COMMAND that reuses the persistent autodev
+// SSH key (already registered on GitHub) so the Askit clone authenticates without
+// a separate credential. GitHub rejects anonymous SSH even for public repos, so
+// reusing autodev's key is what makes this work. Returns "" if no key exists yet.
+func askitSSHCommand() string {
+	dataDir := os.Getenv("AUTODEV_DATA_DIR")
+	if dataDir == "" {
+		dataDir = filepath.Join(".", "data", "autodev")
+	}
+	sshDir := filepath.Join(dataDir, "ssh")
+	keyPath := filepath.Join(sshDir, "id_ed25519")
+	if _, err := os.Stat(keyPath); err != nil {
+		return ""
+	}
+	base := fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o BatchMode=yes", keyPath)
+	if knownHosts := filepath.Join(sshDir, "known_hosts"); fileExists(knownHosts) {
+		base += fmt.Sprintf(" -o UserKnownHostsFile=%s", knownHosts)
+	}
+	return base
+}
 
-	resp, err := client.Get(treeURL)
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// buildZipFromGitHub shallow-clones Askit over SSH and zips its dist/ directory
+// in memory. SSH bypasses the REST API entirely, so there is no 60/hour rate
+// limit — fixing the stale-extension fallback that anonymous API calls hit.
+func buildZipFromGitHub() ([]byte, error) {
+	tmpDir, err := os.MkdirTemp("", "askit-clone-")
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub tree API: %d", resp.StatusCode)
+	defer os.RemoveAll(tmpDir)
+
+	cmd := exec.Command("git", "clone", "--depth", "1", "--branch", askitBranch, askitRepoSSH, tmpDir)
+	if sshCmd := askitSSHCommand(); sshCmd != "" {
+		cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND="+sshCmd)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("git clone failed: %v: %s", err, string(out))
 	}
 
-	var tree struct {
-		Tree []struct {
-			Path string `json:"path"`
-			Type string `json:"type"`
-			URL  string `json:"url"`
-			Size int    `json:"size"`
-		} `json:"tree"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tree); err != nil {
-		return nil, err
+	distDir := filepath.Join(tmpDir, "dist")
+	if _, err := os.Stat(distDir); err != nil {
+		return nil, fmt.Errorf("dist/ not found in cloned repo")
 	}
 
-	// Filter dist/ files
-	type fileEntry struct {
-		path string
-		url  string
-	}
-	var files []fileEntry
-	for _, item := range tree.Tree {
-		if item.Type == "blob" && len(item.Path) > 5 && item.Path[:5] == "dist/" {
-			files = append(files, fileEntry{path: item.Path[5:], url: item.URL})
-		}
-	}
-	if len(files) == 0 {
-		return nil, fmt.Errorf("no dist/ files found in repo")
-	}
-
-	// Build zip
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-
-	for _, f := range files {
-		content, err := fetchGitHubBlob(client, f.url)
+	walkErr := filepath.Walk(distDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil, fmt.Errorf("fetch %s: %w", f.path, err)
+			return err
 		}
-		w, err := zw.Create(f.path)
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(distDir, path)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if _, err := w.Write(content); err != nil {
-			return nil, err
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
+		w, err := zw.Create(filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(content)
+		return err
+	})
+	if walkErr != nil {
+		return nil, walkErr
 	}
-
 	if err := zw.Close(); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-// fetchGitHubBlob downloads a blob's content via GitHub Git Blob API
-func fetchGitHubBlob(client *http.Client, blobURL string) ([]byte, error) {
-	req, _ := http.NewRequest("GET", blobURL, nil)
-	req.Header.Set("Accept", "application/vnd.github.raw+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("blob API: %d", resp.StatusCode)
-	}
-	return io.ReadAll(resp.Body)
 }
