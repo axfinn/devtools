@@ -598,25 +598,17 @@ async function handleMusicCover(text) {
 
 function downloadExtension() { window.open(`${API_BASE}/api/askit/extension`, '_blank') }
 
-// refreshExtension 强制后端从 GitHub 重新拉取最新 dist 并打包，绕过 10 分钟缓存后下载。
+// refreshExtension 触发后端从仓库重新克隆最新 dist 并刷新缓存,只回报更新到的版本,
+// 不下载文件。用户下载始终走「下载 AskIt 扩展」按钮。
 async function refreshExtension() {
   refreshingExt.value = true
   try {
-    const resp = await fetch(`${API_BASE}/api/askit/extension?refresh=1`)
+    const resp = await fetch(`${API_BASE}/api/askit/extension/refresh`, { method: 'POST' })
+    const data = await resp.json().catch(() => ({}))
     if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}))
       throw new Error(data.error || `HTTP ${resp.status}`)
     }
-    const blob = await resp.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'askit-extension.zip'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-    ElMessage.success('已拉取最新扩展并开始下载')
+    ElMessage.success(`已更新到最新版本：${data.commit || '未知'}，请点「下载 AskIt 扩展」获取`)
   } catch (err) {
     ElMessage.error(`更新失败: ${err.message}`)
   } finally {

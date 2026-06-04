@@ -17,6 +17,7 @@ import (
 var (
 	askitCache     []byte
 	askitCacheTime time.Time
+	askitCacheCommit string // short SHA + subject of the cloned HEAD
 	askitCacheMu   sync.Mutex
 	askitCacheTTL  = 10 * time.Minute
 )
@@ -26,12 +27,13 @@ const (
 	askitBranch  = "main"
 )
 
-// AskitExtensionDownload serves the latest AskIt Chrome extension zip.
-// Priority: GitHub dist/ (always latest) -> local static file (Docker build time).
+// AskitExtensionDownload serves the AskIt Chrome extension zip from the cached
+// build (refreshed by AskitExtensionRefresh or the 10-min TTL). This is the only
+// download entry point — the "更新最新" button no longer downloads, it refreshes.
 // GET /api/askit/extension
 func (h *AIGatewayHandler) AskitExtensionDownload(c *gin.Context) {
 	forceRefresh := c.Query("refresh") == "1"
-	data, err := getAskitZipCached(forceRefresh)
+	data, _, err := getAskitZipCached(forceRefresh)
 	if err == nil {
 		c.Header("Content-Disposition", "attachment; filename=askit-extension.zip")
 		c.Header("Content-Type", "application/zip")
@@ -50,22 +52,41 @@ func (h *AIGatewayHandler) AskitExtensionDownload(c *gin.Context) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取扩展包失败: %v", err)})
 }
 
-func getAskitZipCached(forceRefresh bool) ([]byte, error) {
+// AskitExtensionRefresh forces a fresh clone (bypassing the cache) and reports
+// which commit the extension is now built from, WITHOUT returning the zip. The
+// frontend "更新最新" button calls this; users still download via AskitExtensionDownload.
+// POST /api/askit/extension/refresh
+func (h *AIGatewayHandler) AskitExtensionRefresh(c *gin.Context) {
+	_, commit, err := getAskitZipCached(true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("刷新失败: %v", err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":        true,
+		"commit":    commit,
+		"branch":    askitBranch,
+		"refreshed": time.Now().Format("2006-01-02 15:04:05"),
+	})
+}
+
+func getAskitZipCached(forceRefresh bool) ([]byte, string, error) {
 	askitCacheMu.Lock()
 	defer askitCacheMu.Unlock()
 
 	if !forceRefresh && askitCache != nil && time.Since(askitCacheTime) < askitCacheTTL {
-		return askitCache, nil
+		return askitCache, askitCacheCommit, nil
 	}
 
-	data, err := buildZipFromGitHub()
+	data, commit, err := buildZipFromGitHub()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	askitCache = data
 	askitCacheTime = time.Now()
-	return data, nil
+	askitCacheCommit = commit
+	return data, commit, nil
 }
 
 // askitSSHCommand builds a GIT_SSH_COMMAND that reuses the persistent autodev
@@ -96,11 +117,11 @@ func fileExists(p string) bool {
 
 // buildZipFromGitHub shallow-clones Askit over SSH and zips its dist/ directory
 // in memory. SSH bypasses the REST API entirely, so there is no 60/hour rate
-// limit — fixing the stale-extension fallback that anonymous API calls hit.
-func buildZipFromGitHub() ([]byte, error) {
+// limit. Returns the zip bytes and a short "<sha> <subject>" version string.
+func buildZipFromGitHub() ([]byte, string, error) {
 	tmpDir, err := os.MkdirTemp("", "askit-clone-")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -109,12 +130,14 @@ func buildZipFromGitHub() ([]byte, error) {
 		cmd.Env = append(os.Environ(), "GIT_SSH_COMMAND="+sshCmd)
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git clone failed: %v: %s", err, string(out))
+		return nil, "", fmt.Errorf("git clone failed: %v: %s", err, string(out))
 	}
+
+	commit := askitClonedCommit(tmpDir)
 
 	distDir := filepath.Join(tmpDir, "dist")
 	if _, err := os.Stat(distDir); err != nil {
-		return nil, fmt.Errorf("dist/ not found in cloned repo")
+		return nil, "", fmt.Errorf("dist/ not found in cloned repo")
 	}
 
 	var buf bytes.Buffer
@@ -142,10 +165,21 @@ func buildZipFromGitHub() ([]byte, error) {
 		return err
 	})
 	if walkErr != nil {
-		return nil, walkErr
+		return nil, "", walkErr
 	}
 	if err := zw.Close(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return buf.Bytes(), nil
+	return buf.Bytes(), commit, nil
+}
+
+// askitClonedCommit returns a short "<sha> <subject>" description of the cloned
+// HEAD, used to tell the user which version the extension was refreshed to.
+func askitClonedCommit(repoDir string) string {
+	cmd := exec.Command("git", "-C", repoDir, "log", "-1", "--format=%h %s")
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return string(bytes.TrimSpace(out))
 }

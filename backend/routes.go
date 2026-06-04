@@ -536,6 +536,8 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 
 	// AskIt 扩展下载
 	api.GET("/askit/extension", h.aiGatewayHandler.AskitExtensionDownload)
+	// AskIt 扩展刷新缓存(只重新克隆并返回版本号,不下载)
+	api.POST("/askit/extension/refresh", h.aiGatewayHandler.AskitExtensionRefresh)
 
 	// AskIt 云同步 /api/askit/v1
 	askit := api.Group("/askit/v1")
