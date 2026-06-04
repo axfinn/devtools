@@ -482,4 +482,62 @@ func (db *DB) CleanupAskitTombstones(before int64) error {
 	return err
 }
 
+// AskitUserOverview 一名用户的同步「元数据」视图——只看有没有备份、何时更新,
+// 绝不读取 data 内容(密钥是端到端密文,服务器本就无法解密)。供管理页排障。
+type AskitUserOverview struct {
+	Email          string `json:"email"`
+	CreatedAt      int64  `json:"createdAt"`      // ms,注册时间
+	ServerVersion  int64  `json:"serverVersion"`  // 当前同步版本游标
+	RecordCount    int64  `json:"recordCount"`    // 非墓碑记录条数(不含密钥)
+	LastBackupAt   int64  `json:"lastBackupAt"`   // 最近一次任意记录更新时间(0 表示无备份)
+	HasSecrets     bool   `json:"hasSecrets"`     // 是否存在密钥备份(secrets/__secrets__)
+	SecretsUpdated int64  `json:"secretsUpdated"` // 密钥备份最近更新时间(0 表示无)
+}
+
+// GetAskitUsersOverview 汇总所有用户的备份元数据(不含任何 data 内容)。
+// 密钥备份单独识别 collection='secrets' 且 record_id='__secrets__' 的非墓碑记录。
+func (db *DB) GetAskitUsersOverview() ([]AskitUserOverview, error) {
+	rows, err := db.conn.Query(`
+		SELECT
+			u.email,
+			u.created_at,
+			COALESCE(v.cur_version, 0) AS server_version,
+			COALESCE(r.record_count, 0) AS record_count,
+			COALESCE(r.last_backup_at, 0) AS last_backup_at,
+			COALESCE(s.secrets_updated, 0) AS secrets_updated
+		FROM askit_users u
+		LEFT JOIN askit_sync_versions v ON v.user_id = u.id
+		LEFT JOIN (
+			SELECT user_id,
+			       COUNT(1) AS record_count,
+			       MAX(updated_at) AS last_backup_at
+			FROM askit_sync_records
+			WHERE deleted = 0
+			  AND NOT (collection = 'secrets' AND record_id = '__secrets__')
+			GROUP BY user_id
+		) r ON r.user_id = u.id
+		LEFT JOIN (
+			SELECT user_id, updated_at AS secrets_updated
+			FROM askit_sync_records
+			WHERE deleted = 0 AND collection = 'secrets' AND record_id = '__secrets__'
+		) s ON s.user_id = u.id
+		ORDER BY u.created_at DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []AskitUserOverview{}
+	for rows.Next() {
+		var o AskitUserOverview
+		if err := rows.Scan(&o.Email, &o.CreatedAt, &o.ServerVersion, &o.RecordCount, &o.LastBackupAt, &o.SecretsUpdated); err != nil {
+			return nil, err
+		}
+		o.HasSecrets = o.SecretsUpdated > 0
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 

@@ -485,3 +485,18 @@ func (h *AskitSyncHandler) CreateInvites(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"codes": codes})
 }
+
+// AdminUsersOverview GET /admin/users —— 返回所有用户的备份「元数据」视图。
+// 只暴露有没有备份、密钥备份与更新时间,绝不返回任何 data 内容(密钥端到端加密,
+// 服务器也无法解密)。供管理页确认「密钥同步是否生效」。
+func (h *AskitSyncHandler) AdminUsersOverview(c *gin.Context) {
+	if !h.checkAdmin(c) {
+		return
+	}
+	users, err := h.db.GetAskitUsersOverview()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"users": users})
+}

@@ -557,6 +557,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 			sync.GET("/snapshot", h.askitSyncHandler.Snapshot)
 		}
 		askit.POST("/admin/invites", h.askitSyncHandler.CreateInvites)
+		askit.GET("/admin/users", h.askitSyncHandler.AdminUsersOverview)
 	}
 
 	// AI Chat 密码验证

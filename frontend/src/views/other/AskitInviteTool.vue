@@ -36,6 +36,36 @@
       </div>
     </el-card>
 
+    <el-card class="users-card">
+      <template #header>
+        <div class="card-header">
+          <span>用户备份概览</span>
+          <el-button size="small" :loading="usersLoading" @click="loadUsers">刷新</el-button>
+        </div>
+      </template>
+      <el-table :data="users" size="small" v-loading="usersLoading" empty-text="点「刷新」加载（需管理员密码）">
+        <el-table-column label="邮箱" prop="email" min-width="160" show-overflow-tooltip />
+        <el-table-column label="注册时间" width="150">
+          <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="记录数" prop="recordCount" width="80" align="center" />
+        <el-table-column label="最近备份" width="150">
+          <template #default="{ row }">{{ fmtTime(row.lastBackupAt) }}</template>
+        </el-table-column>
+        <el-table-column label="密钥备份" width="160">
+          <template #default="{ row }">
+            <el-tag v-if="row.hasSecrets" type="success" size="small">已备份</el-tag>
+            <el-tag v-else type="info" size="small">无</el-tag>
+            <span v-if="row.hasSecrets" class="secrets-time">{{ fmtTime(row.secretsUpdated) }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="tip">
+        仅展示「有没有备份 / 密钥是否备份」等元数据，不读取任何数据内容。
+        密钥为端到端加密密文，服务器也无法解密。
+      </div>
+    </el-card>
+
     <el-card v-if="codes.length" class="result-card">
       <template #header>
         <div class="card-header">
@@ -76,6 +106,8 @@ const remembered = ref(false)
 const loading = ref(false)
 const codes = ref([])
 const lastExpiresDays = ref(0)
+const users = ref([])
+const usersLoading = ref(false)
 
 const rows = computed(() => codes.value.map(code => ({ code })))
 
@@ -133,12 +165,44 @@ async function copyText(text, okMsg) {
 function copyOne(code) { copyText(code, '已复制') }
 function copyAll() { copyText(codes.value.join('\n'), '已复制全部邀请码') }
 
+function fmtTime(ms) {
+  if (!ms) return '—'
+  const d = new Date(ms)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+async function loadUsers() {
+  if (!adminPassword.value) { ElMessage.warning('请输入管理员密码'); return }
+  usersLoading.value = true
+  try {
+    const r = await fetch('/api/askit/v1/admin/users', {
+      headers: { 'X-Admin-Password': adminPassword.value },
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) {
+      const map = {
+        admin_disabled: '后端未配置 admin_password，接口已禁用',
+        unauthorized: '管理员密码错误',
+      }
+      ElMessage.error(map[data.error] || `加载失败（${data.error || r.status}）`)
+      return
+    }
+    users.value = data.users || []
+  } catch {
+    ElMessage.error('请求失败')
+  } finally {
+    usersLoading.value = false
+  }
+}
+
 onMounted(() => {
   const saved = localStorage.getItem(SESSION_KEY)
   if (saved) {
     adminPassword.value = saved
     remember.value = true
     remembered.value = true
+    loadUsers()
   }
 })
 </script>
@@ -151,4 +215,5 @@ onMounted(() => {
 .tip code { background: var(--el-fill-color-light); padding: 1px 5px; border-radius: 4px; }
 .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.5px; }
 .expiry { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 8px; }
+.secrets-time { font-size: 11px; color: var(--el-text-color-secondary); margin-left: 6px; }
 </style>
