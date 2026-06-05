@@ -135,7 +135,7 @@
         </div>
 
         <!-- Markdown 渲染 -->
-        <div v-if="paste.content_type === 'markdown'" class="markdown-content" v-html="highlightedContent"></div>
+        <div v-if="paste.content_type === 'markdown'" ref="markdownRef" class="markdown-content" v-html="highlightedContent"></div>
         <!-- HTML 渲染预览 -->
         <div v-else-if="isHtmlPaste && htmlViewMode === 'preview'" class="html-preview-wrap">
           <iframe
@@ -397,7 +397,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, defineAsyncComponent } from 'vue'
+import { ref, onMounted, computed, defineAsyncComponent, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading, Lock, Back, Picture, Download, ZoomIn, Document, CopyDocument, Folder, Files, Headset, View, VideoPlay, Search, List } from '@element-plus/icons-vue'
@@ -408,6 +408,7 @@ import mark from 'markdown-it-mark'
 import taskLists from 'markdown-it-task-lists'
 import 'highlight.js/styles/github-dark.css'
 import { API_BASE } from '../../api'
+import { getMermaid } from '../../utils/vendor-loaders'
 
 const PdfViewer = defineAsyncComponent(() => import('../../components/PdfViewer.vue'))
 const ZipViewer = defineAsyncComponent(() => import('../../components/ZipViewer.vue'))
@@ -419,6 +420,10 @@ const md = new MarkdownIt({
   linkify: true,     // 自动转换链接
   typographer: true, // 优化排版
   highlight: function (str, lang) {
+    // mermaid 块先占位,渲染后再替换成 SVG(escapeHtml 让 textContent 原样回读)。
+    if (lang === 'mermaid') {
+      return `<div class="mermaid">${md.utils.escapeHtml(str)}</div>`
+    }
     // 使用 highlight.js 进行代码高亮
     if (lang && hljs.getLanguage(lang)) {
       try {
@@ -711,6 +716,27 @@ const highlightedContent = computed(() => {
   }
   return escapeHtml(content)
 })
+
+const markdownRef = ref(null)
+const renderMermaid = async () => {
+  await nextTick()
+  if (!markdownRef.value) return
+  const elements = markdownRef.value.querySelectorAll('.mermaid:not([data-processed])')
+  if (!elements.length) return
+  const mermaid = await getMermaid({ theme: 'default', flowchart: { useMaxWidth: true, htmlLabels: true } })
+  for (const [index, element] of Array.from(elements).entries()) {
+    try {
+      const { svg } = await mermaid.render(`paste-mmd-${Date.now()}-${index}`, element.textContent)
+      element.innerHTML = svg
+      element.setAttribute('data-processed', 'true')
+    } catch (e) {
+      element.innerHTML = `<div class="mermaid-error">图表渲染错误: ${e.message}</div>`
+      element.setAttribute('data-processed', 'error')
+    }
+  }
+}
+
+watch(highlightedContent, () => { void renderMermaid() })
 
 // 获取带行号的内容
 const contentWithLineNumbers = computed(() => {
@@ -1776,6 +1802,25 @@ onMounted(() => {
   min-height: 200px;
   max-height: 600px;
   overflow-y: auto;
+}
+
+.markdown-content :deep(.mermaid) {
+  text-align: center;
+  margin: 20px 0;
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+.markdown-content :deep(.mermaid svg) {
+  max-width: 100%;
+  height: auto;
+}
+.markdown-content :deep(.mermaid-error) {
+  color: #d32f2f;
+  padding: 10px;
+  background: #ffebee;
+  border-radius: var(--radius-sm);
 }
 
 .markdown-content h1,
