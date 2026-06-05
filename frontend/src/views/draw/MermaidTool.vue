@@ -1393,6 +1393,14 @@ const isShareMode = ref(false)
 const shareCodeCollapsed = ref(true)
 
 // 分享模式初始化
+// Reverse Go's html.EscapeString (applied to paste content server-side).
+// &amp; must come last so &amp;lt; decodes to &lt;, not <.
+const unescapePasteContent = (s) =>
+  String(s)
+    .replace(/&#34;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+
 const initShareMode = async () => {
   const pasteId = route.query.paste
   const shared = route.query.share  // 兼容旧链接
@@ -1412,7 +1420,10 @@ const initShareMode = async () => {
       const res = await fetch(`/api/paste/${pasteId}`)
       if (!res.ok) throw new Error('内容已过期或不存在')
       const data = await res.json()
-      code.value = data.content
+      // The paste backend runs html.EscapeString on stored content, so quotes/
+      // angle brackets come back as &#34;/&lt;/&gt;/&amp;. mermaid.render needs
+      // the raw source — feeding entities to it throws "Syntax error in text".
+      code.value = unescapePasteContent(data.content)
       isShareMode.value = true
     } catch {
       ElMessage.error('分享内容已过期或不存在')
