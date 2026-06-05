@@ -126,6 +126,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/askit-mydata',
+    name: 'AskitMyData',
+    component: () => import('../views/other/AskitMyDataTool.vue'),
+    meta: {
+      title: '我的同步数据',
+      icon: 'FolderOpened',
+      category: 'other',
+      description: '登录查看自己同步到云端的对话、笔记、书签等'
+    }
+  },
+  {
     path: '/base64',
     name: 'Base64',
     component: () => import('../views/convert/Base64Tool.vue'),
