@@ -37,110 +37,140 @@
 
     <!-- 已登录:数据总览 -->
     <template v-else>
-      <el-card class="header-card">
+      <el-card class="header-card" shadow="never">
         <div class="me-bar">
           <div class="me-info">
-            <span class="me-email">{{ me.email }}</span>
-            <span class="me-meta">服务器版本 v{{ serverVersion }} · 注册于 {{ fmtTime(me.createdAt) }}</span>
+            <div class="me-avatar">{{ (me.email || '?').slice(0, 1).toUpperCase() }}</div>
+            <div class="me-text">
+              <span class="me-email">{{ me.email }}</span>
+              <span class="me-meta">服务器版本 v{{ serverVersion }} · 注册于 {{ fmtTime(me.createdAt) }}</span>
+            </div>
           </div>
           <div class="me-actions">
-            <el-button size="small" :loading="dataLoading" @click="loadSnapshot">刷新</el-button>
-            <el-button size="small" @click="exportJson">导出 JSON</el-button>
-            <el-button size="small" text @click="logout">退出登录</el-button>
+            <el-tooltip content="切换 Markdown 渲染 / 查看原文">
+              <el-switch v-model="showRaw" inline-prompt active-text="原文" inactive-text="渲染" />
+            </el-tooltip>
+            <el-button size="small" :icon="Refresh" :loading="dataLoading" @click="loadSnapshot">刷新</el-button>
+            <el-button size="small" :icon="Download" @click="exportJson">导出</el-button>
+            <el-button size="small" text type="danger" @click="logout">退出</el-button>
           </div>
         </div>
         <div class="stat-row">
-          <div v-for="c in cards" :key="c.key" class="stat" :class="{ active: activeTab === c.key }" @click="activeTab = c.key">
-            <div class="stat-num">{{ c.count }}</div>
-            <div class="stat-label">{{ c.label }}</div>
-          </div>
+          <button v-for="c in cards" :key="c.key" class="stat" :class="{ active: activeTab === c.key }" @click="activeTab = c.key">
+            <component :is="c.icon" class="stat-icon" />
+            <div class="stat-text">
+              <div class="stat-num">{{ c.count }}</div>
+              <div class="stat-label">{{ c.label }}</div>
+            </div>
+          </button>
         </div>
       </el-card>
-      <el-card class="body-card" v-loading="dataLoading">
+
+      <el-card class="body-card" shadow="never" v-loading="dataLoading">
         <!-- 对话 -->
         <div v-if="activeTab === 'conversations'">
           <el-empty v-if="!conversations.length" description="暂无对话" />
-          <el-collapse v-else accordion>
+          <el-collapse v-else v-model="openConvs">
             <el-collapse-item v-for="conv in conversations" :key="conv.id" :name="conv.id">
               <template #title>
                 <div class="row-title">
+                  <el-icon class="row-icon"><ChatDotRound /></el-icon>
                   <span class="row-main">{{ conv.title || '未命名对话' }}</span>
                   <span class="row-sub">{{ conv.messageCount }} 条 · {{ fmtTime(conv.updatedAt) }}</span>
                 </div>
               </template>
-              <a v-if="conv.pageUrl" class="conv-src" :href="conv.pageUrl" target="_blank" rel="noopener">{{ conv.pageTitle || conv.pageUrl }}</a>
-              <div v-for="m in conv.messages" :key="m.id" class="msg" :class="m.role">
-                <div class="msg-role">{{ roleLabel(m.role) }}</div>
-                <div class="msg-content">{{ m.content }}</div>
-                <img v-if="m.imageUrl" :src="m.imageUrl" class="msg-img" />
+              <a v-if="conv.pageUrl" class="conv-src" :href="conv.pageUrl" target="_blank" rel="noopener">
+                <el-icon><Link /></el-icon>{{ conv.pageTitle || conv.pageUrl }}
+              </a>
+              <div class="chat">
+                <div v-for="m in conv.messages" :key="m.id" class="bubble-row" :class="m.role">
+                  <div class="avatar" :class="m.role">{{ roleLabel(m.role) }}</div>
+                  <div class="bubble">
+                    <pre v-if="showRaw" class="raw">{{ m.content }}</pre>
+                    <div v-else class="md" v-html="renderMarkdown(m.content)"></div>
+                    <el-image v-if="m.imageUrl" :src="m.imageUrl" :preview-src-list="[m.imageUrl]"
+                      fit="contain" class="bubble-img" hide-on-click-modal preview-teleported />
+                  </div>
+                </div>
               </div>
-              <el-empty v-if="!conv.messages.length" :image-size="60" description="该对话仅同步了元数据" />
+              <el-empty v-if="!conv.messages.length" :image-size="50" description="该对话仅同步了元数据" />
             </el-collapse-item>
           </el-collapse>
         </div>
 
         <!-- 笔记 -->
-        <div v-else-if="activeTab === 'notes'">
+        <div v-else-if="activeTab === 'notes'" class="grid">
           <el-empty v-if="!notes.length" description="暂无笔记" />
-          <div v-for="n in notes" :key="n.id" class="note-item">
-            <img v-if="n.image" :src="n.image" class="note-img" />
-            <div class="note-body">
-              <div class="note-content">{{ n.content }}</div>
-              <div class="note-foot">
-                <a v-if="n.source" :href="n.source" target="_blank" rel="noopener" class="note-src">{{ n.sourceTitle || n.source }}</a>
-                <span class="note-time">{{ fmtTime(n.createdAt) }}</span>
-                <el-tag v-for="t in (n.tags || [])" :key="t" size="small" type="info">{{ t }}</el-tag>
-              </div>
+          <el-card v-for="n in notes" :key="n.id" class="item-card" shadow="hover" :body-style="{ padding: '12px' }">
+            <el-image v-if="n.image" :src="n.image" :preview-src-list="[n.image]" fit="cover"
+              class="card-img" hide-on-click-modal preview-teleported />
+            <pre v-if="showRaw" class="raw note-content">{{ n.content }}</pre>
+            <div v-else class="md note-content" v-html="renderMarkdown(n.content)"></div>
+            <div class="card-foot">
+              <a v-if="n.source" :href="n.source" target="_blank" rel="noopener" class="src-link">{{ n.sourceTitle || n.source }}</a>
+              <span class="time">{{ fmtTime(n.createdAt) }}</span>
             </div>
-          </div>
+            <div v-if="n.tags && n.tags.length" class="tags">
+              <el-tag v-for="t in n.tags" :key="t" size="small" type="info" effect="plain">{{ t }}</el-tag>
+            </div>
+          </el-card>
         </div>
 
         <!-- 书签 -->
-        <div v-else-if="activeTab === 'bookmarks'">
+        <div v-else-if="activeTab === 'bookmarks'" class="grid">
           <el-empty v-if="!bookmarks.length" description="暂无书签" />
-          <div v-for="b in bookmarks" :key="b.id" class="bm-item">
-            <img v-if="b.favicon" :src="b.favicon" class="bm-favicon" />
-            <div class="bm-body">
+          <el-card v-for="b in bookmarks" :key="b.id" class="item-card" shadow="hover" :body-style="{ padding: '12px' }">
+            <div class="bm-head">
+              <img v-if="b.favicon" :src="b.favicon" class="bm-favicon" />
+              <el-icon v-else class="bm-favicon-fallback"><Link /></el-icon>
               <a :href="b.url" target="_blank" rel="noopener" class="bm-title">{{ b.title || b.url }}</a>
-              <div v-if="b.summary || b.note" class="bm-note">{{ b.summary || b.note }}</div>
-              <div class="bm-foot">
-                <span class="bm-time">{{ fmtTime(b.createdAt) }}</span>
-                <el-tag v-for="t in (b.tags || [])" :key="t" size="small" type="info">{{ t }}</el-tag>
-              </div>
             </div>
-          </div>
+            <div v-if="b.summary || b.note" class="bm-note">{{ b.summary || b.note }}</div>
+            <div class="card-foot">
+              <span class="time">{{ fmtTime(b.createdAt) }}</span>
+            </div>
+            <div v-if="b.tags && b.tags.length" class="tags">
+              <el-tag v-for="t in b.tags" :key="t" size="small" type="info" effect="plain">{{ t }}</el-tag>
+            </div>
+          </el-card>
         </div>
 
         <!-- 分享 -->
         <div v-else-if="activeTab === 'shares'">
           <el-empty v-if="!shares.length" description="暂无分享" />
-          <el-table v-else :data="shares" size="small">
-            <el-table-column label="标题" min-width="160" show-overflow-tooltip>
-              <template #default="{ row }"><a :href="row.url" target="_blank" rel="noopener">{{ row.title || row.url }}</a></template>
+          <el-table v-else :data="shares" size="small" stripe>
+            <el-table-column label="标题" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }"><a :href="row.url" target="_blank" rel="noopener" class="src-link">{{ row.title || row.url }}</a></template>
             </el-table-column>
-            <el-table-column label="类型" width="90">
-              <template #default="{ row }"><el-tag size="small">{{ row.kind }}</el-tag></template>
+            <el-table-column label="类型" width="90" align="center">
+              <template #default="{ row }"><el-tag size="small" effect="plain">{{ row.kind }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="创建时间" width="150">
+            <el-table-column label="创建时间" width="160" align="center">
               <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
             </el-table-column>
           </el-table>
         </div>
 
         <!-- 提示词 -->
-        <div v-else-if="activeTab === 'prompts'">
+        <div v-else-if="activeTab === 'prompts'" class="grid">
           <el-empty v-if="!prompts.length" description="暂无自定义提示词" />
-          <div v-for="p in prompts" :key="p.id" class="prompt-item">
-            <div class="prompt-title">{{ p.title }}</div>
-            <div class="prompt-body">{{ p.prompt }}</div>
-            <div class="prompt-time">{{ fmtTime(p.createdAt) }}</div>
-          </div>
+          <el-card v-for="p in prompts" :key="p.id" class="item-card" shadow="hover" :body-style="{ padding: '12px' }">
+            <div class="prompt-title"><el-icon><MagicStick /></el-icon>{{ p.title }}</div>
+            <pre class="raw prompt-body">{{ p.prompt }}</pre>
+            <div class="card-foot"><span class="time">{{ fmtTime(p.createdAt) }}</span></div>
+          </el-card>
         </div>
 
         <!-- 设置 -->
         <div v-else-if="activeTab === 'settings'">
           <el-empty v-if="!settings" description="暂无同步的设置" />
-          <pre v-else class="settings-json">{{ prettySettings }}</pre>
+          <template v-else>
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item v-for="(val, key) in flatSettings" :key="key" :label="key">
+                <span class="setting-val">{{ val }}</span>
+              </el-descriptions-item>
+            </el-descriptions>
+          </template>
           <div class="tip">API Key 等密钥字段从不上云,此处不会出现。</div>
         </div>
       </el-card>
@@ -151,10 +181,31 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import {
+  Refresh, Download, ChatDotRound, Link, MagicStick,
+  Document, Star, Share, Setting,
+} from '@element-plus/icons-vue'
+import MarkdownIt from 'markdown-it'
+import hljs from '../../utils/highlight'
 
 const API = '/api/askit/v1'
 const TOKEN_KEY = 'askit_mydata_access'
 const REFRESH_KEY = 'askit_mydata_refresh'
+
+// html:false —— 不放行同步内容里的原始 HTML,从源头避免 v-html XSS。
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+  highlight(code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      try { return hljs.highlight(code, { language: lang }).value } catch {}
+    }
+    return ''
+  },
+})
+function renderMarkdown(text) { return text ? md.render(text) : '' }
+const showRaw = ref(false)
 
 const email = ref('')
 const code = ref('')
@@ -172,8 +223,7 @@ const dataLoading = ref(false)
 const serverVersion = ref(0)
 const collections = ref({})
 const activeTab = ref('conversations')
-
-// SCRIPT_PLACEHOLDER
+const openConvs = ref([])
 
 // ── 集合解析:snapshot 的 collections[col] 是 [{id,updatedAt,deleted,data}] ──
 function recs(col) {
@@ -204,15 +254,26 @@ const bookmarks = computed(() => recs('bookmarks').map(r => r.data).sort((a, b) 
 const shares = computed(() => recs('shares').map(r => r.data).sort((a, b) => b.createdAt - a.createdAt))
 const prompts = computed(() => recs('prompts').map(r => r.data).sort((a, b) => b.createdAt - a.createdAt))
 const settings = computed(() => recs('settings')[0]?.data || null)
-const prettySettings = computed(() => settings.value ? JSON.stringify(settings.value, null, 2) : '')
+
+// settings 打平成「键: 值」表格;对象/数组转 JSON 单行,布尔/数字直显。
+const flatSettings = computed(() => {
+  const s = settings.value
+  if (!s || typeof s !== 'object') return {}
+  const out = {}
+  for (const [k, v] of Object.entries(s)) {
+    if (v === null || v === undefined || v === '') continue
+    out[k] = typeof v === 'object' ? JSON.stringify(v) : String(v)
+  }
+  return out
+})
 
 const cards = computed(() => [
-  { key: 'conversations', label: '对话', count: conversations.value.length },
-  { key: 'notes', label: '笔记', count: notes.value.length },
-  { key: 'bookmarks', label: '书签', count: bookmarks.value.length },
-  { key: 'shares', label: '分享', count: shares.value.length },
-  { key: 'prompts', label: '提示词', count: prompts.value.length },
-  { key: 'settings', label: '设置', count: settings.value ? 1 : 0 },
+  { key: 'conversations', label: '对话', count: conversations.value.length, icon: ChatDotRound },
+  { key: 'notes', label: '笔记', count: notes.value.length, icon: Document },
+  { key: 'bookmarks', label: '书签', count: bookmarks.value.length, icon: Star },
+  { key: 'shares', label: '分享', count: shares.value.length, icon: Share },
+  { key: 'prompts', label: '提示词', count: prompts.value.length, icon: MagicStick },
+  { key: 'settings', label: '设置', count: settings.value ? 1 : 0, icon: Setting },
 ])
 
 // ── 工具 ──────────────────────────────────────────────────────
@@ -376,54 +437,105 @@ onUnmounted(() => { if (cooldownTimer) clearInterval(cooldownTimer) })
 </script>
 
 <style scoped>
-.askit-mydata { max-width: 860px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-.card-header { display: flex; justify-content: space-between; align-items: center; }
-.tip { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; margin-top: 8px; }
+.askit-mydata { max-width: 900px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+.tip { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; margin-top: 10px; }
 .code-row { display: flex; align-items: center; gap: 8px; }
+.login-card { max-width: 460px; margin: 8px auto; }
 
+/* 头部用户条 */
 .me-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
-.me-info { display: flex; flex-direction: column; gap: 2px; }
+.me-info { display: flex; align-items: center; gap: 12px; }
+.me-avatar { width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center;
+  justify-content: center; font-size: 18px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, var(--el-color-primary), var(--el-color-primary-light-3)); }
+.me-text { display: flex; flex-direction: column; gap: 2px; }
 .me-email { font-weight: 600; font-size: 15px; }
 .me-meta { font-size: 12px; color: var(--el-text-color-secondary); }
-.me-actions { display: flex; gap: 6px; align-items: center; }
+.me-actions { display: flex; gap: 8px; align-items: center; }
 
-.stat-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
-.stat { flex: 1; min-width: 96px; padding: 10px 12px; border-radius: 8px; background: var(--el-fill-color-light);
-  cursor: pointer; text-align: center; transition: all .15s; border: 1px solid transparent; }
-.stat:hover { background: var(--el-fill-color); }
+/* 统计卡 */
+.stat-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 18px; }
+.stat { display: flex; align-items: center; gap: 8px; padding: 12px; border-radius: 10px;
+  background: var(--el-fill-color-light); cursor: pointer; transition: all .15s;
+  border: 1px solid transparent; font-family: inherit; }
+.stat:hover { background: var(--el-fill-color); transform: translateY(-1px); }
 .stat.active { border-color: var(--el-color-primary); background: var(--el-color-primary-light-9); }
-.stat-num { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.stat-icon { width: 22px; height: 22px; color: var(--el-color-primary); flex-shrink: 0; }
+.stat-text { text-align: left; line-height: 1.1; }
+.stat-num { font-size: 20px; font-weight: 700; }
 .stat-label { font-size: 12px; color: var(--el-text-color-secondary); margin-top: 2px; }
-/* STYLE_PLACEHOLDER */
+@media (max-width: 640px) { .stat-row { grid-template-columns: repeat(3, 1fr); } .stat-label { font-size: 11px; } }
 
-.row-title { display: flex; justify-content: space-between; align-items: center; width: 100%; padding-right: 12px; }
-.row-main { font-weight: 500; }
-.row-sub { font-size: 12px; color: var(--el-text-color-secondary); }
-.conv-src { display: block; font-size: 12px; color: var(--el-color-primary); margin-bottom: 8px; word-break: break-all; }
+/* 对话标题行 */
+.row-title { display: flex; align-items: center; gap: 8px; width: 100%; padding-right: 12px; }
+.row-icon { color: var(--el-color-primary); }
+.row-main { font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-sub { font-size: 12px; color: var(--el-text-color-secondary); flex-shrink: 0; }
+.conv-src { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--el-color-primary);
+  margin-bottom: 12px; word-break: break-all; text-decoration: none; }
 
-.msg { padding: 8px 10px; border-radius: 8px; margin-bottom: 8px; background: var(--el-fill-color-lighter); }
-.msg.user { background: var(--el-color-primary-light-9); }
-.msg-role { font-size: 11px; color: var(--el-text-color-secondary); margin-bottom: 2px; }
-.msg-content { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.6; }
-.msg-img { max-width: 220px; max-height: 160px; border-radius: 6px; margin-top: 6px; object-fit: contain; }
+/* 聊天气泡 */
+.chat { display: flex; flex-direction: column; gap: 14px; padding: 4px 0; }
+.bubble-row { display: flex; gap: 10px; align-items: flex-start; }
+.bubble-row.user { flex-direction: row-reverse; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center;
+  justify-content: center; font-size: 12px; font-weight: 600; color: #fff; background: var(--el-color-info); }
+.avatar.user { background: var(--el-color-primary); }
+.avatar.assistant { background: var(--el-color-success); }
+.bubble { max-width: 80%; padding: 10px 14px; border-radius: 12px; background: var(--el-fill-color-light);
+  font-size: 14px; line-height: 1.7; }
+.bubble-row.user .bubble { background: var(--el-color-primary-light-9); border-top-right-radius: 4px; }
+.bubble-row.assistant .bubble { border-top-left-radius: 4px; }
+.bubble-img { max-width: 240px; max-height: 200px; border-radius: 8px; margin-top: 8px; display: block; }
 
-.note-item, .bm-item { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
-.note-img { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
-.note-body, .bm-body { flex: 1; min-width: 0; }
-.note-content { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.6; }
-.note-foot, .bm-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
-.note-src, .bm-title { font-size: 12px; color: var(--el-color-primary); word-break: break-all; }
-.note-time, .bm-time { font-size: 11px; color: var(--el-text-color-secondary); }
+/* Markdown 渲染区 */
+.md { word-break: break-word; }
+.md :deep(p) { margin: 0 0 8px; }
+.md :deep(p:last-child) { margin-bottom: 0; }
+.md :deep(pre) { background: var(--el-fill-color-darker); padding: 10px 12px; border-radius: 8px;
+  overflow-x: auto; font-size: 13px; margin: 8px 0; }
+.md :deep(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+.md :deep(:not(pre) > code) { background: var(--el-fill-color); padding: 1px 5px; border-radius: 4px; }
+.md :deep(ul), .md :deep(ol) { padding-left: 22px; margin: 6px 0; }
+.md :deep(a) { color: var(--el-color-primary); }
+.md :deep(blockquote) { border-left: 3px solid var(--el-border-color); padding-left: 10px; margin: 8px 0;
+  color: var(--el-text-color-secondary); }
+.md :deep(table) { border-collapse: collapse; margin: 8px 0; }
+.md :deep(th), .md :deep(td) { border: 1px solid var(--el-border-color); padding: 4px 8px; }
+.md :deep(img) { max-width: 100%; border-radius: 6px; }
 
-.bm-favicon { width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0; margin-top: 2px; }
-.bm-title { font-size: 14px; font-weight: 500; display: block; }
-.bm-note { font-size: 12px; color: var(--el-text-color-regular); margin-top: 2px; line-height: 1.5; }
+/* 原文 pre */
+.raw { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; line-height: 1.6; margin: 0; }
 
-.prompt-item { padding: 10px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
-.prompt-title { font-weight: 600; font-size: 14px; }
-.prompt-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; color: var(--el-text-color-regular); margin: 4px 0; line-height: 1.6; }
-.prompt-time { font-size: 11px; color: var(--el-text-color-secondary); }
+/* 卡片网格 */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.grid .el-empty { grid-column: 1 / -1; }
+.item-card { border-radius: 10px; }
+.card-img { width: 100%; height: 140px; border-radius: 8px; margin-bottom: 8px; display: block; cursor: zoom-in; }
+.card-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
+.time { font-size: 11px; color: var(--el-text-color-secondary); flex-shrink: 0; }
+.src-link { font-size: 12px; color: var(--el-color-primary); text-decoration: none; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.note-content { max-height: 220px; overflow-y: auto; }
 
-.settings-json { background: var(--el-fill-color-light); padding: 12px; border-radius: 8px; font-size: 12px;
-  line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+/* 书签 */
+.bm-head { display: flex; align-items: center; gap: 8px; }
+.bm-favicon { width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0; }
+.bm-favicon-fallback { color: var(--el-text-color-secondary); flex-shrink: 0; }
+.bm-title { font-size: 14px; font-weight: 500; color: var(--el-text-color-primary); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-title:hover { color: var(--el-color-primary); }
+.bm-note { font-size: 12px; color: var(--el-text-color-regular); margin-top: 6px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 提示词 */
+.prompt-title { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
+.prompt-body { margin: 8px 0; color: var(--el-text-color-regular); max-height: 200px; overflow-y: auto;
+  background: var(--el-fill-color-lighter); padding: 8px 10px; border-radius: 6px; }
+
+/* 设置 */
+.setting-val { word-break: break-all; font-size: 13px; }
 </style>
