@@ -99,21 +99,74 @@
         </div>
 
         <!-- 笔记 -->
-        <div v-else-if="activeTab === 'notes'" class="grid">
+        <div v-else-if="activeTab === 'notes'" class="notes-tab">
+          <!-- 工具条 -->
+          <div class="notes-toolbar">
+            <el-input v-model="noteSearch" placeholder="搜索笔记内容、来源、标签…" clearable :prefix-icon="Search" class="notes-search" />
+            <el-select v-model="noteSort" class="notes-sort" size="default">
+              <el-option label="最新创建" value="createdDesc" />
+              <el-option label="最早创建" value="createdAsc" />
+              <el-option label="最近更新" value="updatedDesc" />
+              <el-option label="最早更新" value="updatedAsc" />
+            </el-select>
+            <div class="notes-count">
+              <template v-if="filteredNotes.length === notes.length">共 {{ notes.length }} 条</template>
+              <template v-else>已筛选 {{ filteredNotes.length }} / {{ notes.length }} 条</template>
+            </div>
+          </div>
+          <div v-if="noteTags.length" class="notes-tagbar">
+            <span class="tagbar-label">标签</span>
+            <div class="tagbar-scroll">
+              <el-check-tag
+                v-for="t in noteTags" :key="t.tag"
+                :checked="selectedTags.includes(t.tag)"
+                @change="toggleTag(t.tag)"
+              >{{ t.tag }} <span class="tag-count">{{ t.count }}</span></el-check-tag>
+            </div>
+            <el-button v-if="selectedTags.length || noteSearch" text type="primary" size="small" @click="clearFilters">清除</el-button>
+          </div>
+          <!-- 列表 -->
           <el-empty v-if="!notes.length" description="暂无笔记" />
-          <el-card v-for="n in notes" :key="n.id" class="item-card" shadow="hover" :body-style="{ padding: '12px' }">
-            <el-image v-if="n.image" :src="n.image" :preview-src-list="[n.image]" fit="cover"
-              class="card-img" hide-on-click-modal preview-teleported />
-            <pre v-if="showRaw" class="raw note-content">{{ n.content }}</pre>
-            <div v-else class="md note-content" v-html="renderMarkdown(n.content)"></div>
-            <div class="card-foot">
-              <a v-if="n.source" :href="n.source" target="_blank" rel="noopener" class="src-link">{{ n.sourceTitle || n.source }}</a>
-              <span class="time">{{ fmtTime(n.createdAt) }}</span>
-            </div>
-            <div v-if="n.tags && n.tags.length" class="tags">
-              <el-tag v-for="t in n.tags" :key="t" size="small" type="info" effect="plain">{{ t }}</el-tag>
-            </div>
-          </el-card>
+          <el-empty v-else-if="!filteredNotes.length" description="没有匹配的笔记">
+            <el-button size="small" @click="clearFilters">清除筛选</el-button>
+          </el-empty>
+          <div v-else class="notes-grid">
+            <article
+              v-for="n in filteredNotes" :key="n.id"
+              class="note-card" tabindex="0"
+              @click="openNote(n)"
+              @keydown.enter.prevent="openNote(n)"
+              @keydown.space.prevent="openNote(n)"
+            >
+              <el-image
+                v-if="n.image" :src="n.image" fit="contain" class="note-img"
+                :preview-src-list="[n.image]" hide-on-click-modal preview-teleported
+                @click.stop
+              />
+              <div class="note-body">
+                <pre v-if="showRaw" class="raw note-preview">{{ n.content }}</pre>
+                <div v-else class="md note-preview" v-html="renderMarkdown(n.content)"></div>
+                <div class="note-fade"></div>
+              </div>
+              <div class="note-meta">
+                <div v-if="n.tags && n.tags.length" class="note-tags">
+                  <el-tag
+                    v-for="t in n.tags.slice(0, 4)" :key="t"
+                    size="small" effect="plain"
+                    :type="selectedTags.includes(t) ? '' : 'info'"
+                    @click.stop="toggleTag(t)"
+                    style="cursor: pointer"
+                  >{{ t }}</el-tag>
+                  <span v-if="n.tags.length > 4" class="more-tags">+{{ n.tags.length - 4 }}</span>
+                </div>
+                <span v-else></span>
+                <span class="time">{{ fmtTime(n.createdAt) }}</span>
+              </div>
+              <a v-if="n.source" :href="n.source" target="_blank" rel="noopener" class="note-source" @click.stop>
+                <el-icon><Link /></el-icon>{{ n.sourceTitle || n.source }}
+              </a>
+            </article>
+          </div>
         </div>
 
         <!-- 书签 -->
@@ -175,6 +228,51 @@
         </div>
       </el-card>
     </template>
+
+    <!-- 笔记详情抽屉 -->
+    <el-drawer
+      v-model="noteDrawerOpen"
+      :direction="isMobile ? 'btt' : 'rtl'"
+      :size="isMobile ? '92%' : '640px'"
+      :with-header="false"
+      append-to-body
+      class="note-drawer"
+    >
+      <div v-if="noteDetail" class="drawer-content" ref="drawerRef">
+        <header class="drawer-head">
+          <div class="drawer-title">
+            <el-icon><Document /></el-icon>
+            <span>笔记详情</span>
+          </div>
+          <div class="drawer-actions">
+            <el-tooltip content="复制全文"><el-button :icon="DocumentCopy" circle size="small" @click="copyContent(noteDetail.content)" /></el-tooltip>
+            <el-tooltip content="关闭"><el-button :icon="Close" circle size="small" @click="noteDrawerOpen = false" /></el-tooltip>
+          </div>
+        </header>
+        <div class="drawer-meta">
+          <span class="meta-time">创建于 {{ fmtTime(noteDetail.createdAt) }}</span>
+          <span v-if="noteDetail.updatedAt && noteDetail.updatedAt !== noteDetail.createdAt" class="meta-time">· 更新于 {{ fmtTime(noteDetail.updatedAt) }}</span>
+        </div>
+        <a v-if="noteDetail.source" :href="noteDetail.source" target="_blank" rel="noopener" class="drawer-source">
+          <el-icon><Link /></el-icon>{{ noteDetail.sourceTitle || noteDetail.source }}
+        </a>
+        <el-image
+          v-if="noteDetail.image" :src="noteDetail.image" fit="contain" class="drawer-img"
+          :preview-src-list="[noteDetail.image]" hide-on-click-modal preview-teleported
+        />
+        <pre v-if="showRaw" class="raw drawer-body">{{ noteDetail.content }}</pre>
+        <div v-else class="md drawer-body" v-html="renderMarkdown(noteDetail.content)"></div>
+        <div v-if="noteDetail.tags && noteDetail.tags.length" class="drawer-tags">
+          <el-tag
+            v-for="t in noteDetail.tags" :key="t"
+            size="small" effect="plain"
+            :type="selectedTags.includes(t) ? '' : 'info'"
+            style="cursor: pointer"
+            @click="toggleTag(t); noteDrawerOpen = false"
+          >{{ t }}</el-tag>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -184,6 +282,7 @@ import { ElMessage } from 'element-plus'
 import {
   Refresh, Download, ChatDotRound, Link, MagicStick,
   Document, Star, Share, Setting,
+  Search, Close, DocumentCopy,
 } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import hljs from '../../utils/highlight'
@@ -231,13 +330,16 @@ const showRaw = ref(false)
 const rootRef = ref(null)
 
 // 渲染后把页面里的 .mermaid 文本块替换成 SVG(懒加载 mermaid,首次用时才拉)。
+// 抽屉是 append-to-body,不在 rootRef 子树里,所以单独把 drawerRef 也扫一遍。
 let mermaidSeq = 0
 async function renderMermaid() {
-  if (showRaw.value || !rootRef.value) return
-  const blocks = rootRef.value.querySelectorAll('.mermaid:not([data-processed])')
+  if (showRaw.value) return
+  const blocks = []
+  if (rootRef.value) blocks.push(...rootRef.value.querySelectorAll('.mermaid:not([data-processed])'))
+  if (drawerRef.value) blocks.push(...drawerRef.value.querySelectorAll('.mermaid:not([data-processed])'))
   if (!blocks.length) return
   const mermaid = await getMermaid({ theme: 'default', flowchart: { useMaxWidth: true, htmlLabels: true } })
-  for (const el of Array.from(blocks)) {
+  for (const el of blocks) {
     el.setAttribute('data-processed', 'true')
     try {
       const { svg } = await mermaid.render(`askit-mmd-${Date.now()}-${mermaidSeq++}`, el.textContent || '')
@@ -295,6 +397,75 @@ const bookmarks = computed(() => recs('bookmarks').map(r => r.data).sort((a, b) 
 const shares = computed(() => recs('shares').map(r => r.data).sort((a, b) => b.createdAt - a.createdAt))
 const prompts = computed(() => recs('prompts').map(r => r.data).sort((a, b) => b.createdAt - a.createdAt))
 const settings = computed(() => recs('settings')[0]?.data || null)
+
+// ── 笔记:搜索 / 标签过滤 / 排序 / 详情抽屉 ──────────────────────
+const noteSearch = ref('')
+const selectedTags = ref([])
+const noteSort = ref('createdDesc')
+const noteDetail = ref(null)
+const noteDrawerOpen = ref(false)
+const drawerRef = ref(null)
+
+// 聚合所有笔记中出现过的标签 + 出现次数,按次数倒序;次数能让用户一眼看出"哪个标签的内容最多"。
+const noteTags = computed(() => {
+  const map = new Map()
+  for (const n of notes.value) {
+    if (!Array.isArray(n.tags)) continue
+    for (const t of n.tags) {
+      if (!t) continue
+      map.set(t, (map.get(t) || 0) + 1)
+    }
+  }
+  return [...map.entries()].sort((a, b) => b[1] - a[1]).map(([tag, count]) => ({ tag, count }))
+})
+
+// 过滤 + 排序:先按标签(AND 语义)再按关键词,最后按排序键。
+const filteredNotes = computed(() => {
+  let list = notes.value
+  if (selectedTags.value.length) {
+    list = list.filter(n => Array.isArray(n.tags) && selectedTags.value.every(t => n.tags.includes(t)))
+  }
+  const q = noteSearch.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(n => {
+      const hay = `${n.content || ''}\n${n.sourceTitle || ''}\n${n.source || ''}\n${(n.tags || []).join(' ')}`
+      return hay.toLowerCase().includes(q)
+    })
+  }
+  const sortFn = {
+    createdDesc: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+    createdAsc:  (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
+    updatedDesc: (a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0),
+    updatedAsc:  (a, b) => (a.updatedAt || a.createdAt || 0) - (b.updatedAt || b.createdAt || 0),
+  }[noteSort.value] || ((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+  return list.slice().sort(sortFn)
+})
+
+function toggleTag(tag) {
+  const i = selectedTags.value.indexOf(tag)
+  if (i >= 0) selectedTags.value.splice(i, 1)
+  else selectedTags.value.push(tag)
+}
+function clearFilters() {
+  noteSearch.value = ''
+  selectedTags.value = []
+}
+function openNote(n) {
+  noteDetail.value = n
+  noteDrawerOpen.value = true
+}
+async function copyContent(text) {
+  try {
+    await navigator.clipboard.writeText(text || '')
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败,请手动选择')
+  }
+}
+
+// 抽屉走 rtl 还是 btt 取决于宽度;手机用 bottom-to-top 体验更自然(底部滑出)。
+const isMobile = ref(false)
+function updateIsMobile() { isMobile.value = window.innerWidth < 768 }
 
 // settings 打平成「键: 值」表格;对象/数组转 JSON 单行,布尔/数字直显。
 const flatSettings = computed(() => {
@@ -472,19 +643,25 @@ async function logout() {
 }
 
 onMounted(() => {
+  updateIsMobile()
+  window.addEventListener('resize', updateIsMobile)
   if (localStorage.getItem(TOKEN_KEY)) afterLogin()
 })
-onUnmounted(() => { if (cooldownTimer) clearInterval(cooldownTimer) })
+onUnmounted(() => {
+  if (cooldownTimer) clearInterval(cooldownTimer)
+  window.removeEventListener('resize', updateIsMobile)
+})
 
-// 切换标签 / 展开对话 / 加载数据 / 切回渲染模式后,重渲染 mermaid 图。
-watch([activeTab, openConvs, collections, showRaw], () => {
+// 切换标签 / 展开对话 / 加载数据 / 切回渲染模式 / 笔记过滤变化 / 打开抽屉时,重渲染 mermaid 图。
+watch([activeTab, openConvs, collections, showRaw, filteredNotes, noteDrawerOpen], () => {
   nextTick(() => { void renderMermaid() })
 }, { deep: true })
 
 </script>
 
 <style scoped>
-.askit-mydata { max-width: 900px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.askit-mydata { max-width: 1200px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+@media (max-width: 768px) { .askit-mydata { padding: 10px; gap: 10px; } }
 .card-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
 .tip { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.6; margin-top: 10px; }
 .code-row { display: flex; align-items: center; gap: 8px; }
@@ -593,4 +770,86 @@ watch([activeTab, openConvs, collections, showRaw], () => {
 
 /* 设置 */
 .setting-val { word-break: break-all; font-size: 13px; }
+
+/* ── 笔记 tab(重做)──────────────────────────────────────── */
+.notes-tab { display: flex; flex-direction: column; gap: 12px; }
+.notes-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.notes-search { flex: 1 1 280px; min-width: 200px; }
+.notes-sort { width: 140px; flex-shrink: 0; }
+.notes-count { font-size: 12px; color: var(--el-text-color-secondary); margin-left: auto; flex-shrink: 0; }
+
+.notes-tagbar { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  background: var(--el-fill-color-lighter); border-radius: 8px; }
+.tagbar-label { font-size: 12px; color: var(--el-text-color-secondary); flex-shrink: 0; font-weight: 500; }
+.tagbar-scroll { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+.tagbar-scroll :deep(.el-check-tag) { padding: 4px 10px; font-size: 12px; }
+.tag-count { opacity: .6; font-size: 11px; margin-left: 2px; }
+
+/* 笔记网格:auto-fill + minmax 实现响应式列数,1200px 宽下能稳到 3 列 */
+.notes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+
+.note-card { position: relative; display: flex; flex-direction: column; gap: 8px;
+  background: var(--el-bg-color); border: 1px solid var(--el-border-color-lighter);
+  border-radius: 12px; padding: 14px; cursor: pointer; transition: all .15s;
+  outline: none; min-height: 120px; }
+.note-card:hover { border-color: var(--el-color-primary-light-5); box-shadow: 0 4px 16px rgba(0,0,0,.06); transform: translateY(-1px); }
+.note-card:focus-visible { border-color: var(--el-color-primary); box-shadow: 0 0 0 3px var(--el-color-primary-light-8); }
+
+.note-img { width: 100%; max-height: 220px; border-radius: 8px; background: var(--el-fill-color-lighter);
+  display: block; cursor: zoom-in; }
+.note-img :deep(img) { object-fit: contain; }
+
+.note-body { position: relative; max-height: 240px; overflow: hidden; }
+.note-preview { margin: 0; font-size: 14px; line-height: 1.6; }
+.note-preview.md { color: var(--el-text-color-regular); }
+.note-fade { position: absolute; bottom: 0; left: 0; right: 0; height: 36px; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--el-bg-color)); }
+
+.note-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: auto; flex-wrap: wrap; }
+.note-tags { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; flex: 1; min-width: 0; }
+.more-tags { font-size: 11px; color: var(--el-text-color-secondary); }
+
+.note-source { display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
+  color: var(--el-color-primary); text-decoration: none; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.note-source:hover { text-decoration: underline; }
+
+/* 抽屉:rtl 用 640px 固定宽,btt 走 92% 高度 */
+.note-drawer :deep(.el-drawer__body) { padding: 0; }
+.drawer-content { display: flex; flex-direction: column; gap: 14px; padding: 18px 22px; height: 100%;
+  overflow-y: auto; box-sizing: border-box; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--el-border-color-lighter); }
+.drawer-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; }
+.drawer-title .el-icon { color: var(--el-color-primary); }
+.drawer-actions { display: flex; gap: 6px; }
+.drawer-meta { font-size: 12px; color: var(--el-text-color-secondary); display: flex; gap: 6px; flex-wrap: wrap; }
+.drawer-source { display: inline-flex; align-items: center; gap: 4px; font-size: 13px;
+  color: var(--el-color-primary); text-decoration: none; word-break: break-all; }
+.drawer-source:hover { text-decoration: underline; }
+.drawer-img { max-width: 100%; max-height: 360px; border-radius: 8px; display: block;
+  background: var(--el-fill-color-lighter); cursor: zoom-in; }
+.drawer-img :deep(img) { object-fit: contain; max-height: 360px; }
+.drawer-body { font-size: 15px; line-height: 1.75; }
+.drawer-tags { display: flex; gap: 6px; flex-wrap: wrap; padding-top: 8px;
+  border-top: 1px solid var(--el-border-color-lighter); }
+
+/* ── 笔记 tab 移动端 ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  .notes-toolbar { gap: 8px; }
+  .notes-search { flex: 1 1 100%; }
+  .notes-sort { width: auto; flex: 1; min-width: 110px; }
+  .notes-count { margin-left: 0; }
+  .notes-tagbar { padding: 8px; }
+  .tagbar-scroll { gap: 4px; }
+  .notes-grid { grid-template-columns: 1fr; gap: 10px; }
+  .note-card { padding: 12px; min-height: 100px; }
+  .note-body { max-height: 200px; }
+  .drawer-content { padding: 14px 16px; gap: 12px; }
+  .drawer-title { font-size: 15px; }
+  .drawer-body { font-size: 14px; line-height: 1.7; }
+  .drawer-img { max-height: 240px; }
+  .drawer-img :deep(img) { max-height: 240px; }
+}
 </style>
