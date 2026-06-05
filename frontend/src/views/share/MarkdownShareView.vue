@@ -76,7 +76,10 @@ const md = new MarkdownIt({
   breaks: true,
   highlight: function (str, lang) {
     if (lang === 'mermaid') {
-      return `<div class="mermaid">${str}</div>`
+      // Escape so the browser parses the source as text — diagrams with <, >, &
+      // in labels otherwise corrupt the markup, and element.textContent (read
+      // back in renderMermaid) returns garbled source → "Syntax error in text".
+      return `<div class="mermaid">${md.utils.escapeHtml(str)}</div>`
     }
     if (lang && hljs.getLanguage(lang)) {
       try {
