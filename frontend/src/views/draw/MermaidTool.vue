@@ -1396,6 +1396,17 @@ const shareCodeCollapsed = ref(true)
 const initShareMode = async () => {
   const pasteId = route.query.paste
   const shared = route.query.share  // 兼容旧链接
+  const editSrc = route.query.edit  // 外部预填代码,直接进编辑模式
+  if (editSrc) {
+    try {
+      code.value = decodeURIComponent(escape(atob(editSrc)))
+    } catch {
+      if (!code.value) code.value = templates.flowchart
+    }
+    isShareMode.value = false
+    render()
+    return
+  }
   if (pasteId) {
     try {
       const res = await fetch(`/api/paste/${pasteId}`)
@@ -1432,7 +1443,7 @@ onMounted(async () => {
 
 // keep-alive 重新激活时重新检查（从其他页面切回来时）
 onActivated(() => {
-  if (route.query.paste || route.query.share) {
+  if (route.query.paste || route.query.share || route.query.edit) {
     initShareMode()
   }
 })
