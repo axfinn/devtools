@@ -1,5 +1,5 @@
 <template>
-  <div class="askit-mydata">
+  <div class="askit-mydata" ref="rootRef">
     <!-- 未登录:邮箱验证码登录 -->
     <el-card v-if="!loggedIn" class="login-card">
       <template #header>
@@ -179,7 +179,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Refresh, Download, ChatDotRound, Link, MagicStick,
@@ -187,25 +187,66 @@ import {
 } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import hljs from '../../utils/highlight'
+import texmath from 'markdown-it-texmath'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import markdownItTaskLists from 'markdown-it-task-lists'
+import markdownItFootnote from 'markdown-it-footnote'
+import markdownItMark from 'markdown-it-mark'
+import markdownItSub from 'markdown-it-sub'
+import markdownItSup from 'markdown-it-sup'
+import { getMermaid } from '../../utils/vendor-loaders'
 
 const API = '/api/askit/v1'
 const TOKEN_KEY = 'askit_mydata_access'
 const REFRESH_KEY = 'askit_mydata_refresh'
 
 // html:false —— 不放行同步内容里的原始 HTML,从源头避免 v-html XSS。
+// highlight 的返回值不受 html:false 转义,所以 mermaid 仍可吐出 <div class="mermaid">。
 const md = new MarkdownIt({
   html: false,
   linkify: true,
   breaks: true,
   highlight(code, lang) {
+    if (lang === 'mermaid') return `<div class="mermaid">${md.utils.escapeHtml(code)}</div>`
     if (lang && hljs.getLanguage(lang)) {
       try { return hljs.highlight(code, { language: lang }).value } catch {}
     }
     return ''
   },
 })
+md.use(texmath, {
+  engine: katex,
+  delimiters: ['dollars', 'brackets'],
+  katexOptions: { throwOnError: false },
+})
+md.use(markdownItTaskLists, { enabled: true })
+md.use(markdownItFootnote)
+md.use(markdownItMark)
+md.use(markdownItSub)
+md.use(markdownItSup)
+
 function renderMarkdown(text) { return text ? md.render(text) : '' }
 const showRaw = ref(false)
+const rootRef = ref(null)
+
+// 渲染后把页面里的 .mermaid 文本块替换成 SVG(懒加载 mermaid,首次用时才拉)。
+let mermaidSeq = 0
+async function renderMermaid() {
+  if (showRaw.value || !rootRef.value) return
+  const blocks = rootRef.value.querySelectorAll('.mermaid:not([data-processed])')
+  if (!blocks.length) return
+  const mermaid = await getMermaid({ theme: 'default', flowchart: { useMaxWidth: true, htmlLabels: true } })
+  for (const el of Array.from(blocks)) {
+    el.setAttribute('data-processed', 'true')
+    try {
+      const { svg } = await mermaid.render(`askit-mmd-${Date.now()}-${mermaidSeq++}`, el.textContent || '')
+      el.innerHTML = svg
+    } catch (e) {
+      el.innerHTML = `<div class="mermaid-error">图表渲染失败: ${e instanceof Error ? e.message : e}</div>`
+    }
+  }
+}
 
 const email = ref('')
 const code = ref('')
@@ -434,6 +475,12 @@ onMounted(() => {
   if (localStorage.getItem(TOKEN_KEY)) afterLogin()
 })
 onUnmounted(() => { if (cooldownTimer) clearInterval(cooldownTimer) })
+
+// 切换标签 / 展开对话 / 加载数据 / 切回渲染模式后,重渲染 mermaid 图。
+watch([activeTab, openConvs, collections, showRaw], () => {
+  nextTick(() => { void renderMermaid() })
+}, { deep: true })
+
 </script>
 
 <style scoped>
@@ -504,6 +551,14 @@ onUnmounted(() => { if (cooldownTimer) clearInterval(cooldownTimer) })
 .md :deep(table) { border-collapse: collapse; margin: 8px 0; }
 .md :deep(th), .md :deep(td) { border: 1px solid var(--el-border-color); padding: 4px 8px; }
 .md :deep(img) { max-width: 100%; border-radius: 6px; }
+.md :deep(.mermaid) { display: flex; justify-content: center; margin: 10px 0; background: #fff;
+  padding: 12px; border-radius: 8px; overflow-x: auto; }
+.md :deep(.mermaid svg) { max-width: 100%; height: auto; }
+.md :deep(.mermaid-error) { color: var(--el-color-danger); font-size: 13px; }
+.md :deep(.katex-display) { margin: 10px 0; overflow-x: auto; }
+.md :deep(.task-list-item) { list-style: none; }
+.md :deep(.task-list-item input) { margin-right: 6px; }
+.md :deep(mark) { background: rgba(255, 235, 59, .4); padding: 0 .15em; border-radius: 2px; }
 
 /* 原文 pre */
 .raw { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
