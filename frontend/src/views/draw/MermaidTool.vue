@@ -3,8 +3,11 @@
 
     <!-- 分享模式：图优先，代码可折叠 -->
     <div v-if="isShareMode" class="share-view">
-      <div class="share-diagram" v-html="svgContent"></div>
+      <div class="share-diagram" ref="shareDiagramRef" v-html="svgContent"></div>
       <div class="share-actions">
+        <el-button size="small" @click="toggleFullscreen">
+          <el-icon><FullScreen /></el-icon> 放大查看
+        </el-button>
         <el-button type="success" size="small" @click="exportPng">
           <el-icon><Picture /></el-icon> 下载 PNG
         </el-button>
@@ -13,6 +16,9 @@
         </el-button>
         <el-button size="small" @click="shareCodeCollapsed = !shareCodeCollapsed">
           <el-icon><Document /></el-icon> {{ shareCodeCollapsed ? '查看代码' : '收起代码' }}
+        </el-button>
+        <el-button size="small" @click="copyCode">
+          <el-icon><CopyDocument /></el-icon> 复制源码
         </el-button>
       </div>
       <div v-if="!shareCodeCollapsed" class="share-code">
@@ -266,7 +272,25 @@
       </div>
     </div>
 
-    <!-- 全屏预览模态框 -->
+    <!-- 全屏预览模态框移至 v-else 外，分享/编辑两种模式共用 -->
+    <!-- 新建档案弹窗 -->
+    <el-dialog v-model="createProjectDialogVisible" title="新建档案" width="360px" :close-on-click-modal="false">
+      <el-input v-model="newProjectName" placeholder="档案名称" @keydown.enter="createProject" autofocus />
+      <template #footer>
+        <el-button @click="createProjectDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!newProjectName.trim()" @click="createProject">创建</el-button>
+      </template>
+    </el-dialog>
+    <!-- 密码验证弹窗 -->
+    <el-dialog v-model="authDialogVisible" title="请输入访问密码" width="360px" :close-on-click-modal="false" :show-close="false">
+      <el-input v-model="authInput" type="password" placeholder="密码" show-password @keydown.enter="submitAuth" autofocus />
+      <template #footer>
+        <el-button type="primary" @click="submitAuth">确认</el-button>
+      </template>
+    </el-dialog>
+    </template><!-- end v-else -->
+
+    <!-- 全屏预览模态框（分享/编辑两种模式共用） -->
     <teleport to="body">
       <div v-if="isFullscreen" class="fullscreen-overlay" @click.self="toggleFullscreen">
         <div class="fullscreen-container">
@@ -310,22 +334,6 @@
         </div>
       </div>
     </teleport>
-    <!-- 新建档案弹窗 -->
-    <el-dialog v-model="createProjectDialogVisible" title="新建档案" width="360px" :close-on-click-modal="false">
-      <el-input v-model="newProjectName" placeholder="档案名称" @keydown.enter="createProject" autofocus />
-      <template #footer>
-        <el-button @click="createProjectDialogVisible = false">取消</el-button>
-        <el-button type="primary" :disabled="!newProjectName.trim()" @click="createProject">创建</el-button>
-      </template>
-    </el-dialog>
-    <!-- 密码验证弹窗 -->
-    <el-dialog v-model="authDialogVisible" title="请输入访问密码" width="360px" :close-on-click-modal="false" :show-close="false">
-      <el-input v-model="authInput" type="password" placeholder="密码" show-password @keydown.enter="submitAuth" autofocus />
-      <template #footer>
-        <el-button type="primary" @click="submitAuth">确认</el-button>
-      </template>
-    </el-dialog>
-    </template><!-- end v-else -->
   </div>
 </template>
 
@@ -553,6 +561,12 @@ const theme = ref('default')
 const zoomLevel = ref(1)
 const previewRef = ref(null)
 const diagramRef = ref(null)
+const shareDiagramRef = ref(null)
+
+// 取当前可见的 SVG 容器：编辑模式用 diagramRef，分享模式用 shareDiagramRef
+const getDiagramSvg = () =>
+  diagramRef.value?.querySelector('svg') || shareDiagramRef.value?.querySelector('svg') || null
+
 const editorRef = ref(null)
 const isFullscreen = ref(false)
 const fullscreenZoom = ref(1)
@@ -1087,7 +1101,7 @@ const exportPng = async () => {
   }
 
   try {
-    const svgElement = diagramRef.value?.querySelector('svg')
+    const svgElement = getDiagramSvg()
     if (!svgElement) {
       ElMessage.error('无法获取 SVG 元素')
       return
@@ -1294,7 +1308,7 @@ const exportSvg = () => {
   }
 
   try {
-    const svgElement = diagramRef.value?.querySelector('svg')
+    const svgElement = getDiagramSvg()
     if (!svgElement) {
       ElMessage.error('无法获取 SVG 元素')
       return
