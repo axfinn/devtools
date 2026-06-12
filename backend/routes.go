@@ -149,6 +149,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		voicememo.GET("/task/:taskId/list", h.voiceMemoHandler.ListByTask)
 		voicememo.GET("/:id/audio", h.voiceMemoHandler.ServeMemoAudio)
 		voicememo.POST("/:id/transcribe", h.voiceMemoHandler.Transcribe)
+		voicememo.POST("/:id/summarize", h.voiceMemoHandler.Summarize)
 		voicememo.POST("/:id/planner-task", h.voiceMemoHandler.CreatePlannerTask)
 		voicememo.PUT("/:id", h.voiceMemoHandler.Update)
 		voicememo.GET("/:id", h.voiceMemoHandler.Get)
