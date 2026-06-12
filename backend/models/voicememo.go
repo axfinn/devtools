@@ -13,6 +13,7 @@ type VoiceMemo struct {
 	Title         string     `json:"title"`
 	AudioURL      string     `json:"audio_url"`
 	Transcript    string     `json:"transcript"`
+	Summary       string     `json:"summary"`
 	Language      string     `json:"language"`
 	DurationSec   float64    `json:"duration_sec"`
 	FileSize      int64      `json:"file_size"`
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS voice_memos (
 	title TEXT DEFAULT '',
 	audio_url TEXT DEFAULT '',
 	transcript TEXT DEFAULT '',
+	summary TEXT DEFAULT '',
 	language TEXT DEFAULT 'zh',
 	duration_sec REAL DEFAULT 0,
 	file_size INTEGER DEFAULT 0,
@@ -94,6 +96,16 @@ func (db *DB) initVoiceMemo() error {
 		}
 	}
 
+	var summaryColumnCount int
+	if err := db.conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('voice_memos') WHERE name='summary'").Scan(&summaryColumnCount); err != nil {
+		return err
+	}
+	if summaryColumnCount == 0 {
+		if _, err := db.conn.Exec("ALTER TABLE voice_memos ADD COLUMN summary TEXT DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+
 	for _, stmt := range voicememoIndexes {
 		if _, err := db.conn.Exec(stmt); err != nil {
 			return err
@@ -114,9 +126,9 @@ func (db *DB) CreateVoiceMemo(m *VoiceMemo) error {
 		m.ExpiresAt = &exp
 	}
 	_, err := db.conn.Exec(
-		`INSERT INTO voice_memos (id, device_id, title, audio_url, transcript, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.DeviceID, m.Title, m.AudioURL, m.Transcript, m.Language,
+		`INSERT INTO voice_memos (id, device_id, title, audio_url, transcript, summary, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.DeviceID, m.Title, m.AudioURL, m.Transcript, m.Summary, m.Language,
 		m.DurationSec, m.FileSize, m.Status, m.ErrorMessage, m.ProfileID, m.PlannerTaskID, m.ExpiresAt, m.CreatedAt, m.UpdatedAt,
 	)
 	return err
@@ -128,9 +140,9 @@ func (db *DB) GetVoiceMemo(id string) (*VoiceMemo, error) {
 	var errorMsg sql.NullString
 	var expiresAt sql.NullTime
 	err := db.conn.QueryRow(
-		`SELECT id, device_id, title, audio_url, transcript, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
+		`SELECT id, device_id, title, audio_url, transcript, summary, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
 		 FROM voice_memos WHERE id = ? AND deleted_at IS NULL`, id,
-	).Scan(&m.ID, &m.DeviceID, &m.Title, &m.AudioURL, &m.Transcript, &m.Language,
+	).Scan(&m.ID, &m.DeviceID, &m.Title, &m.AudioURL, &m.Transcript, &m.Summary, &m.Language,
 		&m.DurationSec, &m.FileSize, &m.Status, &errorMsg, &m.ProfileID, &m.PlannerTaskID, &expiresAt, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -166,7 +178,7 @@ func (db *DB) ListVoiceMemos(profileID, deviceID string, limit, offset int) ([]V
 	var err error
 	if profileID != "" {
 		rows, err = db.conn.Query(
-			`SELECT id, device_id, title, audio_url, transcript, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
+			`SELECT id, device_id, title, audio_url, transcript, summary, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
 			 FROM voice_memos
 			 WHERE deleted_at IS NULL
 			   AND (planner_profile_id = ? OR (planner_profile_id = '' AND device_id = ?))
@@ -175,7 +187,7 @@ func (db *DB) ListVoiceMemos(profileID, deviceID string, limit, offset int) ([]V
 		)
 	} else {
 		rows, err = db.conn.Query(
-			`SELECT id, device_id, title, audio_url, transcript, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
+			`SELECT id, device_id, title, audio_url, transcript, summary, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
 			 FROM voice_memos WHERE device_id = ? AND deleted_at IS NULL
 			 ORDER BY created_at DESC LIMIT ? OFFSET ?`, deviceID, limit, offset,
 		)
@@ -190,7 +202,7 @@ func (db *DB) ListVoiceMemos(profileID, deviceID string, limit, offset int) ([]V
 		var m VoiceMemo
 		var errorMsg sql.NullString
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&m.ID, &m.DeviceID, &m.Title, &m.AudioURL, &m.Transcript, &m.Language,
+		if err := rows.Scan(&m.ID, &m.DeviceID, &m.Title, &m.AudioURL, &m.Transcript, &m.Summary, &m.Language,
 			&m.DurationSec, &m.FileSize, &m.Status, &errorMsg, &m.ProfileID, &m.PlannerTaskID, &expiresAt, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
@@ -209,7 +221,7 @@ func (db *DB) ListVoiceMemos(profileID, deviceID string, limit, offset int) ([]V
 // ListVoiceMemosByTask returns all recordings bound to a planner task (oldest first).
 func (db *DB) ListVoiceMemosByTask(taskID string) ([]VoiceMemo, error) {
 	rows, err := db.conn.Query(
-		`SELECT id, device_id, title, audio_url, transcript, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
+		`SELECT id, device_id, title, audio_url, transcript, summary, language, duration_sec, file_size, status, error_message, planner_profile_id, planner_task_id, expires_at, created_at, updated_at
 		 FROM voice_memos
 		 WHERE planner_task_id = ? AND deleted_at IS NULL
 		 ORDER BY created_at ASC`, taskID,
@@ -224,7 +236,7 @@ func (db *DB) ListVoiceMemosByTask(taskID string) ([]VoiceMemo, error) {
 		var m VoiceMemo
 		var errorMsg sql.NullString
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&m.ID, &m.DeviceID, &m.Title, &m.AudioURL, &m.Transcript, &m.Language,
+		if err := rows.Scan(&m.ID, &m.DeviceID, &m.Title, &m.AudioURL, &m.Transcript, &m.Summary, &m.Language,
 			&m.DurationSec, &m.FileSize, &m.Status, &errorMsg, &m.ProfileID, &m.PlannerTaskID, &expiresAt, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -265,6 +277,15 @@ func (db *DB) UpdateVoiceMemo(id, title, transcript, status string) error {
 	_, err := db.conn.Exec(
 		`UPDATE voice_memos SET title = ?, transcript = ?, status = ?, expires_at = ?, updated_at = ? WHERE id = ?`,
 		title, transcript, status, expiresAt, time.Now(), id,
+	)
+	return err
+}
+
+// UpdateVoiceMemoSummary stores the AI-generated summary for a memo.
+func (db *DB) UpdateVoiceMemoSummary(id, summary string) error {
+	_, err := db.conn.Exec(
+		`UPDATE voice_memos SET summary = ?, updated_at = ? WHERE id = ?`,
+		summary, time.Now(), id,
 	)
 	return err
 }

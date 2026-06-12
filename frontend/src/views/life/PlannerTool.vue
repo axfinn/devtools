@@ -913,7 +913,14 @@
       </div>
     </el-drawer>
 
-    <el-drawer v-model="commentDrawerVisible" title="事项评论" :size="drawerSize">
+    <el-drawer
+      v-model="commentDrawerVisible"
+      title="事项评论"
+      :size="drawerSize"
+      :close-on-click-modal="!isTaskRecording"
+      :close-on-press-escape="!isTaskRecording"
+      :before-close="handleCommentDrawerClose"
+    >
       <div class="drawer-stack">
         <div class="task-recording-block">
           <div class="task-recording-head">
@@ -940,8 +947,30 @@
               <audio :src="recordingAudioUrl(rec)" controls preload="none" class="task-recording-audio" />
               <p v-if="rec.status === 'transcribing'" class="soft-note">转写中…</p>
               <template v-else-if="rec.transcript">
-                <p class="task-recording-transcript">{{ rec.transcript }}</p>
-                <el-button size="small" link type="primary" @click="recordingToComment(rec)">转为评论</el-button>
+                <p
+                  class="task-recording-transcript"
+                  :class="{ 'transcript-collapsed': isTranscriptLong(rec) && !expandedTranscripts[rec.id] }"
+                >{{ rec.transcript }}</p>
+                <div class="task-recording-actions">
+                  <el-button
+                    v-if="isTranscriptLong(rec)"
+                    size="small"
+                    link
+                    @click="toggleTranscript(rec.id)"
+                  >{{ expandedTranscripts[rec.id] ? '收起' : '展开全文' }}</el-button>
+                  <el-button size="small" link type="primary" @click="recordingToComment(rec)">转为评论</el-button>
+                  <el-button
+                    size="small"
+                    link
+                    type="success"
+                    :loading="summarizingRecordingId === rec.id"
+                    @click="summarizeTaskRecording(rec)"
+                  >{{ rec.summary ? '重新总结' : '生成总结' }}</el-button>
+                </div>
+                <div v-if="rec.summary" class="task-recording-summary">
+                  <span class="summary-label">AI 总结</span>
+                  <p>{{ rec.summary }}</p>
+                </div>
               </template>
               <el-button v-else size="small" link @click="transcribeTaskRecording(rec)">转写文字</el-button>
             </div>
@@ -962,7 +991,7 @@
         <el-input v-model="commentForm.content" type="textarea" :rows="4" placeholder="记录进展、补充想法、留一点上下文" />
         <div class="drawer-actions">
           <el-button type="primary" :loading="savingComment" @click="submitComment">添加评论</el-button>
-          <el-button @click="commentDrawerVisible = false">关闭</el-button>
+          <el-button @click="requestCloseCommentDrawer">关闭</el-button>
         </div>
       </div>
     </el-drawer>
@@ -1218,7 +1247,15 @@
       </div>
     </el-drawer>
 
-    <el-drawer v-model="meetingDialogVisible" title="会议纪要" :size="meetingDrawerSize" :before-close="handleMeetingDrawerClose" @closed="resetMeetingForm">
+    <el-drawer
+      v-model="meetingDialogVisible"
+      title="会议纪要"
+      :size="meetingDrawerSize"
+      :close-on-click-modal="meetingVoiceState !== 'recording'"
+      :close-on-press-escape="meetingVoiceState !== 'recording'"
+      :before-close="handleMeetingDrawerClose"
+      @closed="resetMeetingForm"
+    >
       <div class="drawer-stack">
         <div class="quick-row">
           <el-input v-model="meetingForm.title" placeholder="会议标题（必填）" maxlength="80" show-word-limit style="flex:1" />
@@ -1312,7 +1349,7 @@
             <el-button v-if="meetingForm.id" size="small" plain @click="deleteMeeting">删除此纪要</el-button>
           </div>
           <div>
-            <el-button @click="meetingDialogVisible = false">关闭</el-button>
+            <el-button @click="requestCloseMeetingDrawer">关闭</el-button>
             <el-button plain @click="startMeetingVoice">
               <el-icon><Microphone /></el-icon>{{ meetingVoiceState === 'recording' ? '停止录音' : '录音' }}
             </el-button>
@@ -1746,6 +1783,8 @@ const taskCommentsPreview = ref([])
 const taskActivities = ref([])
 const taskActivitiesPreview = ref([])
 const taskRecordings = ref([])
+const expandedTranscripts = reactive({})
+const summarizingRecordingId = ref('')
 const isTaskRecording = ref(false)
 const taskRecordingTime = ref(0)
 const taskRecordingUploading = ref(false)
@@ -2562,6 +2601,37 @@ async function uploadTaskRecording(blob) {
   }
 }
 
+const TRANSCRIPT_COLLAPSE_THRESHOLD = 120
+
+function isTranscriptLong(rec) {
+  return rec && rec.transcript && Array.from(rec.transcript).length > TRANSCRIPT_COLLAPSE_THRESHOLD
+}
+
+function toggleTranscript(id) {
+  expandedTranscripts[id] = !expandedTranscripts[id]
+}
+
+async function summarizeTaskRecording(rec) {
+  if (!rec || !rec.transcript) return
+  summarizingRecordingId.value = rec.id
+  try {
+    const response = await plannerFetch(`${API_BASE.replace('/planner', '')}/voicememo/${rec.id}/summarize?profile_id=${profileId.value}`, {
+      method: 'POST'
+    })
+    const data = await response.json()
+    if (data.summary) {
+      rec.summary = data.summary
+      ElMessage.success('总结已生成')
+    } else {
+      ElMessage.warning('未能生成总结')
+    }
+  } catch (error) {
+    ElMessage.error('总结失败: ' + error.message)
+  } finally {
+    summarizingRecordingId.value = ''
+  }
+}
+
 async function transcribeTaskRecording(rec) {
   try {
     await plannerFetch(`${API_BASE.replace('/planner', '')}/voicememo/${rec.id}/transcribe?profile_id=${profileId.value}`, {
@@ -2888,6 +2958,10 @@ function exportMeetingMarkdown(m) {
 }
 
 async function handleMeetingDrawerClose(done) {
+  if (meetingVoiceState.value === 'recording') {
+    ElMessage.warning('正在录音，请先点「停止录音」再关闭，避免内容丢失')
+    return
+  }
   if (meetingDirty.value) {
     try {
       await ElMessageBox.confirm('有未保存的更改，确定关闭吗？', '未保存的更改', {
@@ -2905,11 +2979,35 @@ async function handleMeetingDrawerClose(done) {
   }
 }
 
+function requestCloseMeetingDrawer() {
+  handleMeetingDrawerClose((cancel) => {
+    if (cancel !== false) {
+      meetingDialogVisible.value = false
+    }
+  })
+}
+
 watch(meetingDialogVisible, (visible) => {
   if (visible) {
     meetingDirty.value = false
   }
 })
+
+function handleCommentDrawerClose(done) {
+  if (isTaskRecording.value) {
+    ElMessage.warning('正在录音，请先点「停止录音」再关闭，避免内容丢失')
+    return
+  }
+  done()
+}
+
+function requestCloseCommentDrawer() {
+  if (isTaskRecording.value) {
+    ElMessage.warning('正在录音，请先点「停止录音」再关闭，避免内容丢失')
+    return
+  }
+  commentDrawerVisible.value = false
+}
 
 watch(commentDrawerVisible, (visible) => {
   if (!visible && isTaskRecording.value) {
@@ -4317,6 +4415,40 @@ onBeforeUnmount(() => {
 
 .task-recording-transcript {
   margin: 0;
+  white-space: pre-wrap;
+  color: #36435a;
+}
+
+.task-recording-transcript.transcript-collapsed {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-recording-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.task-recording-summary {
+  margin-top: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f0f9f3;
+  border: 1px solid #d6efe0;
+}
+
+.task-recording-summary .summary-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f9e6c;
+}
+
+.task-recording-summary p {
+  margin: 4px 0 0;
   white-space: pre-wrap;
   color: #36435a;
 }

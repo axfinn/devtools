@@ -227,6 +227,85 @@ type meetingSummaryResult struct {
 	ActionItems string `json:"action_items"`
 }
 
+// SummarizeTranscript condenses an arbitrary transcript (e.g. a task voice memo)
+// into a short Chinese summary, reusing the MiniMax client. When the API key is
+// missing or the request fails it degrades to a local truncation so callers
+// always get something usable.
+func (h *PlannerHandler) SummarizeTranscript(transcript string) string {
+	content := strings.TrimSpace(transcript)
+	if content == "" {
+		return ""
+	}
+	if strings.TrimSpace(h.cfg.MiniMax.APIKey) == "" {
+		return transcriptSummaryFallback(content)
+	}
+
+	prompt := fmt.Sprintf(`你是一个会议/沟通录音助手。请基于下面的录音转写文本，用中文输出一段简明扼要的总结。
+
+规则：
+1. 直接输出总结正文，不要加「总结：」之类的前缀，也不要附带解释。
+2. 提炼关键信息、结论和待办，控制在 200 字以内。
+3. 如果文本明显有多人对话，按发言要点归纳；信息不足时只总结已有内容。
+
+录音转写文本：
+%s`, content)
+
+	reqBody := map[string]interface{}{
+		"model": plannerFirstNonEmpty(h.cfg.MiniMax.Model, "abab6.5s-chat"),
+		"messages": []map[string]string{
+			{"role": "system", "content": "你是一个擅长归纳沟通录音要点的助手。"},
+			{"role": "user", "content": prompt},
+		},
+		"temperature": 0.2,
+	}
+	body, _ := json.Marshal(reqBody)
+	req, err := http.NewRequest("POST", plannerMiniMaxAPIURL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("voice memo summarize: build request failed, fallback: %v", err)
+		return transcriptSummaryFallback(content)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("voice memo summarize: request failed, fallback: %v", err)
+		return transcriptSummaryFallback(content)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("voice memo summarize: API returned %d, fallback", resp.StatusCode)
+		return transcriptSummaryFallback(content)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return transcriptSummaryFallback(content)
+	}
+	choices, _ := raw["choices"].([]interface{})
+	if len(choices) == 0 {
+		return transcriptSummaryFallback(content)
+	}
+	first, _ := choices[0].(map[string]interface{})
+	msg, _ := first["message"].(map[string]interface{})
+	summary, _ := msg["content"].(string)
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return transcriptSummaryFallback(content)
+	}
+	return summary
+}
+
+func transcriptSummaryFallback(content string) string {
+	runes := []rune(content)
+	const maxRunes = 200
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "…"
+	}
+	return content
+}
+
 type plannerASRSegment struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
@@ -258,13 +337,15 @@ func (h *PlannerHandler) aiSummarizeMeeting(meeting *models.PlannerMeetingMinute
 	}
 
 	prompt := fmt.Sprintf(`你是一个会议纪要助手。请基于下面的会议内容输出 JSON，字段固定为：
-summary(string) — 会议总结，200 字以内
+summary(string) — 会议总结，结构化呈现，依次包含「核心议题」「关键结论/决议」「风险或待跟进」三部分，每部分用一两句话概括，可用换行分隔，控制在 300 字以内。
 action_items(string) — JSON 数组字符串，每条包含 task(string) 和 assignee(string)
 
 规则：
 1. 只返回 JSON，不要附带解释。
 2. 如果原文没有明确待办事项，action_items 返回空数组 []。
-3. 用中文总结。
+3. 待办的 assignee 尽量从参与人或原文中识别；无法确定时填「未指定」。
+4. 如果会议内容里能区分不同发言人，请在总结中按发言要点归纳，不要逐字罗列。
+5. 全程用中文。
 
 会议标题：%s
 参与人：%s

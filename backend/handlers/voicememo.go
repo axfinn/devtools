@@ -272,6 +272,42 @@ func (h *VoiceMemoHandler) Transcribe(c *gin.Context) {
 	})
 }
 
+// Summarize generates an AI summary for a transcribed memo.
+func (h *VoiceMemoHandler) Summarize(c *gin.Context) {
+	memo, err := h.db.GetVoiceMemo(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "记录不存在"})
+		return
+	}
+	if !h.canAccessMemo(c, memo, c.Query("profile_id")) {
+		return
+	}
+	if h.plannerHandler == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "事项管理模块未启用"})
+		return
+	}
+	transcript := strings.TrimSpace(memo.Transcript)
+	if transcript == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先完成语音转写后再生成总结"})
+		return
+	}
+
+	summary := h.plannerHandler.SummarizeTranscript(transcript)
+	if summary == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "总结生成失败"})
+		return
+	}
+	if err := h.db.UpdateVoiceMemoSummary(memo.ID, summary); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存总结失败"})
+		return
+	}
+	memo.Summary = summary
+	c.JSON(http.StatusOK, gin.H{
+		"id":      memo.ID,
+		"summary": summary,
+	})
+}
+
 // Update edits a memo's title, transcript, or saves it.
 func (h *VoiceMemoHandler) Update(c *gin.Context) {
 	memo, err := h.db.GetVoiceMemo(c.Param("id"))
