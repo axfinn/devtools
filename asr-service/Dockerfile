@@ -29,6 +29,9 @@ RUN sed -i 's|deb\.debian\.org|mirrors.aliyun.com|g; s|security\.debian\.org|mir
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY config_loader.py .
+COPY config.example.yaml ./config.yaml
+
 COPY main.py .
 
 EXPOSE 9000

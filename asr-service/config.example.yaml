@@ -1,0 +1,33 @@
+# ASR 服务配置
+# 复制为 config.yaml 后修改;所有字段都支持环境变量覆盖(以 ASR_ 为前缀,见下表)
+#
+# 字段              覆盖变量                  说明
+# model             ASR_MODEL                 faster-whisper 模型
+# device            ASR_DEVICE                cpu | cuda
+# compute_type      ASR_COMPUTE_TYPE          cpu:int8|int8_float16; gpu:float16|int8_float16
+# language          ASR_LANGUAGE              默认 zh;空串表示自动检测
+# beam_size         ASR_BEAM_SIZE
+# vad_filter        ASR_VAD_FILTER            true | false
+#
+# enabled           ASR_DIARIZE_ENABLED       服务级开关:true/false
+# model             ASR_DIARIZE_MODEL         pyannote 模型 id
+# hf_token          HF_TOKEN                  留空走 env(推荐);不要把 token 写进 yaml
+# min_speakers      ASR_DIARIZE_MIN_SPEAKERS  0 = 自动推断
+# max_speakers      ASR_DIARIZE_MAX_SPEAKERS  0 = 自动推断
+# fallback_on_no_gpu ASR_DIARIZE_FALLBACK_NO_GPU  GPU 不可用时是否降级为只转写
+
+asr:
+  model: small
+  device: cpu
+  compute_type: int8
+  language: zh
+  beam_size: 5
+  vad_filter: true
+
+diarize:
+  enabled: false
+  model: pyannote/speaker-diarization-3.1
+  hf_token: ""
+  min_speakers: 0
+  max_speakers: 0
+  fallback_on_no_gpu: true

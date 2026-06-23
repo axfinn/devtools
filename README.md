@@ -194,6 +194,11 @@ devtools/
 | GIN_MODE | release（生产环境） | Gin 运行模式 |
 | TZ | Asia/Shanghai | 时区 |
 | TERMINAL_ENCRYPTION_KEY | 自动生成 | SSH 终端密码加密密钥（需持久化否则重启后无法解密） |
+| ASR_MODEL | small | faster-whisper 模型名（tiny/base/small/medium/large-v3） |
+| ASR_DEVICE | cpu | cpu \| cuda（GPU 模式需装 nvidia-container-toolkit） |
+| ASR_COMPUTE_TYPE | int8 | cpu:int8；gpu:float16 |
+| ASR_DIARIZE_ENABLED | false | 说话人识别开关（基于 pyannote-audio 3.1，需 GPU） |
+| HF_TOKEN | 空 | HuggingFace token（启用 Diarization 时必填） |
 
 ## 配置文件
 

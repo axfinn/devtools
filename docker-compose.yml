@@ -110,10 +110,30 @@ services:
       - https_proxy=
       - NO_PROXY=
       - no_proxy=
-      - ASR_MODEL=small
-      - ASR_DEVICE=cpu
-      - ASR_COMPUTE_TYPE=int8
-      - ASR_LANGUAGE=zh
+      # ASR 服务配置(也支持 asr-service/config.yaml 覆盖,详见 asr-service/config.example.yaml)
+      - ASR_MODEL=${ASR_MODEL:-small}
+      - ASR_DEVICE=${ASR_DEVICE:-cpu}
+      - ASR_COMPUTE_TYPE=${ASR_COMPUTE_TYPE:-int8}
+      - ASR_LANGUAGE=${ASR_LANGUAGE:-zh}
+      - ASR_BEAM_SIZE=${ASR_BEAM_SIZE:-5}
+      - ASR_VAD_FILTER=${ASR_VAD_FILTER:-true}
+      # 说话人识别(可选;需 GPU 才有实际效果,无 GPU 时按 fallback_on_no_gpu 自动降级)
+      - ASR_DIARIZE_ENABLED=${ASR_DIARIZE_ENABLED:-false}
+      - ASR_DIARIZE_MODEL=${ASR_DIARIZE_MODEL:-pyannote/speaker-diarization-3.1}
+      - ASR_DIARIZE_FALLBACK_NO_GPU=${ASR_DIARIZE_FALLBACK_NO_GPU:-true}
+      - HF_TOKEN=${HF_TOKEN:-}
+    # ── 启用 GPU 部署 ──
+    # 1) 宿主机安装 nvidia-container-toolkit
+    # 2) 在 .env 加 ASR_DEVICE=cuda(可选 ASR_DIARIZE_ENABLED=true + HF_TOKEN=...)
+    # 3) 取消下方 deploy.resources 段注释
+    # 4) docker compose up -d asr-service
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
       interval: 10s

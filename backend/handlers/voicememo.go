@@ -615,10 +615,19 @@ func (h *VoiceMemoHandler) ServeMemoAudio(c *gin.Context) {
 // ── ASR Integration ──
 
 type asrResponse struct {
-	Text     string `json:"text"`
-	Language string `json:"language"`
-	Status   string `json:"status"`
-	Error    string `json:"error"`
+	Text          string   `json:"text"`
+	Language      string   `json:"language"`
+	Status        string   `json:"status"`
+	Error         string   `json:"error"`
+	Segments      []asrSegment `json:"segments"`
+	DiarizeStatus string   `json:"diarize_status"`
+}
+
+type asrSegment struct {
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Text    string  `json:"text"`
+	Speaker string  `json:"speaker,omitempty"`
 }
 
 func (h *VoiceMemoHandler) transcribeMemo(memoID, filePath, originalName string) {
