@@ -52,6 +52,7 @@ data/
 # Config
 config.yaml
 backend/config.yaml
+asr-service/config.yaml
 
 # Build artifacts
 dist/
@@ -69,3 +70,8 @@ coverage/
 scripts/archive/
 .env
 backend/expense_csv_import
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

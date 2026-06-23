@@ -1,4 +1,4 @@
-FROM docker.m.daocloud.io/library/node:20-alpine AS frontend-builder
+FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -13,7 +13,7 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build
 
 # Build AskIt Chrome extension
-FROM docker.m.daocloud.io/library/node:20-alpine AS askit-builder
+FROM node:20-alpine AS askit-builder
 
 RUN apk add --no-cache git zip
 WORKDIR /app/askit
@@ -22,7 +22,7 @@ RUN npm install
 RUN npm run build
 RUN cd dist && zip -r /app/askit-extension.zip .
 
-FROM docker.m.daocloud.io/library/golang:1.22-alpine AS backend-builder
+FROM golang:1.22-alpine AS backend-builder
 
 WORKDIR /app/backend
 
@@ -38,7 +38,7 @@ COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
 # 编译 proxy-client 跨平台二进制
-FROM docker.m.daocloud.io/library/golang:1.22-alpine AS proxy-client-builder
+FROM golang:1.22-alpine AS proxy-client-builder
 
 WORKDIR /app/proxy-client
 
@@ -53,9 +53,12 @@ RUN GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o dist/proxy-client-dar
     GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o dist/proxy-client-linux-amd64    . && \
     GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/proxy-client-windows-amd64.exe .
 
-FROM docker.m.daocloud.io/library/alpine:latest
+FROM alpine:latest
 
 WORKDIR /app
+
+# apk 源切到国内（Aliyun 镜像）
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 
 RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
     nodejs npm git bash openssh-client hugo
