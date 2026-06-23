@@ -46,6 +46,7 @@ type UpdateAIAPIKeyRequest struct {
 	AllowedModels       []string `json:"allowed_models"`
 	AllowedScopes       []string `json:"allowed_scopes"`
 	ExpiresDays         int      `json:"expires_days"` // >0 表示从当前时间延长
+	ClearExpiration     bool     `json:"clear_expiration"` // true 时把 expires_at 置 NULL（永不过期），优先级高于 ExpiresDays
 	RateLimitPerHour    int      `json:"rate_limit_per_hour"`
 	BudgetLimit         float64  `json:"budget_limit"`
 	AlertThreshold      float64  `json:"alert_threshold"`

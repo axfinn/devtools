@@ -100,19 +100,26 @@
               </template>
             </el-table-column>
             <el-table-column prop="key_prefix" label="前缀" min-width="140" />
-            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <span :style="isKeyExpired(row) ? 'color:#f56c6c' : ''">{{ row.status }}</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="total_requests" label="总请求" width="90" />
             <el-table-column prop="total_tokens" label="总 Tokens" width="110" />
             <el-table-column label="累计费用" width="120">
               <template #default="{ row }">{{ formatCost(row.total_cost, row.billing_currency) }}</template>
             </el-table-column>
             <el-table-column label="过期时间" width="180">
-              <template #default="{ row }">{{ formatTime(row.expires_at) }}</template>
+              <template #default="{ row }">
+                <span :style="isKeyExpired(row) ? 'color:#f56c6c' : ''">{{ formatTime(row.expires_at) }}</span>
+              </template>
             </el-table-column>
             <el-table-column label="操作" width="240">
               <template #default="{ row }">
                 <el-button text @click="viewKey(row)">详情</el-button>
                 <el-button text type="warning" @click="openEditKey(row)">编辑</el-button>
+                <el-button v-if="row.status !== 'revoked'" text type="success" @click="openRenewKey(row)">续期</el-button>
                 <el-button v-if="row.status === 'active'" text type="danger" @click="revokeKey(row)">吊销</el-button>
               </template>
             </el-table-column>
@@ -688,6 +695,32 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="renewDialogVisible" title="续期 API Key" width="420px">
+      <el-descriptions v-if="renewTarget" :column="1" border size="small">
+        <el-descriptions-item label="名称">{{ renewTarget.name }}</el-descriptions-item>
+        <el-descriptions-item label="当前过期">
+          <span :style="isKeyExpired(renewTarget) ? 'color:#f56c6c' : ''">
+            {{ formatTime(renewTarget.expires_at) }}
+          </span>
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-form label-position="top" style="margin-top: 16px;">
+        <el-form-item label="续期方式">
+          <el-select v-model="renewDays" style="width: 100%">
+            <el-option :value="30" label="30 天" />
+            <el-option :value="90" label="90 天" />
+            <el-option :value="180" label="180 天" />
+            <el-option :value="365" label="365 天" />
+            <el-option :value="0" label="永不过期" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="renewDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="renewing" @click="confirmRenewKey">确认续期</el-button>
+      </template>
+    </el-dialog>
+
 
     <el-dialog v-model="docsVisible" width="920px" title="AI Gateway 接入文档">
       <div v-if="docs" class="docs-content">
@@ -1246,6 +1279,10 @@ const detailVisible = ref(false)
 const editKeyVisible = ref(false)
 const editKeyForm = ref(null)
 const savingKey = ref(false)
+const renewDialogVisible = ref(false)
+const renewTarget = ref(null)
+const renewDays = ref(90)
+const renewing = ref(false)
 const docsVisible = ref(false)
 const docs = ref(null)
 const anthropicDocsVisible = ref(false)
@@ -1659,6 +1696,39 @@ const saveEditKey = async () => {
     ElMessage.error(err.message || '更新失败')
   } finally {
     savingKey.value = false
+  }
+}
+
+const openRenewKey = (row) => {
+  renewTarget.value = { id: row.id, name: row.name, expires_at: row.expires_at }
+  renewDays.value = 90
+  renewDialogVisible.value = true
+}
+
+const confirmRenewKey = async () => {
+  if (!renewTarget.value) return
+  renewing.value = true
+  try {
+    const body = { super_admin_password: superAdminPassword.value }
+    if (renewDays.value === 0) {
+      body.clear_expiration = true
+    } else {
+      body.expires_days = renewDays.value
+    }
+    const res = await fetch(`${API_BASE}/admin/keys/${renewTarget.value.id}`, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || '续期失败')
+    ElMessage.success(renewDays.value === 0 ? '已设为永不过期' : `已续期 ${renewDays.value} 天`)
+    renewDialogVisible.value = false
+    loadKeys()
+  } catch (err) {
+    ElMessage.error(err.message || '续期失败')
+  } finally {
+    renewing.value = false
   }
 }
 
@@ -2104,6 +2174,7 @@ const minimaxModelFeatures = [
 
 const prettyJSON = (value) => JSON.stringify(value, null, 2)
 const formatTime = (value) => value ? new Date(value).toLocaleString() : '-'
+const isKeyExpired = (row) => row && row.expires_at && new Date(row.expires_at).getTime() < Date.now()
 const formatCost = (value, currency = 'CNY') => `${currency} ${Number(value || 0).toFixed(4)}`
 
 onMounted(() => {

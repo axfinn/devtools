@@ -527,7 +527,9 @@ func (h *AIGatewayHandler) AdminUpdateKey(c *gin.Context) {
 	if req.AnthropicProviderID >= 0 {
 		key.AnthropicProviderID = req.AnthropicProviderID
 	}
-	if req.ExpiresDays > 0 {
+	if req.ClearExpiration {
+		key.ExpiresAt = nil
+	} else if req.ExpiresDays > 0 {
 		expiresAt := time.Now().Add(time.Duration(req.ExpiresDays) * 24 * time.Hour)
 		key.ExpiresAt = &expiresAt
 	}
