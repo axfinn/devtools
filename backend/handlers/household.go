@@ -24,10 +24,18 @@ import (
 type HouseholdHandler struct {
 	db  *models.DB
 	cfg *config.Config
+	// 复用的 HTTP 客户端：避免每次 OCR/AI 调用都新建 Client/Transport
+	ocrClient *http.Client
+	aiClient  *http.Client
 }
 
 func NewHouseholdHandler(db *models.DB, cfg *config.Config) *HouseholdHandler {
-	return &HouseholdHandler{db: db, cfg: cfg}
+	return &HouseholdHandler{
+		db:        db,
+		cfg:       cfg,
+		ocrClient: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},
+		aiClient:  &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},
+	}
 }
 
 func (h *HouseholdHandler) profileCreatorKey(c *gin.Context) string {
@@ -1632,14 +1640,7 @@ func (h *HouseholdHandler) ReceiptOCR(c *gin.Context) {
 	ocrReq := map[string]string{"image": imageData}
 	ocrBody, _ := json.Marshal(ocrReq)
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: nil,
-		},
-		Timeout: 30 * time.Second,
-	}
-
-	resp, err := client.Post(ocrURL+"/ocr", "application/json", bytes.NewReader(ocrBody))
+	resp, err := h.ocrClient.Post(ocrURL+"/ocr", "application/json", bytes.NewReader(ocrBody))
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OCR 服务不可用", "code": 503})
 		return
@@ -2380,8 +2381,7 @@ func (h *HouseholdHandler) callDeepSeekAPI(prompt string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.aiClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("网络请求失败: %v", err)
 	}
@@ -2440,8 +2440,7 @@ func (h *HouseholdHandler) callMiniMaxAPI(prompt string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.aiClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("网络请求失败: %v", err)
 	}
@@ -3099,8 +3098,7 @@ func (h *HouseholdHandler) callDeepSeekChatAPI(prompt string, history []*models.
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.aiClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("网络请求失败: %v", err)
 	}
@@ -3176,8 +3174,7 @@ func (h *HouseholdHandler) callMiniMaxChatAPI(prompt string, history []*models.H
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.aiClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("网络请求失败: %v", err)
 	}

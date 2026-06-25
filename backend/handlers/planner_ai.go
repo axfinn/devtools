@@ -107,8 +107,7 @@ kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.minimaxClient.Do(req)
 	if err != nil {
 		log.Printf("planner ai parse: minimax request failed, fallback enabled: %v", err)
 		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
@@ -192,8 +191,7 @@ suggestions(string[])
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.minimaxClient.Do(req)
 	if err != nil {
 		log.Printf("planner ai advise: minimax request failed, fallback enabled: %v", err)
 		return fallbackPlannerAdvice(profile, board, mode, text), "fallback", nil

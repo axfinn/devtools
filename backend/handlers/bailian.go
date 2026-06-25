@@ -1027,7 +1027,12 @@ func truncateString(value string, limit int) string {
 	if limit <= 0 || len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "...(truncated)"
+	// 按 rune 截断，避免把多字节 UTF-8 字符截到中间产生无效序列
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "...(truncated)"
 }
 
 func mapAsyncStatus(vendorStatus string) string {

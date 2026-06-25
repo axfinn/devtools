@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -302,6 +303,7 @@ func (h *AIGatewayHandler) relayVisionSSE(
 	// 心跳：长时间无输出时维持连接，防止中间网关（Cloudflare）按空闲断流。
 	heartbeatDone := make(chan struct{})
 	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in heartbeat goroutine: %v", r) } }()
 		ticker := time.NewTicker(visionHeartbeatInterval)
 		defer ticker.Stop()
 		for {

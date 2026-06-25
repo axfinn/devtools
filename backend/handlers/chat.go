@@ -134,6 +134,8 @@ type ChatHandler struct {
 	ttsServiceURL string
 	botReplyFunc  func(ctx context.Context, systemPrompt string, history []botMessage) (string, error)
 	botDelayFunc  func(turnIndex int, totalTurns int) time.Duration
+	// 复用的 HTTP 客户端：避免每次 bot 回复都新建 Client/Transport，减少 GC 与握手开销
+	minimaxClient *http.Client
 }
 
 type Room struct {
@@ -176,6 +178,7 @@ func NewChatHandler(db *models.DB, adminPassword string, minimax config.MiniMaxC
 		adminPassword: adminPassword,
 		minimax:       minimax,
 		ttsServiceURL: ttsServiceURL,
+		minimaxClient: &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{Proxy: nil}},
 	}
 }
 
@@ -765,10 +768,8 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 		}
 
 		if msg.Type == "message" && msg.Content != "" {
-			// 限制消息长度
-			if len(msg.Content) > 5000 {
-				msg.Content = msg.Content[:5000]
-			}
+			// 限制消息长度：按 rune 截断避免切割多字节 UTF-8 字符
+			msg.Content = truncateRunes(msg.Content, 5000)
 
 			// 保存消息到数据库
 			chatMsg := &models.ChatMessage{
@@ -900,11 +901,16 @@ func (h *ChatHandler) removeClient(client *Client) {
 	}
 	h.broadcast(room, leaveMsg, nil)
 
-	// 如果房间没有人了，从内存中移除
+	// 如果房间没有人了，从内存中移除。
+	// 同时持 h.mu + room.mu 防止"检查为空 -> 新客户端加入"窗口：
+	// JoinRoom/AddBot 总是 h.mu → room.mu 顺序，此处反过来也安全（不与已有锁顺序冲突），
+	// 因为这些路径不会同时持有两把锁。
 	h.mu.Lock()
-	if len(room.clients) == 0 {
+	room.mu.Lock()
+	if len(room.clients) == 0 && h.rooms[room.ID] == room {
 		delete(h.rooms, room.ID)
 	}
+	room.mu.Unlock()
 	h.mu.Unlock()
 }
 
@@ -1164,6 +1170,21 @@ func (h *ChatHandler) AddBot(c *gin.Context) {
 	room, exists := h.rooms[roomID]
 	if !exists {
 		room = &Room{ID: roomID, clients: make(map[*Client]bool), bots: make(map[string]*BotConfig), histories: make(map[string][]botMessage), botCancels: make(map[string]context.CancelFunc)}
+		// 从数据库恢复机器人配置，避免房间被清出内存后再 AddBot 时覆盖掉已有 bots
+		if botJSON, err := h.db.LoadBotConfig(roomID); err == nil && botJSON != "" {
+			var bots []BotConfig
+			if json.Unmarshal([]byte(botJSON), &bots) == nil {
+				for i := range bots {
+					bc := bots[i]
+					room.bots[bc.Nickname] = &bc
+				}
+			} else {
+				var bc BotConfig
+				if json.Unmarshal([]byte(botJSON), &bc) == nil && bc.Nickname != "" {
+					room.bots[bc.Nickname] = &bc
+				}
+			}
+		}
 		h.rooms[roomID] = room
 	}
 	h.mu.Unlock()
@@ -1388,8 +1409,7 @@ func (h *ChatHandler) callMiniMax(ctx context.Context, systemPrompt string, hist
 	req.Header.Set("Authorization", "Bearer "+h.minimax.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.minimaxClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -1465,4 +1485,17 @@ func (h *ChatHandler) AdminDeleteRoom(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "房间删除成功"})
+}
+
+
+// truncateRunes 按 rune 数量截断字符串，避免在多字节 UTF-8 字符中间切割
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes])
 }

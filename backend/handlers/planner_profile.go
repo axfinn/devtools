@@ -269,57 +269,70 @@ func (h *PlannerHandler) ProcessDueReminders() {
 		return
 	}
 	for _, task := range tasks {
-		profile, err := h.db.GetPlannerProfile(task.ProfileID)
-		if err != nil {
-			continue
-		}
-		recipients := plannerFirstNonEmpty(strings.TrimSpace(task.NotifyEmail), strings.TrimSpace(profile.NotifyEmail))
-		if recipients == "" {
-			continue
-		}
-		subject := fmt.Sprintf("%s提醒 [%s] %s", map[string]string{models.PlannerEntryTask: "事项", models.PlannerEntryEvent: "事件"}[task.EntryType], map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[task.Kind], task.Title)
-		bodyLines := []string{
-			fmt.Sprintf("档案: %s", profile.Name),
-			fmt.Sprintf("类型: %s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[task.Kind]),
-			fmt.Sprintf("条目: %s", map[string]string{models.PlannerEntryTask: "任务", models.PlannerEntryEvent: "事件"}[task.EntryType]),
-			fmt.Sprintf("阶段: %s", map[string]string{models.PlannerBucketInbox: "收件箱", models.PlannerBucketPlanned: "计划中", models.PlannerBucketSomeday: "放一放"}[task.Bucket]),
-			fmt.Sprintf("标题: %s", task.Title),
-			fmt.Sprintf("状态: %s", task.Status),
-			fmt.Sprintf("优先级: %s", task.Priority),
-			fmt.Sprintf("计划日期: %s", task.PlannedFor),
-		}
-		if task.RemindAt != nil {
-			bodyLines = append(bodyLines, fmt.Sprintf("提醒时间: %s", task.RemindAt.In(time.Local).Format("2006-01-02 15:04")))
-		}
-		if repeatSummary := plannerRepeatSummary(task); repeatSummary != "" {
-			bodyLines = append(bodyLines, fmt.Sprintf("重复提醒: %s", repeatSummary))
-		}
-		if strings.TrimSpace(task.Detail) != "" {
-			bodyLines = append(bodyLines, "", "详情:", task.Detail)
-		}
-		if strings.TrimSpace(task.LastPostponeReason) != "" {
-			bodyLines = append(bodyLines, "", "最近一次顺延原因:", task.LastPostponeReason)
-		}
-		if strings.TrimSpace(task.CancelReason) != "" {
-			bodyLines = append(bodyLines, "", "取消原因:", task.CancelReason)
-		}
-		attachment := &mailAttachment{
-			Filename:    plannerCalendarFilename(task),
-			ContentType: "text/calendar; charset=UTF-8",
-			Content:     buildPlannerICS(task),
-		}
-		if err := h.sendReminderMail(recipients, subject, strings.Join(bodyLines, "\n"), attachment); err != nil {
-			log.Printf("planner reminder: send failed for task %s: %v", task.ID, err)
-			continue
-		}
-		sentAt := time.Now()
-		nextRemindAt := plannerNextReminderAfter(task, sentAt)
-		if nextRemindAt != nil {
-			_ = h.db.UpdatePlannerTaskReminderState(task.ID, nextRemindAt, task.RepeatUntil, &sentAt)
-			continue
-		}
-		_ = h.db.MarkPlannerTaskReminderSent(task.ID, sentAt)
+		// 单个任务 panic 不应阻断后续提醒：外层 cleanup goroutine 有 panic 兜底，
+		// 但不内嵌 recover 会让同一个坏任务每小时 panic 一次，浪费 CPU+刷屏日志。
+		func(task *models.PlannerTask) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("planner reminder: panic processing task %s: %v", task.ID, r)
+				}
+			}()
+			h.processOneReminder(task)
+		}(task)
 	}
+}
+
+func (h *PlannerHandler) processOneReminder(task *models.PlannerTask) {
+	profile, err := h.db.GetPlannerProfile(task.ProfileID)
+	if err != nil {
+		return
+	}
+	recipients := plannerFirstNonEmpty(strings.TrimSpace(task.NotifyEmail), strings.TrimSpace(profile.NotifyEmail))
+	if recipients == "" {
+		return
+	}
+	subject := fmt.Sprintf("%s提醒 [%s] %s", map[string]string{models.PlannerEntryTask: "事项", models.PlannerEntryEvent: "事件"}[task.EntryType], map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[task.Kind], task.Title)
+	bodyLines := []string{
+		fmt.Sprintf("档案: %s", profile.Name),
+		fmt.Sprintf("类型: %s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[task.Kind]),
+		fmt.Sprintf("条目: %s", map[string]string{models.PlannerEntryTask: "任务", models.PlannerEntryEvent: "事件"}[task.EntryType]),
+		fmt.Sprintf("阶段: %s", map[string]string{models.PlannerBucketInbox: "收件箱", models.PlannerBucketPlanned: "计划中", models.PlannerBucketSomeday: "放一放"}[task.Bucket]),
+		fmt.Sprintf("标题: %s", task.Title),
+		fmt.Sprintf("状态: %s", task.Status),
+		fmt.Sprintf("优先级: %s", task.Priority),
+		fmt.Sprintf("计划日期: %s", task.PlannedFor),
+	}
+	if task.RemindAt != nil {
+		bodyLines = append(bodyLines, fmt.Sprintf("提醒时间: %s", task.RemindAt.In(time.Local).Format("2006-01-02 15:04")))
+	}
+	if repeatSummary := plannerRepeatSummary(task); repeatSummary != "" {
+		bodyLines = append(bodyLines, fmt.Sprintf("重复提醒: %s", repeatSummary))
+	}
+	if strings.TrimSpace(task.Detail) != "" {
+		bodyLines = append(bodyLines, "", "详情:", task.Detail)
+	}
+	if strings.TrimSpace(task.LastPostponeReason) != "" {
+		bodyLines = append(bodyLines, "", "最近一次顺延原因:", task.LastPostponeReason)
+	}
+	if strings.TrimSpace(task.CancelReason) != "" {
+		bodyLines = append(bodyLines, "", "取消原因:", task.CancelReason)
+	}
+	attachment := &mailAttachment{
+		Filename:    plannerCalendarFilename(task),
+		ContentType: "text/calendar; charset=UTF-8",
+		Content:     buildPlannerICS(task),
+	}
+	if err := h.sendReminderMail(recipients, subject, strings.Join(bodyLines, "\n"), attachment); err != nil {
+		log.Printf("planner reminder: send failed for task %s: %v", task.ID, err)
+		return
+	}
+	sentAt := time.Now()
+	nextRemindAt := plannerNextReminderAfter(task, sentAt)
+	if nextRemindAt != nil {
+		_ = h.db.UpdatePlannerTaskReminderState(task.ID, nextRemindAt, task.RepeatUntil, &sentAt)
+		return
+	}
+	_ = h.db.MarkPlannerTaskReminderSent(task.ID, sentAt)
 }
 
 func (h *PlannerHandler) sendReminderMail(recipientRaw, subject, body string, attachment *mailAttachment) error {

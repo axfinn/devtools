@@ -29,16 +29,19 @@ type VoiceMemoHandler struct {
 	plannerHandler *PlannerHandler
 	asrServiceURL  string
 	uploadDir      string
+	// 复用的 HTTP 客户端：避免每次 ASR 调用都新建 Client/Transport
+	asrClient *http.Client
 }
 
 func NewVoiceMemoHandler(db *models.DB, plannerHandler *PlannerHandler, asrServiceURL string) *VoiceMemoHandler {
-	uploadDir := "./data/voicememos"
+	uploadDir := models.VoicememoUploadDir
 	os.MkdirAll(uploadDir, 0755)
 	return &VoiceMemoHandler{
 		db:             db,
 		plannerHandler: plannerHandler,
 		asrServiceURL:  strings.TrimSpace(asrServiceURL),
 		uploadDir:      uploadDir,
+		asrClient:      &http.Client{Timeout: 5 * time.Minute, Transport: &http.Transport{Proxy: nil}},
 	}
 }
 
@@ -687,8 +690,7 @@ func (h *VoiceMemoHandler) callASR(filePath, originalName string) (*asrResponse,
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Do(req)
+	resp, err := h.asrClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

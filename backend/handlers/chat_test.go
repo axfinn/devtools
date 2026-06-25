@@ -3,8 +3,10 @@ package handlers
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"devtools/config"
 	"devtools/models"
@@ -214,5 +216,33 @@ func TestRequestRoomBotSessionStopWaitsCurrentReplyFinish(t *testing.T) {
 	}
 	if messages[0].Content != "第一条回复" {
 		t.Fatalf("messages[0].Content = %q", messages[0].Content)
+	}
+}
+
+func TestTruncateRunesPreservesUTF8Boundary(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		max  int
+		want string
+	}{
+		{"short ascii", "hello", 10, "hello"},
+		{"exact boundary", "hello", 5, "hello"},
+		{"truncate ascii", "hello world", 5, "hello"},
+		{"truncate mid-cjk rune", strings.Repeat("中", 10), 5, strings.Repeat("中", 5)},
+		{"truncate mid-emoji rune", strings.Repeat("🎉", 10), 5, strings.Repeat("🎉", 5)},
+		{"zero max", "hello", 0, ""},
+		{"negative max", "hello", -1, ""},
+		{"empty input", "", 5, ""},
+	}
+	for _, c := range cases {
+		got := truncateRunes(c.in, c.max)
+		if got != c.want {
+			t.Errorf("%s: truncateRunes(%q, %d) = %q, want %q", c.name, c.in, c.max, got, c.want)
+		}
+		// 校验返回结果必须是合法 UTF-8
+		if !utf8.ValidString(got) {
+			t.Errorf("%s: result %q is not valid UTF-8", c.name, got)
+		}
 	}
 }

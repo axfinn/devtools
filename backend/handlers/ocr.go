@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,11 +25,12 @@ func NewOCRHandler() *OCRHandler {
 	if serviceURL == "" {
 		serviceURL = "http://ocr-service:8000"
 	}
-	// 禁用代理，确保能访问 Docker 内部网络服务
+	// 禁用代理，确保能访问 Docker 内部网络服务；设置超时避免 OCR 任务挂死
 	client := &http.Client{
 		Transport: &http.Transport{
 			Proxy: nil,
 		},
+		Timeout: 30 * time.Second,
 	}
 	return &OCRHandler{serviceURL: serviceURL, client: client}
 }

@@ -2,8 +2,40 @@ package models
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
+
+// VoicememoUploadDir 语音备忘音频存放目录，handlers/voicememo.go 共用此常量
+const VoicememoUploadDir = "./data/voicememos"
+
+// voicememoSafeFilename 从 audio_url 提取安全的文件名（防目录穿越）
+// 仅接受形如 "memo_<id>_<digits>.<ext>" 的文件名；其他情况返回空字符串
+func voicememoSafeFilename(audioURL string) string {
+	audioURL = strings.TrimSpace(audioURL)
+	if audioURL == "" {
+		return ""
+	}
+	name := filepath.Base(audioURL)
+	if name == "." || name == "/" || name == ".." {
+		return ""
+	}
+	if !strings.HasPrefix(name, "memo_") {
+		return ""
+	}
+	return name
+}
+
+// deleteVoiceMemoAudio 删除单条语音备忘的音频文件，失败仅记日志不返回错误
+func (db *DB) deleteVoiceMemoAudio(audioURL string) {
+	filename := voicememoSafeFilename(audioURL)
+	if filename == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(VoicememoUploadDir, filename))
+}
 
 // VoiceMemo represents a voice recording with transcription.
 type VoiceMemo struct {
@@ -322,14 +354,33 @@ func (db *DB) DeleteVoiceMemo(id string) error {
 // CleanExpiredVoiceMemos hard-deletes:
 // 1. Draft memos past their expires_at (14 days of inactivity)
 // 2. Soft-deleted memos older than 7 days
+// 在删除前会清理对应音频文件，避免磁盘残留（每条最多 190MB）
 func (db *DB) CleanExpiredVoiceMemos() (int64, error) {
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	now := time.Now()
+	rows, err := db.conn.Query(
+		`SELECT audio_url FROM voice_memos WHERE
+			(deleted_at IS NOT NULL AND deleted_at < ?)
+			OR
+			(expires_at IS NOT NULL AND expires_at < ? AND status = 'draft' AND deleted_at IS NULL)`,
+		cutoff, now,
+	)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var url string
+			if scanErr := rows.Scan(&url); scanErr == nil {
+				db.deleteVoiceMemoAudio(url)
+			}
+		}
+	}
+
 	result, err := db.conn.Exec(
 		`DELETE FROM voice_memos WHERE
 			(deleted_at IS NOT NULL AND deleted_at < ?)
 			OR
 			(expires_at IS NOT NULL AND expires_at < ? AND status = 'draft' AND deleted_at IS NULL)`,
-		time.Now().Add(-7*24*time.Hour),
-		time.Now(),
+		cutoff, now,
 	)
 	if err != nil {
 		return 0, err

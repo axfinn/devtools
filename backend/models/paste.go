@@ -185,7 +185,11 @@ func (db *DB) CleanExpired() (int64, error) {
 
 	// 删除文件
 	for _, filename := range filesToDelete {
-		filePath := filepath.Join("./data/paste_files", filename)
+		safeName := filepath.Base(filename)
+		if safeName == "" || safeName == "." || safeName == "/" {
+			continue
+		}
+		filePath := filepath.Join("./data/paste_files", safeName)
 		os.Remove(filePath) // 忽略错误，文件可能已不存在
 	}
 

@@ -274,6 +274,10 @@ func (db *DB) UpdatePlannerProfile(profile *PlannerProfile) error {
 }
 
 func (db *DB) DeletePlannerProfile(id string) error {
+	// 先清理档案下所有会议的录音文件（会议表通过 FK CASCADE 自动删除，
+	// 但 CASCADE 不会执行 Go 代码，所以这里要显式删除录音）
+	db.DeletePlannerMeetingsRecordingFiles(id)
+
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return err

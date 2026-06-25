@@ -77,6 +77,8 @@ type AutoDevHandler struct {
 	dataDir        string
 	mu             sync.RWMutex
 	processes      map[string]*exec.Cmd
+	// 复用的 HTTP 客户端：避免每次 AI 调用都新建 Client/Transport
+	aiClient *http.Client
 }
 
 // NewAutoDevHandler creates a new AutoDevHandler
@@ -93,6 +95,7 @@ func NewAutoDevHandler(db *models.DB, adminPassword, autodevPath, dataDir string
 		stopScriptPath: stopScript,
 		dataDir:        dataDir,
 		processes:      make(map[string]*exec.Cmd),
+		aiClient:       &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},
 	}
 	os.MkdirAll(dataDir, 0755)
 	return h
@@ -2093,9 +2096,8 @@ func (h *AutoDevHandler) TestModel(c *gin.Context) {
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	start := time.Now()
-	resp, err := client.Do(req)
+	resp, err := h.aiClient.Do(req)
 	result.LatencyMs = time.Since(start).Milliseconds()
 
 	if err != nil {

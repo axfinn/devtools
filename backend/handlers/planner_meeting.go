@@ -266,8 +266,7 @@ func (h *PlannerHandler) SummarizeTranscript(transcript string) string {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.minimaxClient.Do(req)
 	if err != nil {
 		log.Printf("voice memo summarize: request failed, fallback: %v", err)
 		return transcriptSummaryFallback(content)
@@ -370,8 +369,7 @@ action_items(string) — JSON 数组字符串，每条包含 task(string) 和 as
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.cfg.MiniMax.APIKey)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.minimaxClient.Do(req)
 	if err != nil {
 		log.Printf("meeting summarize: request failed, fallback: %v", err)
 		return h.meetingSummaryFallback(meeting), nil

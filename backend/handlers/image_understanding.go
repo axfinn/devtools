@@ -614,11 +614,35 @@ func hasAnyKey(args map[string]interface{}, keys ...string) bool {
 	return false
 }
 
+var sanitizeImagePathKeys = map[string]bool{
+	"image": true, "images": true, "image_url": true, "imageUrl": true,
+	"image_source": true,
+	"image_path": true, "imagePath": true, "path": true, "file": true,
+	"image_file": true, "imageFile": true,
+	"image_paths": true, "imagePaths": true, "paths": true, "files": true,
+	"image_files": true, "input_images": true,
+}
+
 func sanitizeArgs(args map[string]interface{}) map[string]interface{} {
 	clean := map[string]interface{}{}
 	for key, value := range args {
-		if key == "image" || key == "images" || key == "image_url" || key == "imageUrl" {
-			clean[key] = "[image]"
+		if sanitizeImagePathKeys[key] {
+			switch v := value.(type) {
+			case []string:
+				cleanArr := make([]string, len(v))
+				for i := range v {
+					cleanArr[i] = "[image]"
+				}
+				clean[key] = cleanArr
+			case []interface{}:
+				cleanArr := make([]interface{}, len(v))
+				for i := range v {
+					cleanArr[i] = "[image]"
+				}
+				clean[key] = cleanArr
+			default:
+				clean[key] = "[image]"
+			}
 			continue
 		}
 		clean[key] = value

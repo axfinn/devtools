@@ -28,6 +28,8 @@ type GlucoseHandler struct {
 	maxPerIP       int
 	ipWindow       time.Duration
 	cfg            *config.Config
+	// 复用的 HTTP 客户端：避免每次语音解析都新建 Client/Transport
+	aiClient *http.Client
 }
 
 func NewGlucoseHandler(db *models.DB, cfg *config.Config) *GlucoseHandler {
@@ -41,6 +43,7 @@ func NewGlucoseHandler(db *models.DB, cfg *config.Config) *GlucoseHandler {
 		maxPerIP:       5,
 		ipWindow:       time.Hour,
 		cfg:            cfg,
+		aiClient:       &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},
 	}
 }
 
@@ -867,8 +870,7 @@ func (h *GlucoseHandler) callMiniMaxParse(text string) (*GlucoseVoiceParseRespon
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := h.aiClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("网络请求失败: %v", err)
 	}

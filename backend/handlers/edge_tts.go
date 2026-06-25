@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,7 +25,8 @@ type EdgeTTSHandler struct {
 func NewEdgeTTSHandler(ttsServiceURL string) *EdgeTTSHandler {
 	return &EdgeTTSHandler{
 		ttsServiceURL: ttsServiceURL,
-		httpClient:    &http.Client{},
+		// 显式设置超时避免 TTS 服务挂死时无限等待
+		httpClient: &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{Proxy: nil}},
 	}
 }
 

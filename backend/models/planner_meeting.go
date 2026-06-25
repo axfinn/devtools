@@ -1,9 +1,71 @@
 package models
 
 import (
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+// plannerRecordingDir 会议录音存放目录，与 handlers/planner_meeting.go 中的常量保持一致
+const plannerRecordingDir = "./data/planner_recordings"
+
+// plannerSafeRecordingFilename 从 RecordingURL 中提取安全的文件名（防目录穿越）
+// 仅允许形如 "meeting_xxx_<digits>.<ext>" 的文件名；其他情况返回空字符串，避免误删。
+func plannerSafeRecordingFilename(recordingURL string) string {
+	recordingURL = strings.TrimSpace(recordingURL)
+	if recordingURL == "" {
+		return ""
+	}
+	name := filepath.Base(recordingURL)
+	if name == "." || name == "/" || name == ".." {
+		return ""
+	}
+	if !strings.HasPrefix(name, "meeting_") {
+		return ""
+	}
+	return name
+}
+
+// deletePlannerRecordingFile 删除单个录音文件，失败仅记日志不返回错误
+func (db *DB) deletePlannerRecordingFile(recordingURL string) {
+	filename := plannerSafeRecordingFilename(recordingURL)
+	if filename == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(plannerRecordingDir, filename))
+}
+
+// DeletePlannerMeeting 删除会议纪要并清理关联的录音文件
+func (db *DB) DeletePlannerMeeting(id string) error {
+	if meeting, err := db.GetPlannerMeeting(id); err != nil {
+		log.Printf("planner: 查询会议 %s 用于清理录音失败: %v", id, err)
+	} else if meeting != nil {
+		db.deletePlannerRecordingFile(meeting.RecordingURL)
+	}
+	_, err := db.conn.Exec(`DELETE FROM planner_meeting_minutes WHERE id = ?`, id)
+	return err
+}
+
+// DeletePlannerMeetingsRecordingFiles 批量删除指定档案下所有会议的录音文件（档案删除前的清理）
+func (db *DB) DeletePlannerMeetingsRecordingFiles(profileID string) {
+	rows, err := db.conn.Query(`SELECT recording_url FROM planner_meeting_minutes WHERE profile_id = ?`, profileID)
+	if err != nil {
+		log.Printf("planner: 查询档案 %s 录音URL失败: %v", profileID, err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var url string
+		if scanErr := rows.Scan(&url); scanErr == nil {
+			db.deletePlannerRecordingFile(url)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("planner: 遍历档案 %s 录音URL时出错: %v", profileID, err)
+	}
+}
 
 func init() {
 	RegisterInit("会议纪要(planner_meeting_minutes)", (*DB).InitPlannerMeetings)
@@ -169,10 +231,5 @@ func (db *DB) UpdatePlannerMeeting(m *PlannerMeetingMinutes) error {
 	`, m.Title, m.Content, m.Summary, m.ActionItems, m.Participants,
 		m.RecordingURL, m.DurationMinutes, m.MeetingDate, m.MeetingTime,
 		m.Tags, m.Status, m.UpdatedAt, m.ID)
-	return err
-}
-
-func (db *DB) DeletePlannerMeeting(id string) error {
-	_, err := db.conn.Exec(`DELETE FROM planner_meeting_minutes WHERE id = ?`, id)
 	return err
 }

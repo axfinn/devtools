@@ -380,9 +380,12 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		}
 
 		// 检测文件类型
-		f, _ := os.Open(filePath)
+		f, err := os.Open(filePath)
+		if err != nil {
+			continue // 文件被并发删除或权限不足时跳过
+		}
 		magicBytes := make([]byte, 16)
-		f.Read(magicBytes)
+		_, _ = f.Read(magicBytes)
 		f.Close()
 
 		detectedType := detectFileType(magicBytes)
@@ -761,7 +764,13 @@ func (h *PasteHandler) AdminDeletePaste(c *gin.Context) {
 
 // ServeFile 提供文件访问
 func (h *PasteHandler) ServeFile(c *gin.Context) {
-	filename := c.Param("filename")
+	filename := filepath.Base(c.Param("filename"))
+	// 显式拒绝路径分隔符与特殊名(防御 URL 编码绕过 ../ 等变体)
+	if filename == "" || filename == "." || filename == "/" || filename == ".." ||
+		strings.ContainsAny(filename, `/\`) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法文件名", "code": 400})
+		return
+	}
 	filePath := filepath.Join(pasteUploadDir, filename)
 
 	// 检查文件是否存在
@@ -1084,7 +1093,11 @@ func (h *PasteHandler) cleanupPasteFiles(filesJSON string) {
 	}
 
 	for _, file := range files {
-		filePath := filepath.Join(pasteUploadDir, file.Filename)
+		safeName := filepath.Base(file.Filename)
+		if safeName == "" || safeName == "." || safeName == "/" {
+			continue
+		}
+		filePath := filepath.Join(pasteUploadDir, safeName)
 		os.Remove(filePath)
 	}
 }

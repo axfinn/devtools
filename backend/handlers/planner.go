@@ -42,6 +42,7 @@ type PlannerHandler struct {
 	smtpPass          string
 	asrServiceURL     string
 	serviceHTTPClient *http.Client
+	minimaxClient     *http.Client
 }
 
 type plannerProfileResponse struct {
@@ -268,6 +269,8 @@ func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
 		smtpPass:          plannerCfg.SMTPPass,
 		asrServiceURL:     asrServiceURL,
 		serviceHTTPClient: &http.Client{Timeout: 5 * time.Minute, Transport: &http.Transport{Proxy: nil}},
+		// 复用 HTTP 客户端以利用连接池；避免每次 AI 调用都新建 Client
+		minimaxClient: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},
 	}
 }
 
