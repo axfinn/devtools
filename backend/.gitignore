@@ -1,0 +1,32 @@
+# 本地兜底,根目录 .gitignore 已经覆盖大部分,这里做防御性补充
+# 在 backend/ 下直接执行 git 命令时,这套规则也能生效
+
+# 编译产物
+/devtools
+/server
+/expense_csv_import
+/cmd/expense_csv_import/expense_csv_import
+
+# 运行时数据(SQLite / 上传文件 / 缓存)
+/data/
+!/data/.gitkeep
+
+# 前端构建产物(部署时拷贝到 backend/dist)
+/dist/
+!/dist/.gitkeep
+
+# 实际配置(保留 config.example.yaml)
+/config.yaml
+
+# Go 通用
+*.test
+*.out
+*.prof
+coverage/
+*.coverprofile
+*.cover
+*.coverage
+
+# macOS
+.DS_Store
+._*
