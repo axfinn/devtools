@@ -3,8 +3,8 @@
 #
 # 字段              覆盖变量                  说明
 # model             ASR_MODEL                 faster-whisper 模型
-# device            ASR_DEVICE                cpu | cuda
-# compute_type      ASR_COMPUTE_TYPE          cpu:int8|int8_float16; gpu:float16|int8_float16
+# device            ASR_DEVICE                cpu
+# compute_type      ASR_COMPUTE_TYPE          int8
 # language          ASR_LANGUAGE              默认 zh;空串表示自动检测
 # beam_size         ASR_BEAM_SIZE
 # vad_filter        ASR_VAD_FILTER            true | false
@@ -14,7 +14,6 @@
 # hf_token          HF_TOKEN                  留空走 env(推荐);不要把 token 写进 yaml
 # min_speakers      ASR_DIARIZE_MIN_SPEAKERS  0 = 自动推断
 # max_speakers      ASR_DIARIZE_MAX_SPEAKERS  0 = 自动推断
-# fallback_on_no_gpu ASR_DIARIZE_FALLBACK_NO_GPU  GPU 不可用时是否降级为只转写
 
 asr:
   model: small

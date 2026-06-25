@@ -36,20 +36,11 @@ pip install edge-tts fastapi uvicorn
 TTS_OUTPUT_DIR=./backend/data/uploads python3 tts-service/server.py
 ```
 
-### ASR Service (语音转写 + 说话人识别)
+### ASR Service (语音转写)
 - 服务目录: `asr-service/`(Python 3.11 + FastAPI + faster-whisper,端口 9000)
 - 配置文件: `asr-service/config.yaml`(从 `config.example.yaml` 复制;支持 env 覆盖)
-- **CPU / GPU 模式自动切换**:默认 `device=cpu`,GPU 不可用时自动降级,日志 WARN
-- **说话人识别(Diarization)**:基于 `pyannote-audio 3.1`,服务级开关 `diarize.enabled`;需要 GPU 才能跑(无 GPU 时按 `fallback_on_no_gpu` 自动降级)
 - **完全向后兼容**:不开启 Diarization 时响应与 v1.0 一致,旧调用方零迁移
-- 响应新增 `diarize_status` 字段(`disabled` / `ok` / `skipped_no_gpu` / `failed`)、`segments[].speaker` 字段
-
-**启用 GPU + 说话人识别**
-1. 宿主机装 `nvidia-container-toolkit`
-2. `.env` 加: `ASR_DEVICE=cuda`、`ASR_DIARIZE_ENABLED=true`、`HF_TOKEN=hf_xxx`
-3. 申请 HF token: 访问 https://huggingface.co/pyannote/speaker-diarization-3.1 同意条款
-4. 取消 `docker-compose.yml` 中 `asr-service` 的 `deploy.resources` 段注释
-5. `docker compose up -d asr-service`,查看 `GET /health` 返回 `gpu_available=true`
+- 响应新增 `diarize_status` 字段(`disabled` / `ok` / `failed`)、`segments[].speaker` 字段
 
 ### Docker Deployment
 ```bash

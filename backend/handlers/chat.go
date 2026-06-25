@@ -1319,7 +1319,12 @@ func (h *ChatHandler) triggerBotReply(ctx context.Context, room *Room, roomID, u
 	replyCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+				errCh <- fmt.Errorf("bot reply panic: %v", r)
+			}
+		}()
 		reply, err := h.requestBotReply(ctx, bot.SystemPrompt, historyCopy)
 		if err != nil {
 			errCh <- err

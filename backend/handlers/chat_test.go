@@ -219,6 +219,35 @@ func TestRequestRoomBotSessionStopWaitsCurrentReplyFinish(t *testing.T) {
 	}
 }
 
+func TestTriggerBotReplyReturnsErrorOnBotPanic(t *testing.T) {
+	h, room, roomID := newChatTestHandler(t)
+	room.bots["BotA"] = &BotConfig{Enabled: true, Nickname: "BotA", SystemPrompt: "A"}
+
+	h.botReplyFunc = func(ctx context.Context, systemPrompt string, history []botMessage) (string, error) {
+		panic("boom")
+	}
+
+	// 用不可取消的 context：修复前 select 会永久阻塞;修复后必须立即返回 error
+	done := make(chan struct{})
+	var gotErr error
+	go func() {
+		defer close(done)
+		_, gotErr = h.triggerBotReply(context.Background(), room, roomID, "用户", "触发panic", "BotA")
+	}()
+
+	select {
+	case <-done:
+		if gotErr == nil {
+			t.Fatal("expected error on panic, got nil")
+		}
+		if !strings.Contains(gotErr.Error(), "panic") {
+			t.Fatalf("expected error to mention panic, got %v", gotErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("triggerBotReply hung after bot panic; panic recovery should write to errCh")
+	}
+}
+
 func TestTruncateRunesPreservesUTF8Boundary(t *testing.T) {
 	cases := []struct {
 		name string

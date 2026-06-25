@@ -29,7 +29,10 @@ RUN sed -i 's|deb\.debian\.org|mirrors.aliyun.com|g; s|security\.debian\.org|mir
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir \
+    --index-url https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    -r requirements.txt
 
 COPY main.py .
 
