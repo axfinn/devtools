@@ -258,18 +258,28 @@
             <div v-else class="preview-generic">
               <el-icon style="font-size:80px;color:#c0c4cc"><Document /></el-icon>
               <p style="color:#909399;margin-top:12px">该文件类型暂不支持预览</p>
-              <el-button
-                v-if="!info.disable_download"
-                type="primary"
-                size="large"
-                :href="downloadUrl"
-                tag="a"
-                download
-                style="margin-top: 16px;"
-              >
-                <el-icon><Download /></el-icon>
-                直接下载原文件
-              </el-button>
+              <template v-if="!info.disable_download">
+                <el-button
+                  v-if="!downloadProgress"
+                  type="primary"
+                  size="large"
+                  style="margin-top: 16px;"
+                  @click="startDownload"
+                >
+                  <el-icon><Download /></el-icon>
+                  直接下载原文件（{{ formatSize(info.file_size) }}）
+                </el-button>
+                <div v-else class="download-progress">
+                  <p style="margin-top:16px;color:#909399;font-size:14px">
+                    下载中 {{ formatSize(downloadProgress.loaded) }} / {{ formatSize(downloadProgress.total || info.file_size) }}
+                  </p>
+                  <el-progress :percentage="downloadProgress.percent" :stroke-width="14" style="margin-top:8px" />
+                  <div class="flex gap-2 justify-center mt-3">
+                    <el-button v-if="downloadProgress.percent < 100" size="small" @click="cancelDownload">取消</el-button>
+                    <el-button v-else size="small" type="success" @click="downloadProgress = null">完成</el-button>
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -1335,6 +1345,56 @@ onUnmounted(() => {
   stopRecording()
   window.removeEventListener('pagehide', stopRecording)
 })
+
+// ---- 大文件下载(进度条) ----
+const downloadProgress = ref(null)  // null | { loaded, total, percent }
+let downloadAbort = null
+
+async function startDownload() {
+  if (downloadAbort) downloadAbort.abort()
+  const ctrl = new AbortController()
+  downloadAbort = ctrl
+  downloadProgress.value = { loaded: 0, total: info.value?.file_size || 0, percent: 0 }
+  try {
+    const res = await fetch(downloadUrl.value, { signal: ctrl.signal })
+    if (!res.ok) throw new Error('HTTP ' + res.status)
+    const total = parseInt(res.headers.get('Content-Length') || '0', 10) || info.value?.file_size || 0
+    if (total) downloadProgress.value.total = total
+    const reader = res.body.getReader()
+    const chunks = []
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      const loaded = chunks.reduce((s, c) => s + c.length, 0)
+      downloadProgress.value = {
+        loaded,
+        total,
+        percent: total ? Math.min(100, Math.round(loaded * 100 / total)) : 0,
+      }
+    }
+    const blob = new Blob(chunks)
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = info.value?.name || 'download'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(a.href)
+    downloadProgress.value = { loaded: total, total, percent: 100 }
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      console.warn('[Download] failed:', e)
+      ElMessage.error('下载失败：' + e.message)
+    }
+    downloadProgress.value = null
+  }
+}
+
+function cancelDownload() {
+  if (downloadAbort) { downloadAbort.abort(); downloadAbort = null }
+  downloadProgress.value = null
+}
 
 // ---- 录音 ----
 let mediaRecorder = null
