@@ -428,7 +428,7 @@ func (h *NFSShareHandler) CheckPassword(c *gin.Context) {
 
 // -------- 管理接口 --------
 
-// AdminList 列出所有分享（超管）
+// AdminList 列出所有分享（超管）,支持按状态筛选 + 关键字搜索
 func (h *NFSShareHandler) AdminList(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -445,7 +445,12 @@ func (h *NFSShareHandler) AdminList(c *gin.Context) {
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 20
 	}
-	shares, total, err := h.db.GetAllNFSShares(page, pageSize)
+	status := c.DefaultQuery("status", "all")
+	if status == "all" {
+		status = ""
+	}
+	q := strings.TrimSpace(c.Query("q"))
+	shares, total, err := h.db.GetAllNFSShares(page, pageSize, status, q)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

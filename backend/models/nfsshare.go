@@ -172,14 +172,40 @@ func (db *DB) LastNFSShareLogID(shareID, clientIP string) int64 {
 	return id
 }
 
-// GetAllNFSShares 分页获取所有分享（管理员用）
-func (db *DB) GetAllNFSShares(page, pageSize int) ([]NFSShare, int, error) {
+// GetAllNFSShares 分页获取所有分享（管理员用）;支持按状态/关键字筛选
+//   status: "" / "all" 不过滤; "active" 未过期且未用完; "expired" 已过期;
+//           "exhausted" 次数耗尽
+//   q:      模糊匹配 name / file_path / id
+func (db *DB) GetAllNFSShares(page, pageSize int, status, q string) ([]NFSShare, int, error) {
 	offset := (page - 1) * pageSize
-	rows, err := db.conn.Query(
-		`SELECT id, name, file_path, file_size, mime_type, max_views, views, watch_enabled, record_enabled, show_record_indicator, expires_at, created_at, creator_ip
-		 FROM nfs_shares ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-		pageSize, offset,
+
+	var (
+		where []string
+		args  []interface{}
 	)
+	switch status {
+	case "active":
+		// 未过期(not expires_at < now) 且 未耗尽(views < max_views)
+		where = append(where, "(expires_at IS NULL OR expires_at > datetime('now')) AND views < max_views")
+	case "expired":
+		where = append(where, "expires_at IS NOT NULL AND expires_at <= datetime('now')")
+	case "exhausted":
+		where = append(where, "views >= max_views")
+	}
+	if q != "" {
+		where = append(where, "(name LIKE ? OR file_path LIKE ? OR id LIKE ?)")
+		like := "%" + q + "%"
+		args = append(args, like, like, like)
+	}
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	listSQL := `SELECT id, name, file_path, file_size, mime_type, max_views, views, watch_enabled, record_enabled, show_record_indicator, expires_at, created_at, creator_ip
+		FROM nfs_shares ` + whereSQL + ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	listArgs := append(append([]interface{}{}, args...), pageSize, offset)
+	rows, err := db.conn.Query(listSQL, listArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -198,8 +224,11 @@ func (db *DB) GetAllNFSShares(page, pageSize int) ([]NFSShare, int, error) {
 		shares = append(shares, s)
 	}
 
+	countSQL := `SELECT COUNT(*) FROM nfs_shares ` + whereSQL
 	var total int
-	db.conn.QueryRow(`SELECT COUNT(*) FROM nfs_shares`).Scan(&total)
+	if err := db.conn.QueryRow(countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 	return shares, total, nil
 }
 

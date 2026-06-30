@@ -533,11 +533,30 @@
             <el-badge v-if="listTotal > 0" :value="listTotal" class="ml-1" type="info" />
           </template>
           <div class="mt-2">
-            <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
               <span class="text-sm text-gray-500">共 {{ listTotal }} 条分享记录</span>
               <el-button size="small" :loading="listLoading" @click="loadShareList">
                 <el-icon><Refresh /></el-icon> 刷新
               </el-button>
+            </div>
+            <div class="flex items-center gap-2 mb-3 flex-wrap">
+              <el-input
+                v-model="listFilterQ"
+                size="small"
+                clearable
+                placeholder="搜索名称 / 路径 / ID"
+                style="width: 240px"
+                @input="onListFilterChange"
+                @clear="onListFilterChange"
+              >
+                <template #prefix><el-icon><Search /></el-icon></template>
+              </el-input>
+              <el-select v-model="listFilterStatus" size="small" style="width: 120px" @change="onListFilterChange">
+                <el-option value="all" label="全部" />
+                <el-option value="active" label="进行中" />
+                <el-option value="expired" label="已过期" />
+                <el-option value="exhausted" label="次数耗尽" />
+              </el-select>
             </div>
             <el-table :data="shareList" size="small" stripe v-loading="listLoading">
               <el-table-column label="名称" min-width="140">
@@ -764,6 +783,8 @@ const listPage = ref(1)
 const listPageSize = 20
 const listTotal = ref(0)
 const listLoading = ref(false)
+const listFilterStatus = ref('all')
+const listFilterQ = ref('')
 
 // 录音库（跨 share，含已删 share 孤儿录音）
 const recordings = ref([])
@@ -1104,9 +1125,13 @@ const configExample = `nfs_share:
 async function loadShareList() {
   listLoading.value = true
   try {
-    const res = await fetch(
-      `/api/nfsshare/admin/list?page=${listPage.value}&page_size=${listPageSize}`
-    )
+    const params = new URLSearchParams({
+      page: String(listPage.value),
+      page_size: String(listPageSize),
+      status: listFilterStatus.value,
+    })
+    if (listFilterQ.value.trim()) params.set('q', listFilterQ.value.trim())
+    const res = await fetch(`/api/nfsshare/admin/list?${params}`)
     if (!res.ok) {
       const data = await res.json()
       ElMessage.error(data.error || '获取列表失败')
@@ -1120,6 +1145,11 @@ async function loadShareList() {
   } finally {
     listLoading.value = false
   }
+}
+
+function onListFilterChange() {
+  listPage.value = 1
+  loadShareList()
 }
 
 // 加载跨 share 录音库（包含已删 share 的孤儿录音）
