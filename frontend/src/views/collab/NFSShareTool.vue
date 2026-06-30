@@ -1168,11 +1168,39 @@ function copyShareLink(row) {
 }
 
 async function deleteShare(row) {
+  // 先拉 summary,告诉管理员这个 share 会涉及多少东西(录音永久保留)
+  let summary = null
   try {
-    await ElMessageBox.confirm(`确定删除分享「${row.name}」及其所有访问记录？`, '确认删除', {
+    const res = await fetch(`/api/nfsshare/admin/${row.id}/summary`)
+    if (res.ok) summary = await res.json()
+  } catch { /* summary 拉不到也允许删,只是没有提示 */ }
+
+  const lines = [`分享「${row.name}」(ID: ${row.id})`]
+  if (summary) {
+    if (summary.logs_count > 0) {
+      lines.push(`访问记录: ${summary.logs_count} 条`)
+    }
+    if (summary.logs_with_audio > 0) {
+      lines.push(`🎤 录音: ${summary.logs_with_audio} 段(${formatSize(summary.audio_bytes)}) — 永久保留在「📁 录音库」`)
+    } else {
+      lines.push(`录音: 无`)
+    }
+    if (summary.logs_with_audio === 0 && summary.logs_count > 0) {
+      lines.push(`以上访问记录将被一并删除`)
+    }
+  } else {
+    lines.push(`该分享的所有访问记录将被一并删除`)
+  }
+  const hasAudio = summary && summary.logs_with_audio > 0
+  const html = lines.map(l => `<div style="margin:4px 0">${l}</div>`).join('') +
+    (hasAudio ? `<div style="margin-top:10px;padding:8px;background:#fdf6ec;border-radius:4px;color:#b88230;font-size:12px">⚠ 含录音的日志不会被删除,可在"📁 录音库"继续访问</div>` : '')
+
+  try {
+    await ElMessageBox.confirm(html, '确认删除', {
       type: 'warning',
       confirmButtonText: '删除',
-      cancelButtonText: '取消'
+      cancelButtonText: '取消',
+      dangerouslyUseHTMLString: true,
     })
   } catch {
     return
@@ -1184,7 +1212,7 @@ async function deleteShare(row) {
     )
     if (res.ok) {
       ElMessage.success('删除成功')
-      await loadShareList()
+      await Promise.all([loadShareList(), loadRecordings()])
     } else {
       const data = await res.json()
       ElMessage.error(data.error || '删除失败')

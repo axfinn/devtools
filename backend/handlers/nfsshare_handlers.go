@@ -685,7 +685,27 @@ func (h *NFSShareHandler) AdminUpdate(c *gin.Context) {
 	c.JSON(http.StatusOK, updated)
 }
 
-// AdminDelete 删除分享（超管）
+// AdminGetSummary 删除前预览,告诉管理员"会涉及多少东西"
+//   GET /api/nfsshare/admin/:id/summary
+func (h *NFSShareHandler) AdminGetSummary(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.verifyAdminFromContext(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+		return
+	}
+	id := c.Param("id")
+	summary, err := h.db.GetNFSShareSummary(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, summary)
+}
+
+// AdminDelete 删除分享（超管）—— 删除 share + 无录音的访问日志;
+// 带 audio_url 的访问日志永久保留,与 CleanExpiredNFSShares 一致
 func (h *NFSShareHandler) AdminDelete(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return

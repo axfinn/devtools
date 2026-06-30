@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"strings"
 	"time"
 )
@@ -229,13 +230,71 @@ func (db *DB) GetNFSShareLogs(shareID string, page, pageSize int) ([]NFSShareLog
 	return logs, total, nil
 }
 
-// DeleteNFSShare 删除分享及其日志
+// DeleteNFSShare 删除分享及其无录音的访问日志;带录音的日志永久保留
+// (与 CleanExpiredNFSShares 行为一致,符合"录音永久保留"语义)
 func (db *DB) DeleteNFSShare(id string) error {
-	if _, err := db.conn.Exec(`DELETE FROM nfs_share_logs WHERE share_id = ?`, id); err != nil {
+	if _, err := db.conn.Exec(`DELETE FROM nfs_share_logs WHERE share_id = ? AND (audio_url IS NULL OR audio_url = '')`, id); err != nil {
 		return err
 	}
 	_, err := db.conn.Exec(`DELETE FROM nfs_shares WHERE id = ?`, id)
 	return err
+}
+
+// NFSShareSummary 删除/调整分享前的预览,告诉管理员"会涉及多少东西"
+type NFSShareSummary struct {
+	Share         NFSShare `json:"share"`
+	LogsCount     int      `json:"logs_count"`     // 总访问日志条数
+	LogsWithAudio int      `json:"logs_with_audio"` // 带录音的日志条数(不会被删除)
+	AudioBytes    int64    `json:"audio_bytes"`     // 关联录音文件总字节数
+}
+
+// GetNFSShareSummary 汇总分享的访问日志与录音占用,用于删除前的二次确认
+func (db *DB) GetNFSShareSummary(id string) (*NFSShareSummary, error) {
+	share, err := db.GetNFSShare(id)
+	if err != nil {
+		return nil, err
+	}
+	var total, withAudio int
+	var audioBytes int64
+	if err := db.conn.QueryRow(`SELECT COUNT(*) FROM nfs_share_logs WHERE share_id = ?`, id).Scan(&total); err != nil {
+		return nil, err
+	}
+	if err := db.conn.QueryRow(`SELECT COUNT(*) FROM nfs_share_logs WHERE share_id = ? AND audio_url IS NOT NULL AND audio_url != ''`, id).Scan(&withAudio); err != nil {
+		return nil, err
+	}
+	// 汇总带录音日志的 audio_url,解析 filename,累加文件大小
+	rows, err := db.conn.Query(`SELECT audio_url FROM nfs_share_logs WHERE share_id = ? AND audio_url IS NOT NULL AND audio_url != ''`, id)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var raw string
+			if err := rows.Scan(&raw); err != nil {
+				continue
+			}
+			// audio_url 可能是 JSON 数组(多录音)或单字符串
+			var urls []string
+			if jerr := json.Unmarshal([]byte(raw), &urls); jerr != nil {
+				urls = []string{raw}
+			}
+			for _, u := range urls {
+				// URL 形如 /api/nfsshare/<id>/record/<filename>
+				idx := strings.LastIndex(u, "/")
+				if idx < 0 || idx+1 >= len(u) {
+					continue
+				}
+				path := "./data/records/" + id + "/" + u[idx+1:]
+				if fi, err := os.Stat(path); err == nil {
+					audioBytes += fi.Size()
+				}
+			}
+		}
+	}
+	return &NFSShareSummary{
+		Share:         *share,
+		LogsCount:     total,
+		LogsWithAudio: withAudio,
+		AudioBytes:    audioBytes,
+	}, nil
 }
 
 // UpdateNFSShare 更新分享的访问次数上限、过期时间与开关
