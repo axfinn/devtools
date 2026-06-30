@@ -70,22 +70,15 @@
                   {{ viewerCount }} 人在看
                 </el-tag>
                 <el-tooltip
-                  v-if="info.record_enabled && recordStartedAt > 0 && !hideRecIndicator"
+                  v-if="info.record_enabled && info.show_record_indicator !== false && recordStartedAt > 0"
                   placement="bottom"
-                  :content="`录音已 ${recordElapsedSec}s | 已上传 ${recordChunksUploaded} 段 / ${formatSize(recordBytesUploaded)}${recordLastUploadMs ? ' | 上段耗时 ' + recordLastUploadMs + 'ms' : ''}`"
+                  :content="`录音已 ${recordElapsedSec}s | 已上传 ${recordChunksUploaded} 段 / ${formatSize(recordBytesUploaded)} | 状态: ${recordLastStatus || '上传中'}${recordLastUploadMs ? ' | 上段耗时 ' + recordLastUploadMs + 'ms' : ''}`"
                 >
                   <span class="rec-indicator">
                     <span class="rec-dot"></span>
                     REC {{ recordElapsedSec }}s
-                    <button class="rec-close" :title="'隐藏录音指示器'" @click.stop="hideRecIndicator = true">×</button>
                   </span>
                 </el-tooltip>
-                <span
-                  v-if="info.record_enabled && recordStartedAt > 0 && hideRecIndicator"
-                  class="rec-show"
-                  title="显示录音指示器"
-                  @click="hideRecIndicator = false"
-                >🎙</span>
               </div>
             </div>
 
@@ -348,7 +341,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import Hls from 'hls.js'
@@ -1330,11 +1323,7 @@ function removeVoiceParticipant(peerID) {
   voiceParticipants.value = voiceParticipants.value.filter(p => p.peerID !== peerID)
 }
 
-onMounted(() => {
-  loadHideRecIndicator()
-  watch(hideRecIndicator, watchHideRecIndicator)
-  loadInfo()
-})
+onMounted(() => { loadInfo() })
 onUnmounted(() => {
   if (art) { art.destroy(); art = null }
   if (hls) { hls.destroy(); hls = null }
@@ -1358,18 +1347,11 @@ let recordSeq = 0
 const recordChunksUploaded = ref(0)
 const recordBytesUploaded = ref(0)
 const recordLastUploadMs = ref(0)
+const recordLastStatus = ref('')  // 空 / 'ok' / HTTP 4xx / '网络错误'
 const recordStartedAt = ref(0)
 // 实时录音时长(秒),每 250ms 刷新一次
 const recordElapsedSec = ref(0)
 let recordTickTimer = null
-// 录音指示器显示开关:默认开着,访客可手动隐藏,选择持久化到 localStorage
-const hideRecIndicator = ref(false)
-function loadHideRecIndicator() {
-  try { hideRecIndicator.value = localStorage.getItem('nfs_hide_rec_indicator') === '1' } catch (_) {}
-}
-function watchHideRecIndicator() {
-  try { localStorage.setItem('nfs_hide_rec_indicator', hideRecIndicator.value ? '1' : '0') } catch (_) {}
-}
 const CHUNK_INTERVAL = 2000 // 每 2 秒上传一段
 
 function genSessionId() {
@@ -1425,6 +1407,7 @@ async function startRecording() {
     recordChunksUploaded.value = 0
     recordBytesUploaded.value = 0
     recordLastUploadMs.value = 0
+    recordLastStatus.value = '上传中'
     recordStartedAt.value = Date.now()
     recordElapsedSec.value = 0
     if (recordTickTimer) clearInterval(recordTickTimer)
@@ -1432,7 +1415,14 @@ async function startRecording() {
       if (recordStartedAt.value > 0) {
         recordElapsedSec.value = Math.floor((Date.now() - recordStartedAt.value) / 1000)
       }
-    }, 250)
+      // 兜底:start(timeslice) 在某些 Safari 早期版本 + 部分 Android Chrome 上
+      // 不会周期性触发 ondataavailable,只在 stop() 时 emit 一帧。
+      // 每 2 秒主动 requestData() 强制 flush 当前缓冲区,保证长录音不会被截短。
+      const rec = mediaRecorder
+      if (rec && rec.state === 'recording') {
+        try { rec.requestData() } catch (_) {}
+      }
+    }, CHUNK_INTERVAL)
     window.addEventListener('pagehide', stopRecording)
     return true
   } catch (e) {
@@ -1472,19 +1462,21 @@ function uploadChunk(blob, mimeType, sessionId, seq) {
   const t0 = performance.now()
   recordChunksUploaded.value++
   recordBytesUploaded.value += blob.size
-  fetch(
-    `/api/nfsshare/${id}/record?session=${sessionId}&seq=${seq}${pwd}`,
-    { method: 'POST', body: formData, keepalive: true }
-  )
-    .then(res => {
-      recordLastUploadMs.value = Math.round(performance.now() - t0)
-      if (!res.ok) {
-        console.warn(`[Recording] chunk #${seq} upload HTTP ${res.status}`)
-      }
-    })
-    .catch(err => {
-      console.warn(`[Recording] chunk #${seq} upload failed`, err)
-    })
+  const url = `/api/nfsshare/${id}/record?session=${sessionId}&seq=${seq}${pwd}`
+  const send = (attempt) => {
+    fetch(url, { method: 'POST', body: formData, keepalive: true })
+      .then(res => {
+        recordLastUploadMs.value = Math.round(performance.now() - t0)
+        recordLastStatus.value = res.ok ? 'ok' : `HTTP ${res.status}`
+        if (!res.ok) console.warn(`[Recording] chunk #${seq} upload HTTP ${res.status}`)
+      })
+      .catch(err => {
+        console.warn(`[Recording] chunk #${seq} upload attempt ${attempt} failed`, err)
+        recordLastStatus.value = attempt < 3 ? '重试中' : '网络错误'
+        if (attempt < 3) setTimeout(() => send(attempt + 1), 500 * attempt)
+      })
+  }
+  send(1)
 }
 
 function stopRecording() {
@@ -1602,30 +1594,6 @@ function cleanupRecording() {
   background: #fff;
   animation: rec-pulse 1s ease-in-out infinite;
 }
-.rec-indicator .rec-close {
-  background: transparent;
-  border: none;
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 14px;
-  line-height: 1;
-  padding: 0 0 0 2px;
-  cursor: pointer;
-}
-.rec-indicator .rec-close:hover { color: #fff; }
-.rec-show {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: #374151;
-  color: #d1d5db;
-  font-size: 14px;
-  cursor: pointer;
-  user-select: none;
-}
-.rec-show:hover { background: #4b5563; }
 @keyframes rec-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.7); }
