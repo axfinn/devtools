@@ -11,7 +11,11 @@
 - [x] #2 视频/文件错误兜底分码 + 重试 CTA (`NFSShareView.vue:485-491,722-734`)
   - 引入 `setError(msg, action?)` + `errorAction` ref,按错误类型挂 CTA(重试 / 复制链接给分享者 / 切换原生模式)
   - 13 处 error 赋值统一走 setError;404/410 → 复制链接;网络/麦克风/视频失败 → 重试;不支持 HLS → 切换原生
-- [ ] #3 密码弹窗:显示切换 + 不消耗 view 的 `POST /:id/check-password` (`NFSShareView.vue:4-22,495-543`)
+- [x] #3 密码弹窗:显示切换 + 不消耗 view 的 `POST /:id/check-password` (`NFSShareView.vue:4-22,495-543`)
+  - (a) 显示密码图标(`show-password` prop 已在,本轮确认生效)
+  - (b) 后端新增 `POST /:id/check-password`,不消耗 view、不计入日志;前端 confirmPassword 改用专用接口(原本 HEAD /stream 或 / 都会消耗 view)
+  - 前端 60s 滑动窗口限速 5 次,UI 实时显示"剩余 X 次尝试机会"
+  - (c) 错误后自动聚焦输入框 + 选中已有内容(`focusPasswordInput`)
 
 ## P1 · 显著影响
 - [ ] #4 创建流程合并"显示名称"到高级设置 (`NFSShareTool.vue:114-124,148-150,799-840`)
@@ -32,3 +36,4 @@
 - 2026-06-30 #1b 视频初始化并行(getUserMedia / fetchRtcConfig / loadQualities),loadQualities 幂等保护
 - 2026-06-30 #1c 转码 overlay 显示清晰度 + 已生成分片数(pollTranscoding 每 5s 刷新)
 - 2026-06-30 #2 错误兜底分码 + 重试 / 复制 / 切换原生三件套
+- 2026-06-30 #3 密码 UX:后端 check-password 不消耗 view + 前端限速 5/min + 错误后自动聚焦

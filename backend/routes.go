@@ -440,6 +440,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		nfsshare.GET("/status", h.nfsShareHandler.Status)                       // 功能状态（公开）
 		nfsshare.GET("/turn-credentials", h.nfsShareHandler.GetTurnCredentials) // TURN 临时凭证（公开）
 		nfsshare.GET("/:id/info", h.nfsShareHandler.Info)                       // 分享信息（公开，不消耗次数）
+		nfsshare.POST("/:id/check-password", h.nfsShareHandler.CheckPassword)   // 校验访问密码（公开，不消耗次数，不计入浏览日志）
 		nfsshare.GET("/:id/stream", h.nfsShareHandler.Stream)                   // 原生视频流（公开，Range 支持）
 		nfsshare.GET("/:id/qualities", h.nfsShareHandler.HLSQualities)          // 可用清晰度列表（公开）
 		nfsshare.GET("/:id/hls/:quality/:segment", func(c *gin.Context) {       // HLS 转码播放（公开）

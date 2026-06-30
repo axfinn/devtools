@@ -11,6 +11,7 @@
         <p style="color:#999;font-size:13px;margin:0 0 16px">该分享需要密码才能访问</p>
         <el-form-item>
           <el-input
+            ref="passwordInputRef"
             v-model="inputPassword"
             type="password"
             placeholder="输入访问密码"
@@ -20,6 +21,12 @@
           />
         </el-form-item>
         <p v-if="passwordError" style="color:#f56c6c;font-size:12px;margin:4px 0 0">{{ passwordError }}</p>
+        <p v-if="passwordAttemptsRemaining !== null && passwordAttemptsRemaining > 0 && passwordAttemptsRemaining <= 4" style="color:#e6a23c;font-size:12px;margin:4px 0 0">
+          剩余 {{ passwordAttemptsRemaining }} 次尝试机会
+        </p>
+        <p v-else-if="passwordAttemptsRemaining === 0" style="color:#f56c6c;font-size:12px;margin:4px 0 0">
+          尝试次数过多，请稍后再试
+        </p>
       </el-form>
       <template #footer>
         <el-button type="primary" :loading="passwordChecking" @click="confirmPassword">进入</el-button>
@@ -353,6 +360,12 @@ const passwordDialogVisible = ref(false)
 const inputPassword = ref('')
 const passwordError = ref('')
 const passwordChecking = ref(false)
+const passwordInputRef = ref(null)
+// 密码尝试限速:60 秒内最多 5 次;null 表示还没开始
+const passwordAttemptsRemaining = ref(null)
+const passwordAttemptTimestamps = []
+const PASSWORD_MAX_ATTEMPTS = 5
+const PASSWORD_WINDOW_MS = 60000
 
 // ---- 文件预览 ----
 const previewError = ref(false)
@@ -576,20 +589,30 @@ async function confirmPassword() {
   const pwd = inputPassword.value.trim()
   if (!pwd) {
     passwordError.value = '请输入密码'
+    focusPasswordInput()
+    return
+  }
+  // 限速:60 秒内最多 5 次,前端先卡,避免无效请求打到后端
+  if (!consumePasswordAttemptSlot()) {
+    passwordError.value = '尝试次数过多，请稍后再试'
     return
   }
   passwordChecking.value = true
   passwordError.value = ''
   try {
-    // 密码验证：用 info 接口（不消耗次数），但 info 不校验密码，改用专用接口 HEAD 试探
-    const testUrl = info.value.is_native_video
-      ? `/api/nfsshare/${id}/stream?password=${encodeURIComponent(pwd)}`
-      : info.value.is_video
-        ? `/api/nfsshare/${id}/qualities?password=${encodeURIComponent(pwd)}`
-        : `/api/nfsshare/${id}?password=${encodeURIComponent(pwd)}`
-    const res = await fetch(testUrl, { method: 'HEAD' })
+    // 改用专用 check-password 接口,不消耗 view、不计入访问日志,可反复探测
+    const res = await fetch(`/api/nfsshare/${id}/check-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    })
     if (res.status === 401 || res.status === 403) {
       passwordError.value = '密码错误，请重试'
+      focusPasswordInput()
+      return
+    }
+    if (!res.ok) {
+      passwordError.value = '验证失败，请稍后重试'
       return
     }
     // 密码正确
@@ -622,10 +645,38 @@ async function confirmPassword() {
       loadTextPreview()
     }
   } catch {
-    passwordError.value = '验证失败，请重试'
+    passwordError.value = '验证失败，请检查网络'
   } finally {
     passwordChecking.value = false
   }
+}
+
+// 滑动窗口限速:60 秒内最多 5 次,过期时间戳自动出队
+function consumePasswordAttemptSlot() {
+  const now = Date.now()
+  while (passwordAttemptTimestamps.length > 0 && passwordAttemptTimestamps[0] < now - PASSWORD_WINDOW_MS) {
+    passwordAttemptTimestamps.shift()
+  }
+  if (passwordAttemptTimestamps.length >= PASSWORD_MAX_ATTEMPTS) {
+    passwordAttemptsRemaining.value = 0
+    return false
+  }
+  passwordAttemptTimestamps.push(now)
+  passwordAttemptsRemaining.value = PASSWORD_MAX_ATTEMPTS - passwordAttemptTimestamps.length
+  return true
+}
+
+// 错误后自动聚焦 + 选中已有内容,方便直接覆盖输入
+function focusPasswordInput() {
+  nextTick(() => {
+    const el = passwordInputRef.value
+    if (el && el.focus) {
+      el.focus()
+      // Element Plus 的 el-input 暴露内部 input 元素
+      const inner = el.$el ? el.$el.querySelector('input') : null
+      if (inner) inner.select()
+    }
+  })
 }
 
 // ---- 文本预览 ----

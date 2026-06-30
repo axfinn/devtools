@@ -358,6 +358,45 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 	})
 }
 
+// CheckPassword 校验分享访问密码,不消耗 view(用于访客端反复输错时探测)
+// 仅做密码校验,任何状态下不调用 IncrementNFSShareViews
+func (h *NFSShareHandler) CheckPassword(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	id := c.Param("id")
+	share, err := h.db.GetNFSShare(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "分享不存在"})
+		return
+	}
+	if share.ExpiresAt != nil && time.Now().After(*share.ExpiresAt) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "分享已过期"})
+		return
+	}
+	if share.MaxViews > 0 && share.Views >= share.MaxViews {
+		c.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("分享次数已用完（最大 %d 次）", share.MaxViews)})
+		return
+	}
+	// 无密码直接放行
+	if share.Password == "" {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供 password 字段"})
+		return
+	}
+	if !utils.VerifyPassword(req.Password, share.Password) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "密码错误"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // -------- 管理接口 --------
 
 // AdminList 列出所有分享（超管）
