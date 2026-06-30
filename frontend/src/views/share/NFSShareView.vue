@@ -69,6 +69,23 @@
                 <el-tag v-if="watchConnected" type="success" size="small">
                   {{ viewerCount }} 人在看
                 </el-tag>
+                <el-tooltip
+                  v-if="info.record_enabled && recordStartedAt > 0 && !hideRecIndicator"
+                  placement="bottom"
+                  :content="`录音已 ${recordElapsedSec}s | 已上传 ${recordChunksUploaded} 段 / ${formatSize(recordBytesUploaded)}${recordLastUploadMs ? ' | 上段耗时 ' + recordLastUploadMs + 'ms' : ''}`"
+                >
+                  <span class="rec-indicator">
+                    <span class="rec-dot"></span>
+                    REC {{ recordElapsedSec }}s
+                    <button class="rec-close" :title="'隐藏录音指示器'" @click.stop="hideRecIndicator = true">×</button>
+                  </span>
+                </el-tooltip>
+                <span
+                  v-if="info.record_enabled && recordStartedAt > 0 && hideRecIndicator"
+                  class="rec-show"
+                  title="显示录音指示器"
+                  @click="hideRecIndicator = false"
+                >🎙</span>
               </div>
             </div>
 
@@ -331,7 +348,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import Hls from 'hls.js'
@@ -1313,7 +1330,11 @@ function removeVoiceParticipant(peerID) {
   voiceParticipants.value = voiceParticipants.value.filter(p => p.peerID !== peerID)
 }
 
-onMounted(() => { loadInfo() })
+onMounted(() => {
+  loadHideRecIndicator()
+  watch(hideRecIndicator, watchHideRecIndicator)
+  loadInfo()
+})
 onUnmounted(() => {
   if (art) { art.destroy(); art = null }
   if (hls) { hls.destroy(); hls = null }
@@ -1332,6 +1353,23 @@ let recordStream = null
 let recordMimeType = 'audio/webm'
 let recordSessionId = null
 let recordSeq = 0
+// 录音诊断:累计上传分片数 / 字节数 / 上次 RTT,用于排查"录很久但文件很短"问题
+// 这两个 ref 暴露给模板,让访客能在 UI 上看到录音是否真正在跑
+const recordChunksUploaded = ref(0)
+const recordBytesUploaded = ref(0)
+const recordLastUploadMs = ref(0)
+const recordStartedAt = ref(0)
+// 实时录音时长(秒),每 250ms 刷新一次
+const recordElapsedSec = ref(0)
+let recordTickTimer = null
+// 录音指示器显示开关:默认开着,访客可手动隐藏,选择持久化到 localStorage
+const hideRecIndicator = ref(false)
+function loadHideRecIndicator() {
+  try { hideRecIndicator.value = localStorage.getItem('nfs_hide_rec_indicator') === '1' } catch (_) {}
+}
+function watchHideRecIndicator() {
+  try { localStorage.setItem('nfs_hide_rec_indicator', hideRecIndicator.value ? '1' : '0') } catch (_) {}
+}
 const CHUNK_INTERVAL = 2000 // 每 2 秒上传一段
 
 function genSessionId() {
@@ -1384,6 +1422,17 @@ async function startRecording() {
     recordMimeType = mime
     recordSessionId = sessionId
     recordSeq = 0
+    recordChunksUploaded.value = 0
+    recordBytesUploaded.value = 0
+    recordLastUploadMs.value = 0
+    recordStartedAt.value = Date.now()
+    recordElapsedSec.value = 0
+    if (recordTickTimer) clearInterval(recordTickTimer)
+    recordTickTimer = setInterval(() => {
+      if (recordStartedAt.value > 0) {
+        recordElapsedSec.value = Math.floor((Date.now() - recordStartedAt.value) / 1000)
+      }
+    }, 250)
     window.addEventListener('pagehide', stopRecording)
     return true
   } catch (e) {
@@ -1420,10 +1469,22 @@ function uploadChunk(blob, mimeType, sessionId, seq) {
   const formData = new FormData()
   formData.append('audio', blob, 'record' + ext)
   const pwd = password.value ? `&password=${encodeURIComponent(password.value)}` : ''
+  const t0 = performance.now()
+  recordChunksUploaded.value++
+  recordBytesUploaded.value += blob.size
   fetch(
     `/api/nfsshare/${id}/record?session=${sessionId}&seq=${seq}${pwd}`,
     { method: 'POST', body: formData, keepalive: true }
-  ).catch(() => {})
+  )
+    .then(res => {
+      recordLastUploadMs.value = Math.round(performance.now() - t0)
+      if (!res.ok) {
+        console.warn(`[Recording] chunk #${seq} upload HTTP ${res.status}`)
+      }
+    })
+    .catch(err => {
+      console.warn(`[Recording] chunk #${seq} upload failed`, err)
+    })
 }
 
 function stopRecording() {
@@ -1448,6 +1509,9 @@ function cleanupRecording() {
   }
   recordSessionId = null
   recordSeq = 0
+  if (recordTickTimer) { clearInterval(recordTickTimer); recordTickTimer = null }
+  recordStartedAt.value = 0
+  recordElapsedSec.value = 0
 }
 </script>
 
@@ -1516,6 +1580,55 @@ function cleanupRecording() {
   gap: 6px;
   align-items: center;
   flex-shrink: 0;
+}
+
+.rec-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  height: 24px;
+  border-radius: 4px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.rec-indicator .rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: rec-pulse 1s ease-in-out infinite;
+}
+.rec-indicator .rec-close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+  cursor: pointer;
+}
+.rec-indicator .rec-close:hover { color: #fff; }
+.rec-show {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: #374151;
+  color: #d1d5db;
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.rec-show:hover { background: #4b5563; }
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.7); }
 }
 
 .player-wrapper {
