@@ -386,6 +386,103 @@
           </div>
         </el-tab-pane>
 
+        <!-- Tab: 录音库（跨 share，含已删 share 的孤儿录音） -->
+        <el-tab-pane name="recordings">
+          <template #label>
+            <span>📁 录音库</span>
+            <el-badge v-if="recordingsTotal > 0" :value="recordingsTotal" class="ml-1" type="success" />
+          </template>
+          <div class="mt-2">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <span class="text-sm text-gray-500">共 {{ recordingsTotal }} 条录音（含已过期 share 的孤儿录音）</span>
+              <el-button size="small" :loading="recordingsLoading" @click="loadRecordings">
+                <el-icon><Refresh /></el-icon> 刷新
+              </el-button>
+            </div>
+            <div class="flex items-center gap-2 mb-3 flex-wrap">
+              <el-input
+                v-model="recordingFilterShare"
+                size="small"
+                clearable
+                placeholder="Share ID"
+                style="width: 200px"
+              />
+              <el-input
+                v-model="recordingFilterIP"
+                size="small"
+                clearable
+                placeholder="访客 IP"
+                style="width: 160px"
+              />
+              <el-date-picker
+                v-model="recordingFilterRange"
+                type="datetimerange"
+                size="small"
+                range-separator="至"
+                start-placeholder="开始时间"
+                end-placeholder="结束时间"
+                value-format="YYYY-MM-DDTHH:mm:ss"
+                style="width: 360px"
+              />
+              <el-button size="small" type="primary" @click="recordingsPage = 1; loadRecordings()">筛选</el-button>
+              <el-button size="small" @click="clearRecordingFilters">清空</el-button>
+            </div>
+            <el-table :data="recordings" size="small" stripe v-loading="recordingsLoading">
+              <el-table-column label="访问时间" min-width="140">
+                <template #default="{ row }">
+                  <span class="text-xs">{{ formatDate(row.accessed_at) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="Share" min-width="160">
+                <template #default="{ row }">
+                  <div class="flex flex-col">
+                    <span v-if="row.share_deleted" class="text-xs text-red-500">
+                      {{ row.share_id }} <el-tag size="small" type="danger" class="!text-xs">已删除</el-tag>
+                    </span>
+                    <span v-else class="text-sm font-medium">{{ row.share_name || row.share_id }}</span>
+                    <span v-if="row.share_file_path" class="text-xs text-gray-400 truncate" :title="row.share_file_path">{{ row.share_file_path }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="IP" width="120" prop="client_ip" class-name="col-hide-mobile" />
+              <el-table-column label="状态" width="80" align="center" class-name="col-hide-mobile">
+                <template #default="{ row }">
+                  <el-tag :type="getLogStatusTag(row.status)" size="small">{{ getLogStatusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="录音" width="120" align="center">
+                <template #default="{ row }">
+                  <template v-if="row.audio_url">
+                    <el-button
+                      v-for="(url, idx) in parseAudioUrls(row.audio_url)"
+                      :key="idx"
+                      size="small"
+                      type="success"
+                      link
+                      @click="playRecord(url)"
+                    >▶ {{ idx + 1 }}</el-button>
+                  </template>
+                  <span v-else class="text-xs text-gray-400">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="User-Agent" min-width="160" class-name="col-hide-mobile">
+                <template #default="{ row }">
+                  <span class="text-xs text-gray-500 truncate block" :title="row.user_agent">{{ row.user_agent }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="flex justify-end mt-3">
+              <el-pagination
+                v-model:current-page="recordingsPage"
+                :page-size="recordingsPageSize"
+                :total="recordingsTotal"
+                layout="prev, pager, next"
+                @current-change="loadRecordings"
+              />
+            </div>
+          </div>
+        </el-tab-pane>
+
         <!-- 目标目录选择弹窗 -->
         <el-dialog v-model="targetDirPickerVisible" title="选择上传目录" :width="dialogWidth">
           <div class="space-y-2">
@@ -668,6 +765,16 @@ const listPageSize = 20
 const listTotal = ref(0)
 const listLoading = ref(false)
 
+// 录音库（跨 share，含已删 share 孤儿录音）
+const recordings = ref([])
+const recordingsPage = ref(1)
+const recordingsPageSize = 50
+const recordingsTotal = ref(0)
+const recordingsLoading = ref(false)
+const recordingFilterShare = ref('')
+const recordingFilterIP = ref('')
+const recordingFilterRange = ref(null)
+
 // 访问日志弹窗
 const logsDialogVisible = ref(false)
 const currentShare = ref(null)
@@ -800,7 +907,7 @@ async function loginAdmin(silent = false) {
       return
     }
     adminLoggedIn.value = true
-    await Promise.all([loadDir('.'), loadShareList(), loadMounts()])
+    await Promise.all([loadDir('.'), loadShareList(), loadMounts(), loadRecordings()])
   } catch {
     if (!silent) ElMessage.error('网络错误，请重试')
   } finally {
@@ -1013,6 +1120,44 @@ async function loadShareList() {
   } finally {
     listLoading.value = false
   }
+}
+
+// 加载跨 share 录音库（包含已删 share 的孤儿录音）
+async function loadRecordings() {
+  recordingsLoading.value = true
+  try {
+    const params = new URLSearchParams({
+      page: String(recordingsPage.value),
+      page_size: String(recordingsPageSize),
+    })
+    if (recordingFilterShare.value.trim()) params.set('share_id', recordingFilterShare.value.trim())
+    if (recordingFilterIP.value.trim()) params.set('ip', recordingFilterIP.value.trim())
+    if (recordingFilterRange.value && recordingFilterRange.value.length === 2) {
+      params.set('since', recordingFilterRange.value[0])
+      params.set('until', recordingFilterRange.value[1])
+    }
+    const res = await fetch(`/api/nfsshare/admin/recordings?${params}`)
+    if (!res.ok) {
+      const data = await res.json()
+      ElMessage.error(data.error || '获取录音库失败')
+      return
+    }
+    const data = await res.json()
+    recordings.value = data.recordings || []
+    recordingsTotal.value = data.total || 0
+  } catch {
+    ElMessage.error('网络错误')
+  } finally {
+    recordingsLoading.value = false
+  }
+}
+
+function clearRecordingFilters() {
+  recordingFilterShare.value = ''
+  recordingFilterIP.value = ''
+  recordingFilterRange.value = null
+  recordingsPage.value = 1
+  loadRecordings()
 }
 
 function copyShareLink(row) {

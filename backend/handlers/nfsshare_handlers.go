@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/models"
 	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
@@ -476,6 +477,41 @@ func (h *NFSShareHandler) AdminGetLogs(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"logs": logs, "total": total, "page": page, "page_size": pageSize})
+}
+
+// AdminListRecordings 跨 share 列出所有带录音的访问日志（超管）。
+// 即使 share 已被 CleanExpiredNFSShares 删除,孤儿日志依然可查。
+// 用于找回已过期 share 的录音、做审计。
+//   GET /api/nfsshare/admin/recordings?share_id=&ip=&since=&until=&page=&page_size=
+func (h *NFSShareHandler) AdminListRecordings(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.verifyAdminFromContext(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "50"))
+	filter := models.RecordingFilter{
+		ShareID:  strings.TrimSpace(c.Query("share_id")),
+		ClientIP: strings.TrimSpace(c.Query("ip")),
+		Since:    strings.TrimSpace(c.Query("since")),
+		Until:    strings.TrimSpace(c.Query("until")),
+		Page:     page,
+		PageSize: pageSize,
+	}
+	entries, total, err := h.db.GetAllRecordings(filter)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"recordings": entries,
+		"total":      total,
+		"page":       filter.Page,
+		"page_size":  filter.PageSize,
+	})
 }
 
 // UploadRecord POST /api/nfsshare/:id/record?password=xxx&session=xxx&seq=N

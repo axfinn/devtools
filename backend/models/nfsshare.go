@@ -301,3 +301,106 @@ func (db *DB) CleanExpiredNFSShares() (int, error) {
 	}
 	return len(ids), nil
 }
+
+// RecordingFilter 跨 share 查录音时的筛选条件
+type RecordingFilter struct {
+	ShareID string // 空字符串表示全部
+	ClientIP string
+	Since   string // ISO datetime,空字符串表示不限
+	Until   string // ISO datetime
+	Page    int
+	PageSize int
+}
+
+// RecordingEntry 录音库条目，附带 share 信息（已被删的 share 也保留 NULL）
+type RecordingEntry struct {
+	LogID      int64     `json:"log_id"`
+	ShareID    string    `json:"share_id"`
+	ShareName  *string   `json:"share_name"` // share 已删时为 null
+	ShareFilePath *string `json:"share_file_path"`
+	ClientIP   string    `json:"client_ip"`
+	UserAgent  string    `json:"user_agent"`
+	Status     string    `json:"status"`
+	AudioURL   string    `json:"audio_url"`
+	AccessedAt time.Time `json:"accessed_at"`
+	ShareDeleted bool    `json:"share_deleted"`
+}
+
+// GetAllRecordings 跨 share 列出所有带 audio_url 的日志（LEFT JOIN nfs_shares，
+// 所以已删除 share 的孤儿日志也能查到）。share 没了的录音就靠这个入口找回。
+func (db *DB) GetAllRecordings(f RecordingFilter) ([]RecordingEntry, int, error) {
+	if f.Page < 1 {
+		f.Page = 1
+	}
+	if f.PageSize < 1 || f.PageSize > 200 {
+		f.PageSize = 50
+	}
+	offset := (f.Page - 1) * f.PageSize
+
+	var (
+		where  []string
+		args   []interface{}
+	)
+	where = append(where, "l.audio_url IS NOT NULL AND l.audio_url != ''")
+	if f.ShareID != "" {
+		where = append(where, "l.share_id = ?")
+		args = append(args, f.ShareID)
+	}
+	if f.ClientIP != "" {
+		where = append(where, "l.client_ip LIKE ?")
+		args = append(args, "%"+f.ClientIP+"%")
+	}
+	if f.Since != "" {
+		where = append(where, "l.accessed_at >= ?")
+		args = append(args, f.Since)
+	}
+	if f.Until != "" {
+		where = append(where, "l.accessed_at <= ?")
+		args = append(args, f.Until)
+	}
+	whereSQL := strings.Join(where, " AND ")
+
+	// 总数
+	var total int
+	if err := db.conn.QueryRow(`SELECT COUNT(*) FROM nfs_share_logs l WHERE `+whereSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	q := `
+		SELECT l.id, l.share_id, s.name, s.file_path, l.client_ip, l.user_agent,
+		       l.status, l.audio_url, l.accessed_at,
+		       CASE WHEN s.id IS NULL THEN 1 ELSE 0 END AS share_deleted
+		FROM nfs_share_logs l
+		LEFT JOIN nfs_shares s ON l.share_id = s.id
+		WHERE ` + whereSQL + `
+		ORDER BY l.accessed_at DESC
+		LIMIT ? OFFSET ?`
+	queryArgs := append(args, f.PageSize, offset)
+	rows, err := db.conn.Query(q, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]RecordingEntry, 0)
+	for rows.Next() {
+		var e RecordingEntry
+		var shareName, sharePath sql.NullString
+		var shareDeleted int
+		if err := rows.Scan(&e.LogID, &e.ShareID, &shareName, &sharePath, &e.ClientIP, &e.UserAgent,
+			&e.Status, &e.AudioURL, &e.AccessedAt, &shareDeleted); err != nil {
+			continue
+		}
+		if shareName.Valid {
+			v := shareName.String
+			e.ShareName = &v
+		}
+		if sharePath.Valid {
+			v := sharePath.String
+			e.ShareFilePath = &v
+		}
+		e.ShareDeleted = shareDeleted == 1
+		out = append(out, e)
+	}
+	return out, total, nil
+}

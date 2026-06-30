@@ -463,6 +463,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		nfsshare.POST("/admin/mounts/:name/remount", h.nfsShareHandler.MountsRemount)    // 重新挂载（超管）
 		nfsshare.POST("/admin/mounts/:name/umount", h.nfsShareHandler.MountsUmount)      // 卸载（超管）
 		nfsshare.GET("/admin/:id/logs", h.nfsShareHandler.AdminGetLogs)                  // 访问日志（超管）
+		nfsshare.GET("/admin/recordings", h.nfsShareHandler.AdminListRecordings)          // 跨 share 录音库（超管，含已删 share 孤儿录音）
 		nfsshare.PUT("/admin/:id", h.nfsShareHandler.AdminUpdate)                        // 修改配置（超管）
 		nfsshare.DELETE("/admin/:id", h.nfsShareHandler.AdminDelete)                     // 删除分享（超管）
 		nfsshare.POST("/admin/upload/init", h.nfsShareHandler.UploadInit)                // 初始化上传（超管）
