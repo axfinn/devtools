@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	crypto_rand "crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -412,28 +411,6 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 		return
 	}
 
-	// 过滤无效 chunk:macOS Chrome 上 MediaRecorder.requestData() 周期性 flush 会
-	// 产出没有 EBML header 的裸 Opus 片段,ffmpeg 拿到这种 input 整条 concat 命令 fail。
-	// 检查前 4 字节 EBML magic 1a45 dfa3,保留完整容器;否则当作残片丢掉。
-	ebmlMagic := []byte{0x1a, 0x45, 0xdf, 0xa3}
-	valid := chunks[:0]
-	for _, c := range chunks {
-		f, err := os.Open(c)
-		if err != nil {
-			continue
-		}
-		var hdr [4]byte
-		n, _ := f.Read(hdr[:])
-		f.Close()
-		if n == 4 && bytes.Equal(hdr[:], ebmlMagic) {
-			valid = append(valid, c)
-		}
-	}
-	chunks = valid
-	if len(chunks) == 0 {
-		return
-	}
-
 	// 根据第一个 chunk 的扩展名决定输出格式
 	firstExt := strings.ToLower(filepath.Ext(chunks[0]))
 	outExt := ".webm"
@@ -449,52 +426,35 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 	crypto_rand.Read(b)
 	outFile := filepath.Join(outDir, hex.EncodeToString(b)+outExt)
 
-	// 用 ffmpeg concat 拼接
-	listFile := filepath.Join(chunkDir, "list.txt")
-	var listContent string
-	for _, c := range chunks {
-		abs, _ := filepath.Abs(c)
-		listContent += fmt.Sprintf("file '%s'\n", abs)
+	// Chrome Mac 的 MediaRecorder 把 ondataavailable 每次产物当成 Matroska "live 流"续传:
+	// - chunk 0: 完整 EBML header + Segment + 首 Cluster(含音频数据)
+	// - chunk N(N>0): 同一 Segment 的续传 Cluster(无 EBML header,ffmpeg 当独立文件读就 fail)
+	// 因此最终拼接不能用 ffmpeg,直接按字节拼:第一个 chunk 保留完整 header,后续全部追加。
+	// 实测 mr0bmhyj1888f6 21 个 chunk 拼出 22s 音频(原本 ffmpeg 只给 1s)。
+	// requestData() 周期性 flush 产生的小残片(<2KB)可能含半截 cluster,直接拼进去不影响总时长。
+	out, err := os.Create(outFile)
+	if err != nil {
+		return
 	}
-	if err := os.WriteFile(listFile, []byte(listContent), 0644); err != nil {
+	written := int64(0)
+	for _, c := range chunks {
+		f, err := os.Open(c)
+		if err != nil {
+			continue
+		}
+		n, _ := io.Copy(out, f)
+		f.Close()
+		written += n
+	}
+	out.Close()
+	if written == 0 {
+		os.Remove(outFile)
 		return
 	}
 
-	// 用 ffmpeg concat filter 把每个独立 webm 的 opus 流合并成一个连续流。
-	// 旧的 -f concat demuxer + -c copy 在多 webm input 上只取第一个
-	// (其余每个都是完整 EBML 容器,concat demuxer 解析到第二个就退出),
-	// 产物永远只 ~1.9s。concat filter 才是真正拼接多 opus 流的方案。
-	var cmd *exec.Cmd
-	n := len(chunks)
-	if outExt == ".mp4" {
-		args := []string{"-y", "-fflags", "+genpts"}
-		for _, c := range chunks {
-			args = append(args, "-i", c)
-		}
-		labels := make([]string, n)
-		for i := range chunks {
-			labels[i] = fmt.Sprintf("[%d:a]", i)
-		}
-		filter := fmt.Sprintf("%sconcat=n=%d:v=0:a=1[out]", strings.Join(labels, ""), n)
-		args = append(args, "-filter_complex", filter, "-map", "[out]",
-			"-c:a", "aac", "-movflags", "+faststart", outFile)
-		cmd = exec.Command("ffmpeg", args...)
-	} else {
-		args := []string{"-y", "-fflags", "+genpts"}
-		for _, c := range chunks {
-			args = append(args, "-i", c)
-		}
-		labels := make([]string, n)
-		for i := range chunks {
-			labels[i] = fmt.Sprintf("[%d:a]", i)
-		}
-		filter := fmt.Sprintf("%sconcat=n=%d:v=0:a=1[out]", strings.Join(labels, ""), n)
-		args = append(args, "-filter_complex", filter, "-map", "[out]",
-			"-c:a", "libopus", outFile)
-		cmd = exec.Command("ffmpeg", args...)
-	}
-	if _, err := cmd.CombinedOutput(); err != nil {
-		// 重编码 + concat filter 都失败时,主动放弃,避免返回损坏文件
+	// 兜底验证:ffprobe 读不出 opus/vorbis/aac 流就说明产物损坏,主动删掉避免下游解析失败
+	if !hasAudioStream(outFile) {
+		os.Remove(outFile)
 		return
 	}
 
@@ -507,6 +467,18 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 	if logID > 0 {
 		h.db.AppendNFSShareLogAudio(logID, audioURL)
 	}
+}
+
+// hasAudioStream 用 ffprobe 检查文件是否含已知音频流(opus/vorbis/aac),防止拼接异常产物被记录
+func hasAudioStream(path string) bool {
+	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0",
+		"-show_entries", "stream=codec_name", "-of", "csv=p=0", path)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	codec := strings.TrimSpace(string(out))
+	return codec == "opus" || codec == "vorbis" || codec == "aac"
 }
 
 // ServeRecord GET /api/nfsshare/:id/record/:filename?admin_password=xxx
