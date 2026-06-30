@@ -1018,7 +1018,6 @@ async function createShare() {
     }
     const link = `${location.origin}/nfs/${data.id}`
     await navigator.clipboard.writeText(link).catch(() => {})
-    ElMessage.success(`创建成功！链接已复制：${link}`)
     createForm.filePath = ''
     createForm.name = ''
     createForm.maxViews = 5
@@ -1192,9 +1191,7 @@ function clearRecordingFilters() {
 
 function copyShareLink(row) {
   const link = `${location.origin}/nfs/${row.id}`
-  navigator.clipboard.writeText(link)
-    .then(() => ElMessage.success('链接已复制'))
-    .catch(() => ElMessage.info(`链接：${link}`))
+  navigator.clipboard.writeText(link).catch(() => {})
 }
 
 async function deleteShare(row) {
@@ -1445,7 +1442,6 @@ async function createUploadShare() {
     if (!res.ok) { ElMessage.error(data.error || '创建失败'); return }
     const link = `${location.origin}/nfs/${data.id}`
     await navigator.clipboard.writeText(link).catch(() => {})
-    ElMessage.success(`分享链接已复制：${link}`)
     resetUpload()
     activeTab.value = 'list'
     await loadShareList()
