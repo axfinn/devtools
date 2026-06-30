@@ -4,7 +4,7 @@
 > 优化循环从最高优先级开始,每轮完成一项并提交。
 
 ## P0 · 阻塞任务
-- [/] #1 访客端首屏骨架屏 + 视频初始化并行 (`NFSShareView.vue:25-34`)
+- [x] #1 访客端首屏骨架屏 + 视频初始化并行 (`NFSShareView.vue:25-34`)
   - [x] (a) 密码弹窗显示文件元数据(文件名 + 大小 + 剩余次数)
   - [x] (b) 视频场景 getUserMedia/fetchRtcConfig/loadQualities 改为 Promise.allSettled 并行(loadQualities 加幂等保护避免重复请求)
   - [x] (c) 转码 overlay 显示清晰度名 + 已生成分片数(后端 /qualities 增 segments 字段,pollTranscoding 每 5s force 刷新)
