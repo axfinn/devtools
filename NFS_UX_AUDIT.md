@@ -24,11 +24,11 @@
 - [x] #7 目录搜索/排序 (`NFSShareTool.vue:76-125`)
 
 ## P2 · 细节 / a11y
-- [ ] #8 a11y 缺口补 aria-label / 键盘焦点环
+- [x] #8 a11y 缺口补 aria-label / 键盘焦点环
 - [ ] #9 录音开启确认弹窗 + 链接分享后提示气泡
 
 ## P3 · 代码层 / 安全
-- [ ] #10 超管密码改 cookie 鉴权,不再走 query string (`NFSShareTool.vue` 多处)
+- [x] #10 超管密码改 cookie 鉴权,不再走 query string (`NFSShareTool.vue` 多处)
 - [x] #11 `getLogStatus*` 合并为单张 `LOG_STATUS_MAP`,后续加状态只改一处
 
 ## 进展
@@ -42,3 +42,5 @@
 - 2026-06-30 #6 错误面板常驻"重新加载"按钮,errorAction 与 reload 并列布局
 - 2026-06-30 #11 getLogStatus* 合并
 - 2026-06-30 #7 目录搜索(关键字过滤)+ 排序(名称/大小/修改时间),目录仍置顶
+- 2026-06-30 #10 超管密码改 HttpOnly cookie(7051e57)— 审计滞后补登
+- 2026-06-30 #8 装饰图标统一 aria-hidden,加载状态加 role/aria-label

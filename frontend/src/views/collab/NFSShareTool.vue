@@ -15,7 +15,7 @@
     <el-card v-if="nfsEnabled && !adminLoggedIn" class="mb-4 max-w-md mx-auto">
       <template #header>
         <div class="flex items-center gap-2">
-          <el-icon><Lock /></el-icon>
+          <el-icon aria-hidden="true"><Lock /></el-icon>
           <span class="font-bold text-lg">NFS 分享 · 超管登录</span>
         </div>
       </template>
@@ -40,7 +40,7 @@
       <!-- 标题栏 -->
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
-          <el-icon class="text-xl text-blue-500"><FolderOpened /></el-icon>
+          <el-icon class="text-xl text-blue-500" aria-hidden="true"><FolderOpened /></el-icon>
           <span class="text-xl font-bold">NFS 文件分享</span>
           <el-tag type="success" size="small">已登录</el-tag>
         </div>
@@ -77,7 +77,7 @@
                       placeholder="搜索文件名"
                       class="flex-1"
                     >
-                      <template #prefix><el-icon><Search /></el-icon></template>
+                      <template #prefix><el-icon aria-hidden="true"><Search /></el-icon></template>
                     </el-input>
                     <el-select v-model="sortBy" size="small" style="width: 110px">
                       <el-option value="name" label="名称" />
@@ -98,7 +98,7 @@
                   >
                     <el-table-column width="36">
                       <template #default="{ row }">
-                        <el-icon :class="row.is_dir ? 'text-yellow-500' : 'text-blue-400'">
+                        <el-icon :class="row.is_dir ? 'text-yellow-500' : 'text-blue-400'" aria-hidden="true">
                           <Folder v-if="row.is_dir" />
                           <Document v-else />
                         </el-icon>
@@ -229,7 +229,7 @@
             <div class="flex items-center justify-between mb-3">
               <span class="text-sm text-gray-500">挂载点来自 config.yaml → nfs_share.mounts</span>
               <el-button size="small" :loading="mountsLoading" @click="loadMounts">
-                <el-icon><Refresh /></el-icon> 刷新状态
+                <el-icon aria-hidden="true"><Refresh /></el-icon> 刷新状态
               </el-button>
             </div>
             <el-empty v-if="!mountsLoading && mountsList.length === 0" description="暂无挂载点，请在 config.yaml 中配置 nfs_share.mounts" />
@@ -396,7 +396,7 @@
             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
               <span class="text-sm text-gray-500">共 {{ recordingsTotal }} 条录音（含已过期 share 的孤儿录音）</span>
               <el-button size="small" :loading="recordingsLoading" @click="loadRecordings">
-                <el-icon><Refresh /></el-icon> 刷新
+                <el-icon aria-hidden="true"><Refresh /></el-icon> 刷新
               </el-button>
             </div>
             <div class="flex items-center gap-2 mb-3 flex-wrap">
@@ -536,7 +536,7 @@
             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
               <span class="text-sm text-gray-500">共 {{ listTotal }} 条分享记录</span>
               <el-button size="small" :loading="listLoading" @click="loadShareList">
-                <el-icon><Refresh /></el-icon> 刷新
+                <el-icon aria-hidden="true"><Refresh /></el-icon> 刷新
               </el-button>
             </div>
             <div class="flex items-center gap-2 mb-3 flex-wrap">
@@ -549,7 +549,7 @@
                 @input="onListFilterChange"
                 @clear="onListFilterChange"
               >
-                <template #prefix><el-icon><Search /></el-icon></template>
+                <template #prefix><el-icon aria-hidden="true"><Search /></el-icon></template>
               </el-input>
               <el-select v-model="listFilterStatus" size="small" style="width: 120px" @change="onListFilterChange">
                 <el-option value="all" label="全部" />
@@ -634,7 +634,7 @@
       <div class="flex items-center justify-between mb-3">
         <span class="text-sm text-gray-500">共 {{ logsTotal }} 条访问记录</span>
         <el-button size="small" @click="loadLogs">
-          <el-icon><Refresh /></el-icon> 刷新
+          <el-icon aria-hidden="true"><Refresh /></el-icon> 刷新
         </el-button>
       </div>
       <el-table :data="logList" size="small" stripe v-loading="logsLoading" max-height="400">

@@ -35,13 +35,13 @@
 
     <!-- Loading -->
     <div v-if="loading" class="status-container">
-      <el-icon class="is-loading" style="font-size:36px"><Loading /></el-icon>
+      <el-icon class="is-loading" style="font-size:36px" role="status" aria-label="加载中"><Loading /></el-icon>
       <span>加载分享信息...</span>
     </div>
 
     <!-- Error -->
     <div v-else-if="error" class="status-container error">
-      <el-icon style="font-size:36px;color:#f56c6c"><CircleClose /></el-icon>
+      <el-icon style="font-size:36px;color:#f56c6c" aria-hidden="true"><CircleClose /></el-icon>
       <h3>{{ error }}</h3>
       <div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
         <el-button
@@ -90,7 +90,7 @@
 
               <!-- 转码中提示 -->
               <div v-if="transcoding" class="transcoding-overlay">
-                <el-icon class="is-loading" style="font-size:40px;color:#409eff"><Loading /></el-icon>
+                <el-icon class="is-loading" style="font-size:40px;color:#409eff" role="status" aria-label="加载中"><Loading /></el-icon>
                 <p>正在转码 {{ currentQuality || '...' }}，请稍候...</p>
                 <p class="hint">
                   <template v-if="currentQualitySegments > 0">
@@ -118,7 +118,7 @@
                 size="small"
                 @click="disconnectWatch"
               >
-                <el-icon><VideoPause /></el-icon>
+                <el-icon aria-hidden="true"><VideoPause /></el-icon>
                 退出一起看
               </el-button>
               <template v-else>
@@ -128,7 +128,7 @@
                   size="small"
                   @click="toggleWatch"
                 >
-                  <el-icon><VideoPlay /></el-icon>
+                  <el-icon aria-hidden="true"><VideoPlay /></el-icon>
                   一起看
                 </el-button>
                 <el-button
@@ -184,7 +184,7 @@
               </template>
 
               <el-button v-if="!info.disable_video_download && !info.disable_download" size="small" :href="downloadUrl" tag="a" target="_blank">
-                <el-icon><Download /></el-icon>
+                <el-icon aria-hidden="true"><Download /></el-icon>
                 下载
               </el-button>
             </div>
@@ -211,7 +211,7 @@
             <!-- 文件头部信息 -->
             <div class="preview-header">
               <div class="preview-title-row">
-                <el-icon class="preview-file-icon" :style="{ color: fileIconColor }">
+                <el-icon class="preview-file-icon" :style="{ color: fileIconColor }" aria-hidden="true">
                   <component :is="fileIconComponent" />
                 </el-icon>
                 <h2 class="preview-title">{{ info.name }}</h2>
@@ -223,7 +223,7 @@
               </div>
               <div class="preview-actions">
                 <el-button v-if="!info.disable_download" type="primary" :href="downloadUrl" tag="a" download>
-                  <el-icon><Download /></el-icon>
+                  <el-icon aria-hidden="true"><Download /></el-icon>
                   下载文件
                 </el-button>
               </div>
@@ -250,7 +250,7 @@
             <!-- 文本/代码预览 -->
             <div v-else-if="info.is_text" class="preview-text-wrap">
               <div v-if="textLoading" class="preview-text-loading">
-                <el-icon class="is-loading"><Loading /></el-icon> 加载中...
+                <el-icon class="is-loading" aria-hidden="true"><Loading /></el-icon> 加载中...
               </div>
               <pre v-else-if="textContent !== null" class="preview-text-content"><code>{{ textContent }}</code></pre>
               <p v-if="previewError" class="preview-error">文本加载失败，请直接下载</p>
@@ -258,7 +258,7 @@
 
             <!-- 其他文件：仅下载 -->
             <div v-else class="preview-generic">
-              <el-icon style="font-size:80px;color:#c0c4cc"><Document /></el-icon>
+              <el-icon style="font-size:80px;color:#c0c4cc" aria-hidden="true"><Document /></el-icon>
               <p style="color:#909399;margin-top:12px">该文件类型暂不支持预览</p>
               <template v-if="!info.disable_download">
                 <el-button
@@ -268,7 +268,7 @@
                   style="margin-top: 16px;"
                   @click="startDownload"
                 >
-                  <el-icon><Download /></el-icon>
+                  <el-icon aria-hidden="true"><Download /></el-icon>
                   直接下载原文件（{{ formatSize(info.file_size) }}）
                 </el-button>
                 <div v-else class="download-progress">
