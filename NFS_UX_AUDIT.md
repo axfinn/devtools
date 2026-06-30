@@ -37,4 +37,4 @@
 - 2026-06-30 #1c 转码 overlay 显示清晰度 + 已生成分片数(pollTranscoding 每 5s 刷新)
 - 2026-06-30 #2 错误兜底分码 + 重试 / 复制 / 切换原生三件套
 - 2026-06-30 #3 密码 UX:后端 check-password 不消耗 view + 前端限速 5/min + 错误后自动聚焦
-- 2026-06-30 #4 创建表单"显示名称"挪进 el-collapse 高级设置,与录音折叠展示;按钮不再强求 name 必填,留空用 file_path basename 兜底
+- 2026-06-30 #4 创建表单"显示名称"挪进 el-collapse 高级设置,与录音折叠展示;按钮不再强求 name 必填,留空用 file_path basename 兜底 (40b1e69)
