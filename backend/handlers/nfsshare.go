@@ -437,29 +437,42 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 		return
 	}
 
-	absOut, _ := filepath.Abs(outFile)
+	// 用 ffmpeg concat filter 把每个独立 webm 的 opus 流合并成一个连续流。
+	// 旧的 -f concat demuxer + -c copy 在多 webm input 上只取第一个
+	// (其余每个都是完整 EBML 容器,concat demuxer 解析到第二个就退出),
+	// 产物永远只 ~1.9s。concat filter 才是真正拼接多 opus 流的方案。
 	var cmd *exec.Cmd
+	n := len(chunks)
 	if outExt == ".mp4" {
-		// mp4 分片需要重新封装，不能直接 concat copy
-		cmd = exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0",
-			"-i", listFile, "-c", "copy", "-movflags", "+faststart", absOut)
-	} else {
-		cmd = exec.Command("ffmpeg", "-y", "-f", "concat", "-safe", "0",
-			"-i", listFile, "-c", "copy", absOut)
-	}
-	if err := cmd.Run(); err != nil {
-		// ffmpeg 不可用时，直接拼接原始字节（webm/ogg 分片可直接拼接，mp4 不行但聊胜于无）
-		outF, err2 := os.Create(outFile)
-		if err2 != nil {
-			return
-		}
+		args := []string{"-y", "-fflags", "+genpts"}
 		for _, c := range chunks {
-			data, err3 := os.ReadFile(c)
-			if err3 == nil {
-				outF.Write(data)
-			}
+			args = append(args, "-i", c)
 		}
-		outF.Close()
+		labels := make([]string, n)
+		for i := range chunks {
+			labels[i] = fmt.Sprintf("[%d:a]", i)
+		}
+		filter := fmt.Sprintf("%sconcat=n=%d:v=0:a=1[out]", strings.Join(labels, ""), n)
+		args = append(args, "-filter_complex", filter, "-map", "[out]",
+			"-c:a", "aac", "-movflags", "+faststart", outFile)
+		cmd = exec.Command("ffmpeg", args...)
+	} else {
+		args := []string{"-y", "-fflags", "+genpts"}
+		for _, c := range chunks {
+			args = append(args, "-i", c)
+		}
+		labels := make([]string, n)
+		for i := range chunks {
+			labels[i] = fmt.Sprintf("[%d:a]", i)
+		}
+		filter := fmt.Sprintf("%sconcat=n=%d:v=0:a=1[out]", strings.Join(labels, ""), n)
+		args = append(args, "-filter_complex", filter, "-map", "[out]",
+			"-c:a", "libopus", outFile)
+		cmd = exec.Command("ffmpeg", args...)
+	}
+	if _, err := cmd.CombinedOutput(); err != nil {
+		// 重编码 + concat filter 都失败时,主动放弃,避免返回损坏文件
+		return
 	}
 
 	// 清理分片目录
