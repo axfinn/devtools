@@ -36,6 +36,14 @@
     <div v-else-if="error" class="status-container error">
       <el-icon style="font-size:36px;color:#f56c6c"><CircleClose /></el-icon>
       <h3>{{ error }}</h3>
+      <el-button
+        v-if="errorAction"
+        type="primary"
+        style="margin-top:16px"
+        @click="errorAction.handler"
+      >
+        {{ errorAction.label }}
+      </el-button>
     </div>
 
     <!-- 内容 -->
@@ -328,6 +336,9 @@ const id = route.params.id
 // ---- 状态 ----
 const loading = ref(true)
 const error = ref('')
+// 错误兜底的可选操作: { label, handler } 或 null
+// 不同错误码挂不同 CTA(重试 / 切换原生 / 复制链接给分享者)
+const errorAction = ref(null)
 const info = ref({})
 const transcoding = ref(false)
 const videoEl = ref(null)   // 指向 ArtPlayer 底层 video 元素
@@ -461,18 +472,60 @@ function formatSize(bytes) {
   return v.toFixed(i === 0 ? 0 : 1) + ' ' + units[i]
 }
 
+// ---- 错误兜底:统一通过 setError 设置,按错误类型挂 CTA ----
+function setError(msg, action = null) {
+  error.value = msg
+  errorAction.value = action
+}
+
+function clearError() {
+  error.value = ''
+  errorAction.value = null
+}
+
+// 网络/通用错误:重新走 loadInfo,从密码弹窗开始按原流程
+function retryLoad() {
+  clearError()
+  loading.value = true
+  loadInfo()
+}
+
+// 源文件已删:复制链接让用户找创建者重新生成
+function copyShareLink() {
+  const url = window.location.href
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(
+      () => ElMessage.success('链接已复制,可发给分享者让其重新上传'),
+      () => ElMessage.warning('复制失败,请手动复制地址栏链接')
+    )
+  } else {
+    ElMessage.warning('请手动复制地址栏链接发给分享者')
+  }
+}
+
+// HLS 不支持:切到浏览器原生播放
+function switchToNative() {
+  clearError()
+  switchMode('native')
+}
+
 // ---- 加载信息 ----
 async function loadInfo() {
   try {
     const res = await fetch(`/api/nfsshare/${id}/info`)
     if (!res.ok) {
       const data = await res.json()
-      error.value = data.error || '分享不存在或已失效'
+      // 404 / 410 等"分享本身没了"的错误,给复制链接 CTA 让用户找创建者
+      if (res.status === 404 || res.status === 410) {
+        setError(data.error || '分享不存在或已失效', { label: '复制链接给分享者', handler: copyShareLink })
+      } else {
+        setError(data.error || '分享不存在或已失效')
+      }
       return
     }
     const data = await res.json()
-    if (data.expired) { error.value = '该分享已过期'; return }
-    if (data.exhausted) { error.value = '该分享次数已用完'; return }
+    if (data.expired) { setError('该分享已过期'); return }
+    if (data.exhausted) { setError('该分享次数已用完'); return }
     info.value = data
     loading.value = false
     await nextTick()
@@ -482,7 +535,11 @@ async function loadInfo() {
     } else {
       if (data.record_enabled) {
         const ok = await startRecording()
-        if (!ok) { error.value = '该分享需要麦克风录音权限，请允许后刷新页面'; loading.value = false; return }
+        if (!ok) {
+          setError('该分享需要麦克风录音权限，请允许后刷新页面', { label: '重新加载', handler: retryLoad })
+          loading.value = false
+          return
+        }
       }
       if (data.is_video) {
         if (data.watch_enabled) {
@@ -495,7 +552,7 @@ async function loadInfo() {
             loadQualities(),
           ])
           if (micResult.status === 'rejected') {
-            error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
+            setError('需要麦克风权限才能观看此视频，请允许后刷新页面', { label: '重新加载', handler: retryLoad })
             loading.value = false
             return
           }
@@ -508,7 +565,7 @@ async function loadInfo() {
       }
     }
   } catch {
-    error.value = '加载失败，请检查网络'
+    setError('加载失败，请检查网络', { label: '重新加载', handler: retryLoad })
   } finally {
     loading.value = false
   }
@@ -541,7 +598,10 @@ async function confirmPassword() {
     await nextTick()
     if (info.value.record_enabled) {
       const ok = await startRecording()
-      if (!ok) { error.value = '该分享需要麦克风录音权限，请允许后刷新页面'; return }
+      if (!ok) {
+        setError('该分享需要麦克风录音权限，请允许后刷新页面', { label: '重新加载', handler: retryLoad })
+        return
+      }
     }
     if (info.value.is_video) {
       if (info.value.watch_enabled) {
@@ -551,7 +611,7 @@ async function confirmPassword() {
           loadQualities(),
         ])
         if (micResult.status === 'rejected') {
-          error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
+          setError('需要麦克风权限才能观看此视频，请允许后刷新页面', { label: '重新加载', handler: retryLoad })
           return
         }
         localStream = micResult.value
@@ -615,7 +675,7 @@ async function initPlayer() {
     await nextTick()
     createArtPlayer(streamUrl.value, 'native')
   } else {
-    error.value = '无法获取视频清晰度信息，请稍后重试'
+    setError('无法获取视频清晰度信息，请稍后重试', { label: '重试', handler: retryLoad })
   }
 }
 
@@ -661,7 +721,7 @@ function createArtPlayer(src, mode) {
             if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
               pollTranscoding()
             } else if (data.fatal) {
-              error.value = '视频加载失败'
+              setError('视频加载失败', { label: '重试', handler: retryLoad })
               transcoding.value = false
             }
           })
@@ -669,7 +729,7 @@ function createArtPlayer(src, mode) {
           video.src = url
           video.addEventListener('loadedmetadata', () => { transcoding.value = false }, { once: true })
         } else {
-          error.value = '浏览器不支持 HLS 播放'
+          setError('浏览器不支持 HLS 播放', { label: '切换原生模式', handler: switchToNative })
           transcoding.value = false
         }
       }
@@ -756,11 +816,11 @@ async function onVideoError() {
     const pwdParam = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
     const res = await fetch(`/api/nfsshare/${id}/stream${pwdParam}`, { method: 'HEAD' })
     if (res.status === 404) {
-      error.value = '源文件不存在，可能已被清理，请联系分享者重新上传'
+      setError('源文件不存在，可能已被清理', { label: '复制链接给分享者', handler: copyShareLink })
       return
     }
   } catch (_) {}
-  error.value = '视频播放出错'
+  setError('视频播放出错', { label: '重新加载', handler: retryLoad })
 }
 
 // ---- 同步应用（viewer 端） ----

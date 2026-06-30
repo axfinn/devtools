@@ -8,7 +8,9 @@
   - [x] (a) 密码弹窗显示文件元数据(文件名 + 大小 + 剩余次数)
   - [x] (b) 视频场景 getUserMedia/fetchRtcConfig/loadQualities 改为 Promise.allSettled 并行(loadQualities 加幂等保护避免重复请求)
   - [x] (c) 转码 overlay 显示清晰度名 + 已生成分片数(后端 /qualities 增 segments 字段,pollTranscoding 每 5s force 刷新)
-- [ ] #2 视频/文件错误兜底分码 + 重试 CTA (`NFSShareView.vue:485-491,722-734`)
+- [x] #2 视频/文件错误兜底分码 + 重试 CTA (`NFSShareView.vue:485-491,722-734`)
+  - 引入 `setError(msg, action?)` + `errorAction` ref,按错误类型挂 CTA(重试 / 复制链接给分享者 / 切换原生模式)
+  - 13 处 error 赋值统一走 setError;404/410 → 复制链接;网络/麦克风/视频失败 → 重试;不支持 HLS → 切换原生
 - [ ] #3 密码弹窗:显示切换 + 不消耗 view 的 `POST /:id/check-password` (`NFSShareView.vue:4-22,495-543`)
 
 ## P1 · 显著影响
@@ -29,3 +31,4 @@
 - 2026-06-30 #1a 密码弹窗显示文件名 + 大小 + 剩余查看次数
 - 2026-06-30 #1b 视频初始化并行(getUserMedia / fetchRtcConfig / loadQualities),loadQualities 幂等保护
 - 2026-06-30 #1c 转码 overlay 显示清晰度 + 已生成分片数(pollTranscoding 每 5s 刷新)
+- 2026-06-30 #2 错误兜底分码 + 重试 / 复制 / 切换原生三件套
