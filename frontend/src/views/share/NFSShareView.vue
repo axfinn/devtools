@@ -1475,13 +1475,10 @@ async function startRecording() {
       if (recordStartedAt.value > 0) {
         recordElapsedSec.value = Math.floor((Date.now() - recordStartedAt.value) / 1000)
       }
-      // 兜底:start(timeslice) 在某些 Safari 早期版本 + 部分 Android Chrome 上
-      // 不会周期性触发 ondataavailable,只在 stop() 时 emit 一帧。
-      // 每 2 秒主动 requestData() 强制 flush 当前缓冲区,保证长录音不会被截短。
-      const rec = mediaRecorder
-      if (rec && rec.state === 'recording') {
-        try { rec.requestData() } catch (_) {}
-      }
+      // 注:不要在这里周期性 requestData()。在 macOS Chrome 上 requestData()
+      // 会产出没有 EBML header 的裸 Opus 片段,后端 ffmpeg concat 会整条 fail,
+      // 导致"录很久但 audio_url 为空"。start(CHUNK_INTERVAL) 自身就会按 timeslice
+      // 周期 emit 完整 WebM segment(Safari 兜底见 stopRecordingGracefully)
     }, CHUNK_INTERVAL)
     window.addEventListener('pagehide', stopRecording)
     return true

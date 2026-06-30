@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	crypto_rand "crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -407,6 +408,28 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 			chunks = append(chunks, filepath.Join(chunkDir, e.Name()))
 		}
 	}
+	if len(chunks) == 0 {
+		return
+	}
+
+	// 过滤无效 chunk:macOS Chrome 上 MediaRecorder.requestData() 周期性 flush 会
+	// 产出没有 EBML header 的裸 Opus 片段,ffmpeg 拿到这种 input 整条 concat 命令 fail。
+	// 检查前 4 字节 EBML magic 1a45 dfa3,保留完整容器;否则当作残片丢掉。
+	ebmlMagic := []byte{0x1a, 0x45, 0xdf, 0xa3}
+	valid := chunks[:0]
+	for _, c := range chunks {
+		f, err := os.Open(c)
+		if err != nil {
+			continue
+		}
+		var hdr [4]byte
+		n, _ := f.Read(hdr[:])
+		f.Close()
+		if n == 4 && bytes.Equal(hdr[:], ebmlMagic) {
+			valid = append(valid, c)
+		}
+	}
+	chunks = valid
 	if len(chunks) == 0 {
 		return
 	}
