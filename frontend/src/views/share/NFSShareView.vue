@@ -473,15 +473,20 @@ async function loadInfo() {
       }
       if (data.is_video) {
         if (data.watch_enabled) {
-          // 视频+一起看模式：先申请麦克风，拒绝则禁止播放
-          try {
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-            await fetchRtcConfig()
-          } catch (e) {
+          // 视频+一起看模式:三件事并行 - 申请麦克风 / 拉 TURN 凭据 / 拉清晰度列表
+          // 原本逐个 await,网络往返叠加;现在 getUserMedia 等待用户点麦克风弹窗时,
+          // 后两个请求已在路上,首屏空窗期明显缩短
+          const [micResult] = await Promise.allSettled([
+            navigator.mediaDevices.getUserMedia({ audio: true, video: false }),
+            fetchRtcConfig(),
+            loadQualities(),
+          ])
+          if (micResult.status === 'rejected') {
             error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
             loading.value = false
             return
           }
+          localStream = micResult.value
         }
         await initPlayer()
         if (data.watch_enabled) connectPendingWatch()
@@ -527,13 +532,16 @@ async function confirmPassword() {
     }
     if (info.value.is_video) {
       if (info.value.watch_enabled) {
-        try {
-          localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-          await fetchRtcConfig()
-        } catch (e) {
+        const [micResult] = await Promise.allSettled([
+          navigator.mediaDevices.getUserMedia({ audio: true, video: false }),
+          fetchRtcConfig(),
+          loadQualities(),
+        ])
+        if (micResult.status === 'rejected') {
           error.value = '需要麦克风权限才能观看此视频，请允许后刷新页面'
           return
         }
+        localStream = micResult.value
       }
       await initPlayer()
       if (info.value.watch_enabled) connectPendingWatch()
@@ -568,6 +576,7 @@ async function loadTextPreview() {
 
 // ---- 清晰度加载 ----
 async function loadQualities() {
+  if (qualityList.value.length > 0) return // 已加载,避免并行预拉后 initPlayer 二次请求
   try {
     const pwdParam = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
     const res = await fetch(`/api/nfsshare/${id}/qualities${pwdParam}`)
