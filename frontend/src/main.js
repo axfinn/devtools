@@ -71,7 +71,24 @@ function isBenignRejection(reason) {
   return BENIGN_REJECTION_PATTERNS.some(p => p.test(msg))
 }
 
-window.addEventListener('error', (e) => showFatalError(e.error || e.message, 'window.error'))
+// 已知良性的 window.error(框架偶发上报,不影响功能)
+//   - ResizeObserver loop:Chrome 在同一帧内多次布局回调时常报,
+const BENIGN_WINDOW_ERROR_PATTERNS = [
+  /ResizeObserver loop completed with undelivered notifications/i,
+]
+function isBenignWindowError(event) {
+  const msg = String((event && (event.error && (event.error.stack || event.error.message))) || event.message || event || '')
+  return BENIGN_WINDOW_ERROR_PATTERNS.some(p => p.test(msg))
+}
+
+window.addEventListener('error', (e) => {
+  if (isBenignWindowError(e)) {
+    console.warn('[Benign window.error, suppressed]', e.message)
+    e.preventDefault()
+    return
+  }
+  showFatalError(e.error || e.message, 'window.error')
+})
 window.addEventListener('unhandledrejection', (e) => {
   if (isBenignRejection(e.reason)) {
     console.warn('[Benign rejection, suppressed]', e.reason)
