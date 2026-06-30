@@ -506,6 +506,9 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "目录创建失败"})
 		return
 	}
+	// 记录访客 IP 到 .client_ip,服务器重启后用此关联访问日志
+	clientIPFile := filepath.Join(chunkDir, ".client_ip")
+	os.WriteFile(clientIPFile, []byte(clientIP), 0644)
 	chunkFile := filepath.Join(chunkDir, fmt.Sprintf("%06d%s", seq, ext))
 	out, err := os.Create(chunkFile)
 	if err != nil {

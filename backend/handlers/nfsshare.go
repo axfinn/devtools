@@ -481,6 +481,63 @@ func hasAudioStream(path string) bool {
 	return codec == "opus" || codec == "vorbis" || codec == "aac"
 }
 
+// RecoverOrphanRecordings 扫描 ./data/records/*/chunks/,对 mtime > orphanThreshold
+// 的 session 触发 finalize。这些是服务器上次运行时未正常结束(重启/崩溃)的录音,
+// finalize 后关联到该访客最近的访问日志。
+func (h *NFSShareHandler) RecoverOrphanRecordings(orphanThreshold time.Duration) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in RecoverOrphanRecordings: %v", r)
+		}
+	}()
+	recordsRoot := "./data/records"
+	shareDirs, err := os.ReadDir(recordsRoot)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	recovered := 0
+	for _, share := range shareDirs {
+		if !share.IsDir() {
+			continue
+		}
+		shareID := share.Name()
+		chunksRoot := filepath.Join(recordsRoot, shareID, "chunks")
+		sessionDirs, err := os.ReadDir(chunksRoot)
+		if err != nil {
+			continue
+		}
+		for _, sess := range sessionDirs {
+			if !sess.IsDir() {
+				continue
+			}
+			sessPath := filepath.Join(chunksRoot, sess.Name())
+			info, err := os.Stat(sessPath)
+			if err != nil {
+				continue
+			}
+			// 只处理超过阈值的孤儿,避免和正在跑的 session 撞车
+			if now.Sub(info.ModTime()) < orphanThreshold {
+				continue
+			}
+			// 读 .client_ip 关联访问日志(老会话没有这个文件则跳过)
+			clientIPBytes, err := os.ReadFile(filepath.Join(sessPath, ".client_ip"))
+			if err != nil {
+				log.Printf("跳过孤儿 session %s/%s (无 .client_ip,可能为旧版本遗留)", shareID, sess.Name())
+				continue
+			}
+			clientIP := strings.TrimSpace(string(clientIPBytes))
+			log.Printf("恢复孤儿录音 session %s/%s (clientIP=%s, age=%v)",
+				shareID, sess.Name(), clientIP, now.Sub(info.ModTime()).Round(time.Second))
+			h.finalizeRecording(shareID, sess.Name(), clientIP)
+			recovered++
+		}
+	}
+	if recovered > 0 {
+		log.Printf("已恢复 %d 条孤儿录音", recovered)
+	}
+}
+
 // ServeRecord GET /api/nfsshare/:id/record/:filename?admin_password=xxx
 // 超管播放录音文件
 func findPreset(name string) (QualityPreset, bool) {
