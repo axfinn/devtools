@@ -267,13 +267,14 @@ func detectMimeType(filename string) string {
 
 // CreateNFSShareRequest 创建分享请求
 type CreateNFSShareRequest struct {
-	AdminPassword string `json:"admin_password" binding:"required"`
-	Name          string `json:"name" binding:"required"`
-	FilePath      string `json:"file_path" binding:"required"`
-	MaxViews      int    `json:"max_views" binding:"required,min=1"`
-	ExpiresDays   int    `json:"expires_days"`
-	Password      string `json:"password"`       // 可选，访问密码
-	RecordEnabled bool   `json:"record_enabled"` // 是否开启访客录音
+	AdminPassword       string `json:"admin_password" binding:"required"`
+	Name                string `json:"name" binding:"required"`
+	FilePath            string `json:"file_path" binding:"required"`
+	MaxViews            int    `json:"max_views" binding:"required,min=1"`
+	ExpiresDays         int    `json:"expires_days"`
+	Password            string `json:"password"`       // 可选，访问密码
+	RecordEnabled       bool   `json:"record_enabled"` // 是否开启访客录音
+	ShowRecordIndicator *bool  `json:"show_record_indicator,omitempty"` // 留空默认 true
 }
 
 // Create 创建分享（超管）

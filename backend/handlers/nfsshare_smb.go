@@ -254,7 +254,7 @@ func (h *NFSShareHandler) Create(c *gin.Context) {
 		}
 	}
 
-	share, err := h.db.CreateNFSShare(req.Name, req.FilePath, mimeType, hashedPwd, fileSize, req.MaxViews, expiresAt, c.ClientIP(), req.RecordEnabled)
+	share, err := h.db.CreateNFSShare(req.Name, req.FilePath, mimeType, hashedPwd, fileSize, req.MaxViews, expiresAt, c.ClientIP(), req.RecordEnabled, req.ShowRecordIndicator == nil || *req.ShowRecordIndicator)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败: " + err.Error()})
 		return

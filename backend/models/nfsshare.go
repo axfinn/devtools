@@ -25,6 +25,7 @@ type NFSShare struct {
 	Password      string     `json:"-"` // bcrypt hash，不对外暴露
 	WatchEnabled  bool       `json:"watch_enabled"`
 	RecordEnabled bool       `json:"record_enabled"`
+	ShowRecordIndicator bool       `json:"show_record_indicator"`
 	ExpiresAt     *time.Time `json:"expires_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 	CreatorIP     string     `json:"creator_ip"`
@@ -56,7 +57,8 @@ func (db *DB) InitNFSShare() error {
 			password   TEXT NOT NULL DEFAULT '',
 			expires_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			creator_ip TEXT
+			creator_ip TEXT,
+			show_record_indicator INTEGER NOT NULL DEFAULT 1
 		);
 		CREATE INDEX IF NOT EXISTS idx_nfs_shares_expires_at ON nfs_shares(expires_at);
 		CREATE TABLE IF NOT EXISTS nfs_share_logs (
@@ -80,13 +82,15 @@ func (db *DB) InitNFSShare() error {
 	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN watch_enabled INTEGER NOT NULL DEFAULT 0`)
 	// 迁移：为旧数据库添加 record_enabled 列
 	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN record_enabled INTEGER NOT NULL DEFAULT 0`)
+	// 迁移：为旧数据库添加 show_record_indicator 列
+	db.conn.Exec(`ALTER TABLE nfs_shares ADD COLUMN show_record_indicator INTEGER NOT NULL DEFAULT 1`)
 	// 迁移：为旧数据库添加 audio_url 列
 	db.conn.Exec(`ALTER TABLE nfs_share_logs ADD COLUMN audio_url TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
 // CreateNFSShare 创建 NFS 分享
-func (db *DB) CreateNFSShare(name, filePath, mimeType, password string, fileSize int64, maxViews int, expiresAt *time.Time, creatorIP string, recordEnabled bool) (*NFSShare, error) {
+func (db *DB) CreateNFSShare(name, filePath, mimeType, password string, fileSize int64, maxViews int, expiresAt *time.Time, creatorIP string, recordEnabled, showRecordIndicator bool) (*NFSShare, error) {
 	b := make([]byte, 4)
 	rand.Read(b)
 	id := hex.EncodeToString(b)
@@ -97,9 +101,9 @@ func (db *DB) CreateNFSShare(name, filePath, mimeType, password string, fileSize
 	}
 
 	_, err := db.conn.Exec(
-		`INSERT INTO nfs_shares (id, name, file_path, file_size, mime_type, max_views, views, password, record_enabled, expires_at, creator_ip)
-		 VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
-		id, name, filePath, fileSize, mimeType, maxViews, password, recordEnabled, expiresAtVal, creatorIP,
+		`INSERT INTO nfs_shares (id, name, file_path, file_size, mime_type, max_views, views, password, record_enabled, show_record_indicator, expires_at, creator_ip)
+		 VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+		id, name, filePath, fileSize, mimeType, maxViews, password, recordEnabled, showRecordIndicator, expiresAtVal, creatorIP,
 	)
 	if err != nil {
 		return nil, err
@@ -112,9 +116,9 @@ func (db *DB) GetNFSShare(id string) (*NFSShare, error) {
 	s := &NFSShare{}
 	var expiresAt sql.NullTime
 	err := db.conn.QueryRow(
-		`SELECT id, name, file_path, file_size, mime_type, max_views, views, password, watch_enabled, record_enabled, expires_at, created_at, creator_ip
+		`SELECT id, name, file_path, file_size, mime_type, max_views, views, password, watch_enabled, record_enabled, show_record_indicator, expires_at, created_at, creator_ip
 		 FROM nfs_shares WHERE id = ?`, id,
-	).Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.Password, &s.WatchEnabled, &s.RecordEnabled, &expiresAt, &s.CreatedAt, &s.CreatorIP)
+	).Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.Password, &s.WatchEnabled, &s.RecordEnabled, &s.ShowRecordIndicator, &expiresAt, &s.CreatedAt, &s.CreatorIP)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +175,7 @@ func (db *DB) LastNFSShareLogID(shareID, clientIP string) int64 {
 func (db *DB) GetAllNFSShares(page, pageSize int) ([]NFSShare, int, error) {
 	offset := (page - 1) * pageSize
 	rows, err := db.conn.Query(
-		`SELECT id, name, file_path, file_size, mime_type, max_views, views, watch_enabled, record_enabled, expires_at, created_at, creator_ip
+		`SELECT id, name, file_path, file_size, mime_type, max_views, views, watch_enabled, record_enabled, show_record_indicator, expires_at, created_at, creator_ip
 		 FROM nfs_shares ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		pageSize, offset,
 	)
@@ -184,7 +188,7 @@ func (db *DB) GetAllNFSShares(page, pageSize int) ([]NFSShare, int, error) {
 	for rows.Next() {
 		var s NFSShare
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.WatchEnabled, &s.RecordEnabled, &expiresAt, &s.CreatedAt, &s.CreatorIP); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.FilePath, &s.FileSize, &s.MimeType, &s.MaxViews, &s.Views, &s.WatchEnabled, &s.RecordEnabled, &s.ShowRecordIndicator, &expiresAt, &s.CreatedAt, &s.CreatorIP); err != nil {
 			continue
 		}
 		if expiresAt.Valid {

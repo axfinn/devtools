@@ -185,6 +185,10 @@
                           <span class="text-sm">访客观看时录音</span>
                           <el-switch v-model="createForm.recordEnabled" />
                         </div>
+                        <div class="flex items-center justify-between" v-show="createForm.recordEnabled">
+                          <span class="text-sm text-gray-500">对访客显示录音指示器</span>
+                          <el-switch v-model="createForm.showRecordIndicator" />
+                        </div>
                       </div>
                     </el-collapse-item>
                   </el-collapse>
@@ -616,7 +620,8 @@ const createForm = reactive({
   maxViews: 5,
   expiresDays: 7,
   password: '',
-  recordEnabled: false
+  recordEnabled: false,
+  showRecordIndicator: true
 })
 const createLoading = ref(false)
 
@@ -828,7 +833,8 @@ async function createShare() {
         max_views: createForm.maxViews,
         expires_days: createForm.expiresDays,
         password: createForm.password || '',
-        record_enabled: createForm.recordEnabled || false
+        record_enabled: createForm.recordEnabled || false,
+        show_record_indicator: createForm.showRecordIndicator
       })
     })
     const data = await res.json()
