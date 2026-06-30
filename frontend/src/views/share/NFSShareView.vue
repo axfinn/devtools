@@ -43,14 +43,16 @@
     <div v-else-if="error" class="status-container error">
       <el-icon style="font-size:36px;color:#f56c6c"><CircleClose /></el-icon>
       <h3>{{ error }}</h3>
-      <el-button
-        v-if="errorAction"
-        type="primary"
-        style="margin-top:16px"
-        @click="errorAction.handler"
-      >
-        {{ errorAction.label }}
-      </el-button>
+      <div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        <el-button
+          v-if="errorAction"
+          type="primary"
+          @click="errorAction.handler"
+        >
+          {{ errorAction.label }}
+        </el-button>
+        <el-button @click="retryLoad">重新加载</el-button>
+      </div>
     </div>
 
     <!-- 内容 -->
