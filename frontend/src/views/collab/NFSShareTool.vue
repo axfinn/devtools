@@ -1443,9 +1443,9 @@ async function createUploadShare() {
     })
     const data = await res.json()
     if (!res.ok) { ElMessage.error(data.error || '创建失败'); return }
-    const link = `${location.origin}/nfsshare/${data.id}`
+    const link = `${location.origin}/nfs/${data.id}`
     await navigator.clipboard.writeText(link).catch(() => {})
-    ElMessage.success('分享链接已复制到剪贴板')
+    ElMessage.success(`分享链接已复制：${link}`)
     resetUpload()
     activeTab.value = 'list'
     await loadShareList()
