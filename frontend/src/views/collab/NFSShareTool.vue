@@ -69,12 +69,28 @@
                       >{{ seg.name }}</el-breadcrumb-item>
                     </el-breadcrumb>
                   </div>
+                  <div class="flex items-center gap-2 mt-1">
+                    <el-input
+                      v-model="searchKeyword"
+                      size="small"
+                      clearable
+                      placeholder="搜索文件名"
+                      class="flex-1"
+                    >
+                      <template #prefix><el-icon><Search /></el-icon></template>
+                    </el-input>
+                    <el-select v-model="sortBy" size="small" style="width: 110px">
+                      <el-option value="name" label="名称" />
+                      <el-option value="size" label="大小" />
+                      <el-option value="mod_time" label="修改时间" />
+                    </el-select>
+                  </div>
                 </div>
               </template>
               <el-skeleton :loading="browseLoading" animated>
                 <template #default>
                   <el-table
-                    :data="dirEntries"
+                    :data="filteredEntries"
                     size="small"
                     stripe
                     @row-click="handleEntryClick"
@@ -596,7 +612,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Lock, FolderOpened, Folder, Document, Refresh
+  Lock, FolderOpened, Folder, Document, Refresh, Search
 } from '@element-plus/icons-vue'
 
 // -------- 状态 --------
@@ -611,6 +627,26 @@ const activeTab = ref('browse')
 const currentPath = ref('.')
 const dirEntries = ref([])
 const browseLoading = ref(false)
+const searchKeyword = ref('')
+const sortBy = ref('name') // 'name' | 'size' | 'mod_time'
+
+const filteredEntries = computed(() => {
+  const kw = searchKeyword.value.trim().toLowerCase()
+  let list = dirEntries.value
+  if (kw) {
+    list = list.filter(e => e.name.toLowerCase().includes(kw))
+  }
+  const dirFirst = (a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
+    return 0
+  }
+  const cmp = {
+    name:     (a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'),
+    size:     (a, b) => (a.size || 0) - (b.size || 0),
+    mod_time: (a, b) => new Date(a.mod_time).getTime() - new Date(b.mod_time).getTime(),
+  }[sortBy.value] || ((a, b) => a.name.localeCompare(b.name))
+  return [...list].sort((a, b) => dirFirst(a, b) || cmp(a, b))
+})
 
 // 创建分享
 const selectedFileSize = ref(0)
