@@ -1342,35 +1342,53 @@ function genSessionId() {
 // 返回 true 表示录音已启动（或无需录音），false 表示用户拒绝麦克风
 async function startRecording() {
   if (!info.value?.record_enabled) return true
+  // 先把任何旧实例停掉,避免双开麦克风 + 旧 recorder 抢占分片
+  cleanupRecording()
   try {
     recordStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
 
     // 按优先级选择浏览器支持的 mimeType（iOS Safari 只支持 audio/mp4）
     const preferred = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', '']
     const mimeType = preferred.find(m => m === '' || MediaRecorder.isTypeSupported(m)) || ''
-    mediaRecorder = mimeType ? new MediaRecorder(recordStream, { mimeType }) : new MediaRecorder(recordStream)
-    recordMimeType = mediaRecorder.mimeType || 'audio/webm'
-    recordSessionId = genSessionId()
-    recordSeq = 0
+    const recorder = mimeType ? new MediaRecorder(recordStream, { mimeType }) : new MediaRecorder(recordStream)
+    const mime = recorder.mimeType || 'audio/webm'
+    // sessionId / seq 用闭包捕获,避免 ondataavailable 被触发时读到的还是
+    // 上一次 startRecording 残留的全局值 → 旧分片被打上新 session 的 tag
+    const sessionId = genSessionId()
+    let seq = 0
 
-    mediaRecorder.ondataavailable = e => {
+    recorder.ondataavailable = e => {
       if (!e.data || e.data.size < MIN_CHUNK_SIZE) return
-      uploadChunk(e.data, recordMimeType, recordSessionId, recordSeq++)
+      uploadChunk(e.data, mime, sessionId, seq++)
     }
 
-    mediaRecorder.onstop = () => {
-      if (recordStream) {
-        recordStream.getTracks().forEach(t => t.stop())
+    recorder.onstop = () => {
+      // 只停自己的流,不要直接清全局 recordStream,避免新的录音被误杀
+      if (recorder.stream) {
+        recorder.stream.getTracks().forEach(t => t.stop())
+      }
+      // 自己仍是当前活动的 recorder 才清全局,否则是过期的 onstop
+      if (mediaRecorder === recorder) {
+        mediaRecorder = null
         recordStream = null
       }
     }
 
-    mediaRecorder.onerror = () => { stopRecording() }
+    recorder.onerror = (e) => {
+      console.error('[Recording] MediaRecorder error:', e.error || e)
+      cleanupRecording()
+    }
 
-    mediaRecorder.start(CHUNK_INTERVAL)
+    recorder.start(CHUNK_INTERVAL)
+    mediaRecorder = recorder
+    recordMimeType = mime
+    recordSessionId = sessionId
+    recordSeq = 0
     window.addEventListener('pagehide', stopRecording)
     return true
-  } catch {
+  } catch (e) {
+    console.error('[Recording] start failed:', e)
+    cleanupRecording()
     return false
   }
 }
@@ -1389,13 +1407,21 @@ function uploadChunk(blob, mimeType, sessionId, seq) {
 }
 
 function stopRecording() {
+  cleanupRecording()
+}
+
+// 统一释放:停 recorder → 停麦克风轨道 → 清全局状态
+function cleanupRecording() {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop()
-    mediaRecorder = null
-  } else if (recordStream) {
+    try { mediaRecorder.stop() } catch (_) {}
+  }
+  mediaRecorder = null
+  if (recordStream) {
     recordStream.getTracks().forEach(t => t.stop())
     recordStream = null
   }
+  recordSessionId = null
+  recordSeq = 0
 }
 </script>
 
