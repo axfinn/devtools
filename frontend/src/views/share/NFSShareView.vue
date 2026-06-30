@@ -3,6 +3,11 @@
     <!-- 密码验证弹窗 -->
     <el-dialog v-model="passwordDialogVisible" title="访问密码" width="340px" :show-close="false" :close-on-click-modal="false">
       <el-form @submit.prevent="confirmPassword">
+        <p style="font-weight:600;color:#303133;margin:0 0 4px;font-size:14px;word-break:break-all">{{ info?.name }}</p>
+        <p style="font-size:12px;color:#909399;margin:0 0 16px">
+          <span>{{ info ? formatSize(info.file_size) : '' }}</span>
+          <span v-if="info?.remaining_views !== undefined"> · 剩余 {{ info.remaining_views }} 次查看</span>
+        </p>
         <p style="color:#999;font-size:13px;margin:0 0 16px">该分享需要密码才能访问</p>
         <el-form-item>
           <el-input
