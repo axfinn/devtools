@@ -29,7 +29,7 @@
 
 ## P3 · 代码层 / 安全
 - [ ] #10 超管密码改 cookie 鉴权,不再走 query string (`NFSShareTool.vue` 多处)
-- [ ] #11 `confirmPassword` 三分叉清理 + 死代码删除 + `getLogStatus*` map 合并
+- [x] #11 `getLogStatus*` 合并为单张 `LOG_STATUS_MAP`,后续加状态只改一处
 
 ## 进展
 - 2026-06-30 #1a 密码弹窗显示文件名 + 大小 + 剩余查看次数
@@ -40,3 +40,4 @@
 - 2026-06-30 #4 创建表单"显示名称"挪进 el-collapse 高级设置,与录音折叠展示;按钮不再强求 name 必填,留空用 file_path basename 兜底 (40b1e69)
 - 2026-06-30 #5 大文件下载进度 (4d34073)
 - 2026-06-30 #6 错误面板常驻"重新加载"按钮,errorAction 与 reload 并列布局
+- 2026-06-30 #11 getLogStatus* 合并

@@ -1280,28 +1280,20 @@ function getShareStatus(row) {
   return { type: 'success', label: '有效' }
 }
 
-function getLogStatusTag(status) {
-  const map = {
-    success: 'success',
-    denied_views: 'warning',
-    denied_expired: 'warning',
-    file_missing: 'danger',
-    not_found: 'info',
-    error: 'danger'
-  }
-  return map[status] || 'info'
+// 访问日志状态:tag type + 中文 label 一张表,后续加状态只改这里
+const LOG_STATUS_MAP = {
+  success:       { tag: 'success', label: '成功' },
+  denied_views:  { tag: 'warning', label: '次数耗尽' },
+  denied_expired:{ tag: 'warning', label: '已过期' },
+  file_missing:  { tag: 'danger',  label: '文件缺失' },
+  not_found:     { tag: 'info',    label: '不存在' },
+  error:         { tag: 'danger',  label: '错误' },
 }
-
+function getLogStatusTag(status) {
+  return LOG_STATUS_MAP[status]?.tag || 'info'
+}
 function getLogStatusLabel(status) {
-  const map = {
-    success: '成功',
-    denied_views: '次数耗尽',
-    denied_expired: '已过期',
-    file_missing: '文件缺失',
-    not_found: '不存在',
-    error: '错误'
-  }
-  return map[status] || status
+  return LOG_STATUS_MAP[status]?.label || status
 }
 </script>
 
