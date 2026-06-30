@@ -59,8 +59,27 @@ function showFatalError(err, source) {
   const divider = '\n\n--- ' + (source || 'error') + ' @ ' + new Date().toISOString() + ' ---\n'
   box.textContent += divider + msg
 }
+// 已知良性的 rejection,不显示到 fatal 浮层(但仍 console.warn 留底,方便排查)
+//   - 视频 play() 被新的 load 请求打断:Chrome 在切换 src / 销毁重建视频元素时正常行为
+//   - AbortError:fetch 主动 abort(切路由、组件卸载、用户取消上传等场景)
+const BENIGN_REJECTION_PATTERNS = [
+  /play\(\) request was interrupted/i,
+  /\bAbortError\b/i,
+]
+function isBenignRejection(reason) {
+  const msg = String((reason && (reason.stack || reason.message)) || reason || '')
+  return BENIGN_REJECTION_PATTERNS.some(p => p.test(msg))
+}
+
 window.addEventListener('error', (e) => showFatalError(e.error || e.message, 'window.error'))
-window.addEventListener('unhandledrejection', (e) => showFatalError(e.reason, 'unhandledrejection'))
+window.addEventListener('unhandledrejection', (e) => {
+  if (isBenignRejection(e.reason)) {
+    console.warn('[Benign rejection, suppressed]', e.reason)
+    e.preventDefault()
+    return
+  }
+  showFatalError(e.reason, 'unhandledrejection')
+})
 
 const app = createApp(App)
 app.config.errorHandler = (err, instance, info) => {
