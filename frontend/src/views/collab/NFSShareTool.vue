@@ -145,9 +145,6 @@
                   </div>
                   <span v-else class="text-gray-400 text-sm">请在左侧点击"选为分享"</span>
                 </el-form-item>
-                <el-form-item label="显示名称">
-                  <el-input v-model="createForm.name" placeholder="分享名称（必填）" />
-                </el-form-item>
                 <el-form-item label="访问次数">
                   <el-input-number
                     v-model="createForm.maxViews"
@@ -176,14 +173,27 @@
                     show-password
                   />
                 </el-form-item>
-                <el-form-item label="录音">
-                  <el-switch v-model="createForm.recordEnabled" active-text="开启（访客观看时自动录音）" />
+                <el-form-item label="高级设置">
+                  <el-collapse v-model="advOpen">
+                    <el-collapse-item title="显示名称 / 录音" name="adv">
+                      <div class="space-y-3 px-1">
+                        <div>
+                          <div class="text-xs text-gray-500 mb-1">显示名称（默认使用文件名,可修改）</div>
+                          <el-input v-model="createForm.name" placeholder="留空则用文件名" />
+                        </div>
+                        <div class="flex items-center justify-between">
+                          <span class="text-sm">访客观看时录音</span>
+                          <el-switch v-model="createForm.recordEnabled" />
+                        </div>
+                      </div>
+                    </el-collapse-item>
+                  </el-collapse>
                 </el-form-item>
                 <el-form-item>
                   <el-button
                     type="primary"
                     :loading="createLoading"
-                    :disabled="!createForm.filePath || !createForm.name"
+                    :disabled="!createForm.filePath"
                     class="w-full"
                     @click="createShare"
                   >创建分享链接</el-button>
@@ -626,6 +636,9 @@ const logsPageSize = 50
 const logsTotal = ref(0)
 const logsLoading = ref(false)
 
+// 高级设置折叠状态(默认收起,选文件后也保持收起,需要时再展开)
+const advOpen = ref([])
+
 // 挂载管理
 const mountsList = ref([])
 const mountsLoading = ref(false)
@@ -797,10 +810,12 @@ function selectFile(row) {
 
 // -------- 创建分享 --------
 async function createShare() {
-  if (!createForm.filePath || !createForm.name) {
-    ElMessage.warning('请先选择文件并填写名称')
+  if (!createForm.filePath) {
+    ElMessage.warning('请先选择文件')
     return
   }
+  // 名称留空时由后端用 file_path 的 basename 兜底,前端无需硬性要求
+  const nameToSend = createForm.name || (createForm.filePath.split('/').pop() || '分享')
   createLoading.value = true
   try {
     const res = await fetch('/api/nfsshare', {
@@ -808,7 +823,7 @@ async function createShare() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         admin_password: adminPassword.value,
-        name: createForm.name,
+        name: nameToSend,
         file_path: createForm.filePath,
         max_views: createForm.maxViews,
         expires_days: createForm.expiresDays,
