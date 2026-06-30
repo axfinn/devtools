@@ -166,6 +166,36 @@ func (h *NFSShareHandler) verifyAdmin(password string) bool {
 	return h.cfg.AdminPassword != "" && password == h.cfg.AdminPassword
 }
 
+// nfsAdminCookieName 是写入浏览器 cookie 的 admin 密码字段名,避免 query string
+// 把密码写进 URL —— Nginx/Go log 会全量记录。
+const nfsAdminCookieName = "nfs_admin"
+
+// setAdminCookie 把 admin 密码写入 HttpOnly + Secure + SameSite=Strict cookie,
+// 路径限定到 /api/nfsshare,避免泄漏到其他路由
+func setAdminCookie(c *gin.Context, password string) {
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(nfsAdminCookieName, password, 3600*24*7, "/api/nfsshare", "", true, true)
+}
+
+// clearAdminCookie 主动清掉 cookie(登出)
+func clearAdminCookie(c *gin.Context) {
+	c.SetSameSite(http.SameSiteStrictMode)
+	c.SetCookie(nfsAdminCookieName, "", -1, "/api/nfsshare", "", true, true)
+}
+
+// verifyAdminFromContext 优先读 cookie,fallback 到 query(向后兼容旧调用),
+// 最后 X-Admin-Password header(便于 server-to-server 调用)
+func (h *NFSShareHandler) verifyAdminFromContext(c *gin.Context) bool {
+	pwd, _ := c.Cookie(nfsAdminCookieName)
+	if pwd == "" {
+		pwd = c.Query("admin_password")
+	}
+	if pwd == "" {
+		pwd = c.GetHeader("X-Admin-Password")
+	}
+	return h.verifyAdmin(pwd)
+}
+
 // checkSharePassword 校验分享访问密码，通过返回 true；未通过时自动写 403 响应
 func checkSharePassword(c *gin.Context, share *models.NFSShare, password string) bool {
 	if share.Password == "" {

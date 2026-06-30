@@ -29,7 +29,7 @@ func (h *NFSShareHandler) MountsList(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -42,12 +42,40 @@ func (h *NFSShareHandler) MountsList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"mounts": list})
 }
 
+// AdminLogin POST /api/nfsshare/admin/login  body: {admin_password}
+// 密码正确则写入 HttpOnly cookie,后续 admin 调用通过 cookie 鉴权,
+// 不再把密码塞进 URL 避免被 Nginx/Go log 记录。
+func (h *NFSShareHandler) AdminLogin(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	var req struct {
+		AdminPassword string `json:"admin_password"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.AdminPassword == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 admin_password"})
+		return
+	}
+	if !h.verifyAdmin(req.AdminPassword) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+		return
+	}
+	setAdminCookie(c, req.AdminPassword)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// AdminLogout POST /api/nfsshare/admin/logout 清掉 cookie
+func (h *NFSShareHandler) AdminLogout(c *gin.Context) {
+	clearAdminCookie(c)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // MountsRemount 重新连接/挂载（超管）
 func (h *NFSShareHandler) MountsRemount(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -74,7 +102,7 @@ func (h *NFSShareHandler) MountsUmount(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -110,7 +138,7 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -404,7 +432,7 @@ func (h *NFSShareHandler) AdminList(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -429,7 +457,7 @@ func (h *NFSShareHandler) AdminGetLogs(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -528,7 +556,7 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 
 // touchRecordSession 重置（或创建）session 的空闲定时器
 func (h *NFSShareHandler) ServeRecord(c *gin.Context) {
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -626,7 +654,7 @@ func (h *NFSShareHandler) AdminDelete(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
 	}
-	if !h.verifyAdmin(c.Query("admin_password")) {
+	if !h.verifyAdminFromContext(c) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
 		return
 	}
@@ -923,7 +951,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	if nickname == "" {
 		nickname = "匿名用户"
 	}
-	isHost := c.Query("admin_password") != "" && h.verifyAdmin(c.Query("admin_password"))
+	isHost := h.verifyAdminFromContext(c)
 
 	conn, err := watchUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {

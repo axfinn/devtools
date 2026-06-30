@@ -456,6 +456,8 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		nfsshare.GET("/:id/record/:filename", h.nfsShareHandler.ServeRecord)             // 播放录音（超管）
 		nfsshare.POST("", h.nfsShareHandler.Create)                                      // 创建分享（超管）
 		nfsshare.GET("/admin/browse", h.nfsShareHandler.Browse)                          // 浏览目录（超管）
+		nfsshare.POST("/admin/login", h.nfsShareHandler.AdminLogin)                       // 写入 admin cookie(HttpOnly,不再走 query string)
+		nfsshare.POST("/admin/logout", h.nfsShareHandler.AdminLogout)                     // 清 admin cookie
 		nfsshare.GET("/admin/list", h.nfsShareHandler.AdminList)                         // 分享列表（超管）
 		nfsshare.GET("/admin/mounts", h.nfsShareHandler.MountsList)                      // 挂载点列表及状态（超管）
 		nfsshare.POST("/admin/mounts/:name/remount", h.nfsShareHandler.MountsRemount)    // 重新挂载（超管）

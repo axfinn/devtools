@@ -716,11 +716,8 @@ const dialogWidth = computed(() => window.innerWidth < 640 ? '95%' : '560px')
 onMounted(async () => {
   await checkStatus()
   if (nfsEnabled.value) {
-    const saved = localStorage.getItem('nfs_admin_password')
-    if (saved) {
-      adminPassword.value = saved
-      await loginAdmin(true)
-    }
+    // 启动时尝试用 cookie 自动恢复登录态(无密码输入)
+    await loginAdmin(true)
   }
 })
 
@@ -738,25 +735,36 @@ async function checkStatus() {
 }
 
 // -------- 超管登录 --------
+// 走专用 /admin/login 端点,密码放 body(不进 URL),成功后 HttpOnly cookie 写入浏览器,
+// 后续 admin 调用由浏览器自动带 cookie,完全不再出现 admin_password 字样
 async function loginAdmin(silent = false) {
-  if (!adminPassword.value) {
-    if (!silent) ElMessage.warning('请输入超管密码')
-    return
-  }
   loginLoading.value = true
   try {
-    // 用浏览目录来验证密码
-    const res = await fetch(`/api/nfsshare/admin/browse?path=.&admin_password=${encodeURIComponent(adminPassword.value)}`)
-    if (res.ok) {
-      adminLoggedIn.value = true
-      localStorage.setItem('nfs_admin_password', adminPassword.value)
-      await Promise.all([loadDir('.'), loadShareList(), loadMounts()])
-    } else {
-      const data = await res.json()
-      if (!silent) ElMessage.error(data.error || '密码错误')
-      adminPassword.value = ''
-      localStorage.removeItem('nfs_admin_password')
+    if (adminPassword.value) {
+      // 显式登录:POST 密码,后端 set-cookie
+      const res = await fetch('/api/nfsshare/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ admin_password: adminPassword.value })
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        if (!silent) ElMessage.error(data.error || '密码错误')
+        adminPassword.value = ''
+        return
+      }
+      adminPassword.value = '' // 清空内存,不再保留
     }
+    // 用浏览目录验证 cookie 是否有效(silent=true 时就是 cookie 自动恢复流程)
+    const probe = await fetch('/api/nfsshare/admin/browse?path=.')
+    if (!probe.ok) {
+      // cookie 失效(silent 模式静默,显式模式报错)
+      if (!silent) ElMessage.error('登录失败,请检查密码')
+      adminLoggedIn.value = false
+      return
+    }
+    adminLoggedIn.value = true
+    await Promise.all([loadDir('.'), loadShareList(), loadMounts()])
   } catch {
     if (!silent) ElMessage.error('网络错误，请重试')
   } finally {
@@ -764,7 +772,9 @@ async function loginAdmin(silent = false) {
   }
 }
 
-function logout() {
+async function logout() {
+  // 主动通知后端清 cookie
+  try { await fetch('/api/nfsshare/admin/logout', { method: 'POST' }) } catch (_) {}
   adminLoggedIn.value = false
   adminPassword.value = ''
   localStorage.removeItem('nfs_admin_password')
@@ -777,7 +787,7 @@ function logout() {
 async function loadDir(path) {
   browseLoading.value = true
   try {
-    const res = await fetch(`/api/nfsshare/admin/browse?path=${encodeURIComponent(path)}&admin_password=${encodeURIComponent(adminPassword.value)}`)
+    const res = await fetch(`/api/nfsshare/admin/browse?path=${encodeURIComponent(path)}`)
     if (!res.ok) {
       const data = await res.json()
       ElMessage.error(data.error || '无法读取目录')
@@ -864,7 +874,7 @@ async function createShare() {
 async function loadMounts() {
   mountsLoading.value = true
   try {
-    const res = await fetch(`/api/nfsshare/admin/mounts?admin_password=${encodeURIComponent(adminPassword.value)}`)
+    const res = await fetch(`/api/nfsshare/admin/mounts`)
     if (!res.ok) return
     const data = await res.json()
     mountsList.value = data.mounts || []
@@ -879,7 +889,7 @@ async function remount(name) {
   mountActionLoading.value = name + '_remount'
   try {
     const res = await fetch(
-      `/api/nfsshare/admin/mounts/${name}/remount?admin_password=${encodeURIComponent(adminPassword.value)}`,
+      `/api/nfsshare/admin/mounts/${name}/remount`,
       { method: 'POST' }
     )
     const data = await res.json()
@@ -903,7 +913,7 @@ async function umount(name) {
   mountActionLoading.value = name + '_umount'
   try {
     const res = await fetch(
-      `/api/nfsshare/admin/mounts/${name}/umount?admin_password=${encodeURIComponent(adminPassword.value)}`,
+      `/api/nfsshare/admin/mounts/${name}/umount`,
       { method: 'POST' }
     )
     const data = await res.json()
@@ -952,7 +962,7 @@ async function loadShareList() {
   listLoading.value = true
   try {
     const res = await fetch(
-      `/api/nfsshare/admin/list?admin_password=${encodeURIComponent(adminPassword.value)}&page=${listPage.value}&page_size=${listPageSize}`
+      `/api/nfsshare/admin/list?page=${listPage.value}&page_size=${listPageSize}`
     )
     if (!res.ok) {
       const data = await res.json()
@@ -988,7 +998,7 @@ async function deleteShare(row) {
   }
   try {
     const res = await fetch(
-      `/api/nfsshare/admin/${row.id}?admin_password=${encodeURIComponent(adminPassword.value)}`,
+      `/api/nfsshare/admin/${row.id}`,
       { method: 'DELETE' }
     )
     if (res.ok) {
@@ -1016,7 +1026,7 @@ async function loadLogs() {
   logsLoading.value = true
   try {
     const res = await fetch(
-      `/api/nfsshare/admin/${currentShare.value.id}/logs?admin_password=${encodeURIComponent(adminPassword.value)}&page=${logsPage.value}&page_size=${logsPageSize}`
+      `/api/nfsshare/admin/${currentShare.value.id}/logs?page=${logsPage.value}&page_size=${logsPageSize}`
     )
     if (!res.ok) {
       const data = await res.json()
@@ -1043,7 +1053,7 @@ function parseAudioUrls(audioUrl) {
 }
 
 function playRecord(url) {
-  recordPlayURL.value = `${url}?admin_password=${encodeURIComponent(adminPassword.value)}`
+  recordPlayURL.value = `${url}`
   recordDialogVisible.value = true
 }
 
@@ -1095,7 +1105,7 @@ async function browseTargetDir(path) {
   targetDirLoading.value = true
   targetDirEntries.value = []
   try {
-    const res = await fetch(`/api/nfsshare/admin/browse?admin_password=${encodeURIComponent(adminPassword.value)}&path=${encodeURIComponent(path)}`)
+    const res = await fetch(`/api/nfsshare/admin/browse?path=${encodeURIComponent(path)}`)
     const data = await res.json()
     // 只显示目录（根路径时全部是挂载点，都是目录）
     targetDirEntries.value = (data.entries || []).filter(e => e.is_dir)
