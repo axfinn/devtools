@@ -1333,7 +1333,6 @@ let recordMimeType = 'audio/webm'
 let recordSessionId = null
 let recordSeq = 0
 const CHUNK_INTERVAL = 2000 // 每 2 秒上传一段
-const MIN_CHUNK_SIZE = 1024  // 小于 1KB 认为静音，不上传
 
 function genSessionId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -1357,17 +1356,18 @@ async function startRecording() {
     const sessionId = genSessionId()
     let seq = 0
 
+    // 注意:不过滤小分片。安静时段(>50% 时间)产出的 webm 帧 < 1KB 是正常的,
+    // 之前 MIN_CHUNK_SIZE=1024 把这些全丢了,导致 backend 只收到 stop 时
+    // 强制产出的最后一帧,最终录音只有 ~1s。
     recorder.ondataavailable = e => {
-      if (!e.data || e.data.size < MIN_CHUNK_SIZE) return
+      if (!e.data || e.data.size === 0) return
       uploadChunk(e.data, mime, sessionId, seq++)
     }
 
     recorder.onstop = () => {
-      // 只停自己的流,不要直接清全局 recordStream,避免新的录音被误杀
       if (recorder.stream) {
         recorder.stream.getTracks().forEach(t => t.stop())
       }
-      // 自己仍是当前活动的 recorder 才清全局,否则是过期的 onstop
       if (mediaRecorder === recorder) {
         mediaRecorder = null
         recordStream = null
@@ -1393,6 +1393,26 @@ async function startRecording() {
   }
 }
 
+// 停止录音：先 requestData() 强制 flush 尾段,再 stop,避免丢失最后几秒
+function stopRecordingGracefully() {
+  const rec = mediaRecorder
+  if (!rec || rec.state === 'inactive') {
+    cleanupRecording()
+    return
+  }
+  let flushed = false
+  const onFlushed = () => {
+    if (flushed) return
+    flushed = true
+    try { rec.stop() } catch (_) {}
+  }
+  // 监听一次性的 ondataavailable,requestData 触发后自动调用 stop
+  rec.addEventListener('dataavailable', onFlushed, { once: true })
+  try { rec.requestData() } catch (_) { onFlushed() }
+  // 兜底:如果 500ms 内 requestData 没触发 dataavailable(浏览器不支持),直接 stop
+  setTimeout(() => onFlushed(), 500)
+}
+
 function uploadChunk(blob, mimeType, sessionId, seq) {
   let ext = '.webm'
   if ((mimeType || '').includes('mp4')) ext = '.mp4'
@@ -1407,7 +1427,13 @@ function uploadChunk(blob, mimeType, sessionId, seq) {
 }
 
 function stopRecording() {
-  cleanupRecording()
+  // 统一入口:graceful 路径会先 requestData() flush 尾段,再 stop。
+  // 即使是 pagehide 场景,fetch keepalive 也会把最后一包发出去。
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    stopRecordingGracefully()
+  } else {
+    cleanupRecording()
+  }
 }
 
 // 统一释放:停 recorder → 停麦克风轨道 → 清全局状态

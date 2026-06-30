@@ -485,10 +485,9 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 	clientIP := c.ClientIP()
 
 	file, header, err := c.Request.FormFile("audio")
-	if err != nil || header.Size < 1024 {
-		// 静音或无 audio：只重置定时器
-		h.touchRecordSession(id, sessionID, clientIP)
-		c.JSON(http.StatusOK, gin.H{"ok": true, "skipped": true})
+	if err != nil || header.Size == 0 {
+		// 没有任何字节(理论上不会到这,multipart 解析成功就会有 header)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "空的 audio 分片"})
 		return
 	}
 	defer file.Close()
