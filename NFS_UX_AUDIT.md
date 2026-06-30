@@ -7,7 +7,7 @@
 - [/] #1 访客端首屏骨架屏 + 视频初始化并行 (`NFSShareView.vue:25-34`)
   - [x] (a) 密码弹窗显示文件元数据(文件名 + 大小 + 剩余次数)
   - [x] (b) 视频场景 getUserMedia/fetchRtcConfig/loadQualities 改为 Promise.allSettled 并行(loadQualities 加幂等保护避免重复请求)
-  - [ ] (c) 长转码进度/分片数提示
+  - [x] (c) 转码 overlay 显示清晰度名 + 已生成分片数(后端 /qualities 增 segments 字段,pollTranscoding 每 5s force 刷新)
 - [ ] #2 视频/文件错误兜底分码 + 重试 CTA (`NFSShareView.vue:485-491,722-734`)
 - [ ] #3 密码弹窗:显示切换 + 不消耗 view 的 `POST /:id/check-password` (`NFSShareView.vue:4-22,495-543`)
 
@@ -28,3 +28,4 @@
 ## 进展
 - 2026-06-30 #1a 密码弹窗显示文件名 + 大小 + 剩余查看次数
 - 2026-06-30 #1b 视频初始化并行(getUserMedia / fetchRtcConfig / loadQualities),loadQualities 幂等保护
+- 2026-06-30 #1c 转码 overlay 显示清晰度 + 已生成分片数(pollTranscoding 每 5s 刷新)

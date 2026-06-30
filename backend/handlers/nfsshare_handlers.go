@@ -726,9 +726,10 @@ func (h *NFSShareHandler) HLSQualities(c *gin.Context) {
 
 	presets := availableQualities(srcHeight)
 	type qualityInfo struct {
-		Name   string `json:"name"`
-		Height int    `json:"height"`
-		Ready  bool   `json:"ready"` // 已转码完成
+		Name     string `json:"name"`
+		Height   int    `json:"height"`
+		Ready    bool   `json:"ready"` // 已转码完成
+		Segments int    `json:"segments"`
 	}
 	list := make([]qualityInfo, 0, len(presets))
 	for _, p := range presets {
@@ -738,7 +739,16 @@ func (h *NFSShareHandler) HLSQualities(c *gin.Context) {
 		if data, err := os.ReadFile(m3u8); err == nil && strings.Contains(string(data), "#EXT-X-ENDLIST") {
 			ready = true
 		}
-		list = append(list, qualityInfo{Name: p.Name, Height: p.Height, Ready: ready})
+		// 数 .ts 分片,转码中时给前端展示进度;未开始则为 0
+		segments := 0
+		if entries, err := os.ReadDir(outDir); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".ts") {
+					segments++
+				}
+			}
+		}
+		list = append(list, qualityInfo{Name: p.Name, Height: p.Height, Ready: ready, Segments: segments})
 	}
 	c.JSON(http.StatusOK, gin.H{"qualities": list, "source_height": srcHeight})
 }

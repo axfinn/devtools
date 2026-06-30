@@ -64,8 +64,15 @@
               <!-- 转码中提示 -->
               <div v-if="transcoding" class="transcoding-overlay">
                 <el-icon class="is-loading" style="font-size:40px;color:#409eff"><Loading /></el-icon>
-                <p>视频转码中，请稍候...</p>
-                <p class="hint">首次播放需要转码，大文件可能需要几分钟</p>
+                <p>正在转码 {{ currentQuality || '...' }}，请稍候...</p>
+                <p class="hint">
+                  <template v-if="currentQualitySegments > 0">
+                    已生成 {{ currentQualitySegments }} 个分片(约 {{ currentQualitySegments * 10 }} 秒)
+                  </template>
+                  <template v-else>
+                    首次播放需要转码，大文件可能需要几分钟
+                  </template>
+                </p>
               </div>
 
               <!-- 视频元素（ArtPlayer 挂载点） -->
@@ -440,6 +447,12 @@ const remainingTag = computed(() => {
   return 'success'
 })
 
+// 当前清晰度已生成的分片数(转码中时由 pollTranscoding 持续刷新)
+const currentQualitySegments = computed(() => {
+  const q = qualityList.value.find(q => q.name === currentQuality.value)
+  return q ? q.segments : 0
+})
+
 function formatSize(bytes) {
   if (!bytes) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -575,8 +588,8 @@ async function loadTextPreview() {
 }
 
 // ---- 清晰度加载 ----
-async function loadQualities() {
-  if (qualityList.value.length > 0) return // 已加载,避免并行预拉后 initPlayer 二次请求
+async function loadQualities(force = false) {
+  if (!force && qualityList.value.length > 0) return // 已加载,避免并行预拉后 initPlayer 二次请求
   try {
     const pwdParam = password.value ? `?password=${encodeURIComponent(password.value)}` : ''
     const res = await fetch(`/api/nfsshare/${id}/qualities${pwdParam}`)
@@ -728,7 +741,10 @@ function pollTranscoding() {
       if (res.ok) {
         clearInterval(pollTimer); pollTimer = null
         startHLS()
+        return
       }
+      // m3u8 还没好,顺手刷新 qualities 拿到最新分片数,避免 overlay 卡在初始值
+      await loadQualities(true)
     } catch (_) {}
   }, 5000)
 }
