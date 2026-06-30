@@ -55,6 +55,20 @@ func (r *watchRoom) count() int {
 	return len(r.clients)
 }
 
+// visibleCount 返回真实可见人数(排除匿名监听 pending 连接),用于 joined/left 广播的 Count 字段。
+// 否则 viewerCount 会把每个访客的匿名 WS 也算上,虚高吓人。
+func (r *watchRoom) visibleCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	n := 0
+	for c := range r.clients {
+		if !c.isPending {
+			n++
+		}
+	}
+	return n
+}
+
 func (r *watchRoom) broadcast(msg watchBroadcast, exclude *watchClient) {
 	data, _ := json.Marshal(msg)
 	r.mu.RLock()

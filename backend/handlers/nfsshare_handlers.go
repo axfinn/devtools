@@ -1001,11 +1001,12 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	isPending := nickname == "__pending__"
 
 	client := &watchClient{
-		conn:     conn,
-		nickname: nickname,
-		isHost:   isHost,
-		send:     make(chan []byte, 64),
-		peerID:   randomPeerID(),
+		conn:      conn,
+		nickname:  nickname,
+		isHost:    isHost,
+		isPending: isPending,
+		send:      make(chan []byte, 64),
+		peerID:    randomPeerID(),
 	}
 	room.add(client)
 
@@ -1026,7 +1027,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 			Type:     "joined",
 			Nickname: nickname,
 			IsHost:   isHost,
-			Count:    room.count(),
+			Count:    room.visibleCount(),
 			PeerID:   client.peerID,
 		})
 	}
@@ -1133,7 +1134,7 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 			room.broadcastAll(watchBroadcast{
 				Type:     "left",
 				Nickname: nickname,
-				Count:    room.count(),
+				Count:    room.visibleCount(),
 			})
 		}
 		// 房间空了就清理

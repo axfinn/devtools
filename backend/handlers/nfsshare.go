@@ -765,6 +765,7 @@ type watchClient struct {
 	conn        *websocket.Conn
 	nickname    string
 	isHost      bool
+	isPending   bool   // 匿名监听连接(nickname=__pending__),不计入可见人数
 	send        chan []byte
 	peerID      string // WebRTC 信令唯一标识
 	voiceActive bool   // 是否已加入语音
