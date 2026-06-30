@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +58,39 @@ func (h *PlannerHandler) ListTimeline(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "board": board})
 }
 
+// Search 跨任务 / 评论 / 录音的全文搜索。
+// 用于顶部全局搜索框,任何档案访问者都能调用(只是查自己档案的内容)。
+// 参数: q (必填, 至少 1 字符), limit (可选, 默认 30, 上限 100)
+func (h *PlannerHandler) Search(c *gin.Context) {
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	q := strings.TrimSpace(c.Query("q"))
+	if q == "" {
+		c.JSON(http.StatusOK, gin.H{"hits": []*models.PlannerSearchHit{}})
+		return
+	}
+	if len(q) > 200 {
+		q = q[:200]
+	}
+	limit := 30
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	hits, err := h.db.PlannerSearch(profile.ID, q, limit, 3)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "搜索失败", "code": 500})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"hits": hits, "q": q})
+}
+
 func (h *PlannerHandler) Review(c *gin.Context) {
 	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
 	if !ok {
@@ -101,6 +136,14 @@ func buildPlannerReview(profile *models.PlannerProfile, tasks []*models.PlannerT
 	suggestions := make([]string, 0, 4)
 	highlights := make([]*plannerTimelineItem, 0, 5)
 	highlightSeen := map[string]bool{}
+	cancellations := make([]plannerCancellationItem, 0, 10)
+	cancellationSeen := map[string]bool{}
+	postpones := make([]plannerPostponeItem, 0, 10)
+	postponeSeen := map[string]bool{}
+	// 阶段 6:完成感受收集(只收集已标记的:smooth/learned/rough)
+	completionFeelings := make([]plannerCompletionFeelingItem, 0, 10)
+	feelingSeen := map[string]bool{}
+	feelingCounts := map[string]int{}
 
 	for _, task := range tasks {
 		if task.Kind != kind {
@@ -119,8 +162,40 @@ func buildPlannerReview(profile *models.PlannerProfile, tasks []*models.PlannerT
 			switch normalizePlannerStatus(task.Status) {
 			case plannerStatusDone:
 				stats["done"]++
+				// 阶段 6:收集完成感受,前端用于"完成感受"反思聚合
+				if task.CompletionFeeling != "" && !feelingSeen[task.ID] {
+					feelingCounts[task.CompletionFeeling]++
+					if len(completionFeelings) < 10 {
+						completionFeelings = append(completionFeelings, plannerCompletionFeelingItem{
+							Feeling:     task.CompletionFeeling,
+							Title:       task.Title,
+							CompletedAt: task.CompletedAt.In(time.Local).Format("2006-01-02"),
+						})
+						feelingSeen[task.ID] = true
+					}
+				}
 			case plannerStatusCancelled:
 				stats["cancelled"]++
+				// 阶段 5:收集取消事项,前端用于"我没做完"反思聚合。
+				// 用独立的 cancellationSeen 去重,避免与 highlights 互相挤占名额。
+				if len(cancellations) < 10 && !cancellationSeen[task.ID] {
+					reason := strings.TrimSpace(task.CancelReason)
+					if reason == "" {
+						reason = "未填原因"
+					}
+					cancelledAt := ""
+					if task.CompletedAt != nil {
+						cancelledAt = task.CompletedAt.In(time.Local).Format("2006-01-02")
+					}
+					cancellations = append(cancellations, plannerCancellationItem{
+						TaskID:      task.ID,
+						Title:       task.Title,
+						Reason:      reason,
+						CancelledAt: cancelledAt,
+						Rollover:    task.RolloverCount,
+					})
+					cancellationSeen[task.ID] = true
+				}
 			}
 			if len(highlights) < 5 && !highlightSeen[task.ID] {
 				item := &plannerTimelineItem{
@@ -145,8 +220,27 @@ func buildPlannerReview(profile *models.PlannerProfile, tasks []*models.PlannerT
 		}
 		if strings.TrimSpace(task.LastPostponeReason) != "" && task.LastPostponedAt != nil && task.LastPostponedAt.After(start) {
 			stats["commented"]++
+			// 阶段 5 延伸:收集顺延事项,前端用于"我推迟的事"反思。
+			// 排除已取消的(已经在 cancellations 里),状态开放的优先排在前面。
+			if len(postpones) < 10 && !postponeSeen[task.ID] && !cancellationSeen[task.ID] {
+				postponedAt := task.LastPostponedAt.In(time.Local).Format("2006-01-02")
+				postpones = append(postpones, plannerPostponeItem{
+					TaskID:      task.ID,
+					Title:       task.Title,
+					Reason:      strings.TrimSpace(task.LastPostponeReason),
+					PostponedAt: postponedAt,
+					PlannedFor:  task.PlannedFor,
+					Rollover:    task.RolloverCount,
+				})
+				postponeSeen[task.ID] = true
+			}
 		}
 	}
+	// 让顺延按"是否仍开放"排序:开放中的(还在漂)排前,完成的(已落地)排后
+	sort.SliceStable(postpones, func(i, j int) bool {
+		// 用一个虚拟查找,简化:有 rollover > 1 的排前(高频漂移)
+		return postpones[i].Rollover > postpones[j].Rollover
+	})
 
 	switch {
 	case stats["done"] > 0:
@@ -185,14 +279,17 @@ func buildPlannerReview(profile *models.PlannerProfile, tasks []*models.PlannerT
 
 	summary := fmt.Sprintf("%s里新增 %d 条记录，完成 %d 条，仍有 %d 条未收尾。", label, stats["created"], stats["done"], stats["open"])
 	return plannerReviewResponse{
-		Period:      period,
-		Label:       label,
-		Summary:     fmt.Sprintf("%s「%s」%s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind], profile.Name, summary),
-		Stats:       stats,
-		Wins:        wins,
-		Drifts:      drifts,
-		Suggestions: suggestions,
-		Highlights:  highlights,
+		Period:        period,
+		Label:         label,
+		Summary:       fmt.Sprintf("%s「%s」%s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind], profile.Name, summary),
+		Stats:         stats,
+		Wins:          wins,
+		Drifts:        drifts,
+		Suggestions:   suggestions,
+		Highlights:    highlights,
+		Cancellations: cancellations,
+		Postpones:     postpones,
+		CompletionFeelings: completionFeelings,
 	}
 }
 
@@ -376,6 +473,15 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 	if req.RawText != nil {
 		task.RawText = strings.TrimSpace(*req.RawText)
 	}
+	if req.Intent != nil {
+		task.Intent = strings.TrimSpace(*req.Intent)
+	}
+	if req.EnergyLevel != nil {
+		task.EnergyLevel = normalizePlannerEnergyLevel(*req.EnergyLevel)
+	}
+	if req.CompletionFeeling != nil {
+		task.CompletionFeeling = normalizePlannerCompletionFeeling(*req.CompletionFeeling)
+	}
 	if req.RemindAt != nil {
 		task.RemindAt = parsePlannerDateTime(*req.RemindAt)
 		task.LastNotifiedAt = nil
@@ -439,6 +545,9 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 		now := time.Now()
 		task.CompletedAt = &now
 		task.CancelReason = ""
+		if before.Status != plannerStatusDone {
+			task.CompletionCount++
+		}
 	case plannerStatusCancelled:
 		now := time.Now()
 		task.CompletedAt = &now
@@ -458,7 +567,129 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 	for _, activity := range plannerTaskActivitiesFromUpdate(&before, task) {
 		_ = h.db.CreatePlannerTaskActivity(activity)
 	}
-	c.JSON(http.StatusOK, gin.H{"code": 0, "task": task})
+	// 阶段 5 减法:重复任务完成时,自动建下次实例
+	// 哲学:用户标记 done 后,系统替他/她想"下次什么时候",1 步完成 → 下次出现
+	// 数据平滑:仅当 repeat_type != none 时触发,无 repeat 字段的任务行为完全不变
+	// 撤回保护:仅在 done transition(非 cancelled / 非 open)时建
+	var nextTaskID string
+	if before.Status != plannerStatusDone && task.Status == plannerStatusDone {
+		if nextDate := plannerNextOccurrenceDate(task, time.Now()); nextDate != "" {
+			nextID, err := h.createNextRecurringInstance(task, nextDate)
+			if err == nil {
+				nextTaskID = nextID
+			}
+		}
+	}
+	// 阶段 5 减法 (iter 20):计算本次完成时的族系次数(包含本次)
+	// 用于前端 toast 展示"第 N 次完成"
+	familyCount := 0
+	if task.Status == plannerStatusDone && normalizePlannerRepeatType(task.RepeatType) != "none" {
+		if c, err := h.db.CountPlannerFamilyCompletions(task.ProfileID, task.Title, normalizePlannerRepeatType(task.RepeatType)); err == nil {
+			familyCount = c
+		}
+	}
+	if nextTaskID != "" {
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"task": task,
+			"next_task_id": nextTaskID,
+			"next_planned_for": plannerNextDateForResponse(task),
+			"family_completion_count": familyCount,
+		})
+	} else {
+		c.JSON(http.StatusOK, gin.H{
+			"code": 0,
+			"task": task,
+			"family_completion_count": familyCount,
+		})
+	}
+}
+
+// 阶段 5 减法:为已完成的重复任务建下次实例
+// 复用 buildPlannerTask 但强制 status=open / planned_for=nextDate / completed_at=nil
+// 不复制:CompletionCount / CompletedAt / CancelReason / 旧 ID — 全新 task,新 ID
+// 关联性:用 Notes 标记 "续自 {parent_id}",便于以后做"重复任务族"视图
+func (h *PlannerHandler) createNextRecurringInstance(parent *models.PlannerTask, nextDate string) (string, error) {
+	if parent == nil || nextDate == "" {
+		return "", fmt.Errorf("invalid parent or nextDate")
+	}
+	// 计算下次 RemindAt:取原 RemindAt 的时分 + nextDate
+	var nextRemindAt *time.Time
+	if parent.RemindAt != nil {
+		parsed, err := time.ParseInLocation("2006-01-02", nextDate, time.Local)
+		if err == nil {
+			hour := parent.RemindAt.In(time.Local).Hour()
+			min := parent.RemindAt.In(time.Local).Minute()
+			t := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), hour, min, 0, 0, time.Local)
+			nextRemindAt = &t
+		}
+	}
+	notes := strings.TrimSpace(parent.Notes)
+	// 阶段 5 减法 (iter 20):计算族系已完成次数,嵌到 notes 让前端能解析显示"第 N 次"
+	// 此时 parent 已经是 done 状态(被 UpdateTask 改完才来这),所以 count 已含本次
+	familyCount := 0
+	if h.db != nil {
+		if c, err := h.db.CountPlannerFamilyCompletions(parent.ProfileID, parent.Title, normalizePlannerRepeatType(parent.RepeatType)); err == nil {
+			familyCount = c
+		}
+	}
+	if notes != "" {
+		notes += "\n"
+	}
+	notes += "🔁 续自 " + parent.ID
+	// 第 N+1 次 (N = 已完成数,含本次;新实例是第 N+1 次接力)
+	if familyCount > 0 {
+		notes += fmt.Sprintf(" · 第 %d 次", familyCount+1)
+	}
+	req := createPlannerTaskRequest{
+		Title:              parent.Title,
+		Detail:             parent.Detail,
+		Notes:              notes,
+		Kind:               parent.Kind,
+		EntryType:          parent.EntryType,
+		Bucket:             parent.Bucket,
+		Status:             plannerStatusOpen,
+		Priority:           parent.Priority,
+		PlannedFor:         nextDate,
+		Intent:             parent.Intent,
+		EnergyLevel:        parent.EnergyLevel,
+		RemindAt:           plannerFormatDateTimeValuePtr(nextRemindAt),
+		RepeatType:         parent.RepeatType,
+		RepeatInterval:     parent.RepeatInterval,
+		RepeatUntil:        plannerFormatDateTimeValuePtr(parent.RepeatUntil),
+		RawText:            "",
+		CancelReason:       "",
+	}
+	profile, err := h.db.GetPlannerProfile(parent.ProfileID)
+	if err != nil || profile == nil {
+		return "", err
+	}
+	task, err := h.buildPlannerTask(profile, req)
+	if err != nil {
+		return "", err
+	}
+	task.OriginalPlannedFor = nextDate
+	if err := h.db.CreatePlannerTask(task); err != nil {
+		return "", err
+	}
+	return task.ID, nil
+}
+
+// 阶段 5 减法:辅助函数 — 把 *time.Time 转为 "2006-01-02T15:04" 字符串(供 buildPlannerTask 解析)
+func plannerFormatDateTimeValuePtr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.In(time.Local).Format("2006-01-02T15:04")
+}
+
+// 阶段 5 减法:返回下次实例的计划日期(用于响应里前端展示 "下次自动建到 X 月 X 日")
+// 仅当原 task 有 repeat 时返回非空
+func plannerNextDateForResponse(task *models.PlannerTask) string {
+	if task == nil {
+		return ""
+	}
+	return plannerNextOccurrenceDate(task, time.Now())
 }
 
 func (h *PlannerHandler) DeleteTask(c *gin.Context) {
@@ -470,6 +701,99 @@ func (h *PlannerHandler) DeleteTask(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "删除成功"})
+}
+
+type batchUpdatePlannerTaskRequest struct {
+	CreatorKey string   `json:"creator_key"`
+	TaskIDs    []string `json:"task_ids"`
+	Action     string   `json:"action"`
+	Priority   *string  `json:"priority,omitempty"`
+}
+
+func (h *PlannerHandler) BatchUpdateTasks(c *gin.Context) {
+	profile, ok := h.loadProfileByCreator(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	var req batchUpdatePlannerTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误", "code": 400})
+		return
+	}
+	if len(req.TaskIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task_ids 不能为空", "code": 400})
+		return
+	}
+	if len(req.TaskIDs) > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "一次最多处理 100 条", "code": 400})
+		return
+	}
+	today := time.Now().Format("2006-01-02")
+	updated := make([]string, 0, len(req.TaskIDs))
+	deleted := make([]string, 0, len(req.TaskIDs))
+	failed := make([]string, 0)
+	for _, taskID := range req.TaskIDs {
+		task, err := h.db.GetPlannerTask(taskID)
+		if err != nil || task == nil || task.ProfileID != profile.ID {
+			failed = append(failed, taskID)
+			continue
+		}
+		before := *task
+		switch req.Action {
+		case "move_to_today":
+			task.Bucket = models.PlannerBucketPlanned
+			task.PlannedFor = today
+			if task.OriginalPlannedFor == "" {
+				task.OriginalPlannedFor = today
+			}
+			if normalizePlannerStatus(task.Status) == plannerStatusDone || normalizePlannerStatus(task.Status) == plannerStatusCancelled {
+				task.Status = plannerStatusOpen
+				task.CompletedAt = nil
+				task.CancelReason = ""
+			}
+		case "move_to_someday":
+			task.Bucket = models.PlannerBucketSomeday
+			if task.PlannedFor == "" {
+				task.PlannedFor = today
+			}
+		case "mark_done":
+			task.Status = plannerStatusDone
+			now := time.Now()
+			task.CompletedAt = &now
+			task.CancelReason = ""
+		case "set_priority":
+			if req.Priority == nil {
+				failed = append(failed, taskID)
+				continue
+			}
+			task.Priority = normalizePlannerPriority(*req.Priority)
+		case "delete":
+			if err := h.db.DeletePlannerTask(taskID); err != nil {
+				failed = append(failed, taskID)
+				continue
+			}
+			deleted = append(deleted, taskID)
+			continue
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "未知 action: " + req.Action, "code": 400})
+			return
+		}
+		if err := h.db.UpdatePlannerTask(task); err != nil {
+			failed = append(failed, taskID)
+			continue
+		}
+		for _, activity := range plannerTaskActivitiesFromUpdate(&before, task) {
+			_ = h.db.CreatePlannerTaskActivity(activity)
+		}
+		updated = append(updated, taskID)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"updated": updated,
+		"deleted": deleted,
+		"failed":  failed,
+		"action":  req.Action,
+	})
 }
 
 func (h *PlannerHandler) ListTaskComments(c *gin.Context) {
@@ -495,11 +819,16 @@ func (h *PlannerHandler) CreateTaskComment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "评论内容不能为空", "code": 400})
 		return
 	}
+	imageJSON, _ := json.Marshal(req.ImageURLs)
+	if req.ImageURLs == nil {
+		imageJSON = []byte("[]")
+	}
 	comment := &models.PlannerTaskComment{
 		TaskID:    task.ID,
 		ProfileID: profile.ID,
 		Author:    plannerFirstNonEmpty(strings.TrimSpace(req.Author), "我"),
 		Content:   strings.TrimSpace(req.Content),
+		ImageURLs: string(imageJSON),
 	}
 	if comment.Content == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "评论内容不能为空", "code": 400})
@@ -712,9 +1041,23 @@ func buildPlannerICS(task *models.PlannerTask) []byte {
 	sb.WriteString("VERSION:2.0\r\n")
 	sb.WriteString("PRODID:-//DevTools//Planner//CN\r\n")
 	sb.WriteString("CALSCALE:GREGORIAN\r\n")
+	writePlannerICSEvent(&sb, task)
+	sb.WriteString("END:VCALENDAR\r\n")
+	return []byte(sb.String())
+}
+
+// writePlannerICSEvent 写入单个 VEVENT 块(不含 VCALENDAR 包裹),供单任务与订阅 feed 共用
+func writePlannerICSEvent(sb *strings.Builder, task *models.PlannerTask) {
+	if task == nil {
+		return
+	}
 	sb.WriteString("BEGIN:VEVENT\r\n")
 	sb.WriteString(fmt.Sprintf("UID:planner-%s@devtools\r\n", task.ID))
-	sb.WriteString(fmt.Sprintf("DTSTAMP:%s\r\n", time.Now().UTC().Format("20060102T150405Z")))
+	dtStamp := task.UpdatedAt
+	if dtStamp.IsZero() {
+		dtStamp = time.Now()
+	}
+	sb.WriteString(fmt.Sprintf("DTSTAMP:%s\r\n", dtStamp.UTC().Format("20060102T150405Z")))
 	sb.WriteString(fmt.Sprintf("SUMMARY:%s\r\n", escapeICSLine(task.Title)))
 	description := strings.TrimSpace(task.Detail)
 	if strings.TrimSpace(task.Notes) != "" {
@@ -732,6 +1075,23 @@ func buildPlannerICS(task *models.PlannerTask) []byte {
 	if description != "" {
 		sb.WriteString(fmt.Sprintf("DESCRIPTION:%s\r\n", escapeICSLine(description)))
 	}
+	// 已完成的事项额外标 CATEGORIES,方便在系统日历里筛选或淡化
+	if task.Status == "done" {
+		sb.WriteString("CATEGORIES:已完成\r\n")
+		sb.WriteString("STATUS:COMPLETED\r\n")
+	} else if task.Status == "cancelled" {
+		sb.WriteString("CATEGORIES:已取消\r\n")
+		sb.WriteString("STATUS:CANCELLED\r\n")
+	} else if task.Status == "in_progress" {
+		sb.WriteString("CATEGORIES:进行中\r\n")
+	} else {
+		sb.WriteString("CATEGORIES:待办\r\n")
+	}
+	if task.Priority == "urgent" || task.Priority == "high" {
+		sb.WriteString("PRIORITY:1\r\n")
+	} else if task.Priority == "low" {
+		sb.WriteString("PRIORITY:9\r\n")
+	}
 	if task.RemindAt != nil {
 		start := task.RemindAt.In(time.Local)
 		end := start.Add(30 * time.Minute)
@@ -747,9 +1107,50 @@ func buildPlannerICS(task *models.PlannerTask) []byte {
 		sb.WriteString("END:VALARM\r\n")
 	} else {
 		planned := parsePlannerDate(task.PlannedFor)
-		sb.WriteString(fmt.Sprintf("DTSTART;VALUE=DATE:%s\r\n", strings.ReplaceAll(planned, "-", "")))
+		if planned != "" && planned != "0001-01-01" {
+			sb.WriteString(fmt.Sprintf("DTSTART;VALUE=DATE:%s\r\n", strings.ReplaceAll(planned, "-", "")))
+		}
 	}
 	sb.WriteString("END:VEVENT\r\n")
+}
+
+// buildPlannerICSFeed 构造订阅式 feed:单个 VCALENDAR 包裹多个 VEVENT
+// 仅纳入有日期(planned_for 或 remind_at)的事项;已取消事项默认剔除,可由 includeCancelled 控制
+func buildPlannerICSFeed(calendarName string, tasks []*models.PlannerTask, includeCancelled bool) []byte {
+	var sb strings.Builder
+	sb.WriteString("BEGIN:VCALENDAR\r\n")
+	sb.WriteString("VERSION:2.0\r\n")
+	sb.WriteString("PRODID:-//DevTools//Planner//CN\r\n")
+	sb.WriteString("CALSCALE:GREGORIAN\r\n")
+	sb.WriteString("METHOD:PUBLISH\r\n")
+	if calendarName != "" {
+		sb.WriteString(fmt.Sprintf("X-WR-CALNAME:%s\r\n", escapeICSLine(calendarName)))
+		sb.WriteString(fmt.Sprintf("NAME:%s\r\n", escapeICSLine(calendarName)))
+	}
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if !includeCancelled && task.Status == "cancelled" {
+			continue
+		}
+		// 收件箱(inbox)与放一放(someday)是用户"还没决定 / 以后再说"的状态,
+		// 不应自动出现在系统日历里,避免噪音
+		if task.Bucket == "inbox" || task.Bucket == "someday" {
+			continue
+		}
+		// 必须有日期才有意义进入日历
+		hasDate := false
+		if task.RemindAt != nil {
+			hasDate = true
+		} else if planned := strings.TrimSpace(task.PlannedFor); planned != "" && planned != "0001-01-01" {
+			hasDate = true
+		}
+		if !hasDate {
+			continue
+		}
+		writePlannerICSEvent(&sb, task)
+	}
 	sb.WriteString("END:VCALENDAR\r\n")
 	return []byte(sb.String())
 }
@@ -903,5 +1304,35 @@ func (h *PlannerHandler) DownloadCalendar(c *gin.Context) {
 	content := buildPlannerICS(task)
 	c.Header("Content-Type", "text/calendar; charset=utf-8")
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", plannerCalendarFilename(task)))
+	c.Data(http.StatusOK, "text/calendar; charset=utf-8", content)
+}
+
+// DownloadCalendarFeed 订阅式 ICS feed:
+// 一次性返回该档案下所有有日期的事项,系统日历 App 可周期性拉取自动同步
+// query 参数:
+//   - creator_key: 创建者密钥(必填,与现有接口一致)
+//   - include_cancelled: 是否纳入已取消事项(默认 false,保持 feed 干净)
+func (h *PlannerHandler) DownloadCalendarFeed(c *gin.Context) {
+	profile, ok := h.loadProfileByAccess(c, c.Param("id"))
+	if !ok {
+		return
+	}
+	tasks, err := h.db.ListPlannerTasksByProfile(profile.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取事项失败", "code": 500})
+		return
+	}
+	includeCancelled := c.Query("include_cancelled") == "1" || strings.EqualFold(c.Query("include_cancelled"), "true")
+	calendarName := strings.TrimSpace(profile.Name)
+	if calendarName == "" {
+		calendarName = "Planner"
+	} else {
+		calendarName = "Planner · " + calendarName
+	}
+	content := buildPlannerICSFeed(calendarName, tasks, includeCancelled)
+	// 订阅型 feed 不触发浏览器下载,文件名仅用于保存时的默认名
+	filename := "planner-" + profile.ID + ".ics"
+	c.Header("Content-Type", "text/calendar; charset=utf-8")
+	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=%q", filename))
 	c.Data(http.StatusOK, "text/calendar; charset=utf-8", content)
 }

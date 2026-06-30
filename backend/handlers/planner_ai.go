@@ -73,7 +73,7 @@ func (h *PlannerHandler) parsePlannerText(text, defaultKind string) ([]plannerAI
 		return fallbackParsePlannerText(text, defaultKind), "fallback", nil
 	}
 	prompt := fmt.Sprintf(`请把下面的中文内容整理成 JSON 数组，每个元素包含字段：
-kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title、detail、notes、priority(low/medium/high)、status(open/in_progress/done/cancelled)、planned_for(YYYY-MM-DD)、remind_at(YYYY-MM-DDTHH:MM，可为空)、cancel_reason(可为空)、raw_text(原文)。
+kind(work/life)、entry_type(task/event)、bucket(inbox/planned/someday)、title、detail、notes、priority(urgent/high/medium/low)、status(open/in_progress/done/cancelled)、planned_for(YYYY-MM-DD)、remind_at(YYYY-MM-DDTHH:MM，可为空)、cancel_reason(可为空)、raw_text(原文)。
 
 规则：
 1. 只返回 JSON 数组，不要解释。
@@ -409,7 +409,10 @@ func fallbackParsePlannerText(text, defaultKind string) []plannerAITask {
 		}
 
 		priority := "medium"
-		if strings.Contains(item, "尽快") || strings.Contains(item, "今天") || strings.Contains(item, "马上") {
+		switch {
+		case strings.Contains(item, "紧急") || strings.Contains(item, "急") || strings.Contains(item, "立刻") || strings.Contains(item, "asap"):
+			priority = "urgent"
+		case strings.Contains(item, "尽快") || strings.Contains(item, "今天") || strings.Contains(item, "马上"):
 			priority = "high"
 		}
 		result = append(result, plannerAITask{

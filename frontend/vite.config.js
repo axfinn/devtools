@@ -76,6 +76,23 @@ export default defineConfig({
       compress: {
         drop_console: true, // 移除 console
         drop_debugger: true
+      },
+      // 保留模板里用到的函数名,避免 <script setup> 模板引用断裂导致白屏
+      keep_fnames: true,
+      mangle: {
+        // 不混淆 setup 暴露给模板的函数名
+        reserved: [
+          'exportAllDataJSON',
+          'exportTasksCSV',
+          'openGlobalQuickAdd',
+          'closeGlobalQuickAdd',
+          'submitGlobalQuickAdd',
+          'onGlobalQuickAddInput',
+          'openVoice',
+          'startVoiceCapture',
+          'stopVoiceCapture',
+          'cancelVoice'
+        ]
       }
     },
     // 关闭 chunk 大小警告（因为 Mermaid 等库本身较大）

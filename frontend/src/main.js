@@ -45,7 +45,27 @@ import './styles/index.css'
 import App from './App.vue'
 import router from './router'
 
+// 全局错误捕获:把异常显示在页面上,避免白屏看不到原因
+function showFatalError(err, source) {
+  console.error('[Fatal]', source, err)
+  let box = document.getElementById('__fatal_error__')
+  if (!box) {
+    box = document.createElement('div')
+    box.id = '__fatal_error__'
+    box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#fef2f2;color:#991b1b;padding:16px;font-family:monospace;font-size:13px;border-bottom:2px solid #dc2626;max-height:50vh;overflow:auto;white-space:pre-wrap;'
+    document.body.appendChild(box)
+  }
+  const msg = (err && (err.stack || err.message)) || String(err)
+  const divider = '\n\n--- ' + (source || 'error') + ' @ ' + new Date().toISOString() + ' ---\n'
+  box.textContent += divider + msg
+}
+window.addEventListener('error', (e) => showFatalError(e.error || e.message, 'window.error'))
+window.addEventListener('unhandledrejection', (e) => showFatalError(e.reason, 'unhandledrejection'))
+
 const app = createApp(App)
+app.config.errorHandler = (err, instance, info) => {
+  showFatalError(err, 'vue errorHandler [' + info + ']')
+}
 
 const globalIcons = {
   Box,

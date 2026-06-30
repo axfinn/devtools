@@ -112,14 +112,48 @@ type plannerBoardResponse struct {
 }
 
 type plannerReviewResponse struct {
-	Period      string                 `json:"period"`
-	Label       string                 `json:"label"`
-	Summary     string                 `json:"summary"`
-	Stats       map[string]int         `json:"stats"`
-	Wins        []string               `json:"wins"`
-	Drifts      []string               `json:"drifts"`
-	Suggestions []string               `json:"suggestions"`
-	Highlights  []*plannerTimelineItem `json:"highlights"`
+	Period        string                  `json:"period"`
+	Label         string                  `json:"label"`
+	Summary       string                  `json:"summary"`
+	Stats         map[string]int          `json:"stats"`
+	Wins          []string                `json:"wins"`
+	Drifts        []string                `json:"drifts"`
+	Suggestions   []string                `json:"suggestions"`
+	Highlights    []*plannerTimelineItem  `json:"highlights"`
+	Cancellations []plannerCancellationItem `json:"cancellations,omitempty"`
+	Postpones     []plannerPostponeItem   `json:"postpones,omitempty"`
+	// 阶段 6:完成感受聚合(分布 + 最近样本) — 与 Cancellations/Postpones 对称
+	CompletionFeelings []plannerCompletionFeelingItem `json:"completion_feelings,omitempty"`
+}
+
+// 阶段 6:完成感受 item — 让 review 显示"我完成的感受分布"
+type plannerCompletionFeelingItem struct {
+	Feeling   string `json:"feeling"`   // 'smooth' / 'learned' / 'rough'
+	Title     string `json:"title"`
+	CompletedAt string `json:"completed_at"`
+}
+
+// plannerCancellationItem 阶段 5"我没做完"反思:把每个被取消的事项带原因返回,
+// 让前端能聚合"本月最容易放弃的事是哪类"
+// 阶段 6 减法:加 TaskID 让前端 review 弹窗可以 1 步"重新捡起"(复活已取消的事)
+type plannerCancellationItem struct {
+	TaskID      string `json:"task_id"`
+	Title       string `json:"title"`
+	Reason      string `json:"reason"`
+	CancelledAt string `json:"cancelled_at"`
+	Rollover    int    `json:"rollover"`
+}
+
+// plannerPostponeItem 阶段 5 延伸:"我推迟的事"反思。
+// 让用户看见自己经常把什么往后推、推到什么时候 — 与取消聚合对称
+// 阶段 6 减法:加 TaskID 让前端 review 弹窗可以 1 步"今天做"
+type plannerPostponeItem struct {
+	TaskID      string `json:"task_id"`
+	Title       string `json:"title"`
+	Reason      string `json:"reason"`
+	PostponedAt string `json:"postponed_at"`
+	PlannedFor  string `json:"planned_for"`
+	Rollover    int    `json:"rollover"`
 }
 
 type createPlannerProfileRequest struct {
@@ -166,30 +200,32 @@ type createPlannerTaskBatchRequest struct {
 }
 
 type updatePlannerTaskRequest struct {
-	Kind           *string `json:"kind"`
-	EntryType      *string `json:"entry_type"`
-	Bucket         *string `json:"bucket"`
-	Title          *string `json:"title"`
-	Detail         *string `json:"detail"`
-	Notes          *string `json:"notes"`
-	Status         *string `json:"status"`
-	Priority       *string `json:"priority"`
-	PlannedFor     *string `json:"planned_for"`
-	RemindAt       *string `json:"remind_at"`
-	RepeatType     *string `json:"repeat_type"`
-	RepeatInterval *int    `json:"repeat_interval"`
-	RepeatUntil    *string `json:"repeat_until"`
-	NotifyEmail    *string `json:"notify_email"`
-	CancelReason   *string `json:"cancel_reason"`
-	RawText        *string `json:"raw_text"`
-	PostponeReason *string `json:"postpone_reason"`
-	Intent         *string `json:"intent"`
-	EnergyLevel    *string `json:"energy_level"`
+	Kind              *string `json:"kind"`
+	EntryType         *string `json:"entry_type"`
+	Bucket            *string `json:"bucket"`
+	Title             *string `json:"title"`
+	Detail            *string `json:"detail"`
+	Notes             *string `json:"notes"`
+	Status            *string `json:"status"`
+	Priority          *string `json:"priority"`
+	PlannedFor        *string `json:"planned_for"`
+	RemindAt          *string `json:"remind_at"`
+	RepeatType        *string `json:"repeat_type"`
+	RepeatInterval    *int    `json:"repeat_interval"`
+	RepeatUntil       *string `json:"repeat_until"`
+	NotifyEmail       *string `json:"notify_email"`
+	CancelReason      *string `json:"cancel_reason"`
+	RawText           *string `json:"raw_text"`
+	PostponeReason    *string `json:"postpone_reason"`
+	Intent            *string `json:"intent"`
+	EnergyLevel       *string `json:"energy_level"`
+	CompletionFeeling *string `json:"completion_feeling"`
 }
 
 type plannerCommentRequest struct {
-	Author  string `json:"author"`
-	Content string `json:"content" binding:"required"`
+	Author    string   `json:"author"`
+	Content   string   `json:"content" binding:"required"`
+	ImageURLs []string `json:"image_urls"`
 }
 
 type plannerTaskActivityItem struct {
@@ -311,6 +347,8 @@ func normalizePlannerStatus(status string) string {
 
 func normalizePlannerPriority(priority string) string {
 	switch strings.TrimSpace(strings.ToLower(priority)) {
+	case "urgent", "p0":
+		return "urgent"
 	case "low":
 		return "low"
 	case "high":
@@ -354,6 +392,21 @@ func normalizePlannerEnergyLevel(level string) string {
 		return "errand"
 	case "creative":
 		return "creative"
+	default:
+		return ""
+	}
+}
+
+// 阶段 6:完成反思 enum — 让用户主动给"这次做完感觉怎么样"打标
+// 'smooth'(顺手)/ 'learned'(学到)/ 'rough'(划水)/ '' (没标)
+func normalizePlannerCompletionFeeling(feeling string) string {
+	switch strings.TrimSpace(strings.ToLower(feeling)) {
+	case "smooth":
+		return "smooth"
+	case "learned":
+		return "learned"
+	case "rough":
+		return "rough"
 	default:
 		return ""
 	}
@@ -421,6 +474,64 @@ func parsePlannerDateTime(value string) *time.Time {
 		}
 	}
 	return nil
+}
+
+// 阶段 5 减法:计算重复任务的下次发生日期(基于 RemindAt + RepeatType + RepeatInterval)。
+// 返回 "2006-01-02" 格式,若超出 RepeatUntil 则返回 ""。
+// 这是"完成时自动建下次"的核心算式,纯函数,便于单元测试。
+func plannerNextOccurrenceDate(task *models.PlannerTask, now time.Time) string {
+	if task == nil {
+		return ""
+	}
+	repeatType := normalizePlannerRepeatType(task.RepeatType)
+	if repeatType == "none" {
+		return ""
+	}
+	// 优先用 RemindAt 作为锚点(用户实际设的时间),没有则用 PlannedFor,再没有用 now
+	var base time.Time
+	if task.RemindAt != nil {
+		base = *task.RemindAt
+	} else if task.PlannedFor != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", task.PlannedFor, time.Local)
+		if err != nil {
+			base = now
+		} else {
+			base = parsed
+		}
+	} else {
+		base = now
+	}
+	interval := task.RepeatInterval
+	if interval < 1 {
+		interval = 1
+	}
+	var next time.Time
+	switch repeatType {
+	case "daily":
+		next = base.AddDate(0, 0, interval)
+	case "weekdays":
+		// 工作日:从 base + 1 开始跳到下一个 Mon-Fri
+		next = base.AddDate(0, 0, 1)
+		for {
+			wd := next.Weekday()
+			if wd != time.Saturday && wd != time.Sunday {
+				break
+			}
+			next = next.AddDate(0, 0, 1)
+		}
+	case "weekly":
+		next = base.AddDate(0, 0, 7*interval)
+	case "monthly":
+		// 月底容错:原 date 不存在时,Go AddDate 会自动归到下月 1 号附近
+		next = base.AddDate(0, interval, 0)
+	default:
+		return ""
+	}
+	// 尊重 RepeatUntil:若超出则不建
+	if task.RepeatUntil != nil && next.After(*task.RepeatUntil) {
+		return ""
+	}
+	return next.Format("2006-01-02")
 }
 
 func plannerFormatDateTimeValue(t time.Time) string {

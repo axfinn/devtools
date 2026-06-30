@@ -130,9 +130,6 @@ func buildPlannerBoard(tasks []*models.PlannerTask, kind string, now time.Time) 
 	sort.SliceStable(board.RecentItems, func(i, j int) bool {
 		return board.RecentItems[i].UpdatedAt.After(board.RecentItems[j].UpdatedAt)
 	})
-	if len(board.RecentItems) > 8 {
-		board.RecentItems = board.RecentItems[:8]
-	}
 
 	limit := 3
 	if kind == plannerKindLife {
@@ -315,24 +312,28 @@ func sortPlannerItems(items []*plannerTimelineItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		a := items[i]
 		b := items[j]
-		if a.Status != b.Status {
-			return plannerStatusRank(a.Status) < plannerStatusRank(b.Status)
-		}
+		// 1) 紧急永远优先,穿透状态、日期、类型
 		if a.Priority != b.Priority {
 			return plannerPriorityRank(a.Priority) < plannerPriorityRank(b.Priority)
 		}
+		// 2) 同优先级内,先看是否已收尾(未收尾的排前)
+		if a.Status != b.Status {
+			return plannerStatusRank(a.Status) < plannerStatusRank(b.Status)
+		}
+		// 3) 同状态看类型(任务先于事件,事件有时间感)
 		if a.EntryType != b.EntryType {
 			return a.EntryType < b.EntryType
 		}
+		// 4) 最后按计划日期/创建时间稳定排序
 		return a.CreatedAt.Before(b.CreatedAt)
 	})
 }
 
 func plannerStatusRank(status string) int {
 	switch normalizePlannerStatus(status) {
-	case plannerStatusOpen:
-		return 0
 	case plannerStatusInProgress:
+		return 0
+	case plannerStatusOpen:
 		return 1
 	case plannerStatusDone:
 		return 2
@@ -343,12 +344,14 @@ func plannerStatusRank(status string) int {
 
 func plannerPriorityRank(priority string) int {
 	switch normalizePlannerPriority(priority) {
-	case "high":
+	case "urgent":
 		return 0
-	case "medium":
+	case "high":
 		return 1
-	default:
+	case "medium":
 		return 2
+	default:
+		return 3
 	}
 }
 

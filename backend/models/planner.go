@@ -2,6 +2,7 @@ package models
 
 import (
 	"database/sql"
+	"sort"
 	"strings"
 	"time"
 )
@@ -44,6 +45,7 @@ type PlannerTask struct {
 	PlannedFor         string     `json:"planned_for"`
 	OriginalPlannedFor string     `json:"original_planned_for"`
 	RolloverCount      int        `json:"rollover_count"`
+	CompletionCount    int        `json:"completion_count"`
 	LastPostponeReason string     `json:"last_postpone_reason"`
 	LastPostponedAt    *time.Time `json:"last_postponed_at"`
 	Intent             string     `json:"intent"`
@@ -57,6 +59,9 @@ type PlannerTask struct {
 	LastNotifiedAt     *time.Time `json:"last_notified_at"`
 	CancelReason       string     `json:"cancel_reason"`
 	CompletedAt        *time.Time `json:"completed_at"`
+	// 阶段 6 减法:完成反思 — 让用户主动给"这次做完感觉怎么样"打标
+	// enum: 'smooth'(顺手)/ 'learned'(学到)/ 'rough'(划水)/ '' (没标)
+	CompletionFeeling  string     `json:"completion_feeling"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
@@ -67,6 +72,7 @@ type PlannerTaskComment struct {
 	ProfileID string    `json:"profile_id"`
 	Author    string    `json:"author"`
 	Content   string    `json:"content"`
+	ImageURLs string    `json:"image_urls"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -125,6 +131,7 @@ func (db *DB) InitPlanner() error {
 				planned_for TEXT NOT NULL,
 				original_planned_for TEXT DEFAULT '',
 				rollover_count INTEGER DEFAULT 0,
+				completion_count INTEGER DEFAULT 0,
 				last_postpone_reason TEXT DEFAULT '',
 				last_postponed_at DATETIME,
 				remind_at DATETIME,
@@ -146,6 +153,7 @@ func (db *DB) InitPlanner() error {
 			profile_id TEXT NOT NULL,
 			author TEXT NOT NULL DEFAULT '用户',
 			content TEXT NOT NULL,
+			image_urls TEXT DEFAULT '[]',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (task_id) REFERENCES planner_tasks(id) ON DELETE CASCADE,
 			FOREIGN KEY (profile_id) REFERENCES planner_profiles(id) ON DELETE CASCADE
@@ -177,15 +185,18 @@ func (db *DB) InitPlanner() error {
 		"ALTER TABLE planner_tasks ADD COLUMN completed_at DATETIME",
 		"ALTER TABLE planner_tasks ADD COLUMN original_planned_for TEXT DEFAULT ''",
 		"ALTER TABLE planner_tasks ADD COLUMN rollover_count INTEGER DEFAULT 0",
+		"ALTER TABLE planner_tasks ADD COLUMN completion_count INTEGER DEFAULT 0",
 		"ALTER TABLE planner_tasks ADD COLUMN last_postpone_reason TEXT DEFAULT ''",
 		"ALTER TABLE planner_tasks ADD COLUMN last_postponed_at DATETIME",
 		"ALTER TABLE planner_tasks ADD COLUMN repeat_type TEXT NOT NULL DEFAULT 'none'",
 		"ALTER TABLE planner_tasks ADD COLUMN repeat_interval INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE planner_tasks ADD COLUMN repeat_until DATETIME",
 		"ALTER TABLE planner_tasks ADD COLUMN cancel_reason TEXT DEFAULT ''",
+		"ALTER TABLE planner_tasks ADD COLUMN completion_feeling TEXT DEFAULT ''",
 		"ALTER TABLE planner_tasks ADD COLUMN intent TEXT DEFAULT ''",
 		"ALTER TABLE planner_tasks ADD COLUMN energy_level TEXT DEFAULT ''",
 		"ALTER TABLE planner_tasks ADD COLUMN raw_text TEXT DEFAULT ''",
+		"ALTER TABLE planner_task_comments ADD COLUMN image_urls TEXT DEFAULT '[]'",
 	}
 	for _, stmt := range migrations {
 		if _, err := db.conn.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
@@ -326,6 +337,10 @@ func (db *DB) DeletePlannerTask(id string) error {
 		tx.Rollback()
 		return err
 	}
+	if _, err = tx.Exec(`UPDATE voice_memos SET deleted_at = ? WHERE planner_task_id = ? AND deleted_at IS NULL`, time.Now(), id); err != nil {
+		tx.Rollback()
+		return err
+	}
 	if _, err = tx.Exec(`DELETE FROM planner_tasks WHERE id = ?`, id); err != nil {
 		tx.Rollback()
 		return err
@@ -400,13 +415,14 @@ func (db *DB) CreatePlannerTask(task *PlannerTask) error {
 			id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
 			planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
 			intent, energy_level, remind_at, repeat_type, repeat_interval, repeat_until, notify_email, last_notified_at,
-			cancel_reason, completed_at, created_at, updated_at, raw_text
+			cancel_reason, completed_at, completion_feeling, created_at, updated_at, raw_text, completion_count
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, task.ID, task.ProfileID, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status,
 		task.Priority, task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason,
 		task.LastPostponedAt, task.Intent, task.EnergyLevel, task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil,
-		task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CreatedAt, task.UpdatedAt, task.RawText)
+		task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CompletionFeeling, task.CreatedAt, task.UpdatedAt, task.RawText,
+		task.CompletionCount)
 	return err
 }
 
@@ -423,9 +439,9 @@ func (db *DB) CreatePlannerTasks(tasks []*PlannerTask) error {
 			id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
 			planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
 			intent, energy_level, remind_at, repeat_type, repeat_interval, repeat_until, notify_email, last_notified_at,
-			cancel_reason, completed_at, created_at, updated_at, raw_text
+			cancel_reason, completed_at, completion_feeling, created_at, updated_at, raw_text, completion_count
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -442,8 +458,8 @@ func (db *DB) CreatePlannerTasks(tasks []*PlannerTask) error {
 			task.ID, task.ProfileID, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status,
 			task.Priority, task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason,
 			task.LastPostponedAt, task.Intent, task.EnergyLevel, task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil,
-			task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CreatedAt,
-			task.UpdatedAt, task.RawText,
+			task.NotifyEmail, task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CompletionFeeling, task.CreatedAt,
+			task.UpdatedAt, task.RawText, task.CompletionCount,
 		); err != nil {
 			tx.Rollback()
 			return err
@@ -461,7 +477,7 @@ const plannerTaskSelectSQL = `
 	SELECT id, profile_id, kind, entry_type, bucket, title, detail, notes, status, priority,
 	       planned_for, original_planned_for, rollover_count, last_postpone_reason, last_postponed_at,
 	       intent, energy_level, remind_at, repeat_type, repeat_interval, repeat_until, notify_email,
-	       last_notified_at, cancel_reason, completed_at, created_at, updated_at, raw_text
+	       last_notified_at, cancel_reason, completed_at, completion_feeling, created_at, updated_at, raw_text, completion_count
 	FROM planner_tasks
 `
 
@@ -505,9 +521,11 @@ func scanPlannerTask(scanner plannerTaskScanner) (*PlannerTask, error) {
 		&lastNotifiedAt,
 		&task.CancelReason,
 		&completedAt,
+		&task.CompletionFeeling,
 		&task.CreatedAt,
 		&task.UpdatedAt,
 		&rawText,
+		&task.CompletionCount,
 	); err != nil {
 		return nil, err
 	}
@@ -609,13 +627,15 @@ func (db *DB) UpdatePlannerTask(task *PlannerTask) error {
 			    planned_for = ?, original_planned_for = ?, rollover_count = ?, last_postpone_reason = ?, last_postponed_at = ?,
 			    intent = ?, energy_level = ?,
 			    remind_at = ?, repeat_type = ?, repeat_interval = ?, repeat_until = ?, notify_email = ?,
-			    last_notified_at = ?, cancel_reason = ?, completed_at = ?, raw_text = ?, updated_at = ?
+			    last_notified_at = ?, cancel_reason = ?, completed_at = ?, completion_feeling = ?, raw_text = ?, updated_at = ?,
+			    completion_count = ?
 			WHERE id = ?
 		`, task.Kind, task.EntryType, task.Bucket, task.Title, task.Detail, task.Notes, task.Status, task.Priority,
 		task.PlannedFor, task.OriginalPlannedFor, task.RolloverCount, task.LastPostponeReason, task.LastPostponedAt,
 		task.Intent, task.EnergyLevel,
 		task.RemindAt, task.RepeatType, task.RepeatInterval, task.RepeatUntil, task.NotifyEmail,
-		task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.RawText, task.UpdatedAt,
+		task.LastNotifiedAt, task.CancelReason, task.CompletedAt, task.CompletionFeeling, task.RawText, task.UpdatedAt,
+		task.CompletionCount,
 		task.ID)
 	return err
 }
@@ -623,10 +643,13 @@ func (db *DB) UpdatePlannerTask(task *PlannerTask) error {
 func (db *DB) CreatePlannerTaskComment(comment *PlannerTaskComment) error {
 	comment.ID = generateID(8)
 	comment.CreatedAt = time.Now()
+	if comment.ImageURLs == "" {
+		comment.ImageURLs = "[]"
+	}
 	_, err := db.conn.Exec(`
-		INSERT INTO planner_task_comments (id, task_id, profile_id, author, content, created_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, comment.ID, comment.TaskID, comment.ProfileID, comment.Author, comment.Content, comment.CreatedAt)
+		INSERT INTO planner_task_comments (id, task_id, profile_id, author, content, image_urls, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, comment.ID, comment.TaskID, comment.ProfileID, comment.Author, comment.Content, comment.ImageURLs, comment.CreatedAt)
 	return err
 }
 
@@ -642,7 +665,7 @@ func (db *DB) CreatePlannerTaskActivity(activity *PlannerTaskActivity) error {
 
 func (db *DB) ListPlannerTaskComments(taskID string) ([]*PlannerTaskComment, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, task_id, profile_id, author, content, created_at
+		SELECT id, task_id, profile_id, author, content, image_urls, created_at
 		FROM planner_task_comments
 		WHERE task_id = ?
 		ORDER BY created_at ASC
@@ -655,7 +678,7 @@ func (db *DB) ListPlannerTaskComments(taskID string) ([]*PlannerTaskComment, err
 	result := make([]*PlannerTaskComment, 0)
 	for rows.Next() {
 		item := &PlannerTaskComment{}
-		if err := rows.Scan(&item.ID, &item.TaskID, &item.ProfileID, &item.Author, &item.Content, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.TaskID, &item.ProfileID, &item.Author, &item.Content, &item.ImageURLs, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
@@ -750,6 +773,25 @@ func (db *DB) CountPlannerTasks(profileID string) (map[string]int, error) {
 		stats[key] = count
 	}
 	return stats, rows.Err()
+}
+
+// 阶段 5 减法 (iter 20):统计某重复任务族已完成次数。
+// "族"定义为:同 profile + 同 title + 同 repeat_type + status='done'。
+// 包含 cancelled 的不算(用户放弃了 = 不算在族内完成)。
+// 返回值:已 done 的实例数 (含 task 自己,如果它当前是 done)
+func (db *DB) CountPlannerFamilyCompletions(profileID, title, repeatType string) (int, error) {
+	if title == "" || repeatType == "" || repeatType == "none" {
+		return 0, nil
+	}
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM planner_tasks
+		WHERE profile_id = ? AND title = ? AND repeat_type = ? AND status = 'done'
+	`, profileID, title, repeatType).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (db *DB) ListPlannerTasksDueForReminder(now time.Time, limit int) ([]*PlannerTask, error) {
@@ -886,4 +928,225 @@ func (db *DB) SearchPlannerProfiles(keyword string, limit int) ([]*PlannerProfil
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// PlannerSearchKind 搜索匹配类型。
+const (
+	PlannerSearchKindTask      = "task"      // 任务标题/详情/备注
+	PlannerSearchKindComment   = "comment"   // 评论内容
+	PlannerSearchKindRecording = "recording" // 语音备忘 / 事项录音 标题 + 转写
+)
+
+// PlannerSearchHit 单条搜索结果。
+// MatchKind 告诉前端命中的是哪种字段,前端据此跳转/高亮。
+// Snippet 是关键词附近的文本片段(已截断,前端可直接渲染)。
+// SourceID 对应评论 id 或语音备忘 id,点击结果时前端用它跳转到具体位置。
+type PlannerSearchHit struct {
+	TaskID    string `json:"task_id"`
+	TaskTitle string `json:"task_title"`
+	MatchKind string `json:"match_kind"`
+	Snippet   string `json:"snippet"`
+	SourceID  string `json:"source_id,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+}
+
+// PlannerSearch 跨任务 / 评论 / 录音的全文搜索。
+// 纯加性:不动 schema、不动老数据。空 query 返回空结果。
+// 去重策略:同一任务最多 maxPerTask 条,按 match_kind 优先级(评论 > 录音 > 任务)和时间倒序。
+func (db *DB) PlannerSearch(profileID, query string, maxTotal, maxPerTask int) ([]*PlannerSearchHit, error) {
+	if maxTotal <= 0 {
+		maxTotal = 30
+	}
+	if maxPerTask <= 0 {
+		maxPerTask = 3
+	}
+	q := strings.TrimSpace(query)
+	if q == "" || profileID == "" {
+		return []*PlannerSearchHit{}, nil
+	}
+	like := "%" + q + "%"
+	results := []*PlannerSearchHit{}
+
+	// 1) 任务自身:title / detail / notes / raw_text
+	taskRows, err := db.conn.Query(`
+		SELECT id, title, COALESCE(detail,''), COALESCE(notes,''), COALESCE(raw_text,''), updated_at
+		FROM planner_tasks
+		WHERE profile_id = ?
+		  AND (title LIKE ? OR detail LIKE ? OR notes LIKE ? OR raw_text LIKE ?)
+		ORDER BY updated_at DESC
+		LIMIT ?
+	`, profileID, like, like, like, like, maxTotal)
+	if err == nil {
+		defer taskRows.Close()
+		for taskRows.Next() {
+			var id, title, detail, notes, raw string
+			var updated string
+			if err := taskRows.Scan(&id, &title, &detail, &notes, &raw, &updated); err != nil {
+				continue
+			}
+			snippet := firstMatchSnippet([]string{title, detail, notes, raw}, q, 80)
+			results = append(results, &PlannerSearchHit{
+				TaskID:    id,
+				TaskTitle: title,
+				MatchKind: PlannerSearchKindTask,
+				Snippet:   snippet,
+				CreatedAt: updated,
+			})
+		}
+	}
+
+	// 2) 评论
+	commentRows, err := db.conn.Query(`
+		SELECT c.id, c.task_id, t.title, c.content, c.created_at
+		FROM planner_task_comments c
+		JOIN planner_tasks t ON t.id = c.task_id
+		WHERE t.profile_id = ? AND c.content LIKE ?
+		ORDER BY c.created_at DESC
+		LIMIT ?
+	`, profileID, like, maxTotal)
+	if err == nil {
+		defer commentRows.Close()
+		for commentRows.Next() {
+			var cid, tid, title, content, created string
+			if err := commentRows.Scan(&cid, &tid, &title, &content, &created); err != nil {
+				continue
+			}
+			results = append(results, &PlannerSearchHit{
+				TaskID:    tid,
+				TaskTitle: title,
+				MatchKind: PlannerSearchKindComment,
+				Snippet:   firstMatchSnippet([]string{content}, q, 80),
+				SourceID:  cid,
+				CreatedAt: created,
+			})
+		}
+	}
+
+	// 3) 语音备忘:title + transcript(同事务档案下,绑定或不绑定到任务都搜)
+	recordingRows, err := db.conn.Query(`
+		SELECT id, COALESCE(planner_task_id,''), COALESCE(title,''), COALESCE(transcript,''), created_at
+		FROM voice_memos
+		WHERE planner_profile_id = ?
+		  AND deleted_at IS NULL
+		  AND (title LIKE ? OR transcript LIKE ?)
+		ORDER BY created_at DESC
+		LIMIT ?
+	`, profileID, like, like, maxTotal)
+	if err == nil {
+		defer recordingRows.Close()
+		for recordingRows.Next() {
+			var vid, tid, title, transcript, created string
+			if err := recordingRows.Scan(&vid, &tid, &title, &transcript, &created); err != nil {
+				continue
+			}
+			taskTitle := title
+			if tid != "" {
+				var t string
+				if err := db.conn.QueryRow(`SELECT title FROM planner_tasks WHERE id = ?`, tid).Scan(&t); err == nil {
+					taskTitle = t
+				}
+			}
+			results = append(results, &PlannerSearchHit{
+				TaskID:    tid,
+				TaskTitle: taskTitle,
+				MatchKind: PlannerSearchKindRecording,
+				Snippet:   firstMatchSnippet([]string{title, transcript}, q, 80),
+				SourceID:  vid,
+				CreatedAt: created,
+			})
+		}
+	}
+
+	// 去重 + 排序
+	deduped := dedupSearchHits(results, maxPerTask)
+	priority := map[string]int{
+		PlannerSearchKindComment:   0,
+		PlannerSearchKindRecording: 1,
+		PlannerSearchKindTask:      2,
+	}
+	sort.SliceStable(deduped, func(i, j int) bool {
+		pi, pj := priority[deduped[i].MatchKind], priority[deduped[j].MatchKind]
+		if pi != pj {
+			return pi < pj
+		}
+		return deduped[i].CreatedAt > deduped[j].CreatedAt
+	})
+	if len(deduped) > maxTotal {
+		deduped = deduped[:maxTotal]
+	}
+	return deduped, nil
+}
+
+// firstMatchSnippet 从候选文本中找第一个含 q 的位置,返回关键词前后 contextLen 字符的片段。
+// 若未命中返回第一个非空文本的截断版本。
+func firstMatchSnippet(candidates []string, q string, contextLen int) string {
+	ql := strings.ToLower(q)
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		idx := strings.Index(strings.ToLower(c), ql)
+		if idx < 0 {
+			continue
+		}
+		start := idx - contextLen
+		if start < 0 {
+			start = 0
+		}
+		end := idx + len(q) + contextLen
+		if end > len(c) {
+			end = len(c)
+		}
+		prefix := ""
+		suffix := ""
+		if start > 0 {
+			prefix = "…"
+		}
+		if end < len(c) {
+			suffix = "…"
+		}
+		return prefix + c[start:end] + suffix
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if len(c) > contextLen*2 {
+			return c[:contextLen*2] + "…"
+		}
+		return c
+	}
+	return ""
+}
+
+func dedupSearchHits(hits []*PlannerSearchHit, maxPerTask int) []*PlannerSearchHit {
+	if maxPerTask <= 0 {
+		maxPerTask = 3
+	}
+	countByTask := make(map[string]int)
+	seen := make(map[string]bool)
+	out := []*PlannerSearchHit{}
+	for _, h := range hits {
+		if h == nil || h.TaskID == "" {
+			continue
+		}
+		if countByTask[h.TaskID] >= maxPerTask {
+			continue
+		}
+		key := h.TaskID + "|" + h.MatchKind + "|" + h.SourceID + "|" + truncateForKey(h.Snippet, 30)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		countByTask[h.TaskID]++
+		out = append(out, h)
+	}
+	return out
+}
+
+func truncateForKey(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }

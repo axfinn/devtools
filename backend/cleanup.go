@@ -97,8 +97,9 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			if err == nil && historyCount > 0 {
 				log.Printf("已清理 %d 条旧 SSH 历史记录（超过%d天）", historyCount, cfg.SSH.HistoryMaxAgeDays)
 			}
-			// 清理过期上传文件（7天），跳过 NFS 分享上传的文件
-			protected, _ := db.ActiveUploadFilenames()
+			// 清理过期上传文件（7天），跳过被任何持久化内容引用的文件
+			// (NFS 分享 / 粘贴板附件 / 事项评论图 / 事项录音 / 语音备忘 / 聊天室 / 照片墙 / Markdown / Excalidraw)
+			protected, _ := db.ReferencedUploadFilenames()
 			uploadCount, err := utils.CleanExpiredUploads("./data/uploads", 7, protected)
 			if err == nil && uploadCount > 0 {
 				log.Printf("已清理 %d 个过期上传文件", uploadCount)
