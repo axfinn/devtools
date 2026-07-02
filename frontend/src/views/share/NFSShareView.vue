@@ -1523,15 +1523,21 @@ function uploadChunk(blob, mimeType, sessionId, seq) {
   recordBytesUploaded.value += blob.size
   const url = `/api/nfsshare/${id}/record?session=${sessionId}&seq=${seq}${pwd}`
   const send = (attempt) => {
-    fetch(url, { method: 'POST', body: formData, keepalive: true })
+    // 30s 超时:服务器挂死或网络半开时主动 abort,避免 retry 队列无限堆叠
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort('timeout'), 30000)
+    fetch(url, { method: 'POST', body: formData, keepalive: true, signal: controller.signal })
       .then(res => {
+        clearTimeout(timer)
         recordLastUploadMs.value = Math.round(performance.now() - t0)
         recordLastStatus.value = res.ok ? 'ok' : `HTTP ${res.status}`
         if (!res.ok) console.warn(`[Recording] chunk #${seq} upload HTTP ${res.status}`)
       })
       .catch(err => {
-        console.warn(`[Recording] chunk #${seq} upload attempt ${attempt} failed`, err)
-        recordLastStatus.value = attempt < 3 ? '重试中' : '网络错误'
+        clearTimeout(timer)
+        const isAbort = err && (err.name === 'AbortError' || err === 'timeout')
+        console.warn(`[Recording] chunk #${seq} attempt ${attempt} ${isAbort ? 'timeout' : 'failed'}`, err)
+        recordLastStatus.value = attempt < 3 ? '重试中' : (isAbort ? '超时' : '网络错误')
         if (attempt < 3) setTimeout(() => send(attempt + 1), 500 * attempt)
       })
   }

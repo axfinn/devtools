@@ -442,11 +442,19 @@ func (h *NFSShareHandler) finalizeRecording(shareID, sessionID, clientIP string)
 	}
 
 	// 按文件名排序（已用 %06d 序号命名）
+	// 排除所有点文件 —— `.client_ip` 是元数据,会被 ip 关联逻辑读,
+	// 但若被字节拼进音频流会直接毁掉整个文件(IP 地址字节会被 ffprobe 当成噪音/坏数据,
+	// 进而 hasAudioStream 校验失败,产物被 os.Remove 删除 —— 对应"分片都在上传,却没录音文件")
 	var chunks []string
 	for _, e := range entries {
-		if !e.IsDir() && e.Name() != "list.txt" {
-			chunks = append(chunks, filepath.Join(chunkDir, e.Name()))
+		if e.IsDir() {
+			continue
 		}
+		name := e.Name()
+		if name == "list.txt" || strings.HasPrefix(name, ".") {
+			continue
+		}
+		chunks = append(chunks, filepath.Join(chunkDir, name))
 	}
 	if len(chunks) == 0 {
 		return

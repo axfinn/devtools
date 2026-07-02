@@ -3,8 +3,11 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -417,5 +420,140 @@ func TestIsInitialAccessRequest(t *testing.T) {
 				t.Fatalf("isInitialAccessRequest = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// UploadRecord 同一 (session, seq) 重传时必须幂等,否则前端 retry 会反复落盘覆盖。
+// 完整跑通需要文件落地;此处直接构造 chunkDir 与 chunkFile,验证去重分支不报错即可。
+func TestUploadRecordChunkDedup(t *testing.T) {
+	h := newNFSShareTestHandler(t)
+
+	// 建一个 share 用于 ID;不需要真实文件,因为 chunkDir 路径只与 id/session 有关
+	share, err := h.db.CreateNFSShare("test", "irrelevant/path", "video/mp4", "", 0, 100, nil, "127.0.0.1", true, true)
+	if err != nil {
+		t.Fatalf("CreateNFSShare: %v", err)
+	}
+	id := share.ID
+
+	sessionID := "test_session_dedup"
+	chunkDir := filepath.Join("./data/records", id, "chunks", sessionID)
+	if err := os.MkdirAll(chunkDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// 预置 seq=0 的 chunk,模拟已上传成功
+	chunkFile := filepath.Join(chunkDir, "000000.webm")
+	if err := os.WriteFile(chunkFile, []byte("pretend-webm-bytes"), 0644); err != nil {
+		t.Fatalf("seed chunk: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(filepath.Join("./data/records", id)) })
+
+	// 再次上传 seq=0:必须返回 200 + duplicate:true,且不动 chunkFile 内容
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	fw, err := mw.CreateFormFile("audio", "record.webm")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write([]byte("new-webm-bytes"))
+	mw.Close()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost,
+		"/api/nfsshare/"+id+"/record?session="+sessionID+"&seq=0", body)
+	c.Request.Header.Set("Content-Type", mw.FormDataContentType())
+	c.Params = gin.Params{{Key: "id", Value: id}}
+	h.UploadRecord(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK        bool `json:"ok"`
+		Duplicate bool `json:"duplicate"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !resp.OK || !resp.Duplicate {
+		t.Fatalf("resp = %+v, want ok=true duplicate=true", resp)
+	}
+	// 关键:chunkFile 不能被覆盖
+	got, err := os.ReadFile(chunkFile)
+	if err != nil {
+		t.Fatalf("read after dup: %v", err)
+	}
+	if string(got) != "pretend-webm-bytes" {
+		t.Fatalf("chunkFile was overwritten on dedup hit, got: %q", got)
+	}
+}
+
+// 回归:finalizeRecording 必须排除 chunkDir 里的元数据文件(.client_ip 等),
+// 否则 IP 字节会被拼到音频流开头,毁掉整个文件 —— 对应"分片都在上传,产物却不存在"
+// 真实场景:192.168.1.5\n 这种 12 字节前缀被 ffprobe 当噪音,hasAudioStream 判定失败,
+// 之后 os.Remove(outFile) 删掉产物,访客端 /api/.../record 永远 404。
+func TestFinalizeRecording_IgnoresDotFiles(t *testing.T) {
+	h := newNFSShareTestHandler(t)
+
+	share, err := h.db.CreateNFSShare("test", "irrelevant/path", "video/mp4", "", 0, 100, nil, "127.0.0.1", true, true)
+	if err != nil {
+		t.Fatalf("CreateNFSShare: %v", err)
+	}
+	id := share.ID
+	const sessionID = "dotfile_exclude_test"
+
+	chunkDir := filepath.Join("./data/records", id, "chunks", sessionID)
+	if err := os.MkdirAll(chunkDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	outDir := filepath.Join("./data/records", id)
+	t.Cleanup(func() { os.RemoveAll(filepath.Join("./data/records", id)) })
+
+	// 元数据:IP 字符串(精确 12 字节,这是它在 outFile 头部嵌入时的形态)
+	clientIPBytes := []byte("192.168.1.5\n")
+	if err := os.WriteFile(filepath.Join(chunkDir, ".client_ip"), clientIPBytes, 0644); err != nil {
+		t.Fatalf("seed .client_ip: %v", err)
+	}
+	// 两个 11 字节的"假 webm"分片,后续会被 ffprobe 拒绝(outFile 被删)—— 不重要,
+	// 关键是 finalize 必须先把 .client_ip 排除掉再写文件。
+	for i, body := range []string{"WEBM-CHUNK-0", "WEBM-CHUNK-1"} {
+		name := fmt.Sprintf("%06d.webm", i)
+		if err := os.WriteFile(filepath.Join(chunkDir, name), []byte(body), 0644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+
+	// outDir 里已有旧产物就先清干净
+	if entries, err := os.ReadDir(outDir); err == nil {
+		for _, e := range entries {
+			os.Remove(filepath.Join(outDir, e.Name()))
+		}
+	}
+
+	h.finalizeRecording(id, sessionID, "192.168.1.5")
+
+	// 核心断言:如果 outDir 里**存在**任何输出文件,它的前 12 字节都**不能**是 IP 字节
+	// (假如旧的 buggy 行为,IP 字节会按字典序排在 000000 前,污染文件头)
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		// outDir 不存在 = 最终无产物(ffprobe 拒了假 webm,这是预期),测试通过
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		fp := filepath.Join(outDir, e.Name())
+		f, err := os.Open(fp)
+		if err != nil {
+			continue
+		}
+		head := make([]byte, len(clientIPBytes))
+		n, _ := f.Read(head)
+		f.Close()
+		if n == len(clientIPBytes) && string(head) == string(clientIPBytes) {
+			t.Fatalf("output file %s starts with .client_ip bytes (corruption): %q",
+				e.Name(), head)
+		}
 	}
 }

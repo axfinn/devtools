@@ -605,6 +605,13 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 	clientIPFile := filepath.Join(chunkDir, ".client_ip")
 	os.WriteFile(clientIPFile, []byte(clientIP), 0644)
 	chunkFile := filepath.Join(chunkDir, fmt.Sprintf("%06d%s", seq, ext))
+	// 幂等:同一 (session, seq) 重传时直接返回成功,避免重复落盘 IO 和覆盖写。
+	// 客户端 retry 用相同 seq,所以这里去重是必要的。
+	if _, err := os.Stat(chunkFile); err == nil {
+		h.touchRecordSession(id, sessionID, clientIP)
+		c.JSON(http.StatusOK, gin.H{"ok": true, "duplicate": true})
+		return
+	}
 	out, err := os.Create(chunkFile)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件创建失败"})
