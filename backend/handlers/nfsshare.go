@@ -220,6 +220,17 @@ func (h *NFSShareHandler) checkEnabled(c *gin.Context) bool {
 	return true
 }
 
+// requireAdmin admin 鉴权:优先 cookie(verifyAdminFromContext),fallback body 字段
+// 失败时直接写 403,返回 false.前端登录后清空内存里的明文密码,后续 admin 调用
+// 走 HttpOnly cookie;body 字段保留是为兼容老调用方
+func (h *NFSShareHandler) requireAdmin(c *gin.Context, bodyPwd string) bool {
+	if h.verifyAdminFromContext(c) || h.verifyAdmin(bodyPwd) {
+		return true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+	return false
+}
+
 // parsePath 解析 "mount_name/relative/path"，返回 mountStatus 和相对路径（SMB 用）或绝对路径（NFS/local 用）
 type parsedPath struct {
 	ms      *MountStatus
@@ -297,14 +308,14 @@ func detectMimeType(filename string) string {
 
 // CreateNFSShareRequest 创建分享请求
 type CreateNFSShareRequest struct {
-	AdminPassword       string `json:"admin_password" binding:"required"`
+	AdminPassword       string `json:"admin_password"`
 	Name                string `json:"name" binding:"required"`
 	FilePath            string `json:"file_path" binding:"required"`
 	MaxViews            int    `json:"max_views" binding:"required,min=1"`
 	ExpiresDays         int    `json:"expires_days"`
-	Password            string `json:"password"`       // 可选，访问密码
-	RecordEnabled       bool   `json:"record_enabled"` // 是否开启访客录音
-	ShowRecordIndicator *bool  `json:"show_record_indicator,omitempty"` // 留空默认 true
+	Password            string `json:"password"`
+	RecordEnabled       bool   `json:"record_enabled"`
+	ShowRecordIndicator *bool  `json:"show_record_indicator,omitempty"`
 }
 
 // Create 创建分享（超管）

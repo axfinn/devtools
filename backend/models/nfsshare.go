@@ -327,14 +327,14 @@ func (db *DB) GetNFSShareSummary(id string) (*NFSShareSummary, error) {
 }
 
 // UpdateNFSShare 更新分享的访问次数上限、过期时间与开关
-func (db *DB) UpdateNFSShare(id string, maxViews int, expiresAt *time.Time, watchEnabled, recordEnabled bool) error {
+func (db *DB) UpdateNFSShare(id string, maxViews int, expiresAt *time.Time, watchEnabled, recordEnabled, showRecordIndicator bool) error {
 	var expiresAtVal interface{}
 	if expiresAt != nil {
 		expiresAtVal = *expiresAt
 	}
 	_, err := db.conn.Exec(
-		`UPDATE nfs_shares SET max_views = ?, expires_at = ?, watch_enabled = ?, record_enabled = ? WHERE id = ?`,
-		maxViews, expiresAtVal, watchEnabled, recordEnabled, id,
+		`UPDATE nfs_shares SET max_views = ?, expires_at = ?, watch_enabled = ?, record_enabled = ?, show_record_indicator = ? WHERE id = ?`,
+		maxViews, expiresAtVal, watchEnabled, recordEnabled, showRecordIndicator, id,
 	)
 	return err
 }

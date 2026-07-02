@@ -715,6 +715,10 @@
           <el-switch v-model="editForm.recordEnabled" active-text="开启" inactive-text="关闭" />
           <div class="text-xs text-gray-400 mt-1">开启后访客观看时自动录音并保存</div>
         </el-form-item>
+        <el-form-item label="录音提示" v-if="editForm.recordEnabled">
+          <el-switch v-model="editForm.showRecordIndicator" active-text="显示" inactive-text="隐藏" />
+          <div class="text-xs text-gray-400 mt-1">关闭后访客页面不再显示 REC 提示徽标,录音仍正常进行</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editDialogVisible = false">取消</el-button>
@@ -846,7 +850,7 @@ const targetDirBreadcrumbs = computed(() => {
 // 编辑弹窗
 const editDialogVisible = ref(false)
 const editTarget = ref(null)
-const editForm = reactive({ addViews: 0, addDays: 0, watchEnabled: false, recordEnabled: false })
+const editForm = reactive({ addViews: 0, addDays: 0, watchEnabled: false, recordEnabled: false, showRecordIndicator: true })
 const editLoading = ref(false)
 
 // 录音播放
@@ -1001,7 +1005,6 @@ async function createShare() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        admin_password: adminPassword.value,
         name: nameToSend,
         file_path: createForm.filePath,
         max_views: createForm.maxViews,
@@ -1371,7 +1374,6 @@ async function startUpload() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        admin_password: adminPassword.value,
         filename: file.name,
         total_size: file.size,
         total_chunks: totalChunks,
@@ -1406,7 +1408,7 @@ async function startUpload() {
     const completeRes = await fetch(`/api/nfsshare/admin/upload/${token}/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ admin_password: adminPassword.value, total_chunks: totalChunks })
+      body: JSON.stringify({ total_chunks: totalChunks })
     })
     const completeData = await completeRes.json()
     if (!completeRes.ok) { ElMessage.error(completeData.error || '合并失败'); return }
@@ -1426,7 +1428,6 @@ async function createUploadShare() {
   uploadShareLoading.value = true
   try {
     const body = {
-      admin_password: adminPassword.value,
       name: uploadShareForm.name || uploadedFilePath.value.split('/').pop(),
       file_path: uploadedFilePath.value,
       max_views: uploadShareForm.maxViews,
@@ -1459,6 +1460,7 @@ function openEditDialog(row) {
   editForm.addDays = 0
   editForm.watchEnabled = row.watch_enabled || false
   editForm.recordEnabled = row.record_enabled || false
+  editForm.showRecordIndicator = row.show_record_indicator !== false
   editDialogVisible.value = true
 }
 
@@ -1466,16 +1468,21 @@ async function submitEdit() {
   if (!editTarget.value) return
   editLoading.value = true
   try {
+    // 录音关闭时不带 show_record_indicator,沿用后端 *bool nil=不动的语义,
+    // 避免把"录音提示"的值在关闭录音时意外回写
+    const body = {
+      add_views: editForm.addViews,
+      add_days: editForm.addDays,
+      watch_enabled: editForm.watchEnabled,
+      record_enabled: editForm.recordEnabled
+    }
+    if (editForm.recordEnabled) {
+      body.show_record_indicator = editForm.showRecordIndicator
+    }
     const res = await fetch(`/api/nfsshare/admin/${editTarget.value.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        admin_password: adminPassword.value,
-        add_views: editForm.addViews,
-        add_days: editForm.addDays,
-        watch_enabled: editForm.watchEnabled,
-        record_enabled: editForm.recordEnabled
-      })
+      body: JSON.stringify(body)
     })
     const data = await res.json()
     if (!res.ok) {

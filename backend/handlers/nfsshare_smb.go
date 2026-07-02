@@ -196,8 +196,8 @@ func (h *NFSShareHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if !h.verifyAdmin(req.AdminPassword) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+	// 优先走 cookie,fallback body 字段,兼容直接传密码的老调用方
+	if !h.requireAdmin(c, req.AdminPassword) {
 		return
 	}
 

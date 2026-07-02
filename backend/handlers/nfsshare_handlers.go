@@ -384,6 +384,7 @@ func (h *NFSShareHandler) Info(c *gin.Context) {
 		"has_password":           share.Password != "",
 		"watch_enabled":          share.WatchEnabled,
 		"record_enabled":         share.RecordEnabled,
+		"show_record_indicator":  share.ShowRecordIndicator,
 	})
 }
 
@@ -626,13 +627,14 @@ func (h *NFSShareHandler) ServeRecord(c *gin.Context) {
 }
 
 type UpdateNFSShareRequest struct {
-	AdminPassword string     `json:"admin_password" binding:"required"`
-	MaxViews      int        `json:"max_views"`
-	AddViews      int        `json:"add_views"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	AddDays       int        `json:"add_days"`
-	WatchEnabled  *bool      `json:"watch_enabled"`
-	RecordEnabled *bool      `json:"record_enabled"`
+	AdminPassword       string     `json:"admin_password"`
+	MaxViews            int        `json:"max_views"`
+	AddViews            int        `json:"add_views"`
+	ExpiresAt           *time.Time `json:"expires_at"`
+	AddDays             int        `json:"add_days"`
+	WatchEnabled        *bool      `json:"watch_enabled"`
+	RecordEnabled       *bool      `json:"record_enabled"`
+	ShowRecordIndicator *bool      `json:"show_record_indicator,omitempty"` // 留空表示不动
 }
 
 // AdminUpdate 修改分享配置（超管）
@@ -646,8 +648,7 @@ func (h *NFSShareHandler) AdminUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if !h.verifyAdmin(req.AdminPassword) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+	if !h.requireAdmin(c, req.AdminPassword) {
 		return
 	}
 	share, err := h.db.GetNFSShare(id)
@@ -682,12 +683,22 @@ func (h *NFSShareHandler) AdminUpdate(c *gin.Context) {
 	if req.RecordEnabled != nil {
 		newRecordEnabled = *req.RecordEnabled
 	}
-	if err := h.db.UpdateNFSShare(id, newMaxViews, newExpiresAt, newWatchEnabled, newRecordEnabled); err != nil {
+	newShowRecordIndicator := share.ShowRecordIndicator
+	if req.ShowRecordIndicator != nil {
+		newShowRecordIndicator = *req.ShowRecordIndicator
+	}
+	if err := h.db.UpdateNFSShare(id, newMaxViews, newExpiresAt, newWatchEnabled, newRecordEnabled, newShowRecordIndicator); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	updated, _ := h.db.GetNFSShare(id)
-	c.JSON(http.StatusOK, updated)
+	// 用内存里已 patch 好的 share 兜底回写(Views/CreatedAt 等非请求字段从原值带过来),
+	// 避免再发一次 GetNFSShare 读
+	share.MaxViews = newMaxViews
+	share.ExpiresAt = newExpiresAt
+	share.WatchEnabled = newWatchEnabled
+	share.RecordEnabled = newRecordEnabled
+	share.ShowRecordIndicator = newShowRecordIndicator
+	c.JSON(http.StatusOK, share)
 }
 
 // AdminGetSummary 删除前预览,告诉管理员"会涉及多少东西"
@@ -1348,11 +1359,11 @@ func (h *NFSShareHandler) GetTurnCredentials(c *gin.Context) {
 // -------- 文件上传 --------
 
 type uploadInitRequest struct {
-	AdminPassword string `json:"admin_password" binding:"required"`
+	AdminPassword string `json:"admin_password"`
 	Filename      string `json:"filename" binding:"required"`
 	TotalSize     int64  `json:"total_size"`
 	TotalChunks   int    `json:"total_chunks" binding:"required,min=1"`
-	TargetDir     string `json:"target_dir"` // 可选，格式 "mountName/subdir"，空则存到 __uploads__
+	TargetDir     string `json:"target_dir"`
 }
 
 // UploadInit 初始化分片上传，返回 token
@@ -1365,8 +1376,7 @@ func (h *NFSShareHandler) UploadInit(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if !h.verifyAdmin(req.AdminPassword) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+	if !h.requireAdmin(c, req.AdminPassword) {
 		return
 	}
 	// 文件名安全处理
@@ -1456,7 +1466,7 @@ func (h *NFSShareHandler) UploadChunk(c *gin.Context) {
 }
 
 type uploadCompleteRequest struct {
-	AdminPassword string `json:"admin_password" binding:"required"`
+	AdminPassword string `json:"admin_password"`
 	TotalChunks   int    `json:"total_chunks" binding:"required,min=1"`
 }
 
@@ -1471,8 +1481,7 @@ func (h *NFSShareHandler) UploadComplete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if !h.verifyAdmin(req.AdminPassword) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+	if !h.requireAdmin(c, req.AdminPassword) {
 		return
 	}
 	tmpDir := filepath.Join("./data/uploads/.tmp", token)
