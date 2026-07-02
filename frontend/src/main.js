@@ -62,9 +62,11 @@ function showFatalError(err, source) {
 // 已知良性的 rejection,不显示到 fatal 浮层(但仍 console.warn 留底,方便排查)
 //   - 视频 play() 被新的 load 请求打断:Chrome 在切换 src / 销毁重建视频元素时正常行为
 //   - AbortError:fetch 主动 abort(切路由、组件卸载、用户取消上传等场景)
+//   - no supported sources:媒体元素 src 不可播放(常见:文件损坏/编码不支持),页面 @error 已显示错误提示
 const BENIGN_REJECTION_PATTERNS = [
   /play\(\) request was interrupted/i,
   /\bAbortError\b/i,
+  /no supported sources/i,
 ]
 function isBenignRejection(reason) {
   const msg = String((reason && (reason.stack || reason.message)) || reason || '')
@@ -73,8 +75,10 @@ function isBenignRejection(reason) {
 
 // 已知良性的 window.error(框架偶发上报,不影响功能)
 //   - ResizeObserver loop:Chrome 在同一帧内多次布局回调时常报,
+//   - no supported sources:媒体元素 src 不可播放(页面 @error 已显示错误提示)
 const BENIGN_WINDOW_ERROR_PATTERNS = [
   /ResizeObserver loop completed with undelivered notifications/i,
+  /no supported sources/i,
 ]
 function isBenignWindowError(event) {
   const msg = String((event && (event.error && (event.error.stack || event.error.message))) || event.message || event || '')

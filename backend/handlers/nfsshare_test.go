@@ -387,3 +387,35 @@ func TestNFSShareUploadComplete_CookieAuth(t *testing.T) {
 		t.Fatalf("UploadComplete with cookie still hits AdminPassword binding: %s", w.Body.String())
 	}
 }
+
+// 回归 Range 多次请求刷 view 的 bug:浏览器 seek/多段下载只会发 Range 请求,
+// 不应被 Access/Stream 计入 view 或写 success 日志
+func TestIsInitialAccessRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		rangeH string
+		want   bool
+	}{
+		{"GET 无 Range(老浏览器/curl)", http.MethodGet, "", true},
+		{"GET Range 字节首段", http.MethodGet, "bytes=0-", true},
+		{"GET Range 字节首段带末尾", http.MethodGet, "bytes=0-1023", true},
+		{"GET Range 中段(seek)", http.MethodGet, "bytes=1024-2047", false},
+		{"GET Range 末尾段", http.MethodGet, "bytes=500-", false},
+		{"HEAD 任意", http.MethodHead, "", false},
+		{"HEAD 带 Range", http.MethodHead, "bytes=0-", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(tt.method, "/api/nfsshare/x", nil)
+			if tt.rangeH != "" {
+				c.Request.Header.Set("Range", tt.rangeH)
+			}
+			if got := isInitialAccessRequest(c); got != tt.want {
+				t.Fatalf("isInitialAccessRequest = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

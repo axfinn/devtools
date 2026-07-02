@@ -268,6 +268,22 @@ var videoExtensions = map[string]string{
 	".3g2":  "video/3gpp2",
 }
 
+// isInitialAccessRequest 区分首请求 vs 后续 Range / HEAD,用于决定是否计入 view 与日志
+//   - HEAD 不计(view 是访问次数,预检不算)
+//   - 无 Range 视为首次(老浏览器/curl 直接拉)
+//   - Range: bytes=0- 视为首次(浏览器加载媒体首段,等价完整请求)
+//   - 其他 Range(bytes=1024- 等 seek / 多段下载)不计
+func isInitialAccessRequest(c *gin.Context) bool {
+	if c.Request.Method == "HEAD" {
+		return false
+	}
+	r := c.GetHeader("Range")
+	if r == "" {
+		return true
+	}
+	return strings.HasPrefix(r, "bytes=0-")
+}
+
 // detectMimeType 根据文件扩展名检测 MIME 类型，对常见视频格式有可靠的回退
 func (h *NFSShareHandler) Access(c *gin.Context) {
 	if !h.checkEnabled(c) {
@@ -313,7 +329,12 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 		return
 	}
 
-	h.db.IncrementNFSShareViews(id)
+	// 首请求才计入 view 与 success 日志;Range seek/HEAD 预检不计,
+	// 否则浏览器一次播放会产生几十次访问记录
+	countAccess := isInitialAccessRequest(c)
+	if countAccess {
+		h.db.IncrementNFSShareViews(id)
+	}
 	filename := filepath.Base(share.FilePath)
 
 	if strings.ToLower(pp.ms.Config.Type) == "smb" {
@@ -325,7 +346,9 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 			return
 		}
 		defer f.Close()
-		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", size)
+		if countAccess {
+			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", size)
+		}
 		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		c.Header("Content-Type", share.MimeType)
 		c.Header("Content-Length", fmt.Sprintf("%d", size))
@@ -338,7 +361,9 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "源文件不存在"})
 			return
 		}
-		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", info.Size())
+		if countAccess {
+			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", info.Size())
+		}
 		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		c.Header("Content-Type", share.MimeType)
 		c.File(pp.absPath)
@@ -782,7 +807,11 @@ func (h *NFSShareHandler) Stream(c *gin.Context) {
 		return
 	}
 
-	h.db.IncrementNFSShareViews(id)
+	// 首请求才计入 view 与 success 日志;Range seek / HEAD 不计
+	countAccess := isInitialAccessRequest(c)
+	if countAccess {
+		h.db.IncrementNFSShareViews(id)
+	}
 	mimeType := share.MimeType
 	if mimeType == "" || mimeType == "application/octet-stream" {
 		mimeType = detectMimeType(share.FilePath)
@@ -796,12 +825,16 @@ func (h *NFSShareHandler) Stream(c *gin.Context) {
 			return
 		}
 		defer f.Close()
-		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", size)
+		if countAccess {
+			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", size)
+		}
 		c.Header("Content-Type", mimeType)
 		c.Header("Content-Length", fmt.Sprintf("%d", size))
 		io.Copy(c.Writer, f)
 	} else {
-		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", share.FileSize)
+		if countAccess {
+			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", share.FileSize)
+		}
 		c.Header("Content-Type", mimeType)
 		// 用 http.ServeContent 支持 Range 请求（浏览器 seek）
 		f, err := os.Open(pp.absPath)
