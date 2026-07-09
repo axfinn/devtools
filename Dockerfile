@@ -1,4 +1,4 @@
-FROM node:20-alpine AS frontend-builder
+FROM node:26-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
@@ -13,7 +13,7 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build
 
 # Build AskIt Chrome extension
-FROM node:20-alpine AS askit-builder
+FROM node:26-alpine AS askit-builder
 
 RUN apk add --no-cache git zip
 WORKDIR /app/askit
