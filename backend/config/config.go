@@ -710,6 +710,24 @@ func Load(path string) (*Config, error) {
 		cfg.Chat.TTSServiceURL = "http://127.0.0.1:8083"
 	}
 
+	// TURN 配置支持环境变量覆盖(docker 部署时不必挂载 config.yaml)
+	if v := os.Getenv("TURN_HOST"); v != "" {
+		cfg.TURN.Host = v
+	}
+	if v := os.Getenv("TURN_PORT"); v != "" {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.TURN.Port = n
+		}
+	}
+	if v := os.Getenv("TURN_SECRET"); v != "" {
+		cfg.TURN.Secret = v
+	}
+	if v := os.Getenv("TURN_TTL"); v != "" {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.TURN.TTL = n
+		}
+	}
+
 	// AskIt 云同步配置环境变量覆盖
 	if v := os.Getenv("ASKIT_SYNC_REGISTRATION_MODE"); v != "" {
 		cfg.AskitSync.RegistrationMode = v

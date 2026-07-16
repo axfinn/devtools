@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"devtools/config"
 	"devtools/models"
@@ -555,5 +556,639 @@ func TestFinalizeRecording_IgnoresDotFiles(t *testing.T) {
 			t.Fatalf("output file %s starts with .client_ip bytes (corruption): %q",
 				e.Name(), head)
 		}
+	}
+}
+
+// =================== nfsshare 列表/预览改造相关单测 ===================
+
+// sortFileEntries: 目录优先 + 主键升降序
+func TestSortFileEntries(t *testing.T) {
+	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	t3 := time.Date(2024, 12, 1, 0, 0, 0, 0, time.UTC)
+	entries := []FileEntry{
+		{Name: "b.txt", Size: 200, ModTime: t2, IsDir: false},
+		{Name: "zdir", Size: 0, ModTime: t1, IsDir: true},
+		{Name: "a.txt", Size: 100, ModTime: t3, IsDir: false},
+		{Name: "adir", Size: 0, ModTime: t2, IsDir: true},
+		{Name: "c.txt", Size: 50, ModTime: t1, IsDir: false},
+	}
+
+	tests := []struct {
+		name      string
+		orderBy   string
+		orderDir  string
+		wantNames []string
+	}{
+		{"name asc", "name", "asc", []string{"adir", "zdir", "a.txt", "b.txt", "c.txt"}},
+		{"name desc", "name", "desc", []string{"zdir", "adir", "c.txt", "b.txt", "a.txt"}},
+		{"size asc", "size", "asc", []string{"adir", "zdir", "c.txt", "a.txt", "b.txt"}},
+		{"size desc", "size", "desc", []string{"zdir", "adir", "b.txt", "a.txt", "c.txt"}},
+		{"mod_time asc", "mod_time", "asc", []string{"zdir", "adir", "c.txt", "b.txt", "a.txt"}},
+		{"mod_time desc", "mod_time", "desc", []string{"adir", "zdir", "a.txt", "b.txt", "c.txt"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := append([]FileEntry(nil), entries...)
+			sortFileEntries(got, tt.orderBy, tt.orderDir)
+			if len(got) != len(tt.wantNames) {
+				t.Fatalf("len = %d, want %d", len(got), len(tt.wantNames))
+			}
+			for i, name := range tt.wantNames {
+				if got[i].Name != name {
+					t.Errorf("pos %d: got %s, want %s (full=%v)", i, got[i].Name, name, namesOf(got))
+				}
+			}
+		})
+	}
+}
+
+func namesOf(es []FileEntry) []string {
+	out := make([]string, len(es))
+	for i, e := range es {
+		out[i] = e.Name
+	}
+	return out
+}
+
+// paginateFileEntries: 切片、越界、最后一页部分
+func TestPaginateFileEntries(t *testing.T) {
+	all := make([]FileEntry, 25)
+	for i := range all {
+		all[i] = FileEntry{Name: fmt.Sprintf("f%d", i)}
+	}
+	tests := []struct {
+		name     string
+		page     int
+		pageSize int
+		wantLen  int
+		wantMore bool
+		wantName string // 第一项 Name（验切片起点）
+	}{
+		{"first page", 1, 10, 10, true, "f0"},
+		{"middle page", 2, 10, 10, true, "f10"},
+		{"last full page", 3, 10, 5, false, "f20"},
+		{"beyond range", 4, 10, 0, false, ""},
+		{"page=1 size=25", 1, 25, 25, false, "f0"},
+		{"page=1 size=100", 1, 100, 25, false, "f0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paged, total, hasMore := paginateFileEntries(all, tt.page, tt.pageSize)
+			if total != 25 {
+				t.Errorf("total = %d, want 25", total)
+			}
+			if len(paged) != tt.wantLen {
+				t.Errorf("len(paged) = %d, want %d", len(paged), tt.wantLen)
+			}
+			if hasMore != tt.wantMore {
+				t.Errorf("hasMore = %v, want %v", hasMore, tt.wantMore)
+			}
+			if len(paged) > 0 && paged[0].Name != tt.wantName {
+				t.Errorf("first = %s, want %s", paged[0].Name, tt.wantName)
+			}
+		})
+	}
+}
+
+// isInlinePreviewable: mime → 浏览器内联 or 下载
+func TestIsInlinePreviewable(t *testing.T) {
+	tests := []struct {
+		mime string
+		want bool
+	}{
+		{"image/png", true},
+		{"image/jpeg", true},
+		{"image/webp", true},
+		{"video/mp4", true},
+		{"video/webm", true},
+		{"audio/mpeg", true},
+		{"audio/ogg", true},
+		{"text/plain", true},
+		{"text/html", true},
+		{"application/json", true},
+		{"application/pdf", true},
+		{"application/zip", false},
+		{"application/octet-stream", false},
+		{"application/x-tar", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mime, func(t *testing.T) {
+			if got := isInlinePreviewable(tt.mime); got != tt.want {
+				t.Errorf("isInlinePreviewable(%q) = %v, want %v", tt.mime, got, tt.want)
+			}
+		})
+	}
+}
+
+// Browse handler: 分页/搜索/排序 + 老调用兼容
+// 用 tmp 目录造 25 个文件 + 3 个目录，挂成 local mount，挂载到 __test_browse__ 上验证
+func TestBrowse_PaginationAndFilter(t *testing.T) {
+	h := newNFSShareTestHandler(t)
+
+	// 准备挂载点目录与文件
+	tmpDir := t.TempDir()
+	files := []struct {
+		name string
+		size int64
+	}{
+		{"alpha.txt", 100},
+		{"beta.txt", 500},
+		{"gamma.txt", 300},
+		{"apple.txt", 50},
+		{"zebra.txt", 700},
+		// 凑够 25 个不同前缀的文件，方便分页断言
+	}
+	for i := 0; i < 25; i++ {
+		files = append(files, struct {
+			name string
+			size int64
+		}{fmt.Sprintf("file_%02d.txt", i), int64(i * 10)})
+	}
+	dirs := []string{"docs", "images", "videos"}
+	for _, d := range dirs {
+		if err := os.MkdirAll(filepath.Join(tmpDir, d), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range files {
+		p := filepath.Join(tmpDir, f.name)
+		if err := os.WriteFile(p, bytes.Repeat([]byte("x"), int(f.size)), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 把 tmpDir 加为 local mount 名为 __test_browse__
+	h.mu.Lock()
+	h.mounts["__test_browse__"] = &MountStatus{
+		Config:    config.MountConfig{Name: "__test_browse__", Type: "local", Export: tmpDir},
+		LocalPath: tmpDir,
+		Mounted:   true,
+	}
+	h.mu.Unlock()
+
+	t.Run("legacy: no page returns all entries without pagination metadata", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Path    string       `json:"path"`
+			Entries []FileEntry  `json:"entries"`
+			Total   *int         `json:"total"`
+			Page    *int         `json:"page"`
+			HasMore *bool        `json:"has_more"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		// 老行为：total/page/has_more 不应出现（向后兼容）
+		if resp.Total != nil {
+			t.Errorf("legacy call should not include total, got %v", *resp.Total)
+		}
+		if len(resp.Entries) != len(files)+len(dirs) {
+			t.Errorf("entries = %d, want %d", len(resp.Entries), len(files)+len(dirs))
+		}
+	})
+
+	t.Run("page=1 page_size=10 returns first 10 + total/has_more", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__&page=1&page_size=10&order_by=name&order_dir=asc", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Entries  []FileEntry `json:"entries"`
+			Total    int         `json:"total"`
+			Page     int         `json:"page"`
+			PageSize int         `json:"page_size"`
+			HasMore  bool        `json:"has_more"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Total != len(files)+len(dirs) {
+			t.Errorf("total = %d, want %d", resp.Total, len(files)+len(dirs))
+		}
+		if resp.Page != 1 || resp.PageSize != 10 {
+			t.Errorf("page/page_size = %d/%d, want 1/10", resp.Page, resp.PageSize)
+		}
+		if !resp.HasMore {
+			t.Error("has_more should be true on page 1 with 28 total")
+		}
+		if len(resp.Entries) != 10 {
+			t.Errorf("entries = %d, want 10", len(resp.Entries))
+		}
+	})
+
+	t.Run("page=3 page_size=10 returns entries 20-29, has_more true (33 total)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__&page=3&page_size=10&order_by=name&order_dir=asc", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		var resp struct {
+			Entries []FileEntry `json:"entries"`
+			HasMore bool        `json:"has_more"`
+			Total   int         `json:"total"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		// 33 total (30 files + 3 dirs), page 3 of 10: start=20 end=30 = 10 entries; 还有第 4 页(33-30=3) → has_more=true
+		if resp.Total != 33 {
+			t.Errorf("total = %d, want 33", resp.Total)
+		}
+		if len(resp.Entries) != 10 {
+			t.Errorf("entries = %d, want 10 (positions 20-29)", len(resp.Entries))
+		}
+		if !resp.HasMore {
+			t.Error("has_more should be true (page 4 has 3 more)")
+		}
+	})
+
+	t.Run("page=4 page_size=10 returns last 3 entries, has_more false", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__&page=4&page_size=10&order_by=name&order_dir=asc", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		var resp struct {
+			Entries []FileEntry `json:"entries"`
+			HasMore bool        `json:"has_more"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if len(resp.Entries) != 3 {
+			t.Errorf("entries = %d, want 3 (33-30)", len(resp.Entries))
+		}
+		if resp.HasMore {
+			t.Error("has_more should be false on last page")
+		}
+	})
+
+	t.Run("q filter + page: file_01 matches file_01.txt only", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__&q=file_01&order_by=name&page=1&page_size=10", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		var resp struct {
+			Entries []FileEntry `json:"entries"`
+			Total   int         `json:"total"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp.Total != 1 {
+			t.Errorf("total = %d, want 1 (only file_01.txt)", resp.Total)
+		}
+	})
+
+	t.Run("q filter + page: file_ matches all 25 file_NN.txt", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__&q=file_&page=1&page_size=50", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		var resp struct {
+			Total int `json:"total"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if resp.Total != 25 {
+			t.Errorf("total = %d, want 25", resp.Total)
+		}
+	})
+
+	t.Run("order_by=size desc puts biggest file first (after dirs)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__&page=1&page_size=10&order_by=size&order_dir=desc", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		var resp struct {
+			Entries []FileEntry `json:"entries"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		// 头三个是目录（顺序无所谓），第一个文件应该是 zebra.txt (700 bytes)
+		var firstFile *FileEntry
+		for i := range resp.Entries {
+			if !resp.Entries[i].IsDir {
+				firstFile = &resp.Entries[i]
+				break
+			}
+		}
+		if firstFile == nil {
+			t.Fatal("no file in first 10 entries")
+		}
+		if firstFile.Name != "zebra.txt" {
+			t.Errorf("first file = %s, want zebra.txt", firstFile.Name)
+		}
+	})
+
+	t.Run("no auth: 403", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__&page=1", nil)
+		h.Browse(c)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", w.Code)
+		}
+	})
+
+	t.Run("mount_type propagated to FileEntry (前端据此隐藏 SMB 预览)", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/browse?path=__test_browse__", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		var resp struct {
+			Entries []struct {
+				Name      string `json:"name"`
+				MountType string `json:"mount_type"`
+			} `json:"entries"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		// 至少要有一个 entry, 且 mount_type=local
+		if len(resp.Entries) == 0 {
+			t.Fatal("no entries returned")
+		}
+		for _, e := range resp.Entries {
+			if e.MountType != "local" {
+				t.Errorf("entry %s: mount_type = %q, want local", e.Name, e.MountType)
+			}
+		}
+	})
+
+	t.Run("SMB mount entries tagged with mount_type=smb", func(t *testing.T) {
+		// 把 __smb_browse__ 加成 smb 挂载点,先调 ReadDir 必然失败,所以只验 tag 不会跑到 SMB 实际读
+		// 这里改为直接验"根目录列出挂载点"那支:挂载点本身 mount_type 应是 smb
+		h.mu.RLock()
+		_, has := h.mounts["__smb_browse__"]
+		h.mu.RUnlock()
+		if has {
+			t.Skip("__smb_browse__ already exists")
+		}
+		h.mu.Lock()
+		h.mounts["__smb_browse__"] = &MountStatus{
+			Config:  config.MountConfig{Name: "__smb_browse__", Type: "smb", Host: "fake", Share: "x"},
+			Mounted: false,
+		}
+		h.mu.Unlock()
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/nfsshare/admin/browse?path=.", nil)
+		nfsAdminCookie(c.Request)
+		h.Browse(c)
+		var resp struct {
+			Entries []struct {
+				Name      string `json:"name"`
+				MountType string `json:"mount_type"`
+			} `json:"entries"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		var found bool
+		for _, e := range resp.Entries {
+			if e.Name == "__smb_browse__" {
+				if e.MountType != "smb" {
+					t.Errorf("mount_type = %q, want smb", e.MountType)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Error("__smb_browse__ not in root listing")
+		}
+	})
+}
+
+// AdminRaw: 鉴权、SMB 拒绝、文件服务、Range、目录/不存在
+func TestAdminRaw(t *testing.T) {
+	h := newNFSShareTestHandler(t)
+
+	tmpDir := t.TempDir()
+	fileContent := []byte("hello admin raw!\n" + strings.Repeat("ABCD", 1000))
+	if err := os.WriteFile(filepath.Join(tmpDir, "hi.txt"), fileContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "sub", "nested.png"), []byte("\x89PNG\r\n\x1a\nfake-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h.mu.Lock()
+	h.mounts["__raw__"] = &MountStatus{
+		Config:    config.MountConfig{Name: "__raw__", Type: "local", Export: tmpDir},
+		LocalPath: tmpDir,
+		Mounted:   true,
+	}
+	h.mu.Unlock()
+
+	t.Run("no auth → 403", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/hi.txt", nil)
+		h.AdminRaw(c)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", w.Code)
+		}
+	})
+
+	t.Run("missing path → 400", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/nfsshare/admin/raw", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("directory → 400", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/sub", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", w.Code)
+		}
+	})
+
+	t.Run("non-existent file → 404", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/ghost.txt", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", w.Code)
+		}
+	})
+
+	t.Run("SMB mount: 文件不存在/不可达 → 404（不再 415，已支持 SMB）", func(t *testing.T) {
+		// SMB 后端没真挂载时 Open 会失败 → 404 而不是 415
+		h.mu.Lock()
+		smbCfg := config.MountConfig{Name: "__smb__", Type: "smb", Host: "127.0.0.1", Share: "fake", Username: "u", Password: "p"}
+		h.mounts["__smb__"] = &MountStatus{
+			Config:  smbCfg,
+			Mounted: true,
+			smb:     newSMBBackend(smbCfg),
+		}
+		h.mu.Unlock()
+
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__smb__/foo.txt", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		// 期望：SMB 后端连不上 fake server → Open 失败 → 404（不是 415）
+		if w.Code == http.StatusUnsupportedMediaType {
+			t.Errorf("status = 415 (regression: SMB 应该走文件读取路径而不是直接拒绝)")
+		}
+		if w.Code != http.StatusNotFound && w.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 404/500 (SMB 连接失败)", w.Code)
+		}
+	})
+
+	t.Run("Content-Disposition: 中文文件名 UTF-8 + RFC 5987 编码", func(t *testing.T) {
+		// 文件名包含中文（用户的 win-share 场景就是中文文件名）
+		// Go 的 http.ServeContent 内部会用 mime.EncodeFilename 处理 UTF-8
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/hi.txt", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+		}
+		// 文本文件 → inline；正文里至少要能看到内容
+		if !bytes.HasPrefix(w.Body.Bytes(), []byte("hello admin raw!")) {
+			t.Errorf("body prefix wrong: %q", w.Body.Bytes()[:32])
+		}
+	})
+
+	t.Run("text file: full body + inline Content-Disposition", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/hi.txt", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+		}
+		if !bytes.HasPrefix(w.Body.Bytes(), []byte("hello admin raw!")) {
+			t.Errorf("body prefix wrong: %q", w.Body.Bytes()[:32])
+		}
+		cd := w.Header().Get("Content-Disposition")
+		if !strings.HasPrefix(cd, "inline") {
+			t.Errorf("Content-Disposition = %q, want inline...", cd)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/") {
+			t.Errorf("Content-Type = %q, want text/*", ct)
+		}
+	})
+
+	t.Run("binary file: attachment Content-Disposition + correct content-type", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/sub/nested.png", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		if cd := w.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "inline") {
+			// image/png 应该 inline，不是 attachment
+			t.Errorf("Content-Disposition = %q, want inline", cd)
+		}
+		if ct := w.Header().Get("Content-Type"); ct != "image/png" {
+			t.Errorf("Content-Type = %q, want image/png", ct)
+		}
+		if !bytes.Equal(w.Body.Bytes()[:8], []byte("\x89PNG\r\n\x1a\n")) {
+			t.Errorf("body mismatch, got %v", w.Body.Bytes()[:8])
+		}
+	})
+
+	t.Run("Range request: serve partial bytes", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/hi.txt", nil)
+		c.Request.Header.Set("Range", "bytes=0-4")
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusPartialContent {
+			t.Fatalf("status = %d, want 206, body: %s", w.Code, w.Body.String())
+		}
+		if got := w.Body.String(); got != "hello" {
+			t.Errorf("range body = %q, want %q", got, "hello")
+		}
+	})
+
+	t.Run("path traversal blocked", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet,
+			"/api/nfsshare/admin/raw?path=__raw__/../../etc/passwd", nil)
+		nfsAdminCookie(c.Request)
+		h.AdminRaw(c)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400 for traversal", w.Code)
+		}
+	})
+}
+
+// 超管改 max_file_size_mb 后,超过的文件应被 413 拒绝
+func TestAdminRaw_MaxFileSizeLimit(t *testing.T) {
+	h := newNFSShareTestHandler(t)
+	h.cfg.MaxFileSizeMB = 1 // 1MB
+
+	tmpDir := t.TempDir()
+	big := bytes.Repeat([]byte("X"), 2*1024*1024) // 2MB
+	if err := os.WriteFile(filepath.Join(tmpDir, "big.bin"), big, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	h.mu.Lock()
+	h.mounts["__raw__"] = &MountStatus{
+		Config:    config.MountConfig{Name: "__raw__", Type: "local", Export: tmpDir},
+		LocalPath: tmpDir,
+		Mounted:   true,
+	}
+	h.mu.Unlock()
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet,
+		"/api/nfsshare/admin/raw?path=__raw__/big.bin", nil)
+	nfsAdminCookie(c.Request)
+	h.AdminRaw(c)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", w.Code)
 	}
 }

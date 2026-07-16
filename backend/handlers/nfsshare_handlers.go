@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -126,15 +127,26 @@ func (h *NFSShareHandler) MountsUmount(c *gin.Context) {
 
 // FileEntry 目录条目
 type FileEntry struct {
-	Name     string    `json:"name"`
-	Path     string    `json:"path"`
-	IsDir    bool      `json:"is_dir"`
-	Size     int64     `json:"size"`
-	ModTime  time.Time `json:"mod_time"`
-	MimeType string    `json:"mime_type"`
+	Name      string    `json:"name"`
+	Path      string    `json:"path"`
+	IsDir     bool      `json:"is_dir"`
+	Size      int64     `json:"size"`
+	ModTime   time.Time `json:"mod_time"`
+	MimeType  string    `json:"mime_type"`
+	MountType string    `json:"mount_type,omitempty"` // local/nfs/smb；前端据此隐藏 SMB 预览按钮
 }
 
 // Browse 浏览目录（超管）
+//
+// 可选 query 参数（全部缺省时退化为老行为：返回全量 entries，不带 total）：
+//   q          - 文件名包含匹配（小写不敏感）
+//   order_by   - name|size|mod_time，默认 name
+//   order_dir  - asc|desc，默认 asc
+//   page       - ≥1，传入即启用分页
+//   page_size  - 1-500，默认 100
+//
+// 启用分页时响应额外带 total / page / page_size / has_more。
+// 根目录（"."）只接受分页参数，q/order_by 跳过（挂载点列表不参与搜索/排序）。
 func (h *NFSShareHandler) Browse(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -146,10 +158,27 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 
 	path := strings.TrimSpace(c.Query("path"))
 
-	// 根路径：列出所有挂载点
+	// 解析分页/搜索参数
+	q := strings.TrimSpace(c.Query("q"))
+	orderBy := c.DefaultQuery("order_by", "name")
+	orderDir := c.DefaultQuery("order_dir", "asc")
+	pageStr := strings.TrimSpace(c.Query("page"))
+	pageSizeStr := strings.TrimSpace(c.Query("page_size"))
+	usePage := pageStr != ""
+	page := 1
+	pageSize := 100
+	if usePage {
+		if p, err := strconv.Atoi(pageStr); err == nil && p >= 1 {
+			page = p
+		}
+		if ps, err := strconv.Atoi(pageSizeStr); err == nil && ps >= 1 && ps <= 500 {
+			pageSize = ps
+		}
+	}
+
+	// 根路径：列出所有挂载点（不参与 q/order_by）
 	if path == "" || path == "." {
 		h.mu.RLock()
-		defer h.mu.RUnlock()
 		entries := make([]FileEntry, 0, len(h.mounts))
 		for _, ms := range h.mounts {
 			status := "已连接"
@@ -157,11 +186,27 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 				status = "未连接: " + ms.ErrMessage
 			}
 			entries = append(entries, FileEntry{
-				Name:     ms.Config.Name,
-				Path:     ms.Config.Name,
-				IsDir:    true,
-				MimeType: fmt.Sprintf("[%s] %s", strings.ToUpper(ms.Config.Type), status),
+				Name:      ms.Config.Name,
+				Path:      ms.Config.Name,
+				IsDir:     true,
+				MimeType:  fmt.Sprintf("[%s] %s", strings.ToUpper(ms.Config.Type), status),
+				MountType: strings.ToLower(ms.Config.Type),
 			})
+		}
+		h.mu.RUnlock()
+		// 挂载点列表固定按名字升序
+		sortFileEntries(entries, "name", "asc")
+		if usePage {
+			paged, total, hasMore := paginateFileEntries(entries, page, pageSize)
+			c.JSON(http.StatusOK, gin.H{
+				"path":      ".",
+				"entries":   paged,
+				"total":     total,
+				"page":      page,
+				"page_size": pageSize,
+				"has_more":  hasMore,
+			})
+			return
 		}
 		c.JSON(http.StatusOK, gin.H{"path": ".", "entries": entries})
 		return
@@ -202,12 +247,13 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 				mt = detectMimeType(info.Name())
 			}
 			result = append(result, FileEntry{
-				Name:     info.Name(),
-				Path:     entryPath,
-				IsDir:    info.IsDir(),
-				Size:     info.Size(),
+				Name:      info.Name(),
+				Path:      entryPath,
+				IsDir:     info.IsDir(),
+				Size:      info.Size(),
 				ModTime:  info.ModTime(),
-				MimeType: mt,
+				MimeType:  mt,
+				MountType: "smb",
 			})
 		}
 	} else {
@@ -237,16 +283,105 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 				mt = detectMimeType(e.Name())
 			}
 			result = append(result, FileEntry{
-				Name:     e.Name(),
-				Path:     entryPath,
-				IsDir:    e.IsDir(),
+				Name:      e.Name(),
+				Path:      entryPath,
+				IsDir:     e.IsDir(),
 				Size:     info.Size(),
 				ModTime:  info.ModTime(),
-				MimeType: mt,
+				MimeType:  mt,
+				MountType: strings.ToLower(pp.ms.Config.Type),
 			})
 		}
 	}
+
+	// 文件名搜索
+	if q != "" {
+		ql := strings.ToLower(q)
+		filtered := result[:0]
+		for _, e := range result {
+			if strings.Contains(strings.ToLower(e.Name), ql) {
+				filtered = append(filtered, e)
+			}
+		}
+		result = filtered
+	}
+
+	// 排序（目录优先 + 主键）
+	sortFileEntries(result, orderBy, orderDir)
+
+	if usePage {
+		paged, total, hasMore := paginateFileEntries(result, page, pageSize)
+		c.JSON(http.StatusOK, gin.H{
+			"path":      path,
+			"entries":   paged,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+			"has_more":  hasMore,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"path": path, "entries": result})
+}
+
+// sortFileEntries 对 entries 排序：目录优先，然后按主键升降序。
+// orderBy: name|size|mod_time；orderDir: asc|desc。
+func sortFileEntries(entries []FileEntry, orderBy, orderDir string) {
+	dirFirst := func(a, b FileEntry) int {
+		if a.IsDir != b.IsDir {
+			if a.IsDir {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	}
+	cmp := func(a, b FileEntry) int {
+		switch orderBy {
+		case "size":
+			if a.Size != b.Size {
+				if a.Size < b.Size {
+					return -1
+				}
+				return 1
+			}
+		case "mod_time":
+			at := a.ModTime.UnixNano()
+			bt := b.ModTime.UnixNano()
+			if at != bt {
+				if at < bt {
+					return -1
+				}
+				return 1
+			}
+		}
+		// name 是稳定 fallback
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	}
+	asc := orderDir != "desc"
+	sort.SliceStable(entries, func(i, j int) bool {
+		if d := dirFirst(entries[i], entries[j]); d != 0 {
+			return d < 0
+		}
+		if asc {
+			return cmp(entries[i], entries[j]) < 0
+		}
+		return cmp(entries[i], entries[j]) > 0
+	})
+}
+
+// paginateFileEntries 对已排序的 entries 做切片，返回当前页、总条数、是否还有更多。
+func paginateFileEntries(entries []FileEntry, page, pageSize int) ([]FileEntry, int, bool) {
+	total := len(entries)
+	start := (page - 1) * pageSize
+	if start >= total {
+		return []FileEntry{}, total, false
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	return entries[start:end], total, end < total
 }
 
 // -------- MIME 类型检测 --------
@@ -368,6 +503,105 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 		c.Header("Content-Type", share.MimeType)
 		c.File(pp.absPath)
 	}
+}
+
+// AdminRaw 管理员直接预览/下载挂载点下的任意文件（不走 share 计数）
+//
+//   GET /api/nfsshare/admin/raw?path=<mountName>/<relPath>
+//
+// 仅 admin cookie / X-Admin-Password 鉴权；不消耗访问次数、不写访问日志。
+// 本地/NFS/SMB 都用 http.ServeContent 支持 Range，前端 <video>/<audio> 可正常 seek。
+func (h *NFSShareHandler) AdminRaw(c *gin.Context) {
+	if !h.checkEnabled(c) {
+		return
+	}
+	if !h.verifyAdminFromContext(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "超管密码错误"})
+		return
+	}
+
+	path := strings.TrimSpace(c.Query("path"))
+	if path == "" || path == "." {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "需要指定文件 path"})
+		return
+	}
+
+	pp, err := h.parsePath(path)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	isSMB := strings.ToLower(pp.ms.Config.Type) == "smb"
+	filename := filepath.Base(pp.relPath)
+	mime := detectMimeType(filename)
+
+	// Content-Disposition: inline 浏览器能内联预览的,attachment 触发下载
+	if isInlinePreviewable(mime) {
+		c.Header("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
+	} else {
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	}
+	c.Header("Content-Type", mime)
+
+	if isSMB {
+		// SMB: smb.Open 返回 io.ReadSeekCloser,直接喂 ServeContent
+		f, size, err := pp.ms.smb.Open(pp.relPath)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "源文件不存在或无法访问: " + err.Error()})
+			return
+		}
+		defer f.Close()
+		if h.cfg.MaxFileSizeMB > 0 && size > int64(h.cfg.MaxFileSizeMB)*1024*1024 {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("文件超过 %dMB 上限", h.cfg.MaxFileSizeMB)})
+			return
+		}
+		// SMB 没有 modtime,用零值
+		http.ServeContent(c.Writer, c.Request, filename, time.Time{}, f)
+		return
+	}
+
+	// 本地/NFS
+	info, err := os.Stat(pp.absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if info.IsDir() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path 是目录，不是文件"})
+		return
+	}
+	if h.cfg.MaxFileSizeMB > 0 && info.Size() > int64(h.cfg.MaxFileSizeMB)*1024*1024 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("文件超过 %dMB 上限", h.cfg.MaxFileSizeMB)})
+		return
+	}
+
+	f, err := os.Open(pp.absPath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "无法打开文件"})
+		return
+	}
+	defer f.Close()
+	http.ServeContent(c.Writer, c.Request, info.Name(), info.ModTime(), f)
+}
+
+// isInlinePreviewable 浏览器能直接预览的 MIME 类型：image/* / video/* / audio/* / pdf / text/*
+// （admin/raw 默认 inline 这些；其它走 attachment）
+func isInlinePreviewable(mime string) bool {
+	switch {
+	case strings.HasPrefix(mime, "image/"),
+		strings.HasPrefix(mime, "video/"),
+		strings.HasPrefix(mime, "audio/"),
+		strings.HasPrefix(mime, "text/"),
+		mime == "application/pdf",
+		mime == "application/json":
+		return true
+	}
+	return false
 }
 
 // isVideoFile 通过 MIME 类型或扩展名判断是否为视频文件

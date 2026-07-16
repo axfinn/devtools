@@ -126,6 +126,11 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			if err == nil && nfsCount > 0 {
 				log.Printf("已清理 %d 个过期 NFS 分享", nfsCount)
 			}
+			// 清理过期的屏幕共享会话(active → expired)
+			screenCount, err := db.CleanExpiredScreenSessions()
+			if err == nil && screenCount > 0 {
+				log.Printf("已清理 %d 个过期屏幕共享会话", screenCount)
+			}
 			// 清理孤立的 HLS 转码缓存（分享已删除但目录残留）
 			if entries, err := os.ReadDir("./data/transcode"); err == nil {
 				for _, e := range entries {

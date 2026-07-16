@@ -1,5 +1,6 @@
 {
   "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.12.15"
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "events": "^3.3.0"
   }
 }

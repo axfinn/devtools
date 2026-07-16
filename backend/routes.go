@@ -40,6 +40,7 @@ type routeHandlers struct {
 	voiceMemoHandler          *handlers.VoiceMemoHandler
 	gameHandler               *handlers.GameHandler
 	askitSyncHandler          *handlers.AskitSyncHandler
+	screenHandler             *handlers.ScreenHandler
 }
 
 func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter, h *routeHandlers) {
@@ -456,6 +457,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		nfsshare.GET("/:id/record/:filename", h.nfsShareHandler.ServeRecord)             // 播放录音（超管）
 		nfsshare.POST("", h.nfsShareHandler.Create)                                      // 创建分享（超管）
 		nfsshare.GET("/admin/browse", h.nfsShareHandler.Browse)                          // 浏览目录（超管）
+		nfsshare.GET("/admin/raw", h.nfsShareHandler.AdminRaw)                           // 直读挂载点文件/预览（超管，不计访问次数）
 		nfsshare.POST("/admin/login", h.nfsShareHandler.AdminLogin)                       // 写入 admin cookie(HttpOnly,不再走 query string)
 		nfsshare.POST("/admin/logout", h.nfsShareHandler.AdminLogout)                     // 清 admin cookie
 		nfsshare.GET("/admin/list", h.nfsShareHandler.AdminList)                         // 分享列表（超管）
@@ -570,6 +572,21 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		askit.GET("/blob/files/:uid/:name", h.askitSyncHandler.BlobServe)
 		askit.POST("/admin/invites", h.askitSyncHandler.CreateInvites)
 		askit.GET("/admin/users", h.askitSyncHandler.AdminUsersOverview)
+	}
+
+	// 屏幕共享 API(WebRTC 信令 + 房间管理)
+	screen := api.Group("/screen")
+	{
+		screen.GET("/turn-credentials", h.screenHandler.ScreenTurnCredentials)
+		screen.GET("/sessions/mine", h.screenHandler.ScreenMySessions)
+		screen.POST("/sessions", h.screenHandler.ScreenCreate)
+		screen.GET("/sessions/:id/info", h.screenHandler.ScreenInfo)
+		screen.POST("/sessions/:id/check-password", h.screenHandler.ScreenCheckPassword)
+		screen.DELETE("/sessions/:id", h.screenHandler.ScreenStop)
+		screen.GET("/sessions/:id/ws", h.screenHandler.ScreenSignalingWS)
+		// Binary relay fallback(P2P 不可达时 server 转发屏幕帧/音频块)
+		screen.GET("/sessions/:id/relay-host", h.screenHandler.ScreenRelayHostWS)
+		screen.GET("/sessions/:id/relay-viewer", h.screenHandler.ScreenRelayViewerWS)
 	}
 
 	// AI Chat 密码验证

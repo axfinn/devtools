@@ -47,9 +47,13 @@ func registerPublicRoutes(router *gin.Engine, handlers *routeHandlers) {
 }
 
 func registerStaticRoutes(router *gin.Engine, distDir string) {
-	router.Static("/assets", distDir+"/assets")
+	// /assets 里的 chunk 是 hashed 文件名(immutable),可以永久缓存。
+	// 但 index.html 必须每次校验,否则浏览器拿旧 index.html 引用旧 chunk → 用户看到老 bug。
 	router.Static("/neon", distDir+"/neon")
-	router.StaticFile("/", distDir+"/index.html")
+	router.GET("/", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.File(distDir + "/index.html")
+	})
 	router.StaticFile("/alipay.jpeg", distDir+"/alipay.jpeg")
 	router.StaticFile("/wxpay.jpeg", distDir+"/wxpay.jpeg")
 	router.StaticFile("/pregnancy-shortcut-192.png", distDir+"/pregnancy-shortcut-192.png")
@@ -69,6 +73,14 @@ func registerStaticRoutes(router *gin.Engine, distDir string) {
 		if path == "/api" || strings.HasPrefix(path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "接口不存在", "path": path})
 			return
+		}
+
+		// hashed chunk 文件名带 hash 即可长缓存;其他文件(包含 index.html 兜底)
+		// 必须每次校验,避免浏览器拿旧版引用旧 chunk。
+		if strings.HasPrefix(path, "/assets/") && (strings.Contains(path, "-") || strings.Contains(path, ".")) {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 		}
 
 		cleanPath := filepath.Clean(strings.TrimPrefix(path, "/"))

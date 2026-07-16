@@ -63,10 +63,22 @@ function showFatalError(err, source) {
 //   - 视频 play() 被新的 load 请求打断:Chrome 在切换 src / 销毁重建视频元素时正常行为
 //   - AbortError:fetch 主动 abort(切路由、组件卸载、用户取消上传等场景)
 //   - no supported sources:媒体元素 src 不可播放(常见:文件损坏/编码不支持),页面 @error 已显示错误提示
+//   - LastPass 扩展(content.js / background.js) 错误:它在每个页面都会注入 content script,
+//     内部 message bus 偶发失败时在 console 抛 "Could not establish connection..." /
+//     "Attempting to use a disconnected port object" / "Called encrypt() without a session key" /
+//     "The message port closed before a response was received"。这些走的是 extension
+//     自己的 error channel,只在 content script 的 reject 经 window 冒泡时能被这里兜底,
+//     extension 内部 background.js 的 "Error in event handler" / "Unchecked runtime.lastError"
+//     是 Chrome 自己打到 console 的,无法 suppress(只能让用户禁/卸 LastPass)。
 const BENIGN_REJECTION_PATTERNS = [
   /play\(\) request was interrupted/i,
   /\bAbortError\b/i,
   /no supported sources/i,
+  /Could not establish connection\. Receiving end does not exist/i,
+  /Receiving end does not exist/i,
+  /Attempting to use a disconnected port object/i,
+  /The message port closed before a response was received/i,
+  /Called encrypt\(\) without a session key/i,
 ]
 function isBenignRejection(reason) {
   const msg = String((reason && (reason.stack || reason.message)) || reason || '')
@@ -76,9 +88,16 @@ function isBenignRejection(reason) {
 // 已知良性的 window.error(框架偶发上报,不影响功能)
 //   - ResizeObserver loop:Chrome 在同一帧内多次布局回调时常报,
 //   - no supported sources:媒体元素 src 不可播放(页面 @error 已显示错误提示)
+//   - LastPass content script 错误:LastPass 注入的 content.js 抛 unhandled rejection
+//     之外的同步错误会以 window error 形式上报,pattern 在这里兜底。
 const BENIGN_WINDOW_ERROR_PATTERNS = [
   /ResizeObserver loop completed with undelivered notifications/i,
   /no supported sources/i,
+  /Could not establish connection\. Receiving end does not exist/i,
+  /Receiving end does not exist/i,
+  /Attempting to use a disconnected port object/i,
+  /The message port closed before a response was received/i,
+  /Called encrypt\(\) without a session key/i,
 ]
 function isBenignWindowError(event) {
   const msg = String((event && (event.error && (event.error.stack || event.error.message))) || event.message || event || '')

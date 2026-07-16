@@ -297,11 +297,35 @@ func detectMimeType(filename string) string {
 	if mt, ok := videoExtensions[ext]; ok {
 		return mt
 	}
-	mt := mime.TypeByExtension(ext)
-	if mt == "" {
-		return "application/octet-stream"
+	// 文本/代码类扩展名兜底：alpine 等精简容器可能没装 mime.types,
+	// 此时 mime.TypeByExtension 返回空 → 走下面的硬编码表
+	if mt, ok := textMimeFallback[ext]; ok {
+		return mt
 	}
-	return mt
+	if mt := mime.TypeByExtension(ext); mt != "" {
+		return mt
+	}
+	return "application/octet-stream"
+}
+
+// textMimeFallback 文本/代码类扩展名兜底（mime.types 缺失时用）
+var textMimeFallback = map[string]string{
+	".txt":  "text/plain; charset=utf-8",
+	".md":   "text/markdown; charset=utf-8",
+	".json": "application/json; charset=utf-8",
+	".xml":  "application/xml; charset=utf-8",
+	".yaml": "text/yaml; charset=utf-8",
+	".yml":  "text/yaml; charset=utf-8",
+	".csv":  "text/csv; charset=utf-8",
+	".log":  "text/plain; charset=utf-8",
+	".html": "text/html; charset=utf-8",
+	".htm":  "text/html; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".js":   "application/javascript; charset=utf-8",
+	".ts":   "application/typescript; charset=utf-8",
+	".go":   "text/x-go; charset=utf-8",
+	".py":   "text/x-python; charset=utf-8",
+	".sh":   "text/x-shellscript; charset=utf-8",
 }
 
 // -------- 创建分享 --------

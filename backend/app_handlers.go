@@ -58,6 +58,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	gameHandler := handlers.NewGameHandler()
 	voiceMemoHandler := handlers.NewVoiceMemoHandler(db, plannerHandler, envOrDefault("ASR_SERVICE_URL", "http://asr-service:9000"))
 	askitSyncHandler := handlers.NewAskitSyncHandler(db, cfg.AskitSync)
+	screenHandler := handlers.NewScreenHandler(db, *cfg)
 
 	return &routeHandlers{
 		pasteHandler:              pasteHandler,
@@ -91,6 +92,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		gameHandler:               gameHandler,
 		voiceMemoHandler:          voiceMemoHandler,
 		askitSyncHandler:          askitSyncHandler,
+		screenHandler:             screenHandler,
 	}, nil
 }
 

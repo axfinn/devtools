@@ -89,11 +89,13 @@
               </template>
               <el-skeleton :loading="browseLoading" animated>
                 <template #default>
+                  <!-- 桌面表格 -->
                   <el-table
                     :data="filteredEntries"
                     size="small"
                     stripe
                     @row-click="handleEntryClick"
+                    class="browse-table"
                     style="cursor: pointer;"
                   >
                     <el-table-column width="36">
@@ -127,7 +129,7 @@
                         <span class="text-gray-400 text-xs">{{ formatDate(row.mod_time) }}</span>
                       </template>
                     </el-table-column>
-                    <el-table-column label="操作" width="80">
+                    <el-table-column label="操作" width="220">
                       <template #default="{ row }">
                         <el-button
                           v-if="!row.is_dir"
@@ -136,9 +138,70 @@
                           link
                           @click.stop="selectFile(row)"
                         >选为分享</el-button>
+                        <template v-if="!row.is_dir">
+                          <el-button
+                            v-if="previewableKind(row)"
+                            size="small"
+                            type="success"
+                            link
+                            @click.stop="previewFile(row)"
+                          >预览</el-button>
+                          <el-button
+                            size="small"
+                            type="info"
+                            link
+                            @click.stop="triggerDownload(row)"
+                          >下载</el-button>
+                        </template>
                       </template>
                     </el-table-column>
                   </el-table>
+
+                  <!-- 移动端卡片 -->
+                  <div v-if="isMobile" class="browse-cards">
+                    <div
+                      v-for="row in filteredEntries"
+                      :key="row.path"
+                      class="nfs-mobile-card"
+                      :class="{ 'is-dir': row.is_dir }"
+                      @click="handleEntryClick(row)"
+                    >
+                      <div class="nfs-card-head">
+                        <el-icon :class="row.is_dir ? 'text-yellow-500' : 'text-blue-400'" class="nfs-card-icon" aria-hidden="true">
+                          <Folder v-if="row.is_dir" />
+                          <component v-else :is="previewableKind(row) === 'image' ? Picture : previewableKind(row) === 'video' ? VideoPlay : previewableKind(row) === 'audio' ? Headset : Document" />
+                        </el-icon>
+                        <span class="nfs-card-name" :class="row.is_dir ? 'text-yellow-700 font-medium' : ''">{{ row.name }}</span>
+                      </div>
+                      <div class="nfs-card-meta">
+                        <span v-if="!row.is_dir">{{ formatSize(row.size) }}</span>
+                        <span>{{ formatDate(row.mod_time) }}</span>
+                      </div>
+                      <div v-if="!row.is_dir" class="nfs-card-actions" @click.stop>
+                        <el-button size="small" type="primary" plain @click="selectFile(row)">选为分享</el-button>
+                        <el-button
+                          v-if="previewableKind(row)"
+                          size="small"
+                          type="success"
+                          plain
+                          @click="previewFile(row)"
+                        >
+                          <el-icon aria-hidden="true"><View /></el-icon>预览
+                        </el-button>
+                        <el-button size="small" type="info" plain @click="triggerDownload(row)">
+                          <el-icon aria-hidden="true"><Download /></el-icon>下载
+                        </el-button>
+                      </div>
+                    </div>
+                    <div v-if="filteredEntries.length === 0 && !browseLoading" class="nfs-card-empty">空目录</div>
+                  </div>
+
+                  <!-- 加载更多（移动端 + 桌面分页都展示） -->
+                  <div v-if="browseHasMore || browseTotal > filteredEntries.length" class="nfs-loadmore">
+                    <el-button :loading="browseLoading" @click="loadMoreDir">
+                      加载更多（已显示 {{ filteredEntries.length }} / {{ browseTotal || '?' }}）
+                    </el-button>
+                  </div>
                 </template>
               </el-skeleton>
             </el-card>
@@ -427,7 +490,7 @@
               <el-button size="small" type="primary" @click="recordingsPage = 1; loadRecordings()">筛选</el-button>
               <el-button size="small" @click="clearRecordingFilters">清空</el-button>
             </div>
-            <el-table :data="recordings" size="small" stripe v-loading="recordingsLoading">
+            <el-table :data="recordings" size="small" stripe v-loading="recordingsLoading" class="recording-table">
               <el-table-column label="访问时间" min-width="140">
                 <template #default="{ row }">
                   <span class="text-xs">{{ formatDate(row.accessed_at) }}</span>
@@ -471,6 +534,41 @@
                 </template>
               </el-table-column>
             </el-table>
+
+            <!-- 录音库 移动端卡片 -->
+            <div v-if="isMobile" class="recording-cards">
+              <div v-for="row in recordings" :key="row.id || row.accessed_at" class="nfs-mobile-card">
+                <div class="nfs-card-head">
+                  <span class="text-xs text-gray-400">{{ formatDate(row.accessed_at) }}</span>
+                  <el-tag :type="getLogStatusTag(row.status)" size="small">{{ getLogStatusLabel(row.status) }}</el-tag>
+                </div>
+                <div class="nfs-card-name">
+                  <template v-if="row.share_deleted">
+                    <span class="text-xs text-red-500">{{ row.share_id }} <el-tag size="small" type="danger" class="!text-xs">已删除</el-tag></span>
+                  </template>
+                  <template v-else>
+                    <span class="font-medium">{{ row.share_name || row.share_id }}</span>
+                  </template>
+                </div>
+                <div v-if="row.share_file_path" class="nfs-card-meta">
+                  <span class="truncate flex-1 min-w-0" :title="row.share_file_path">{{ row.share_file_path }}</span>
+                </div>
+                <div class="nfs-card-meta">
+                  <span v-if="row.client_ip">IP: {{ row.client_ip }}</span>
+                </div>
+                <div v-if="row.audio_url" class="nfs-card-actions">
+                  <el-button
+                    v-for="(url, idx) in parseAudioUrls(row.audio_url)"
+                    :key="idx"
+                    size="small"
+                    type="success"
+                    plain
+                    @click="playRecord(url)"
+                  >▶ {{ idx + 1 }}</el-button>
+                </div>
+              </div>
+              <div v-if="recordings.length === 0 && !recordingsLoading" class="nfs-card-empty">暂无录音</div>
+            </div>
             <div class="flex justify-end mt-3">
               <el-pagination
                 v-model:current-page="recordingsPage"
@@ -558,7 +656,7 @@
                 <el-option value="exhausted" label="次数耗尽" />
               </el-select>
             </div>
-            <el-table :data="shareList" size="small" stripe v-loading="listLoading">
+            <el-table :data="shareList" size="small" stripe v-loading="listLoading" class="share-table">
               <el-table-column label="名称" min-width="140">
                 <template #default="{ row }">
                   <div class="font-medium">{{ row.name }}</div>
@@ -610,6 +708,34 @@
                 </template>
               </el-table-column>
             </el-table>
+
+            <!-- 分享列表 移动端卡片 -->
+            <div v-if="isMobile" class="share-cards">
+              <div v-for="row in shareList" :key="row.id" class="nfs-mobile-card">
+                <div class="nfs-card-head">
+                  <el-icon class="nfs-card-icon text-blue-400" aria-hidden="true"><Document /></el-icon>
+                  <span class="nfs-card-name font-medium">{{ row.name }}</span>
+                </div>
+                <div class="nfs-card-meta">
+                  <span class="truncate flex-1 min-w-0" :title="row.file_path">{{ row.file_path }}</span>
+                </div>
+                <div class="nfs-card-meta">
+                  <span>{{ formatSize(row.file_size) }}</span>
+                  <el-tag :type="getShareStatus(row).type" size="small">{{ getShareStatus(row).label }}</el-tag>
+                  <span>{{ row.views }} / {{ row.max_views }}</span>
+                  <span :class="row.expires_at && isExpired(row.expires_at) ? 'text-red-500' : ''">
+                    {{ row.expires_at ? formatDate(row.expires_at) : '永不过期' }}
+                  </span>
+                </div>
+                <div class="nfs-card-actions">
+                  <el-button size="small" type="primary" plain @click="copyShareLink(row)">复制</el-button>
+                  <el-button size="small" type="info" plain @click="viewLogs(row)">日志</el-button>
+                  <el-button size="small" plain @click="openEditDialog(row)">调整</el-button>
+                  <el-button size="small" type="danger" plain @click="deleteShare(row)">删除</el-button>
+                </div>
+              </div>
+              <div v-if="shareList.length === 0 && !listLoading" class="nfs-card-empty">暂无分享记录</div>
+            </div>
             <div class="flex justify-end mt-3">
               <el-pagination
                 v-model:current-page="listPage"
@@ -693,6 +819,42 @@
       <audio v-if="recordPlayURL" :src="recordPlayURL" controls autoplay style="width:100%" />
     </el-dialog>
 
+    <!-- 管理员文件预览弹窗（仅 browse tab 用） -->
+    <el-dialog
+      v-model="previewDialogVisible"
+      :title="previewName || '预览'"
+      :width="dialogWidth"
+      destroy-on-close
+      @close="closePreview"
+    >
+      <!-- 图片：el-image-viewer 全屏预览 -->
+      <div v-if="previewType === 'image'" class="nfs-preview-image">
+        <el-image :src="previewUrl" :preview-src-list="[previewUrl]" :preview-teleported="true" fit="contain" style="width:100%;max-height:70vh" />
+      </div>
+      <!-- 视频：原生 video，Range 已由 http.ServeContent 支持 -->
+      <div v-else-if="previewType === 'video'" class="nfs-preview-media">
+        <video :src="previewUrl" controls preload="metadata" style="width:100%;max-height:70vh;background:#000" />
+      </div>
+      <!-- 音频 -->
+      <div v-else-if="previewType === 'audio'" class="nfs-preview-media">
+        <audio :src="previewUrl" controls preload="metadata" style="width:100%" />
+      </div>
+      <!-- 文本 -->
+      <div v-else-if="previewType === 'text'" class="nfs-preview-text">
+        <div v-if="previewTextLoading" class="text-center text-gray-400 py-6">
+          <el-icon class="is-loading" aria-hidden="true"><Loading /></el-icon> 加载中...
+        </div>
+        <pre v-else-if="previewTextContent" class="nfs-preview-text-content">{{ previewTextContent }}</pre>
+        <p v-else-if="previewTextError" class="text-red-500 text-center py-4">加载失败，请<a :href="previewUrl" download>下载</a></p>
+      </div>
+      <template #footer>
+        <el-button @click="closePreview">关闭</el-button>
+        <el-button type="primary" :href="previewUrl" download>
+          <el-icon aria-hidden="true"><Download /></el-icon>下载
+        </el-button>
+      </template>
+    </el-dialog>
+
     <!-- 调整分享配置弹窗 -->
     <el-dialog v-model="editDialogVisible" title="调整分享配置" :width="dialogWidth">
       <el-form :model="editForm" label-width="90px">
@@ -729,10 +891,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Lock, FolderOpened, Folder, Document, Refresh, Search
+  Lock, FolderOpened, Folder, Document, Refresh, Search,
+  Picture, VideoPlay, Headset, View, Download, Loading
 } from '@element-plus/icons-vue'
 
 // -------- 状态 --------
@@ -743,30 +906,24 @@ const adminPassword = ref('')
 const loginLoading = ref(false)
 const activeTab = ref('browse')
 
-// 目录浏览
+// -------- 移动端检测 (≤640px 切卡片视图) --------
+const isMobile = ref(false)
+let mobileMQL = null
+function syncIsMobile(e) { isMobile.value = e.matches }
+
+// -------- 目录浏览 --------
 const currentPath = ref('.')
 const dirEntries = ref([])
 const browseLoading = ref(false)
 const searchKeyword = ref('')
-const sortBy = ref('name') // 'name' | 'size' | 'mod_time'
-
-const filteredEntries = computed(() => {
-  const kw = searchKeyword.value.trim().toLowerCase()
-  let list = dirEntries.value
-  if (kw) {
-    list = list.filter(e => e.name.toLowerCase().includes(kw))
-  }
-  const dirFirst = (a, b) => {
-    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
-    return 0
-  }
-  const cmp = {
-    name:     (a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'),
-    size:     (a, b) => (a.size || 0) - (b.size || 0),
-    mod_time: (a, b) => new Date(a.mod_time).getTime() - new Date(b.mod_time).getTime(),
-  }[sortBy.value] || ((a, b) => a.name.localeCompare(b.name))
-  return [...list].sort((a, b) => dirFirst(a, b) || cmp(a, b))
-})
+const sortBy = ref('name') // 'name' | 'size' | 'mod_time'，与后端 order_by 对齐
+// 后端分页状态：默认 page_size=100，移动端可按需调整
+const browsePage = ref(1)
+const browsePageSize = 100
+const browseTotal = ref(0)
+const browseHasMore = ref(false)
+// 移动端卡片不需要前端二次排序/过滤——后端已按 order_by + q 处理好
+const filteredEntries = computed(() => dirEntries.value)
 
 // 创建分享
 const selectedFileSize = ref(0)
@@ -857,6 +1014,87 @@ const editLoading = ref(false)
 const recordDialogVisible = ref(false)
 const recordPlayURL = ref('')
 
+// -------- 管理员文件预览（仅 browse tab 用）--------
+// 三种类型:image 走 el-image-viewer 全屏预览；video/audio 走 el-dialog 内嵌原生控件；
+// 其它文件直接给下载链接（SMB 不支持时按钮会隐藏）。
+const previewDialogVisible = ref(false)
+const previewType = ref('') // 'image' | 'video' | 'audio' | 'text'
+const previewUrl = ref('')
+const previewName = ref('')
+const previewTextContent = ref('')
+const previewTextLoading = ref(false)
+const previewTextError = ref(false)
+
+function previewableKind(entry) {
+  if (entry.is_dir) return null
+  // SMB 也支持：后端 smb.Open 返回 io.ReadSeekCloser，可直接 http.ServeContent
+  const mt = (entry.mime_type || '').toLowerCase()
+  const ext = (entry.name.split('.').pop() || '').toLowerCase()
+  if (mt.startsWith('image/') || ['jpg','jpeg','png','gif','webp','bmp','svg','ico','avif','tiff'].includes(ext)) return 'image'
+  if (mt.startsWith('video/') || ['mp4','m4v','mkv','webm','mov','avi','ts','ogv','3gp','flv','wmv'].includes(ext)) return 'video'
+  if (mt.startsWith('audio/') || ['mp3','flac','wav','aac','ogg','opus','m4a','wma','ape'].includes(ext)) return 'audio'
+  if (mt.startsWith('text/') || mt === 'application/json' || mt === 'application/xml' ||
+      ['txt','md','json','xml','yaml','yml','toml','ini','cfg','csv','log','go','py','js','ts','vue','html','css','sh','java','rs','rb','php','sql'].includes(ext)) return 'text'
+  return null
+}
+
+function rawUrl(entry) {
+  return `/api/nfsshare/admin/raw?path=${encodeURIComponent(entry.path)}`
+}
+
+async function previewFile(entry) {
+  const kind = previewableKind(entry)
+  if (!kind) {
+    // 不支持预览的文件直接下载
+    triggerDownload(entry)
+    return
+  }
+  previewName.value = entry.name
+  previewUrl.value = rawUrl(entry)
+  previewTextContent.value = ''
+  previewTextError.value = false
+  if (kind === 'text') {
+    // 文本走 fetch 全文（同源带 admin cookie），512KB 阈值与后端不对齐，前端按大小跳过
+    if (entry.size > 512 * 1024) {
+      ElMessage.warning('文本文件超过 512KB，请直接下载查看')
+      return
+    }
+    previewType.value = 'text'
+    previewDialogVisible.value = true
+    previewTextLoading.value = true
+    try {
+      const res = await fetch(previewUrl.value)
+      if (!res.ok) throw new Error('HTTP ' + res.status)
+      previewTextContent.value = await res.text()
+    } catch (e) {
+      previewTextError.value = true
+      ElMessage.error('加载文本失败：' + e.message)
+    } finally {
+      previewTextLoading.value = false
+    }
+    return
+  }
+  previewType.value = kind
+  previewDialogVisible.value = true
+}
+
+function triggerDownload(entry) {
+  // a 标签 download 属性：浏览器原生触发下载；同源 admin cookie 自动带
+  const a = document.createElement('a')
+  a.href = rawUrl(entry)
+  a.download = entry.name
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
+function closePreview() {
+  previewDialogVisible.value = false
+  previewUrl.value = ''
+  previewTextContent.value = ''
+}
+
 // -------- 计算属性 --------
 const breadcrumbs = computed(() => {
   const segs = [{ name: 'NFS 根目录', path: '.' }]
@@ -882,10 +1120,30 @@ const dialogWidth = computed(() => window.innerWidth < 640 ? '95%' : '560px')
 
 // -------- 生命周期 --------
 onMounted(async () => {
+  // 监听 ≤640px 媒体查询，驱动移动端卡片/桌面表格切换
+  mobileMQL = window.matchMedia('(max-width: 640px)')
+  isMobile.value = mobileMQL.matches
+  if (mobileMQL.addEventListener) {
+    mobileMQL.addEventListener('change', syncIsMobile)
+  } else {
+    // Safari < 14
+    mobileMQL.addListener(syncIsMobile)
+  }
+
   await checkStatus()
   if (nfsEnabled.value) {
     // 启动时尝试用 cookie 自动恢复登录态(无密码输入)
     await loginAdmin(true)
+  }
+})
+
+onUnmounted(() => {
+  if (mobileMQL) {
+    if (mobileMQL.removeEventListener) {
+      mobileMQL.removeEventListener('change', syncIsMobile)
+    } else {
+      mobileMQL.removeListener(syncIsMobile)
+    }
   }
 })
 
@@ -952,27 +1210,58 @@ async function logout() {
 }
 
 // -------- 目录浏览 --------
-async function loadDir(path) {
+// loadDir 默认覆盖式加载；append=true 时走"加载更多"，把新页 append 到现有列表
+async function loadDir(path, append = false) {
+  if (!append) {
+    browsePage.value = 1
+    browseTotal.value = 0
+    browseHasMore.value = false
+  }
   browseLoading.value = true
   try {
-    const res = await fetch(`/api/nfsshare/admin/browse?path=${encodeURIComponent(path)}`)
+    const params = new URLSearchParams({
+      path,
+      page: String(browsePage.value),
+      page_size: String(browsePageSize),
+      order_by: sortBy.value,
+    })
+    if (searchKeyword.value.trim()) params.set('q', searchKeyword.value.trim())
+    const res = await fetch(`/api/nfsshare/admin/browse?${params}`)
     if (!res.ok) {
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       ElMessage.error(data.error || '无法读取目录')
       return
     }
     const data = await res.json()
     currentPath.value = path
-    dirEntries.value = (data.entries || []).sort((a, b) => {
-      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1
-      return a.name.localeCompare(b.name)
-    })
+    const pageEntries = data.entries || []
+    if (append) {
+      dirEntries.value = dirEntries.value.concat(pageEntries)
+    } else {
+      dirEntries.value = pageEntries
+    }
+    // 后端只在 page 模式下返回 total/has_more
+    if (typeof data.total === 'number') browseTotal.value = data.total
+    browseHasMore.value = !!data.has_more
   } catch {
     ElMessage.error('网络错误')
   } finally {
     browseLoading.value = false
   }
 }
+
+// "加载更多" 按钮：page++ 后 append=true
+async function loadMoreDir() {
+  if (!browseHasMore.value || browseLoading.value) return
+  browsePage.value += 1
+  await loadDir(currentPath.value, true)
+}
+
+// 排序/搜索变化：重置 page=1 重新拉（覆盖式）
+watch([sortBy, searchKeyword], () => {
+  if (!adminLoggedIn.value) return
+  loadDir(currentPath.value, false)
+})
 
 function handleEntryClick(row) {
   if (row.is_dir) {
@@ -1623,9 +1912,124 @@ function getLogStatusLabel(status) {
     display: flex;
   }
 
+  /* 桌面表格隐藏，卡片视图接管 */
+  :deep(.browse-table),
+  :deep(.share-table),
+  :deep(.recording-table) {
+    display: none;
+  }
+  .browse-cards,
+  .share-cards,
+  .recording-cards {
+    display: block;
+  }
+
   /* 分页简化 */
   :deep(.el-pagination .el-pager) {
     display: none;
   }
+}
+
+/* 桌面默认隐藏卡片 */
+@media (min-width: 641px) {
+  .browse-cards,
+  .share-cards,
+  .recording-cards {
+    display: none;
+  }
+}
+
+/* ===== 移动端卡片样式（三个列表共用） ===== */
+.nfs-mobile-card {
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.nfs-mobile-card:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
+}
+.nfs-mobile-card:active {
+  background: #f5f7fa;
+}
+.nfs-mobile-card.is-dir {
+  border-left: 3px solid #e6a23c;
+}
+
+.nfs-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.nfs-card-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.nfs-card-name {
+  font-size: 14px;
+  color: #303133;
+  word-break: break-all;
+  line-height: 1.4;
+}
+.nfs-card-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #909399;
+  align-items: center;
+}
+.nfs-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.nfs-card-actions .el-button {
+  margin-left: 0;
+}
+.nfs-card-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: #c0c4cc;
+  font-size: 13px;
+}
+
+.nfs-loadmore {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+/* ===== 预览弹窗 ===== */
+.nfs-preview-image {
+  display: flex;
+  justify-content: center;
+}
+.nfs-preview-media {
+  display: flex;
+  justify-content: center;
+}
+.nfs-preview-text-content {
+  margin: 0;
+  padding: 12px;
+  font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #303133;
+  background: #f5f7fa;
+  border-radius: 4px;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

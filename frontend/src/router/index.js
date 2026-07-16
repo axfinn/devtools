@@ -296,6 +296,27 @@ const toolRoutes = [
     }
   },
   {
+    path: '/screen',
+    name: 'ScreenShare',
+    component: () => import('../views/collab/ScreenShareTool.vue'),
+    meta: {
+      title: '屏幕共享',
+      icon: 'VideoCamera',
+      category: 'collab',
+      shortcut: true,
+      description: 'WebRTC 屏幕共享 + 远程协助'
+    }
+  },
+  {
+    path: '/screen/view/:id',
+    name: 'ScreenView',
+    component: () => import('../views/collab/ScreenView.vue'),
+    meta: {
+      title: '观看屏幕',
+      hidden: true
+    }
+  },
+  {
     path: '/yun',
     name: 'Pregnancy',
     component: () => import('../views/life/PregnancyTool.vue'),
