@@ -67,7 +67,7 @@
     "tailwindcss": "^4.1.18",
     "terser": "^5.44.1",
     "vite": "^7.2.4",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   },
   "optionalDependencies": {
     "@tailwindcss/oxide-android-arm64": "4.2.1",
