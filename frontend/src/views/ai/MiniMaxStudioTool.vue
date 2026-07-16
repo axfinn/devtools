@@ -5,7 +5,7 @@
         <p class="eyebrow">MINIMAX STUDIO</p>
         <h2>把文本、语音、视频、音乐和结果归档放到一个工作台里。</h2>
         <p class="hero-desc">
-          页面直接复用项目现有的 MiniMax 配置与网关能力。文本生成、Speech、Hailuo、music-2.5 / 2.6、music-cover、lyrics_generation、image-01 都能从这里发起和归档。
+          页面直接复用项目现有的 MiniMax 配置与网关能力。文本生成、Speech、Hailuo、music-3.0 / 3.0-free / 2.6 / 2.6-free / cover / cover-free、lyrics_generation、image-01 都能从这里发起和归档。
         </p>
         <div class="hero-tips">
           <span>支持 `AI Gateway API Key`</span>
@@ -344,6 +344,104 @@
             </el-table-column>
           </el-table>
         </el-card>
+      </el-tab-pane>
+
+      <el-tab-pane label="一键音乐" name="oneclick-music">
+        <section class="panel-grid">
+          <el-card class="panel-card" shadow="never">
+            <template #header>
+              <div class="panel-head">
+                <span>主题描述</span>
+                <el-tag size="small" type="success">一步到位</el-tag>
+              </div>
+            </template>
+            <el-form label-position="top">
+              <el-form-item label="一句话主题">
+                <el-input
+                  v-model="oneClickForm.theme"
+                  type="textarea"
+                  :rows="3"
+                  placeholder="例如：我在北疆自驾了一周，帮我写一首关于雪山、草原、星空的背景音乐"
+                />
+              </el-form-item>
+              <el-form-item label="风格补充（可选）">
+                <el-input
+                  v-model="oneClickForm.style"
+                  placeholder="例如：温暖治愈、民谣、钢琴为主，不要电子鼓"
+                />
+              </el-form-item>
+              <div class="inline-fields">
+                <el-form-item label="模型">
+                  <el-select v-model="oneClickForm.model" class="w-full">
+                    <el-option v-for="m in oneClickModels" :key="m.value" :label="m.label" :value="m.value">
+                      <span style="float:left">{{ m.label }}</span>
+                      <span style="float:right;color:#909399;font-size:12px">{{ m.hint }}</span>
+                    </el-option>
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="语种">
+                  <el-select v-model="oneClickForm.language" class="w-full">
+                    <el-option label="中文" value="zh" />
+                    <el-option label="英文" value="en" />
+                    <el-option label="日文" value="ja" />
+                    <el-option label="不限（自动）" value="auto" />
+                  </el-select>
+                </el-form-item>
+              </div>
+              <div class="panel-actions">
+                <el-button
+                  type="primary"
+                  size="large"
+                  :loading="oneClickRunning"
+                  :disabled="!oneClickForm.theme.trim()"
+                  @click="runOneClickMusic"
+                >
+                  🎵 一步生成歌词 + 音乐
+                </el-button>
+                <el-button :disabled="!oneClickResult" @click="resetOneClickMusic">清空</el-button>
+              </div>
+              <el-progress
+                v-if="oneClickRunning"
+                :percentage="oneClickProgress"
+                :status="oneClickProgressStatus"
+                style="margin-top: 12px"
+              />
+              <div v-if="oneClickStep" class="step-hint">{{ oneClickStep }}</div>
+            </el-form>
+          </el-card>
+
+          <el-card class="panel-card result-card" shadow="never">
+            <template #header>
+              <div class="panel-head">
+                <span>{{ oneClickResult?.title || '生成结果' }}</span>
+                <div class="inline-actions">
+                  <el-button text :disabled="!oneClickResult" @click="copyText(oneClickResult?.lyrics || '')">复制歌词</el-button>
+                  <el-button text :disabled="!oneClickResult?.audioUrl" @click="downloadOneClickAudio">下载音频</el-button>
+                </div>
+              </div>
+            </template>
+            <div v-if="oneClickResult">
+              <div v-if="oneClickResult.audioUrl" class="audio-block">
+                <audio :src="oneClickResult.audioUrl" controls preload="metadata" />
+              </div>
+              <div v-if="oneClickResult.lyrics" class="lyrics-block">{{ oneClickResult.lyrics }}</div>
+              <div v-if="oneClickResult.extra" class="extra-info">
+                耗时 {{ oneClickResult.elapsedSec }}s ·
+                <span v-if="oneClickResult.extra.music_duration">音频 {{ Math.round(oneClickResult.extra.music_duration / 1000) }}s</span>
+                <span v-if="oneClickResult.extra.bitrate"> · {{ Math.round(oneClickResult.extra.bitrate / 1000) }}kbps</span>
+              </div>
+              <el-alert
+                v-if="oneClickResult.warning"
+                :title="oneClickResult.warning"
+                type="warning"
+                :closable="false"
+                show-icon
+                style="margin-top: 8px"
+              />
+            </div>
+            <div v-else class="empty-block">输入主题，点击"一步生成"开始。</div>
+          </el-card>
+        </section>
       </el-tab-pane>
 
       <el-tab-pane label="音乐工作流" name="music">
@@ -794,6 +892,25 @@ const coverForm = ref({
   jsonText: '{\n  "model": "music-cover"\n}'
 })
 
+// 一键音乐生产：主题 → 歌词 → 音频，三步一气呵成。
+const oneClickRunning = ref(false)
+const oneClickProgress = ref(0)
+const oneClickProgressStatus = ref('')
+const oneClickStep = ref('')
+const oneClickResult = ref(null)
+const oneClickForm = ref({
+  theme: '',
+  style: '',
+  model: 'music-3.0',
+  language: 'zh'
+})
+const oneClickModels = [
+  { value: 'music-3.0', label: 'Music 3.0', hint: '推荐 RPM 120' },
+  { value: 'music-3.0-free', label: 'Music 3.0 Free', hint: '限免 RPM 3' },
+  { value: 'music-2.6', label: 'Music 2.6', hint: '稳定版' },
+  { value: 'music-2.6-free', label: 'Music 2.6 Free', hint: '限免 RPM 3' }
+]
+
 const resultShareDocsLoading = ref(false)
 const resultShareDocs = ref(null)
 const createShareVisible = ref(false)
@@ -846,9 +963,12 @@ const filteredTextModels = computed(() => {
 const mediaModels = [
   { value: 'MiniMax-Hailuo-2.3-Fast', label: 'Hailuo Fast', hint: '图生视频模型，需提供首帧图片 URL。', tone: 'video' },
   { value: 'MiniMax-Hailuo-2.3', label: 'Hailuo 2.3', hint: '标准 Hailuo 视频生成。', tone: 'video' },
-  { value: 'music-2.5', label: 'Music 2.5', hint: '音乐生成，适合常规乐曲草稿。', tone: 'music' },
-  { value: 'music-2.6', label: 'Music 2.6', hint: '更适合新版音乐额度。', tone: 'music' },
+  { value: 'music-3.0', label: 'Music 3.0', hint: '官方推荐文本生成音乐，RPM 120。', tone: 'music' },
+  { value: 'music-3.0-free', label: 'Music 3.0 Free', hint: '3.0 限免版，所有 API Key 可用，RPM 3。', tone: 'music' },
+  { value: 'music-2.6', label: 'Music 2.6', hint: '2.6 标准版（Token Plan / 付费）。', tone: 'music' },
+  { value: 'music-2.6-free', label: 'Music 2.6 Free', hint: '2.6 限免版，RPM 3。', tone: 'music' },
   { value: 'music-cover', label: 'Music Cover', hint: '翻唱任务，需先完成前处理并补齐歌词/结构元数据。', tone: 'music' },
+  { value: 'music-cover-free', label: 'Music Cover Free', hint: '翻唱限免版，RPM 3。', tone: 'music' },
   { value: 'image-01', label: 'Image 01', hint: '图像生成。', tone: 'image' }
 ]
 
@@ -857,9 +977,12 @@ const capabilityCards = [
   { name: 'Text to Speech HD', badge: 'Direct', model: 'speech-2.8-hd', desc: '官方 Speech / TTS 调试入口。', tab: 'speech', tone: 'speech' },
   { name: 'Hailuo-2.3-Fast-768P 6s', badge: 'Image To Video', model: 'MiniMax-Hailuo-2.3-Fast', desc: '图生视频，需提供参考图片。', tab: 'media', tone: 'video' },
   { name: 'Hailuo-2.3-768P 6s', badge: 'Direct', model: 'MiniMax-Hailuo-2.3', desc: '标准视频链路。', tab: 'media', tone: 'video' },
-  { name: 'music-2.5', badge: 'Direct', model: 'music-2.5', desc: '基础音乐生成。', tab: 'media', tone: 'music' },
-  { name: 'music-2.6', badge: 'Direct', model: 'music-2.6', desc: '新版音乐额度入口。', tab: 'media', tone: 'music' },
+  { name: 'music-3.0', badge: 'Direct', model: 'music-3.0', desc: '官方推荐文本生成音乐。', tab: 'media', tone: 'music' },
+  { name: 'music-3.0-free', badge: 'Direct', model: 'music-3.0-free', desc: '3.0 限免版，所有 API Key 可用。', tab: 'media', tone: 'music' },
+  { name: 'music-2.6', badge: 'Direct', model: 'music-2.6', desc: '2.6 标准版（Token Plan / 付费）。', tab: 'media', tone: 'music' },
+  { name: 'music-2.6-free', badge: 'Direct', model: 'music-2.6-free', desc: '2.6 限免版。', tab: 'media', tone: 'music' },
   { name: 'music-cover', badge: 'Workflow', model: 'music-cover', desc: '先做前处理，再带上歌词和结构元数据生成。', tab: 'music', tone: 'music' },
+  { name: 'music-cover-free', badge: 'Workflow', model: 'music-cover-free', desc: '翻唱限免版。', tab: 'music', tone: 'music' },
   { name: 'lyrics_generation', badge: 'Workflow', model: 'lyrics_generation', desc: '先写歌词，再带入音乐生成。', tab: 'music', tone: 'music' },
   { name: 'image-01', badge: 'Direct', model: 'image-01', desc: '图像生成任务入口。', tab: 'media', tone: 'image' },
   { name: 'coding-plan-vlm', badge: 'Open Tool', model: 'MiniMax MCP', desc: '打开独立图像理解工具。', route: '/image-understanding', tone: 'coding' },
@@ -1146,7 +1269,7 @@ async function submitMedia() {
     }
     if (isMusicModel.value) {
       payload.duration = mediaForm.value.duration
-      if ((mediaForm.value.model === 'music-2.5' || mediaForm.value.model === 'music-2.6') && !mediaForm.value.lyrics.trim()) {
+      if ((mediaForm.value.model === 'music-2.6' || mediaForm.value.model === 'music-2.6-free' || mediaForm.value.model === 'music-3.0' || mediaForm.value.model === 'music-3.0-free') && !mediaForm.value.lyrics.trim()) {
         throw new Error(`${mediaForm.value.model} 需要先提供歌词，可先到下方 lyrics_generation 生成后带入`)
       }
       if (mediaForm.value.model === 'music-cover') {
@@ -1440,6 +1563,177 @@ function applyCoverToMedia() {
   }
   activeTab.value = 'media'
   ElMessage.success('cover_feature_id 和前处理歌词已带入翻唱任务')
+}
+
+// 一键音乐生产：主题 → 歌词（lyrics_generation）→ 音频（music_generation）→ 轮询 → 下载。
+async function runOneClickMusic() {
+  if (!requireCredential()) return
+  const theme = oneClickForm.value.theme.trim()
+  if (!theme) {
+    ElMessage.error('请输入一句话主题')
+    return
+  }
+  if (oneClickRunning.value) return
+
+  oneClickRunning.value = true
+  oneClickProgress.value = 0
+  oneClickProgressStatus.value = ''
+  oneClickResult.value = null
+  const startedAt = Date.now()
+
+  try {
+    const styleHint = oneClickForm.value.style.trim()
+    const lyricsPrompt = styleHint ? `${theme}；风格：${styleHint}` : theme
+
+    oneClickStep.value = '📝 正在生成歌词...'
+    oneClickProgress.value = 10
+    const lyricsPayload = {
+      mode: 'write_full_song',
+      prompt: lyricsPrompt
+    }
+    if (oneClickForm.value.language && oneClickForm.value.language !== 'auto') {
+      lyricsPayload.advancedParams = { language: oneClickForm.value.language }
+    }
+    const lyricsResp = await fetch('/api/minimax/music/v1/lyrics_generation', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify(lyricsPayload)
+    })
+    const lyricsData = await safeJson(lyricsResp)
+    if (!lyricsResp.ok || lyricsData?.base_resp?.status_code) {
+      throw new Error(lyricsData?.base_resp?.status_msg || lyricsData?.error || '歌词生成失败')
+    }
+    const lyrics = lyricsData?.lyrics || lyricsData?.data?.lyrics || ''
+    const title = lyricsData?.song_title || lyricsData?.data?.title || oneClickForm.value.theme.slice(0, 16)
+    if (!lyrics.trim()) throw new Error('歌词生成成功但内容为空，请重试')
+
+    oneClickProgress.value = 30
+    oneClickStep.value = '🎵 正在生成音频（音乐是同步接口，可能需要 1-3 分钟）...'
+
+    const musicPayload = {
+      model: oneClickForm.value.model,
+      prompt: lyricsPrompt,
+      lyrics,
+      output_format: 'url',
+      audio_setting: {
+        sample_rate: 44100,
+        bitrate: 256000,
+        format: 'mp3'
+      }
+    }
+    const { audioUrl, extra, warning } = await oneClickSubmitAndFetch(musicPayload)
+
+    oneClickProgress.value = 100
+    oneClickProgressStatus.value = 'success'
+    oneClickStep.value = '✅ 完成'
+    oneClickResult.value = {
+      title,
+      lyrics,
+      audioUrl,
+      extra,
+      warning,
+      elapsedSec: Math.round((Date.now() - startedAt) / 1000)
+    }
+    ElMessage.success(`已完成（${oneClickResult.value.elapsedSec}s）`)
+  } catch (err) {
+    oneClickProgressStatus.value = 'exception'
+    oneClickStep.value = `❌ ${err.message || '生成失败'}`
+    ElMessage.error(err.message || '一键生成失败')
+  } finally {
+    oneClickRunning.value = false
+  }
+}
+
+async function oneClickSubmitAndFetch(payload) {
+  const submitResp = await fetch('/api/minimax/token-plan/v1/generations', {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  })
+  const submitData = await safeJson(submitResp)
+  if (!submitResp.ok) {
+    throw new Error(submitData?.error || `提交失败 HTTP ${submitResp.status}`)
+  }
+  // 同步接口：data.audio 可能是 URL 或 hex
+  const data = submitData?.data || submitData
+  const baseResp = submitData?.base_resp || submitData?.data?.base_resp || {}
+  if (baseResp.status_code && baseResp.status_code !== 0) {
+    throw new Error(baseResp.status_msg || `上游错误 ${baseResp.status_code}`)
+  }
+  const audioRaw = data?.audio || data?.audio_url || data?.audioUrl
+  if (!audioRaw) {
+    throw new Error('响应中未找到音频数据（data.audio）')
+  }
+  let audioUrl = audioRaw
+  let warning = ''
+  // hex 数据走 download 端点拿 blob
+  if (!/^https?:\/\//i.test(audioRaw)) {
+    audioUrl = await fetchTaskAudioBlobUrl(data?.task_id || submitData?.task_id, '')
+    warning = '上游返回 hex 数据，已自动通过本地端点代理'
+  }
+  return {
+    audioUrl,
+    extra: data?.extra_info || submitData?.extra_info || null,
+    warning
+  }
+}
+
+function fetchTaskAudioBlobUrl(taskId, fallbackUrl) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (fallbackUrl && /^https?:\/\//i.test(fallbackUrl)) {
+        const resp = await fetch(fallbackUrl)
+        if (!resp.ok) throw new Error('下载音频失败')
+        const blob = await resp.blob()
+        resolve(URL.createObjectURL(blob))
+        return
+      }
+      if (!taskId) {
+        reject(new Error('缺少 task_id，无法下载'))
+        return
+      }
+      const resp = await fetch(`/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}/download`, {
+        headers: authHeaders()
+      })
+      if (!resp.ok) {
+        const data = await safeJson(resp)
+        reject(new Error(data?.error || '下载失败'))
+        return
+      }
+      const blob = await resp.blob()
+      resolve(URL.createObjectURL(blob))
+    } catch (err) {
+      reject(err)
+    }
+  })
+}
+
+function resetOneClickMusic() {
+  oneClickResult.value = null
+  oneClickProgress.value = 0
+  oneClickProgressStatus.value = ''
+  oneClickStep.value = ''
+}
+
+async function downloadOneClickAudio() {
+  const url = oneClickResult.value?.audioUrl
+  if (!url) return
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) throw new Error('下载失败')
+    const blob = await resp.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    const safeTitle = String(oneClickResult.value?.title || 'music').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)
+    link.download = `${safeTitle}.${guessExtension(blob.type) || 'mp3'}`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1500)
+  } catch (err) {
+    ElMessage.error(err.message || '下载失败')
+  }
 }
 
 async function loadResultShareDocs() {

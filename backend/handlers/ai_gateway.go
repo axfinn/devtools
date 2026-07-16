@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"devtools/config"
@@ -9,14 +10,15 @@ import (
 )
 
 type AIGatewayHandler struct {
-	db             *models.DB
-	cfg            *config.Config
-	bailian        *BailianHandler
-	imageHandler   *ImageUnderstandingHandler
-	client         *http.Client // 带代理，用于 OpenAI 兼容接口
-	noProxyClient  *http.Client // 不走代理，禁用压缩（用于 Chat/Anthropic 避免 Brotli）
-	mediaClient    *http.Client // 不走代理，启用压缩（用于 MiniMax 媒体 API：图片/视频/音乐/TTS）
-	streamClient   *http.Client // 不走代理，用于 SSE 流式请求（无超时，依赖 context 取消）
+	db                *models.DB
+	cfg               *config.Config
+	bailian           *BailianHandler
+	imageHandler      *ImageUnderstandingHandler
+	client            *http.Client // 带代理，用于 OpenAI 兼容接口
+	noProxyClient     *http.Client // 不走代理，禁用压缩（用于 Chat/Anthropic 避免 Brotli）
+	mediaClient       *http.Client // 不走代理，启用压缩（用于 MiniMax 媒体 API：图片/视频/TTS）
+	musicSubmitClient *http.Client // 音乐生成专用：MiniMax /v1/music_generation 是同步接口，会阻塞到音频生成完成才返回（5 分钟音频常见 1-3 分钟），不能复用 mediaClient 的 90s 超时
+	streamClient      *http.Client // 不走代理，用于 SSE 流式请求（无超时，依赖 context 取消）
 }
 
 type usageSummary struct {
@@ -28,16 +30,16 @@ type usageSummary struct {
 }
 
 type CreateAIAPIKeyRequest struct {
-	SuperAdminPassword string   `json:"super_admin_password"`
-	Name               string   `json:"name" binding:"required"`
-	AllowedModels      []string `json:"allowed_models"`
-	AllowedScopes      []string `json:"allowed_scopes"`
-	ExpiresDays        int      `json:"expires_days"`
-	RateLimitPerHour   int      `json:"rate_limit_per_hour"`
-	BudgetLimit        float64  `json:"budget_limit"`
-	AlertThreshold     float64  `json:"alert_threshold"`
-	Notes               string `json:"notes"`
-	AnthropicProviderID int    `json:"anthropic_provider_id"` // 0=默认，非0=指定下游
+	SuperAdminPassword  string   `json:"super_admin_password"`
+	Name                string   `json:"name" binding:"required"`
+	AllowedModels       []string `json:"allowed_models"`
+	AllowedScopes       []string `json:"allowed_scopes"`
+	ExpiresDays         int      `json:"expires_days"`
+	RateLimitPerHour    int      `json:"rate_limit_per_hour"`
+	BudgetLimit         float64  `json:"budget_limit"`
+	AlertThreshold      float64  `json:"alert_threshold"`
+	Notes               string   `json:"notes"`
+	AnthropicProviderID int      `json:"anthropic_provider_id"` // 0=默认，非0=指定下游
 }
 
 type UpdateAIAPIKeyRequest struct {
@@ -45,7 +47,7 @@ type UpdateAIAPIKeyRequest struct {
 	Name                string   `json:"name"`
 	AllowedModels       []string `json:"allowed_models"`
 	AllowedScopes       []string `json:"allowed_scopes"`
-	ExpiresDays         int      `json:"expires_days"` // >0 表示从当前时间延长
+	ExpiresDays         int      `json:"expires_days"`     // >0 表示从当前时间延长
 	ClearExpiration     bool     `json:"clear_expiration"` // true 时把 expires_at 置 NULL（永不过期），优先级高于 ExpiresDays
 	RateLimitPerHour    int      `json:"rate_limit_per_hour"`
 	BudgetLimit         float64  `json:"budget_limit"`
@@ -119,10 +121,13 @@ var TokenPlanAllowedModels = []string{
 	"MiniMax-Hailuo-02",
 	"T2V-01-Director",
 	"T2V-01",
-	// Music（官方模型名: music-2.5, music-2.6, music-cover）
-	"music-2.5",
+	// Music（官方模型名: music-3.0 / music-2.6 / music-cover + 限免版 -free）
 	"music-2.6",
+	"music-2.6-free",
 	"music-cover",
+	"music-cover-free",
+	"music-3.0",
+	"music-3.0-free",
 	// Image（官方模型名: image-01, image-01-live）
 	"image-01",
 	"image-01-live",
@@ -135,9 +140,12 @@ var TokenPlanAsyncModels = []string{
 	"MiniMax-Hailuo-02",
 	"T2V-01-Director",
 	"T2V-01",
-	"music-2.5",
 	"music-2.6",
+	"music-2.6-free",
 	"music-cover",
+	"music-cover-free",
+	"music-3.0",
+	"music-3.0-free",
 	"image-01",
 	"image-01-live",
 }
@@ -187,7 +195,7 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 	// mediaTransport 启用压缩：MiniMax 图片/视频/音乐/TTS 端点要求 Accept-Encoding，
 	// 否则会直接断开连接（EOF）。这些端点不返回 Brotli，安全启用。
 	mediaTransport := &http.Transport{
-		Proxy:             nil,
+		Proxy:              nil,
 		DisableCompression: false,
 	}
 	return &AIGatewayHandler{
@@ -204,6 +212,10 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 			Timeout:   90 * time.Second,
 			Transport: mediaTransport,
 		},
+		musicSubmitClient: &http.Client{
+			Timeout:   5 * time.Minute,
+			Transport: mediaTransport,
+		},
 		// 流式请求不设 Timeout：http.Client.Timeout 包含读取 body 的时间，
 		// 对 SSE 长流会在 90s 后强制断开。改用 context 取消（客户端断开时自动传播）。
 		streamClient: &http.Client{
@@ -211,4 +223,14 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 			Transport: noProxyTransport,
 		},
 	}
+}
+
+// pickMediaSubmitClient 根据模型选择提交用的 HTTP 客户端。
+// 音乐模型走 musicSubmitClient(5 分钟)，其他媒体模型走 mediaClient(90s)。
+
+func (h *AIGatewayHandler) pickMediaSubmitClient(model string) *http.Client {
+	if strings.HasPrefix(model, "music-") {
+		return h.musicSubmitClient
+	}
+	return h.mediaClient
 }

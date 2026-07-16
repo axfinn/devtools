@@ -126,7 +126,10 @@ func resolveTokenPlanModelEndpoint(model string) string {
 		"T2V-01-Director", "T2V-01":
 		return "/v1/video_generation"
 	// Music - 正确端点: /v1/music_generation
-	case "music-2.5", "music-2.6", "music-cover":
+	// 官方当前模型：music-3.0 (推荐) / music-2.6 / music-cover + 三个 -free 限免版
+	case "music-2.6", "music-cover",
+		"music-3.0", "music-3.0-free",
+		"music-2.6-free", "music-cover-free":
 		return "/v1/music_generation"
 	// Image - 正确端点: /v1/image_generation
 	case "image-01", "image-01-live":
@@ -332,7 +335,9 @@ func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, ups
 	_ = h.db.UpdateMiniMaxMediaTask(task)
 
 	start := time.Now()
-	respBody, respContentType, err := h.doMediaRequestWithResp(upstreamURL, apiKey, "POST", bodyBytes, nil)
+	// 音乐生成是同步接口（直接返回 data.audio），阻塞时长取决于音频长度（5 分钟音频常见 1-3 分钟）。
+	// 必须用 musicSubmitClient(5 分钟超时)，否则 90s mediaClient 超时会在生成完成前断连。
+	respBody, respContentType, err := h.doRequestWithClient(h.pickMediaSubmitClient(model), upstreamURL, apiKey, "POST", bodyBytes, nil)
 
 	if err != nil {
 		task.Status = "failed"
@@ -1072,9 +1077,15 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 				"resolution": "768P",
 			},
 			"music_request": gin.H{
-				"model":    "music-2.6",
-				"prompt":   "轻松的爵士音乐，适合咖啡厅背景",
-				"duration": 300,
+				"model":         "music-3.0",
+				"prompt":        "轻松的爵士音乐，适合咖啡厅背景",
+				"lyrics":        "[Verse]\n...\n[Chorus]\n...",
+				"output_format": "url",
+				"audio_setting": gin.H{
+					"sample_rate": 44100,
+					"bitrate":     256000,
+					"format":      "mp3",
+				},
 			},
 			"image_request": gin.H{
 				"model":  "image-01",
@@ -1109,9 +1120,12 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 			"T2V-01-Director":         "视频生成（T2V-01-Director）",
 			"T2V-01":                  "视频生成（T2V-01）",
 			// Music
-			"music-2.5":   "音乐生成（2.5）",
-			"music-2.6":   "音乐生成（2.6）",
-			"music-cover": "翻唱生成（需先拿到 cover_feature_id）",
+			"music-2.6":        "音乐生成（2.6，推荐 Token Plan / 付费用户，RPM 120）",
+			"music-2.6-free":   "音乐生成（2.6 限免版，所有 API Key 可用，RPM 3）",
+			"music-cover":      "翻唱生成（需先拿到 cover_feature_id）",
+			"music-cover-free": "翻唱生成（限免版，RPM 3）",
+			"music-3.0":        "音乐生成（3.0，推荐，RPM 120）",
+			"music-3.0-free":   "音乐生成（3.0 限免版，所有 API Key 可用，RPM 3）",
 			// Image
 			"image-01":      "图像生成",
 			"image-01-live": "图像生成（live 版）",

@@ -28,7 +28,7 @@ func (h *AIGatewayHandler) GetMiniMaxMusicDocs(c *gin.Context) {
 			{"method": "GET", "path": "/api/minimax/music/docs", "description": "获取音乐工作流文档"},
 			{"method": "POST", "path": "/api/minimax/music/v1/lyrics_generation", "description": "歌词生成"},
 			{"method": "POST", "path": "/api/minimax/music/v1/cover_preprocess", "description": "翻唱前处理，获取 cover_feature_id"},
-			{"method": "POST", "path": "/api/minimax/token-plan/v1/generations", "description": "音乐生成（支持 music-2.5 / music-2.6 / music-cover）"},
+			{"method": "POST", "path": "/api/minimax/token-plan/v1/generations", "description": "音乐生成（支持 music-3.0 / music-3.0-free / music-2.6 / music-2.6-free / music-cover / music-cover-free）"},
 		},
 		"examples": gin.H{
 			"lyrics_generation": gin.H{
