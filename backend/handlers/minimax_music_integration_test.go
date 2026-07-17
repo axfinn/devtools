@@ -7,9 +7,11 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +135,15 @@ func verifyAudioURL(t *testing.T, client *http.Client, url, model string) {
 		t.Fatalf("[%s] 文件不像合法音频: magic=%x, content-type=%s, size=%d", model, head, contentType, len(full))
 	}
 	t.Logf("[%s] 音频 URL 下载成功: %d 字节, content-type=%s", model, len(full), contentType)
+	// 落盘到 /tmp/devtools-music-share-<model>.mp3 供后续 upload/devtools 分享使用。
+	// 仅当 SAVE_GENERATED_MUSIC_DIR 环境变量设置时才保存。
+	if dir := os.Getenv("SAVE_GENERATED_MUSIC_DIR"); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+		path := filepath.Join(dir, fmt.Sprintf("music-%s.mp3", model))
+		if err := os.WriteFile(path, full, 0o644); err == nil {
+			t.Logf("[%s] 已保存到 %s", model, path)
+		}
+	}
 }
 
 // verifyAudioHex 解码 hex 音频数据，校验 magic bytes 和大小。
