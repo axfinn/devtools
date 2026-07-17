@@ -1,7 +1,7 @@
-"""ASR 服务: faster-whisper 转写 + 可选 pyannote 说话人识别。
+"""ASR 服务: faster-whisper 转写。
 
-向后兼容: 当 diarize 关闭或 GPU 不可用时,响应结构与 v1.0 一致
-(仅 text / language / segments),仅在启用角色识别时新增 diarize_status 字段。
+说话人识别(diarization)已拆出到独立服务,见同级 ../diarize-service/。
+本服务只做转写,diarize_status 字段恒为 "disabled",保持调用方解析逻辑不变。
 """
 
 from __future__ import annotations
@@ -10,14 +10,13 @@ import logging
 import os
 import tempfile
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
 
-from config_loader import DiarizeConfig, ServiceConfig, load_config
+from config_loader import ASRConfig, ServiceConfig, load_config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,7 +25,6 @@ logger = logging.getLogger(__name__)
 # ── 全局状态(由 lifespan 初始化) ─────────────────────────
 config: ServiceConfig = ServiceConfig()
 whisper_model: WhisperModel | None = None
-diarize_pipeline: Any = None
 gpu_available: bool = False
 effective_device: str = "cpu"  # 启动时若 cuda 不可用会被降级
 
@@ -63,6 +61,8 @@ class ASRSegment(BaseModel):
     start: float
     end: float
     text: str
+    # speaker 字段保留但不再由本服务填充;若调用方启用了 diarize-service,
+    # 会在 Go 层按中点合并后填入。
     speaker: str | None = None
 
 
@@ -72,8 +72,8 @@ class ASRResponse(BaseModel):
     status: str = "completed"
     error: str = ""
     segments: list[ASRSegment] = []
-    # 角色识别状态(向后兼容: 旧调用方忽略此字段)
-    # 取值: "disabled" | "ok" | "skipped_no_gpu" | "failed"
+    # 恒为 "disabled";diarization 已拆到独立服务(diarize-service),
+    # 由 devtools 后端按 DIARIZE_SERVICE_URL 配置决定是否调。
     diarize_status: str = "disabled"
 
 
@@ -90,71 +90,12 @@ def _load_whisper(cfg: ServiceConfig, device: str) -> WhisperModel:
     return WhisperModel(cfg.asr.model, device=device, compute_type=cfg.asr.compute_type)
 
 
-# ── Diarization 懒加载 ────────────────────────────────────
-
-
-def _load_diarize_pipeline(diar_cfg: DiarizeConfig):
-    """懒加载 pyannote pipeline。失败抛出异常,调用方决定降级还是报错。"""
-    if not diar_cfg.hf_token:
-        raise RuntimeError(
-            "diarize.enabled=true 但未配置 HF_TOKEN;请在 .env 设置 HF_TOKEN=hf_xxx"
-        )
-    from pyannote.audio import Pipeline  # type: ignore
-
-    logger.info("加载 pyannote diarization pipeline: %s", diar_cfg.model)
-    pipeline = Pipeline.from_pretrained(
-        diar_cfg.model,
-        use_auth_token=diar_cfg.hf_token,
-    )
-    try:
-        import torch  # type: ignore
-
-        if torch.cuda.is_available():
-            pipeline.to(torch.device("cuda"))
-            logger.info("pyannote pipeline 已迁移到 GPU")
-    except Exception as exc:
-        logger.warning("pyannote 迁移到 GPU 失败,将使用默认设备: %s", exc)
-    return pipeline
-
-
-# ── Speaker 合并 ─────────────────────────────────────────
-
-
-def _assign_speakers(whisper_segs, diarize_annotation) -> list[ASRSegment]:
-    """把 pyannote 的 (turn, _, speaker) 与 whisper segments 按中点时间对齐。"""
-    if diarize_annotation is None:
-        return [
-            ASRSegment(start=s.start, end=s.end, text=s.text.strip())
-            for s in whisper_segs
-        ]
-    out: list[ASRSegment] = []
-    for seg in whisper_segs:
-        mid = (seg.start + seg.end) / 2.0
-        speaker: str | None = None
-        try:
-            for turn, _, label in diarize_annotation.itertracks(yield_label=True):
-                if turn.start <= mid <= turn.end:
-                    speaker = label
-                    break
-        except Exception:
-            speaker = None
-        out.append(
-            ASRSegment(
-                start=float(seg.start),
-                end=float(seg.end),
-                text=seg.text.strip(),
-                speaker=speaker,
-            )
-        )
-    return out
-
-
 # ── 启动 / 关闭 ──────────────────────────────────────────
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global config, whisper_model, diarize_pipeline, gpu_available, effective_device
+    global config, whisper_model, gpu_available, effective_device
 
     config = load_config()
 
@@ -184,27 +125,16 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.info("ASR 预热跳过(临时文件不可用)")
 
-    # Diarization(可选,懒加载;失败不阻塞启动,首次请求时报错或降级)
-    if config.diarize.enabled:
-        try:
-            diarize_pipeline = _load_diarize_pipeline(config.diarize)
-        except Exception as exc:
-            logger.error("Diarization pipeline 加载失败: %s", exc)
-            diarize_pipeline = None
-
     logger.info(
-        "ASR 服务就绪: device=%s, gpu_available=%s, diarize_enabled=%s, diarize_loaded=%s",
+        "ASR 服务就绪: device=%s, gpu_available=%s",
         effective_device,
         gpu_available,
-        config.diarize.enabled,
-        diarize_pipeline is not None,
     )
     yield
     whisper_model = None
-    diarize_pipeline = None
 
 
-app = FastAPI(title="ASR Service", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="ASR Service", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -228,8 +158,8 @@ async def health():
         "requested_device": config.asr.device,
         "compute_type": config.asr.compute_type,
         "gpu_available": gpu_available,
-        "diarize_enabled": config.diarize.enabled,
-        "diarize_loaded": diarize_pipeline is not None,
+        "diarize_enabled": False,
+        "diarize_service_url": os.getenv("DIARIZE_SERVICE_URL", ""),
     }
 
 
@@ -262,63 +192,17 @@ async def transcribe(
         )
         whisper_segs = [s for s in segs_iter if s.text.strip()]
 
-        # Diarization 分支
-        diarize_status = "disabled"
-        segments: list[ASRSegment]
-        if not config.diarize.enabled:
-            segments = [
-                ASRSegment(start=float(s.start), end=float(s.end), text=s.text.strip())
-                for s in whisper_segs
-            ]
-        elif diarize_pipeline is None:
-            # 启用了但加载失败 → 走只转写
-            logger.warning("diarize_enabled 但 pipeline 未加载,只返回转写")
-            segments = [
-                ASRSegment(start=float(s.start), end=float(s.end), text=s.text.strip())
-                for s in whisper_segs
-            ]
-            diarize_status = "failed"
-        else:
-            # 启用了 + pipeline 在
-            if not gpu_available and config.diarize.fallback_on_no_gpu:
-                logger.warning("diarize 启用但无 GPU,自动降级为只转写")
-                segments = [
-                    ASRSegment(start=float(s.start), end=float(s.end), text=s.text.strip())
-                    for s in whisper_segs
-                ]
-                diarize_status = "skipped_no_gpu"
-            elif not gpu_available and not config.diarize.fallback_on_no_gpu:
-                raise HTTPException(
-                    status_code=503,
-                    detail="diarize 启用但当前环境无 GPU,且 fallback_on_no_gpu=false",
-                )
-            else:
-                # 实际跑 pyannote
-                try:
-                    diar_kwargs: dict[str, Any] = {}
-                    if config.diarize.min_speakers > 0:
-                        diar_kwargs["min_speakers"] = config.diarize.min_speakers
-                    if config.diarize.max_speakers > 0:
-                        diar_kwargs["max_speakers"] = config.diarize.max_speakers
-                    annotation = diarize_pipeline(temp_path, **diar_kwargs)
-                    segments = _assign_speakers(whisper_segs, annotation)
-                    diarize_status = "ok"
-                except Exception as exc:
-                    logger.exception("diarize 推理失败,降级为只转写")
-                    segments = [
-                        ASRSegment(
-                            start=float(s.start), end=float(s.end), text=s.text.strip()
-                        )
-                        for s in whisper_segs
-                    ]
-                    diarize_status = "failed"
+        segments = [
+            ASRSegment(start=float(s.start), end=float(s.end), text=s.text.strip())
+            for s in whisper_segs
+        ]
 
         text = "\n".join(s.text for s in segments).strip()
         return ASRResponse(
             text=text,
             language=getattr(info, "language", None),
             segments=segments,
-            diarize_status=diarize_status,
+            diarize_status="disabled",
         )
     except HTTPException:
         raise

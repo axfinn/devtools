@@ -306,9 +306,10 @@ func transcriptSummaryFallback(content string) string {
 }
 
 type plannerASRSegment struct {
-	Start float64 `json:"start"`
-	End   float64 `json:"end"`
-	Text  string  `json:"text"`
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Text    string  `json:"text"`
+	Speaker string  `json:"speaker,omitempty"`
 }
 
 type plannerASRResponse struct {
@@ -536,6 +537,29 @@ func (h *PlannerHandler) UploadMeetingRecording(c *gin.Context) {
 		transcriptLanguage = strings.TrimSpace(asrResult.Language)
 		transcriptError = strings.TrimSpace(asrResult.Error)
 		transcriptSegments = asrResult.Segments
+	}
+	// 说话人识别:仅在 ASR 成功且 diarize-service 启用时追加。
+	// 失败安全降级,不影响会议上传/转写主流程。
+	if asrResult != nil && transcriptStatus == "completed" && h.diarizeClient.Enabled() && len(transcriptSegments) > 0 {
+		segs := make([]DiarizeSegment, len(transcriptSegments))
+		for i, s := range transcriptSegments {
+			segs[i] = DiarizeSegment{Start: s.Start, End: s.End, Text: s.Text}
+		}
+		dRes, dErr := h.diarizeClient.Call(filePath, header.Filename)
+		if dErr != nil {
+			log.Printf("planner meeting diarize 失败,降级为只转写: %v", dErr)
+		} else {
+			segs = AssignSpeakers(segs, dRes.Turns)
+			enriched := FormatTranscriptWithSpeakers(segs)
+			if enriched != "" {
+				transcript = enriched
+				for i, s := range segs {
+					transcriptSegments[i].Speaker = s.Speaker
+				}
+				log.Printf("planner meeting: 已合并说话人标签(%d 段, %d turn)",
+					len(segs), len(dRes.Turns))
+			}
+		}
 	}
 	if asrErr != nil && transcriptError == "" {
 		transcriptStatus = "failed"

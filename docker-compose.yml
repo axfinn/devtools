@@ -29,6 +29,10 @@ services:
       - TZ=Asia/Shanghai
       - OCR_SERVICE_URL=http://ocr-service:8000
       - ASR_SERVICE_URL=http://asr-service:9000
+      # 说话人识别(diarize-service):独立部署在 Windows / 其他主机时填外部 URL。
+      # 留空表示禁用,基础 ASR 仍正常工作,只是不会带说话人标签。
+      # 示例:DIARIZE_SERVICE_URL=http://host.docker.internal:9100
+      - DIARIZE_SERVICE_URL=${DIARIZE_SERVICE_URL:-}
       - no_proxy=ocr-service,asr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
       - NO_PROXY=ocr-service,asr-service,redis,devtools,api.minimaxi.com,host.docker.internal,192.168.65.254
       - AUTODEV_PATH=/app/data/clawtest/autodev/autodev
@@ -111,6 +115,7 @@ services:
       - NO_PROXY=
       - no_proxy=
       # ASR 服务配置(也支持 asr-service/config.yaml 覆盖,详见 asr-service/config.example.yaml)
+      # 注意:说话人识别已拆到独立服务 ../diarize-service/,不在此处配置
       - ASR_MODEL=${ASR_MODEL:-small}
       - ASR_DEVICE=${ASR_DEVICE:-cpu}
       - ASR_COMPUTE_TYPE=${ASR_COMPUTE_TYPE:-int8}

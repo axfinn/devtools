@@ -3,6 +3,8 @@
 优先级: 环境变量 > config.yaml > 内置默认值
 路径: 默认读取 ./config.yaml,可通过 ASR_CONFIG_PATH 覆盖。
 若文件不存在,只读环境变量 + 默认值,启动不报错。
+
+说话人识别(diarization)已拆出到独立服务,本文件不再包含 diarize 相关字段。
 """
 
 from __future__ import annotations
@@ -54,19 +56,8 @@ class ASRConfig:
 
 
 @dataclass
-class DiarizeConfig:
-    enabled: bool = False
-    model: str = "pyannote/speaker-diarization-3.1"
-    hf_token: str = ""
-    min_speakers: int = 0
-    max_speakers: int = 0
-    fallback_on_no_gpu: bool = True
-
-
-@dataclass
 class ServiceConfig:
     asr: ASRConfig = field(default_factory=ASRConfig)
-    diarize: DiarizeConfig = field(default_factory=DiarizeConfig)
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
@@ -120,7 +111,13 @@ def load_config() -> ServiceConfig:
     path = _env_str(CONFIG_FILE_ENV, DEFAULT_CONFIG_PATH)
     raw = _load_yaml(path)
     asr_raw = raw.get("asr", {}) if isinstance(raw.get("asr"), dict) else {}
-    diar_raw = raw.get("diarize", {}) if isinstance(raw.get("diarize"), dict) else {}
+
+    # 兼容旧配置文件:若顶层出现 diarize 字段,打日志提示用户迁出
+    if isinstance(raw.get("diarize"), dict):
+        logger.warning(
+            "检测到 config.yaml 顶层 'diarize' 字段已被忽略;"
+            "说话人识别已拆到独立服务,见 ../diarize-service/"
+        )
 
     asr = ASRConfig(
         model=_pick_str(asr_raw.get("model"), "ASR_MODEL", "small"),
@@ -131,21 +128,4 @@ def load_config() -> ServiceConfig:
         vad_filter=_pick_bool(asr_raw.get("vad_filter"), "ASR_VAD_FILTER", True),
     )
 
-    diarize = DiarizeConfig(
-        enabled=_pick_bool(diar_raw.get("enabled"), "ASR_DIARIZE_ENABLED", False),
-        model=_pick_str(
-            diar_raw.get("model"),
-            "ASR_DIARIZE_MODEL",
-            "pyannote/speaker-diarization-3.1",
-        ),
-        hf_token=_env_str("HF_TOKEN", str(diar_raw.get("hf_token") or "").strip()),
-        min_speakers=_pick_int(diar_raw.get("min_speakers"), "ASR_DIARIZE_MIN_SPEAKERS", 0),
-        max_speakers=_pick_int(diar_raw.get("max_speakers"), "ASR_DIARIZE_MAX_SPEAKERS", 0),
-        fallback_on_no_gpu=_pick_bool(
-            diar_raw.get("fallback_on_no_gpu"),
-            "ASR_DIARIZE_FALLBACK_NO_GPU",
-            True,
-        ),
-    )
-
-    return ServiceConfig(asr=asr, diarize=diarize)
+    return ServiceConfig(asr=asr)

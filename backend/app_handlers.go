@@ -56,7 +56,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	hermesHandler := handlers.NewHermesHandler(cfg.Hermes)
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
 	gameHandler := handlers.NewGameHandler()
-	voiceMemoHandler := handlers.NewVoiceMemoHandler(db, plannerHandler, envOrDefault("ASR_SERVICE_URL", "http://asr-service:9000"))
+	voiceMemoHandler := handlers.NewVoiceMemoHandler(db, plannerHandler, envOrDefault("ASR_SERVICE_URL", "http://asr-service:9000"), os.Getenv("DIARIZE_SERVICE_URL"))
 	askitSyncHandler := handlers.NewAskitSyncHandler(db, cfg.AskitSync)
 	screenHandler := handlers.NewScreenHandler(db, *cfg)
 

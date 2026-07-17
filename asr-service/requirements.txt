@@ -4,5 +4,3 @@ requests==2.32.3
 faster-whisper==1.0.3
 python-multipart==0.0.9
 PyYAML==6.0.2
-# 说话人识别(pyannote-audio 3.1)
-pyannote-audio==3.1.1

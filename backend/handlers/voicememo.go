@@ -31,9 +31,12 @@ type VoiceMemoHandler struct {
 	uploadDir      string
 	// 复用的 HTTP 客户端：避免每次 ASR 调用都新建 Client/Transport
 	asrClient *http.Client
+	// 可选:外部 diarize-service 客户端;URL 为空时 nil。
+	// 用于在 ASR 转写后追加说话人标签,服务不可用时安全降级为只转写。
+	diarizeClient *DiarizeClient
 }
 
-func NewVoiceMemoHandler(db *models.DB, plannerHandler *PlannerHandler, asrServiceURL string) *VoiceMemoHandler {
+func NewVoiceMemoHandler(db *models.DB, plannerHandler *PlannerHandler, asrServiceURL, diarizeServiceURL string) *VoiceMemoHandler {
 	uploadDir := models.VoicememoUploadDir
 	os.MkdirAll(uploadDir, 0755)
 	return &VoiceMemoHandler{
@@ -42,6 +45,7 @@ func NewVoiceMemoHandler(db *models.DB, plannerHandler *PlannerHandler, asrServi
 		asrServiceURL:  strings.TrimSpace(asrServiceURL),
 		uploadDir:      uploadDir,
 		asrClient:      &http.Client{Timeout: 5 * time.Minute, Transport: &http.Transport{Proxy: nil}},
+		diarizeClient:  NewDiarizeClient(diarizeServiceURL),
 	}
 }
 
@@ -656,7 +660,29 @@ func (h *VoiceMemoHandler) transcribeMemo(memoID, filePath, originalName string)
 		errMsg = result.Error
 	}
 
-	if err := h.db.UpdateVoiceMemoTranscript(memoID, result.Text, result.Language, status, errMsg); err != nil {
+	transcriptText := result.Text
+	// 说话人识别:仅在 ASR 成功且启用了 diarize-service 时追加。
+	// 任一环节失败都安全降级为纯转写,不影响基础 ASR。
+	if status == "completed" && h.diarizeClient.Enabled() && len(result.Segments) > 0 {
+		segs := make([]DiarizeSegment, len(result.Segments))
+		for i, s := range result.Segments {
+			segs[i] = DiarizeSegment{Start: s.Start, End: s.End, Text: s.Text}
+		}
+		dRes, dErr := h.diarizeClient.Call(filePath, originalName)
+		if dErr != nil {
+			log.Printf("voicememo: diarize 失败,降级为只转写(%s): %v", memoID, dErr)
+		} else {
+			segs = AssignSpeakers(segs, dRes.Turns)
+			enriched := FormatTranscriptWithSpeakers(segs)
+			if enriched != "" {
+				transcriptText = enriched
+				log.Printf("voicememo: 已合并说话人标签(%s, %d 段, %d turn)",
+					memoID, len(segs), len(dRes.Turns))
+			}
+		}
+	}
+
+	if err := h.db.UpdateVoiceMemoTranscript(memoID, transcriptText, result.Language, status, errMsg); err != nil {
 		log.Printf("voicememo: failed to update transcript for %s: %v", memoID, err)
 	}
 }

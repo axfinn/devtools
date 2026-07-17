@@ -41,6 +41,8 @@ type PlannerHandler struct {
 	smtpUser          string
 	smtpPass          string
 	asrServiceURL     string
+	// 可选:外部 diarize-service 客户端;URL 为空时 nil。
+	diarizeClient     *DiarizeClient
 	serviceHTTPClient *http.Client
 	minimaxClient     *http.Client
 }
@@ -293,6 +295,7 @@ func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
 	if asrServiceURL == "" {
 		asrServiceURL = plannerASRServiceURL
 	}
+	diarizeServiceURL := strings.TrimSpace(os.Getenv("DIARIZE_SERVICE_URL"))
 	return &PlannerHandler{
 		db:                db,
 		cfg:               cfg,
@@ -304,6 +307,7 @@ func NewPlannerHandler(db *models.DB, cfg *config.Config) *PlannerHandler {
 		smtpUser:          plannerCfg.SMTPUser,
 		smtpPass:          plannerCfg.SMTPPass,
 		asrServiceURL:     asrServiceURL,
+		diarizeClient:     NewDiarizeClient(diarizeServiceURL),
 		serviceHTTPClient: &http.Client{Timeout: 5 * time.Minute, Transport: &http.Transport{Proxy: nil}},
 		// 复用 HTTP 客户端以利用连接池；避免每次 AI 调用都新建 Client
 		minimaxClient: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},

@@ -39,8 +39,17 @@ TTS_OUTPUT_DIR=./backend/data/uploads python3 tts-service/server.py
 ### ASR Service (语音转写)
 - 服务目录: `asr-service/`(Python 3.11 + FastAPI + faster-whisper,端口 9000)
 - 配置文件: `asr-service/config.yaml`(从 `config.example.yaml` 复制;支持 env 覆盖)
-- **完全向后兼容**:不开启 Diarization 时响应与 v1.0 一致,旧调用方零迁移
-- 响应新增 `diarize_status` 字段(`disabled` / `ok` / `failed`)、`segments[].speaker` 字段
+- **只做转写**;说话人识别已拆出到独立项目 `../diarize-service/`,通过环境变量 `DIARIZE_SERVICE_URL` 联动
+- 响应 `diarize_status` 恒为 `"disabled"`(兼容旧解析逻辑)
+
+### Diarize Service (说话人识别,独立项目)
+- 项目目录: `../diarize-service/`(Python 3.11 + FastAPI + pyannote-audio 3.1,端口 9100)
+- NVIDIA GPU 加速(CUDA);无 GPU 时自动回退 CPU
+- 配置: `diarize-service/config.yaml` + `HF_TOKEN` 环境变量(必需)
+- devtools 后端通过 `DIARIZE_SERVICE_URL` 环境变量接入:
+  - 留空 → 禁用,只转写不带说话人标签
+  - 设置(例 `http://host.docker.internal:9100`)→ ASR 后追加 `/diarize` 调用,按段中点合并 `speaker` 标签
+- 任一调用失败均安全降级为基础 ASR,不影响原有功能
 
 ### Docker Deployment
 ```bash
@@ -267,6 +276,7 @@ The Dockerfile uses multi-stage builds:
 - `GIN_MODE`: Gin mode, set to "release" in production
 - `HOST_PORT`: Host port for Docker exposure (default: 8082)
 - `OCR_SERVICE_URL`: OCR 服务地址 (default: http://ocr-service:8000)
+- `DIARIZE_SERVICE_URL`: 说话人识别服务地址 (default: 空=禁用;独立部署在 `../diarize-service/`)
 - `DEEPSEEK_API_KEY`: DeepSeek API 密钥 (用于记账 AI 分析)
 - `MINIMAX_API_KEY`: MiniMax API 密钥 (用于聊天室 AI 机器人)
 - `TTS_SERVICE_URL`: TTS HTTP 服务地址 (default: http://127.0.0.1:8083)
