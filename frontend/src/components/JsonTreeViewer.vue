@@ -4,6 +4,7 @@
     <div class="json-tree-toolbar">
       <div class="tree-stats">
         <span class="stat-label">{{ totalNodes }} 个节点</span>
+        <span v-if="searchMatchCount > 0" class="stat-truncated">搜索命中 {{ searchMatchCount }} 个</span>
         <span v-if="truncatedCount > 0" class="stat-truncated">已折叠 {{ truncatedCount }} 项</span>
       </div>
       <div class="tree-actions">
@@ -21,7 +22,7 @@
     <div v-if="parsedRoot" class="json-tree-content" ref="treeScrollRef">
       <JsonNodeRow
         :node="parsedRoot"
-        :search-matched-paths="matchedPathSet"
+        :search-matched-paths="combinedMatchedPaths"
         :has-truncation="truncatedCount > 0"
         :truncation-node-paths="truncationPathsSet"
         :truncation-map="truncationMap"
@@ -398,9 +399,57 @@ function expandToDepth(depth) {
 
 // ---- Search ----
 
+// 用户在父组件输入的 searchText:遍历整棵树的 key + 值(标量/对象/数组都转字符串),
+// case-insensitive 包含匹配。命中节点的 path 进入集合,传给 JsonNodeRow 高亮。
+// 同时把命中的祖先节点 force-expand,否则在 collapsed 状态下看不到。
+const searchMatchedPathSet = computed(() => {
+  const q = (props.searchText || '').trim().toLowerCase()
+  if (!q || !parsedRoot.value) return new Set()
+  const set = new Set()
+  walkTree(parsedRoot.value, (n) => {
+    if (n.key !== null && n.key !== undefined && String(n.key).toLowerCase().includes(q)) {
+      set.add(jsonPath(n.path))
+    } else if (n.type !== 'object' && n.type !== 'array') {
+      // 标量值:直接比字符串
+      if (String(n.value).toLowerCase().includes(q)) set.add(jsonPath(n.path))
+    } else {
+      // 对象/数组:对 childrenCount 或类型标签包含关键词的也算(便于搜 "object" / "5" 这种)
+      const label = `${n.type} ${n.childrenCount}`
+      if (label.toLowerCase().includes(q)) set.add(jsonPath(n.path))
+    }
+  })
+  return set
+})
+
+// 搜索命中的总数(给工具栏显示 "N 个匹配")
+const searchMatchCount = computed(() => searchMatchedPathSet.value.size)
+
 const matchedPathSet = computed(() => {
   const paths = props.highlightPaths || []
   return new Set(paths.map(p => Array.isArray(p) ? jsonPath(p) : p))
+})
+
+// 合并 highlightPaths(JSONPath 命中) + searchMatchedPathSet(搜索框命中)给 JsonNodeRow
+const combinedMatchedPaths = computed(() => {
+  const a = matchedPathSet.value
+  const b = searchMatchedPathSet.value
+  if (a.size === 0) return b
+  if (b.size === 0) return a
+  return new Set([...a, ...b])
+})
+
+watch(() => props.searchText, () => {
+  if (!parsedRoot.value || !props.searchText) return
+  // 把每个命中节点的所有祖先 force expand,否则 collapsed 父节点下看不到命中
+  for (const pathStr of searchMatchedPathSet.value) {
+    // pathStr like "$.a.b.c" 或 "$";从路径里反推 path array
+    const pathArr = pathStr === '$' ? [] : pathStr.slice(2).split('.')
+    for (let i = 0; i < pathArr.length; i++) {
+      const ancestor = findNode(parsedRoot.value, pathArr.slice(0, i))
+      if (ancestor && ancestor.collapsed) ancestor.collapsed = false
+    }
+  }
+  refreshRoot()
 })
 
 watch(() => props.highlightPaths, (paths) => {

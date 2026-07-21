@@ -575,7 +575,10 @@ const transformTo = async (kind) => {
     ElMessage.warning('输入不是合法 JSON,无法转换')
     return
   }
-  const v = JSON.parse(outputJson.value || inputJson.value)
+  // 直接 parse inputJson:它刚被 parseStatus 验证为合法 JSON。
+  // 不能用 outputJson.value — 它在 transform 成功后会被覆盖成 TOML/YAML/CSV/MD,
+  // 再次点击 transform 时 JSON.parse 会炸("Unexpected token in TOML text")。
+  const v = JSON.parse(inputJson.value)
   let result = ''
   try {
     if (kind === 'yaml') {
