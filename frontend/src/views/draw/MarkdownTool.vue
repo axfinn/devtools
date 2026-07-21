@@ -3,6 +3,17 @@
     <div class="tool-header">
       <h2>Markdown 编辑器</h2>
       <div class="actions">
+        <el-radio-group v-model="viewMode" size="default">
+          <el-radio-button value="editor">
+            <el-icon><EditPen /></el-icon>
+            只编辑
+          </el-radio-button>
+          <el-radio-button value="both">分屏</el-radio-button>
+          <el-radio-button value="preview">
+            <el-icon><View /></el-icon>
+            全屏预览
+          </el-radio-button>
+        </el-radio-group>
         <el-button type="success" @click="showShareDialog = true">
           <el-icon><Share /></el-icon>
           分享
@@ -41,10 +52,12 @@
       <el-tag size="small">任务列表</el-tag>
       <el-tag type="danger" size="small">粘贴/拖拽图片</el-tag>
       <el-tag type="info" size="small">脚注/高亮/上下标</el-tag>
+      <el-tag type="info" size="small">拖拽 .md 文件覆盖</el-tag>
+      <el-tag type="success" size="small">单视图模式</el-tag>
     </div>
 
-    <div class="editor-container">
-      <div class="editor-panel">
+    <div class="editor-container" :style="editorContainerStyle">
+      <div v-show="editorVisible" class="editor-panel">
         <div class="panel-header">
           <span>Markdown 输入</span>
           <span class="char-count">{{ markdownText.length }} 字符</span>
@@ -53,7 +66,7 @@
           ref="editorRef"
           v-model="markdownText"
           class="code-editor"
-          placeholder="输入 Markdown 内容...&#10;&#10;支持粘贴图片 (Ctrl+V)&#10;支持拖拽图片"
+          placeholder="输入 Markdown 内容...&#10;&#10;支持粘贴图片 (Ctrl+V)&#10;支持拖拽图片&#10;支持拖拽 .md / .markdown / .txt 文件(覆盖内容)"
           spellcheck="false"
           @scroll="onScroll('editor')"
           @paste="handlePaste"
@@ -61,7 +74,7 @@
           @dragover.prevent
         ></textarea>
       </div>
-      <div class="editor-panel preview-panel">
+      <div v-show="previewVisible" class="editor-panel preview-panel">
         <div class="panel-header">预览</div>
         <div ref="previewRef" class="preview-content markdown-body" v-html="renderedHtml" @scroll="onScroll('preview')"></div>
       </div>
@@ -401,7 +414,7 @@ const onScroll = (source) => {
   requestAnimationFrame(() => { isScrolling = false })
 }
 
-const markdownText = ref(`# Markdown 编辑器
+const defaultMarkdownPlaceholder = `# Markdown 编辑器
 
 ## 功能特点
 
@@ -465,7 +478,19 @@ const share = async (content) => {
 ---
 
 > 提示: 点击右上角"分享"按钮可生成短链接分享给他人
-`)
+`
+
+const markdownText = ref(defaultMarkdownPlaceholder)
+
+// 视图模式:`both` 分屏(默认),`editor` 只编辑,`preview` 全屏预览
+// 用 v-show 而不是 v-if,保留 preview div 里 mermaid 已渲染的 data-processed 标记,
+// 单视图切换不会触发重新渲染
+const viewMode = ref('both')
+const editorVisible = computed(() => viewMode.value !== 'preview')
+const previewVisible = computed(() => viewMode.value !== 'editor')
+const editorContainerStyle = computed(() => {
+  return viewMode.value === 'both' ? null : { gridTemplateColumns: '1fr' }
+})
 
 const renderedHtml = computed(() => md.render(markdownText.value))
 
@@ -522,7 +547,53 @@ const handleDrop = async (e) => {
   for (const file of files) {
     if (file.type.startsWith('image/')) {
       await uploadAndInsertImage(file)
+      continue
     }
+    if (isMarkdownLikeFile(file)) {
+      await loadMarkdownFile(file)
+    }
+  }
+}
+
+const isMarkdownLikeFile = (file) => {
+  const name = (file.name || '').toLowerCase()
+  if (/\.(md|markdown|markdown\.txt)$/.test(name)) return true
+  return file.type === 'text/markdown' || file.type === 'text/x-markdown'
+}
+
+const MAX_MD_FILE_SIZE = 5 * 1024 * 1024
+
+const loadMarkdownFile = async (file) => {
+  if (file.size > MAX_MD_FILE_SIZE) {
+    ElMessage.warning('文件超过 5MB,无法加载')
+    return
+  }
+  let text
+  try {
+    text = await file.text()
+  } catch (err) {
+    ElMessage.error('读取文件失败: ' + err.message)
+    return
+  }
+  const isUnmodified =
+    !markdownText.value ||
+    markdownText.value.trim() === '' ||
+    markdownText.value === defaultMarkdownPlaceholder
+  if (isUnmodified) {
+    markdownText.value = text
+    ElMessage.success(`已加载 ${file.name}`)
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将覆盖当前编辑器内容 (${markdownText.value.length} 字符),改用 ${file.name} (${text.length} 字符)?`,
+      '加载 Markdown 文件',
+      { confirmButtonText: '覆盖', cancelButtonText: '取消', type: 'warning' }
+    )
+    markdownText.value = text
+    ElMessage.success(`已加载 ${file.name}`)
+  } catch {
+    // 用户取消,不动
   }
 }
 
