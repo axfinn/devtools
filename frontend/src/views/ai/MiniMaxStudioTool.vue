@@ -417,6 +417,7 @@
                 <div class="inline-actions">
                   <el-button text :disabled="!oneClickResult" @click="copyText(oneClickResult?.lyrics || '')">复制歌词</el-button>
                   <el-button text :disabled="!oneClickResult?.audioUrl" @click="downloadOneClickAudio">下载音频</el-button>
+                  <el-button text :disabled="!oneClickResult?.sourceUrl" @click="openShareDialog('oneclick')">保存分享</el-button>
                 </div>
               </div>
             </template>
@@ -559,6 +560,7 @@
               <el-button :disabled="!currentMediaTask" @click="openShareDialog('media')">保存媒体任务</el-button>
               <el-button :disabled="!lyricsResultText" @click="openShareDialog('lyrics')">保存歌词结果</el-button>
               <el-button :disabled="!coverFeatureId" @click="openShareDialog('cover')">保存翻唱前处理</el-button>
+              <el-button :disabled="!oneClickResult?.sourceUrl" @click="openShareDialog('oneclick')">保存一键音乐结果</el-button>
             </div>
 
             <el-alert
@@ -1565,7 +1567,9 @@ function applyCoverToMedia() {
   ElMessage.success('cover_feature_id 和前处理歌词已带入翻唱任务')
 }
 
-// 一键音乐生产：主题 → 歌词（lyrics_generation）→ 音频（music_generation）→ 轮询 → 下载。
+// 一键音乐生产：主题 → 歌词（lyrics_generation）→ 提交音乐任务 → 轮询 → 下载代理成 blob。
+// 必须轮询：devtools 后端 /api/minimax/token-plan/v1/generations 对所有 music 模型都是异步返回 task_id，
+// 真正结果要从 /api/minimax/token-plan/tasks/:id 轮询拿到 result_urls。这跟 AIChatTool.handleMusic 同源。
 async function runOneClickMusic() {
   if (!requireCredential()) return
   const theme = oneClickForm.value.theme.trim()
@@ -1587,41 +1591,29 @@ async function runOneClickMusic() {
 
     oneClickStep.value = '📝 正在生成歌词...'
     oneClickProgress.value = 10
-    const lyricsPayload = {
-      mode: 'write_full_song',
-      prompt: lyricsPrompt
-    }
+    const lyricsPayload = { mode: 'write_full_song', prompt: lyricsPrompt }
     if (oneClickForm.value.language && oneClickForm.value.language !== 'auto') {
       lyricsPayload.advancedParams = { language: oneClickForm.value.language }
     }
-    const lyricsResp = await fetch('/api/minimax/music/v1/lyrics_generation', {
-      method: 'POST',
-      headers: jsonHeaders(),
-      body: JSON.stringify(lyricsPayload)
-    })
-    const lyricsData = await safeJson(lyricsResp)
-    if (!lyricsResp.ok || lyricsData?.base_resp?.status_code) {
-      throw new Error(lyricsData?.base_resp?.status_msg || lyricsData?.error || '歌词生成失败')
-    }
-    const lyrics = lyricsData?.lyrics || lyricsData?.data?.lyrics || ''
-    const title = lyricsData?.song_title || lyricsData?.data?.title || oneClickForm.value.theme.slice(0, 16)
+    const lyricsData = await postJSON('/api/minimax/music/v1/lyrics_generation', lyricsPayload)
+    const lyricsErr = extractUpstreamError(lyricsData)
+    if (lyricsErr) throw new Error(lyricsErr)
+
+    const lyrics = extractLyricsText(lyricsData)
+    const title = extractSongTitle(lyricsData) || theme.slice(0, 16)
     if (!lyrics.trim()) throw new Error('歌词生成成功但内容为空，请重试')
 
     oneClickProgress.value = 30
-    oneClickStep.value = '🎵 正在生成音频（音乐是同步接口，可能需要 1-3 分钟）...'
+    oneClickStep.value = '🎵 已提交音乐任务（音乐生成耗时较长，请耐心等待）...'
 
     const musicPayload = {
       model: oneClickForm.value.model,
       prompt: lyricsPrompt,
       lyrics,
       output_format: 'url',
-      audio_setting: {
-        sample_rate: 44100,
-        bitrate: 256000,
-        format: 'mp3'
-      }
+      audio_setting: { sample_rate: 44100, bitrate: 256000, format: 'mp3' }
     }
-    const { audioUrl, extra, warning } = await oneClickSubmitAndFetch(musicPayload)
+    const { audioUrl, sourceUrl, extra, warning } = await oneClickSubmitPollAndDownload(musicPayload, startedAt)
 
     oneClickProgress.value = 100
     oneClickProgressStatus.value = 'success'
@@ -1630,6 +1622,7 @@ async function runOneClickMusic() {
       title,
       lyrics,
       audioUrl,
+      sourceUrl,
       extra,
       warning,
       elapsedSec: Math.round((Date.now() - startedAt) / 1000)
@@ -1644,68 +1637,137 @@ async function runOneClickMusic() {
   }
 }
 
-async function oneClickSubmitAndFetch(payload) {
-  const submitResp = await fetch('/api/minimax/token-plan/v1/generations', {
-    method: 'POST',
-    headers: jsonHeaders(),
-    body: JSON.stringify(payload)
-  })
-  const submitData = await safeJson(submitResp)
-  if (!submitResp.ok) {
-    throw new Error(submitData?.error || `提交失败 HTTP ${submitResp.status}`)
+// 提交 → 轮询 → 取首个 audio URL → 通过 /download 端点代理成 blob URL。
+// 返回 sourceUrl（上游地址）以便后续分享时由后端 fetch 资产。
+async function oneClickSubmitPollAndDownload(payload, startedAt) {
+  const submitData = await postJSON('/api/minimax/token-plan/v1/generations', payload)
+  const submitErr = extractUpstreamError(submitData)
+  if (submitErr) throw new Error(submitErr)
+
+  // 同步成功（理论上 music 模型走异步，这里只是兜底）
+  const inlineUrls = extractTaskUrls(submitData)
+  if (inlineUrls.length > 0) {
+    const sourceUrl = inlineUrls[0]
+    const audioUrl = (await fetchTaskAudioBlobUrl(submitData.task_id, sourceUrl)) || sourceUrl
+    return { audioUrl, sourceUrl, extra: submitData?.extra_info || null, warning: '' }
   }
-  // 同步接口：data.audio 可能是 URL 或 hex
-  const data = submitData?.data || submitData
-  const baseResp = submitData?.base_resp || submitData?.data?.base_resp || {}
-  if (baseResp.status_code && baseResp.status_code !== 0) {
-    throw new Error(baseResp.status_msg || `上游错误 ${baseResp.status_code}`)
+
+  const taskId = submitData?.task_id
+  if (!taskId) throw new Error('提交成功但未返回任务 ID')
+
+  const deadline = Date.now() + 8 * 60 * 1000
+  let lastStatus = 'pending'
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 4000))
+    const tData = await fetchJSON(`/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}`)
+    if (!tData) continue
+    if (tData.status === 'succeeded') {
+      const urls = extractTaskUrls(tData)
+      if (urls.length === 0) throw new Error('任务完成但未返回音频 URL，请到任务列表查看')
+      const sourceUrl = urls[0]
+      const audioUrl = (await fetchTaskAudioBlobUrl(taskId, sourceUrl)) || sourceUrl
+      return { audioUrl, sourceUrl, extra: extractExtraInfo(tData), warning: '' }
+    }
+    if (tData.status === 'failed') {
+      throw new Error(tData.error || '任务失败')
+    }
+    lastStatus = tData.status
+    oneClickStep.value = `🎵 任务进行中（${tData.status}），已等待 ${Math.round((Date.now() - startedAt) / 1000)}s...`
   }
-  const audioRaw = data?.audio || data?.audio_url || data?.audioUrl
-  if (!audioRaw) {
-    throw new Error('响应中未找到音频数据（data.audio）')
-  }
-  let audioUrl = audioRaw
-  let warning = ''
-  // hex 数据走 download 端点拿 blob
-  if (!/^https?:\/\//i.test(audioRaw)) {
-    audioUrl = await fetchTaskAudioBlobUrl(data?.task_id || submitData?.task_id, '')
-    warning = '上游返回 hex 数据，已自动通过本地端点代理'
-  }
-  return {
-    audioUrl,
-    extra: data?.extra_info || submitData?.extra_info || null,
-    warning
-  }
+  throw new Error(`任务超时未完成（最后状态：${lastStatus}）`)
 }
 
 function fetchTaskAudioBlobUrl(taskId, fallbackUrl) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      if (fallbackUrl && /^https?:\/\//i.test(fallbackUrl)) {
-        const resp = await fetch(fallbackUrl)
-        if (!resp.ok) throw new Error('下载音频失败')
-        const blob = await resp.blob()
-        resolve(URL.createObjectURL(blob))
-        return
-      }
-      if (!taskId) {
-        reject(new Error('缺少 task_id，无法下载'))
-        return
-      }
-      const resp = await fetch(`/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}/download`, {
-        headers: authHeaders()
+  if (taskId) {
+    return fetch(`/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}/download`, {
+      headers: authHeaders()
+    })
+      .then(resp => {
+        if (!resp.ok) return null
+        return resp.blob().then(b => URL.createObjectURL(b))
       })
-      if (!resp.ok) {
-        const data = await safeJson(resp)
-        reject(new Error(data?.error || '下载失败'))
-        return
-      }
-      const blob = await resp.blob()
-      resolve(URL.createObjectURL(blob))
-    } catch (err) {
-      reject(err)
-    }
+      .catch(() => null)
+      .then(blobUrl => blobUrl || fallbackUrl)
+  }
+  return Promise.resolve(fallbackUrl)
+}
+
+async function postJSON(url, body) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(body)
   })
+  if (!resp.ok) {
+    const data = await safeJson(resp)
+    throw new Error(data?.error || data?.base_resp?.status_msg || `HTTP ${resp.status}`)
+  }
+  return safeJson(resp)
+}
+
+async function fetchJSON(url) {
+  try {
+    const resp = await fetch(url, { headers: authHeaders() })
+    if (!resp.ok) return null
+    return await safeJson(resp)
+  } catch {
+    return null
+  }
+}
+
+// 上游 base_resp 错误统一提取，避免每个调用点重复判断。
+function extractUpstreamError(data) {
+  if (!data) return null
+  const code = data?.base_resp?.status_code
+  if (typeof code === 'number' && code !== 0) {
+    return data?.base_resp?.status_msg || `上游错误 ${code}`
+  }
+  if (data?.error) return data.error
+  return null
+}
+
+function extractSongTitle(data) {
+  if (!data) return ''
+  return (
+    data?.song_title
+    || data?.title
+    || data?.data?.song_title
+    || data?.data?.title
+    || data?.data?.songTitle
+    || ''
+  ).trim()
+}
+
+function extractTaskUrls(task) {
+  if (!task) return []
+  const urls = Array.isArray(task.result_urls) ? [...task.result_urls] : []
+  collectTaskUrls(task.primary_asset, urls)
+  collectTaskUrls(task.result, urls)
+  return Array.from(new Set(urls))
+}
+
+function collectTaskUrls(value, bucket) {
+  if (!value) return
+  if (typeof value === 'string') {
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      bucket.push(value)
+    }
+    return
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectTaskUrls(item, bucket))
+    return
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach(item => collectTaskUrls(item, bucket))
+  }
+}
+
+function extractExtraInfo(task) {
+  if (!task) return null
+  if (task.result && typeof task.result === 'object') return task.result.extra_info || null
+  if (task.extra_info) return task.extra_info
+  return null
 }
 
 function resetOneClickMusic() {
@@ -1834,6 +1896,51 @@ function buildShareDraft(source) {
           raw: coverRaw.value
         },
         assets: [],
+      }
+    case 'oneclick':
+      if (!oneClickResult.value) {
+        throw new Error('当前没有一键音乐结果')
+      }
+      if (!oneClickResult.value.sourceUrl) {
+        throw new Error('当前结果缺少可分享的音频地址，请重新生成')
+      }
+      {
+        const oc = oneClickResult.value
+        const rawTitle = String(oc.title || oneClickForm.value.theme || 'oneclick-music')
+          .replace(/[\\/:*?"<>|]/g, '_')
+          .slice(0, 60)
+        const parts = []
+        if (oneClickForm.value.theme) parts.push(`主题：${oneClickForm.value.theme}`)
+        if (oneClickForm.value.style) parts.push(`风格：${oneClickForm.value.style}`)
+        if (oneClickForm.value.language && oneClickForm.value.language !== 'auto') {
+          parts.push(`语言：${oneClickForm.value.language}`)
+        }
+        parts.push(`模型：${oneClickForm.value.model}`)
+        parts.push(`耗时：${oc.elapsedSec}s`)
+        return {
+          sourceLabel: '一键音乐',
+          title: buildShareTitle('一键音乐', rawTitle),
+          summary: parts.join(' · '),
+          resultType: 'audio',
+          model: oneClickForm.value.model,
+          payload: {
+            theme: oneClickForm.value.theme,
+            style: oneClickForm.value.style,
+            language: oneClickForm.value.language,
+            model: oneClickForm.value.model,
+            title: oc.title,
+            lyrics: oc.lyrics,
+            extra: oc.extra,
+            warning: oc.warning,
+            elapsed_sec: oc.elapsedSec,
+            source_audio_url: oc.sourceUrl,
+          },
+          assets: [{
+            url: oc.sourceUrl,
+            filename: `${rawTitle}.mp3`,
+            kind: 'audio',
+          }],
+        }
       }
     default:
       throw new Error('未知的分享来源')
@@ -2161,6 +2268,7 @@ function extractAnthropicText(payload) {
 
 function extractLyricsText(payload) {
   if (!payload) return ''
+  // 兼容 root / nested / 多种字段名：upstream / 老代理代码 / 不同模型都出现过
   const data = payload.data || payload
   return data.lyrics || data.lyric || data.full_lyrics || data.text || ''
 }
