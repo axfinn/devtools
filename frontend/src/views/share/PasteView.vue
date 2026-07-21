@@ -84,6 +84,16 @@
                 源码
               </el-button>
             </el-button-group>
+            <el-button-group v-if="isMarkdownPaste" size="small">
+              <el-button :type="mdViewMode === 'preview' ? 'primary' : 'default'" @click="mdViewMode = 'preview'">
+                <el-icon><View /></el-icon>
+                预览
+              </el-button>
+              <el-button :type="mdViewMode === 'source' ? 'primary' : 'default'" @click="mdViewMode = 'source'">
+                <el-icon><Document /></el-icon>
+                源码
+              </el-button>
+            </el-button-group>
             <el-button v-if="showLineNumberBtn" size="small" @click="toggleLineNumbers">
               <el-icon><List /></el-icon>
               {{ showLineNumbers ? '隐藏行号' : '显示行号' }}
@@ -135,7 +145,9 @@
         </div>
 
         <!-- Markdown 渲染 -->
-        <div v-if="paste.content_type === 'markdown'" ref="markdownRef" class="markdown-content" v-html="highlightedContent"></div>
+        <div v-if="paste.content_type === 'markdown' && mdViewMode === 'preview'" ref="markdownRef" class="markdown-content" v-html="highlightedContent"></div>
+        <!-- Markdown 源码 -->
+        <pre v-else-if="paste.content_type === 'markdown' && mdViewMode === 'source'" class="code-content" v-html="highlightedMdSource"></pre>
         <!-- HTML 渲染预览 -->
         <div v-else-if="isHtmlPaste && htmlViewMode === 'preview'" class="html-preview-wrap">
           <iframe
@@ -461,6 +473,7 @@ const htmlViewMode = ref('preview')
 const showFormattedPasteContent = ref(false)
 const jsonViewMode = ref('tree')
 const editedJsonContent = ref('')
+const mdViewMode = ref('preview')
 
 // 代码预览增强功能
 const showLineNumbers = ref(true)
@@ -492,6 +505,11 @@ const isHtmlPaste = computed(() => {
 const isJsonPaste = computed(() => {
   if (!paste.value) return false
   return paste.value.language === 'json' || paste.value.content_type === 'json'
+})
+
+const isMarkdownPaste = computed(() => {
+  if (!paste.value) return false
+  return paste.value.content_type === 'markdown'
 })
 
 const contentPanelTitle = computed(() => {
@@ -717,6 +735,19 @@ const highlightedContent = computed(() => {
   return escapeHtml(content)
 })
 
+const highlightedMdSource = computed(() => {
+  if (!paste.value) return ''
+  const content = paste.value.content || ''
+  if (hljs.getLanguage('markdown')) {
+    try {
+      return hljs.highlight(content, { language: 'markdown', ignoreIllegals: true }).value
+    } catch (e) {
+      return escapeHtml(content)
+    }
+  }
+  return escapeHtml(content)
+})
+
 const markdownRef = ref(null)
 const renderMermaid = async () => {
   await nextTick()
@@ -737,6 +768,9 @@ const renderMermaid = async () => {
 }
 
 watch(highlightedContent, () => { void renderMermaid() })
+// 切回预览时 markdown div 重新挂载,但 highlightedContent 没变,
+// watcher 不触发会漏掉 mermaid 渲染,这里补一个 mdViewMode 的监听
+watch(mdViewMode, () => { void renderMermaid() })
 
 // 获取带行号的内容
 const contentWithLineNumbers = computed(() => {
