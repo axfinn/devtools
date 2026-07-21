@@ -33,6 +33,7 @@
     "html5-qrcode": "^2.3.8",
     "i18next": "^25.8.4",
     "js-yaml": "^4.3.0",
+    "jsondiffpatch": "^0.7.6",
     "jsonpath-plus": "^10.4.0",
     "jszip": "^3.10.1",
     "katex": "^0.16.27",

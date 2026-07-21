@@ -172,14 +172,26 @@
           <el-tab-pane label="Diff" name="diff">
             <div class="diff-pane">
               <div class="diff-toolbar">
+                <el-radio-group v-model="diffViewMode" size="small">
+                  <el-radio-button label="unified">Unified</el-radio-button>
+                  <el-radio-button label="split">并排</el-radio-button>
+                  <el-radio-button label="structural">结构化</el-radio-button>
+                </el-radio-group>
                 <el-button-group size="small">
                   <el-button @click="formatDiffBoth">格式化两侧</el-button>
                   <el-button @click="swapDiffSides" :disabled="!diffInputA && !diffInputB">交换 A/B</el-button>
                   <el-button @click="copyDiffResult" :disabled="diffVisibleRows.length === 0">复制 diff</el-button>
                   <el-button @click="clearDiffSides">清除</el-button>
                 </el-button-group>
-                <el-checkbox v-model="diffOnlyChanges" size="small">只显示差异</el-checkbox>
-                <el-checkbox v-model="diffWordHighlight" size="small" :disabled="diffVisibleRows.length === 0">词级高亮</el-checkbox>
+                <el-checkbox v-if="diffViewMode !== 'structural'" v-model="diffOnlyChanges" size="small">只显示差异</el-checkbox>
+                <el-checkbox v-if="diffViewMode === 'unified'" v-model="diffWordHighlight" size="small" :disabled="diffVisibleRows.length === 0">词级高亮</el-checkbox>
+                <template v-if="diffViewMode !== 'structural' && diffChangeIndices.length > 0">
+                  <el-button-group size="small">
+                    <el-button @click="gotoDiffChange('prev')" :disabled="diffChangeIndices.length === 0">‹ 上一处</el-button>
+                    <el-button :disabled="true" class="diff-cursor-label">{{ diffChangeCursor + 1 }} / {{ diffChangeIndices.length }}</el-button>
+                    <el-button @click="gotoDiffChange('next')" :disabled="diffChangeIndices.length === 0">下一处 ›</el-button>
+                  </el-button-group>
+                </template>
                 <span class="diff-toolbar-spacer"></span>
                 <span class="diff-legend">
                   <span class="legend-add">+ {{ diffStats.added }}</span>
@@ -191,6 +203,7 @@
                 <div class="diff-side">
                   <div class="diff-side-header">
                     <span>A (旧)</span>
+                    <el-button size="small" @click="fillDiffFromMain('a')" :disabled="!inputJson.trim()">← 主输入</el-button>
                     <el-button size="small" @click="triggerDiffLoad('a')">加载文件</el-button>
                     <input
                       type="file"
@@ -211,6 +224,7 @@
                 <div class="diff-side">
                   <div class="diff-side-header">
                     <span>B (新)</span>
+                    <el-button size="small" @click="fillDiffFromMain('b')" :disabled="!inputJson.trim()">主输入 →</el-button>
                     <el-button size="small" @click="triggerDiffLoad('b')">加载文件</el-button>
                     <input
                       type="file"
@@ -229,15 +243,17 @@
                   />
                 </div>
               </div>
-              <div class="diff-result">
-                <div v-if="diffVisibleRows.length === 0" class="empty-state">两侧都填入内容后,会自动显示差异</div>
-                <div v-else>
-                  <div class="diff-body">
+              <div class="diff-result" :ref="(el) => diffBodyRef = el">
+                <!-- Unified -->
+                <template v-if="diffViewMode === 'unified'">
+                  <div v-if="diffVisibleRows.length === 0" class="empty-state">两侧都填入内容后,会自动显示差异</div>
+                  <div v-else class="diff-body">
                     <div
                       v-for="(row, i) in diffVisibleRows"
-                      :key="i"
+                      :key="'u-' + i"
                       class="diff-line"
-                      :class="rowClass(row)"
+                      :class="[rowClass(row), row.kind !== 'eq' ? 'is-change' : '']"
+                      :data-change-index="diffChangeIndices[diffChangeCursor] === i ? i : undefined"
                     >
                       <span class="diff-gutter diff-gutter-a">{{ row.aLine ?? '' }}</span>
                       <span class="diff-gutter diff-gutter-b">{{ row.bLine ?? '' }}</span>
@@ -245,7 +261,53 @@
                       <pre class="diff-text" v-html="renderDiffRowText(row)"></pre>
                     </div>
                   </div>
-                </div>
+                </template>
+
+                <!-- Split (side-by-side) -->
+                <template v-else-if="diffViewMode === 'split'">
+                  <div v-if="diffSideRows.length === 0" class="empty-state">两侧都填入内容后,会自动显示差异</div>
+                  <div v-else class="diff-body diff-body--split">
+                    <div
+                      v-for="(pair, i) in diffSideRows"
+                      :key="'s-' + i"
+                      class="diff-split-row"
+                      :class="pair.kind"
+                    >
+                      <!-- A side -->
+                      <div class="diff-split-cell diff-split-cell--a">
+                        <span class="diff-gutter">{{ pair.a?.aLine ?? '' }}</span>
+                        <pre class="diff-text" v-html="renderSplitCell(pair.a, 'rem')"></pre>
+                      </div>
+                      <!-- B side -->
+                      <div class="diff-split-cell diff-split-cell--b">
+                        <span class="diff-gutter">{{ pair.b?.bLine ?? '' }}</span>
+                        <pre class="diff-text" v-html="renderSplitCell(pair.b, 'add')"></pre>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Structural -->
+                <template v-else>
+                  <div v-if="!diffStructuralChanges.ok" class="empty-state">{{ diffStructuralChanges.reason || '请填入两侧内容' }}</div>
+                  <div v-else-if="diffStructuralChanges.list.length === 0" class="empty-state ok">✓ 两份 JSON 完全相同(结构化对比)</div>
+                  <div v-else class="diff-structural">
+                    <div class="diff-structural-summary">共 {{ diffStructuralChanges.list.length }} 处结构差异</div>
+                    <table class="diff-structural-table">
+                      <thead>
+                        <tr><th>路径</th><th>类型</th><th>旧值</th><th>新值</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(ch, i) in diffStructuralChanges.list" :key="i" :class="'diff-structural-' + ch.kind">
+                          <td><code>{{ formatStructPath(ch.path) }}</code></td>
+                          <td><el-tag size="small" :type="structuralTagType(ch.kind)">{{ structuralKindLabel(ch.kind) }}</el-tag></td>
+                          <td><pre class="diff-structural-val">{{ ch.lhs !== undefined ? formatStructValue(ch.lhs) : '—' }}</pre></td>
+                          <td><pre class="diff-structural-val">{{ ch.rhs !== undefined ? formatStructValue(ch.rhs) : '—' }}</pre></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
               </div>
             </div>
           </el-tab-pane>
@@ -685,6 +747,7 @@ const runJsonPath = () => {
 //   diffInputA / diffInputB  →  diffTryParse(每侧)
 //   → diffRawParts(diffLines 出的 parts) → diffRows(摊平为行,A/B 行号,词级 segments)
 //   → diffVisibleRows(可选过滤 equal 行,带前后 1 行 context)
+//   → 按 diffViewMode 选 unified / split / structural 三种渲染
 const diffInputA = ref('')
 const diffInputB = ref('')
 const diffFileA = ref(null)
@@ -695,6 +758,15 @@ const diffOnlyChanges = ref(false)
 const diffWordHighlight = ref(true)
 const diffParseErrorA = ref('')
 const diffParseErrorB = ref('')
+const diffViewMode = ref('unified') // 'unified' | 'split' | 'structural'
+const diffChangeCursor = ref(0)     // 当前跳到的变化在 diffVisibleRows 里的 index
+const diffBodyRef = ref(null)
+import { create as createJSONDiffPatcher } from 'jsondiffpatch'
+const jsonDiffer = createJSONDiffPatcher({
+  // objectHash 给数组里的对象做 key,改动一个属性时不至于整数组标 deleted
+  objectHash: (obj) => obj?.id ?? obj?.key ?? obj?.name ?? JSON.stringify(obj),
+  arrays: { detectMove: true, includeValueOnMove: false }
+})
 
 const triggerDiffLoad = (which) => (which === 'a' ? diffFileA.value : diffFileB.value)?.click()
 
@@ -710,6 +782,17 @@ const onDiffFilePick = async (e, which) => {
   } catch (err) {
     ElMessage.error('读取失败: ' + err.message)
   }
+}
+
+// 从主输入框(已格式化的 JSON 或原始字符串)填充到 A 或 B
+const fillDiffFromMain = (which) => {
+  if (!inputJson.value || !inputJson.value.trim()) {
+    ElMessage.warning('主输入框为空,先去左侧输入 JSON')
+    return
+  }
+  if (which === 'a') diffInputA.value = inputJson.value
+  else diffInputB.value = inputJson.value
+  ElMessage.success(`已用主输入填充 ${which.toUpperCase()}`)
 }
 
 // 两侧独立 try parse:能 parse 就 pretty,不能 parse 就当文本对比(允许任意格式 diff)
@@ -864,6 +947,129 @@ const diffStats = computed(() => {
   return { added, removed, equal }
 })
 
+// 当前可见行中所有变化的 index(在 diffVisibleRows 里的位置),给 prev/next 跳转用
+const diffChangeIndices = computed(() => {
+  const list = []
+  diffVisibleRows.value.forEach((r, i) => { if (r.kind !== 'eq') list.push(i) })
+  return list
+})
+
+// cursor 跟随 diffChangeIndices 自动 clamp,既保证不会越界也不会指到一个 equal 行
+watch([diffChangeIndices, diffChangeCursor], ([list, cur]) => {
+  if (list.length === 0) { if (cur !== -1) diffChangeCursor.value = -1; return }
+  if (cur < 0 || cur >= list.length) diffChangeCursor.value = 0
+  // 如果当前 cursor 指向的 index 已经不在 list 里(diffOnlyChanges 切回 false 等),重置
+  if (!list.includes(cur)) diffChangeCursor.value = 0
+}, { immediate: true })
+
+// 输入变化时重置 cursor
+watch([diffInputA, diffInputB, diffOnlyChanges], () => { diffChangeCursor.value = 0 })
+
+// 跳到第 N 处变化(在 diffChangeIndices 里的位置)
+const gotoDiffChange = (dir) => {
+  const list = diffChangeIndices.value
+  if (list.length === 0) {
+    ElMessage.warning('没有差异可以跳转')
+    return
+  }
+  let cur = diffChangeCursor.value
+  if (dir === 'next') cur = (cur + 1) % list.length
+  else cur = (cur - 1 + list.length) % list.length
+  diffChangeCursor.value = cur
+  // scroll to the row
+  nextTick(() => {
+    const rowEl = diffBodyRef.value?.querySelector(`[data-change-index="${list[cur]}"]`)
+    if (rowEl) rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+
+// ===== 并排视图数据 =====
+// 把 diffVisibleRows 重组为成对的 side rows:每对最多包含一行 A + 一行 B。
+// 规则:扫一遍,add 配对前一个 rem(用 LCS 配对) — 但简化版按出现顺序配对 rem+add,
+// 对于 {"a":1,"b":2} → {"a":1,"b":3} 这种情况足够好;复杂对齐(LCS)是进阶,先不上。
+const diffSideRows = computed(() => {
+  const rows = diffVisibleRows.value
+  if (rows.length === 0) return []
+  const out = []
+  let i = 0
+  while (i < rows.length) {
+    const cur = rows[i]
+    if (cur.kind === 'eq') {
+      out.push({ kind: 'eq', a: cur, b: cur })
+      i++
+    } else if (cur.kind === 'rem') {
+      // 配对下一个 add(如果有)
+      const next = rows[i + 1]
+      if (next && next.kind === 'add') {
+        out.push({ kind: 'change', a: cur, b: next })
+        i += 2
+      } else {
+        out.push({ kind: 'rem', a: cur, b: null })
+        i++
+      }
+    } else { // add
+      out.push({ kind: 'add', a: null, b: cur })
+      i++
+    }
+  }
+  return out
+})
+
+// ===== 结构化 diff 数据 =====
+// 只有两侧都是合法 JSON 时才出。delta shape:
+//   { kind:'N', path:[...], rhs }  新增
+//   { kind:'D', path:[...], lhs }  删除
+//   { kind:'E', path:[...], lhs, rhs }  修改
+//   { kind:'A', path:[...], index:N, item:{kind, lhs?, rhs?} }  数组里某项
+const diffStructuralChanges = computed(() => {
+  const aRaw = diffInputA.value
+  const bRaw = diffInputB.value
+  if (!aRaw.trim() || !bRaw.trim()) return { ok: false, reason: 'empty' }
+  let a, b
+  try { a = JSON.parse(aRaw) } catch (e) { return { ok: false, reason: 'A 解析失败: ' + e.message } }
+  try { b = JSON.parse(bRaw) } catch (e) { return { ok: false, reason: 'B 解析失败: ' + e.message } }
+  try {
+    const delta = jsonDiffer.diff(a, b)
+    if (!delta) return { ok: true, list: [] } // 完全相同
+    // delta 是对象 {path: change} 或数组(jsondiffpatch 默认返回数组形式的内部 delta)
+    // .diff() 返回数组;但 .diff() 实际是 { key1: change, key2: change }
+    const list = []
+    walkDelta(delta, [], list)
+    return { ok: true, list }
+  } catch (e) {
+    return { ok: false, reason: '结构化 diff 失败: ' + e.message }
+  }
+})
+
+// jsondiffpatch 的 delta 是个对象,key 是 path 最后一段,value 是 change
+// 也有可能是数组(数组变更用)
+function walkDelta(delta, pathPrefix, out) {
+  if (delta == null || typeof delta !== 'object') return
+  // 数组形态(数组变更 delta 是数组)
+  if (Array.isArray(delta)) {
+    delta.forEach((item, idx) => {
+      if (item && typeof item === 'object' && '_t' in item) {
+        // 数组项内部 delta,继续走对象逻辑
+        walkDelta(item, [...pathPrefix, String(idx)], out)
+      } else if (item && typeof item === 'object') {
+        // 数组元素变更
+        if ('kind' in item) {
+          out.push({ ...item, path: [...pathPrefix, String(idx)] })
+        }
+      }
+    })
+    return
+  }
+  for (const [k, v] of Object.entries(delta)) {
+    if (v && typeof v === 'object' && 'kind' in v) {
+      out.push({ ...v, path: [...pathPrefix, k] })
+    } else if (v && typeof v === 'object' && '_t' in v) {
+      // 嵌套 delta,递归
+      walkDelta(v, [...pathPrefix, k], out)
+    }
+  }
+}
+
 const rowClass = (r) => {
   if (r.kind === 'add') return 'diff-line--add'
   if (r.kind === 'rem') return 'diff-line--rem'
@@ -900,6 +1106,49 @@ const renderDiffRowText = (r) => {
     }
   }
   return out
+}
+
+// 并排视图里单格内容渲染:
+// - null → 空 (用于 change 行的另一侧 / add 或 rem 单边)
+// - change 对时:rem 格强制走"rem 视角"标词,add 格强制走"add 视角"标词
+const renderSplitCell = (row, side) => {
+  if (!row) return '&nbsp;'
+  if (!diffWordHighlight.value || !row.words) return escapeHtml(row.text || '') || '&nbsp;'
+  let out = ''
+  for (const seg of row.words) {
+    const html = escapeHtml(seg.value)
+    if (side === 'rem') {
+      if (seg.removed) out += `<span class="word-rem">${html}</span>`
+      else if (!seg.added) out += html
+    } else {
+      if (seg.added) out += `<span class="word-add">${html}</span>`
+      else if (!seg.removed) out += html
+    }
+  }
+  return out || '&nbsp;'
+}
+
+// ===== 结构化 diff 渲染辅助 =====
+const STRUCT_KIND_LABELS = { N: '新增', D: '删除', E: '修改', A: '数组' }
+const structuralKindLabel = (k) => STRUCT_KIND_LABELS[k] || k
+const structuralTagType = (k) => k === 'N' ? 'success' : k === 'D' ? 'danger' : k === 'E' ? 'warning' : 'info'
+
+// 把 path 数组格式化为 JSONPath 字符串(对象 key 用 . 拼接,数组下标用 [N])
+const formatStructPath = (path) => {
+  if (!path || path.length === 0) return '$'
+  let out = '$'
+  for (const seg of path) {
+    if (typeof seg === 'number' || /^\d+$/.test(String(seg))) out += `[${seg}]`
+    else if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(String(seg))) out += `.${seg}`
+    else out += `[${JSON.stringify(String(seg))}]`
+  }
+  return out
+}
+
+const formatStructValue = (v) => {
+  if (v === undefined) return 'undefined'
+  if (typeof v === 'string') return v
+  try { return JSON.stringify(v, null, 2) } catch { return String(v) }
 }
 
 // 复制 unified diff 文本(unified diff 格式,贴到任何 diff 工具里都能识别)
@@ -1334,6 +1583,116 @@ const toTypeScript = () => {
   text-decoration: line-through;
   text-decoration-color: rgba(245, 108, 108, 0.6);
 }
+
+/* 当前跳到的变化行(逐处跳转时高亮) */
+.diff-line.is-change[data-change-index] {
+  outline: 2px solid #409eff;
+  outline-offset: -2px;
+  box-shadow: 0 0 0 1px rgba(64, 158, 255, 0.3);
+}
+
+.diff-cursor-label {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+/* 并排视图 */
+.diff-body--split { white-space: normal; }
+.diff-split-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border-base);
+  min-height: 20px;
+}
+.diff-split-cell {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.diff-split-cell + .diff-split-cell { border-left: 1px solid var(--border-base); }
+.diff-split-cell .diff-gutter {
+  width: 38px;
+  flex-shrink: 0;
+  text-align: right;
+  padding: 0 6px;
+  color: #999;
+  background: rgba(0, 0, 0, 0.04);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.diff-split-cell .diff-text {
+  flex: 1;
+  margin: 0;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.diff-split-row.eq .diff-split-cell { color: var(--text-secondary); }
+.diff-split-row.rem .diff-split-cell--a,
+.diff-split-row.change .diff-split-cell--a {
+  background: #ffebee;
+}
+.diff-split-row.add .diff-split-cell--b,
+.diff-split-row.change .diff-split-cell--b {
+  background: #e8f5e9;
+}
+
+/* 结构化 diff 表格 */
+.diff-structural {
+  padding: 0 4px;
+}
+.diff-structural-summary {
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-base);
+  color: var(--text-secondary);
+}
+.diff-structural-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.diff-structural-table th,
+.diff-structural-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-base);
+  vertical-align: top;
+}
+.diff-structural-table th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.diff-structural-table td code {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.08);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.diff-structural-val {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.03);
+  padding: 6px 8px;
+  border-radius: 3px;
+}
+.diff-structural-N td:not(:nth-child(2)) { background: rgba(103, 194, 58, 0.06); }
+.diff-structural-D td:not(:nth-child(2)) { background: rgba(245, 108, 108, 0.06); }
+.diff-structural-E td:not(:nth-child(2)) { background: rgba(230, 162, 60, 0.06); }
 
 /* Schema dialog */
 .schema-dialog {
