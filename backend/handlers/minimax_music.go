@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,6 +120,62 @@ func (h *AIGatewayHandler) proxyMiniMaxMusicJSON(c *gin.Context, upstreamPath, m
 }
 
 func (h *AIGatewayHandler) performMiniMaxMusicRequest(apiKey, url string, body []byte, incoming http.Header) ([]byte, int, http.Header, error) {
+	const maxRetries = 2 // 总共 3 次尝试(初始 + 2 次重试),覆盖 Cloudflare 524 这类偶发抖动
+
+	var (
+		respBody   []byte
+		statusCode int
+		respHeader http.Header
+		err        error
+	)
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(musicProxyRetryBackoff(attempt))
+		}
+
+		respBody, statusCode, respHeader, err = h.performMiniMaxMusicRequestOnce(apiKey, url, body, incoming)
+		if err == nil && !shouldRetryMusicProxyStatus(statusCode) {
+			// 成功 / 4xx 客户端错误:重试无意义,直接返回
+			if attempt > 0 && respHeader != nil {
+				respHeader = respHeader.Clone()
+				respHeader.Set("X-Retry-Count", strconv.Itoa(attempt))
+			}
+			return respBody, statusCode, respHeader, nil
+		}
+		// 5xx/524/网络错误 → 进入下一次重试
+	}
+
+	// 3 次都失败:最后一次的结果直接返回(让客户端看到原始错误码)
+	if respHeader != nil {
+		respHeader = respHeader.Clone()
+		respHeader.Set("X-Retry-Count", strconv.Itoa(maxRetries))
+	}
+	return respBody, statusCode, respHeader, err
+}
+
+// musicProxyRetryBackoff 返回第 N 次重试前要等待多久。
+// attempt 从 1 开始:首次重试 1s,第二次 2s(指数 backoff)。
+// 用包级 var 是为了测试时能覆盖成 0 加速。
+var musicProxyRetryBackoff = func(attempt int) time.Duration {
+	return time.Duration(attempt) * time.Second
+}
+
+// shouldRetryMusicProxyStatus 判断上游返回的状态码是否值得重试。
+// 524 是 Cloudflare 的"origin timeout",会偶发;502/503/504 同理。
+// 4xx 是请求本身有问题(鉴权/参数错误),重试也不会过。
+func shouldRetryMusicProxyStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusBadGateway,         // 502
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout,      // 504
+		524:                            // Cloudflare origin timeout
+		return true
+	}
+	return false
+}
+
+func (h *AIGatewayHandler) performMiniMaxMusicRequestOnce(apiKey, url string, body []byte, incoming http.Header) ([]byte, int, http.Header, error) {
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, nil, err

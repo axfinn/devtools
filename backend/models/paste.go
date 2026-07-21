@@ -211,6 +211,15 @@ func (db *DB) TotalCount() (int, error) {
 	return count, err
 }
 
+// SetMaxOpenConns 调整底层 sql.DB 连接池上限。
+// 仅供测试使用：:memory: 数据库每个连接独立，多个并发查询可能看不到彼此的写入；
+// 把池压到 1 强制串行能消除这种 race。生产环境用磁盘文件，无此问题。
+func (db *DB) SetMaxOpenConns(n int) {
+	if db.conn != nil {
+		db.conn.SetMaxOpenConns(n)
+	}
+}
+
 func (db *DB) Close() error {
 	return db.conn.Close()
 }
