@@ -504,14 +504,14 @@
           <el-divider>响应结果</el-divider>
           <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="状态码">
-              <el-tag>{{ testResponse.status }}</el-tag>
+              <el-tag :type="testStatusTagType">{{ testResponse.status }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="响应时间">
               {{ testResponse.duration }} ms
             </el-descriptions-item>
           </el-descriptions>
 
-          <div class="mt-4">
+          <div v-if="testResponse.headers" class="mt-4">
             <div class="text-sm font-medium mb-2">响应头：</div>
             <pre class="response-content">{{ testResponse.headers }}</pre>
           </div>
@@ -573,7 +573,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus,
@@ -620,6 +620,17 @@ const testQueryParams = ref([])
 const testBody = ref('')
 const testLoading = ref(false)
 const testResponse = ref(null)
+
+// 响应状态 tag 颜色:NETWORK/ERROR 红,5xx 橙,4xx 黄,2xx/3xx 绿
+const testStatusTagType = computed(() => {
+  const s = testResponse.value?.status
+  if (s === 'NETWORK' || s === 'ERROR') return 'danger'
+  if (typeof s !== 'number') return 'info'
+  if (s >= 500) return 'warning'
+  if (s >= 400) return 'warning'
+  if (s >= 300) return 'info'
+  return 'success'
+})
 
 // 更新对话框
 const updateMockDialog = ref(false)
@@ -949,13 +960,37 @@ const deleteMockConfirm = async () => {
 // 发送测试请求
 const sendTestRequest = async () => {
   if (!createdMock.value) return
+  if (!createdMock.value.mock_url) {
+    ElMessage.error('Mock URL 缺失,请重新创建')
+    return
+  }
+
+  // 关键:把 mock_url 强制改成与当前页面同源(scheme+host+port)。
+  // 后端拼 mock_url 用 c.Request.TLS / X-Forwarded-Proto 判定 scheme,
+  // 经过 Cloudflare 反代时这俩经常对不上 → 拼出 http://,HTTPS 页面 fetch
+  // http:// 直接 Mixed Content block,报 "Failed to fetch" 让人摸不着头脑。
+  // 改用当前页面 origin 只留 path 部分,彻底绕开 scheme/host 误判。
+  let sameOriginUrl
+  try {
+    const u = new URL(createdMock.value.mock_url)
+    sameOriginUrl = window.location.origin + u.pathname
+  } catch (_) {
+    ElMessage.error('Mock URL 解析失败: ' + createdMock.value.mock_url)
+    return
+  }
+
+  // POST/PUT/PATCH 没 body 时给个明确提示,避免 fetch 把空 body 静默吞掉
+  const method = testMethod.value
+  if ((method === 'POST' || method === 'PUT' || method === 'PATCH') && !testBody.value.trim()) {
+    ElMessage.warning(`${method} 请求但未填写 Body,继续发送(服务端会收到空 body)`)
+  }
 
   testLoading.value = true
   const startTime = Date.now()
 
   try {
     // 构建 URL with query params
-    let url = createdMock.value.mock_url
+    let url = sameOriginUrl
     const queryParams = testQueryParams.value
       .filter(p => p.key)
       .map(p => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`)
@@ -965,34 +1000,38 @@ const sendTestRequest = async () => {
       url += '?' + queryParams
     }
 
-    // 构建 headers
+    // 构建 headers(空 key/value 跳过)
     const headers = {}
     testHeaders.value.forEach(h => {
-      if (h.key && h.value) {
-        headers[h.key] = h.value
-      }
+      if (h.key && h.value) headers[h.key] = h.value
     })
 
-    const options = {
-      method: testMethod.value,
-      headers
-    }
-
-    if (testMethod.value !== 'GET' && testBody.value) {
+    const options = { method, headers }
+    if (method !== 'GET' && method !== 'HEAD' && testBody.value) {
       options.body = testBody.value
     }
 
-    const response = await fetch(url, options)
-    const duration = Date.now() - startTime
+    let response
+    try {
+      response = await fetch(url, options)
+    } catch (networkErr) {
+      // 网络/CORS/mixed-content 错误:把完整信息塞到响应面板,方便排查
+      const duration = Date.now() - startTime
+      testResponse.value = {
+        status: 'NETWORK',
+        duration,
+        headers: '',
+        body: `[网络错误] ${networkErr.message || networkErr}\n\n可能原因:\n1. Mock URL 与当前页面跨源(CORS / Mixed Content)\n2. Mock API 已过期或达到 max_calls\n3. 网络中断\n\n请求 URL: ${url}\n请求方法: ${method}`
+      }
+      return
+    }
 
-    // 读取响应
+    const duration = Date.now() - startTime
     const body = await response.text()
 
-    // 格式化响应头
+    // 响应头(headers.forEach 不会抛)
     const responseHeaders = {}
-    response.headers.forEach((value, key) => {
-      responseHeaders[key] = value
-    })
+    try { response.headers.forEach((value, key) => { responseHeaders[key] = value }) } catch (_) {}
 
     testResponse.value = {
       status: response.status,
@@ -1000,13 +1039,19 @@ const sendTestRequest = async () => {
       headers: JSON.stringify(responseHeaders, null, 2),
       body: body
     }
-
-    // 刷新日志
-    loadLogs()
   } catch (error) {
-    ElMessage.error('请求失败: ' + error.message)
+    // 兜底:任何其它意外错误也展示到响应面板,不只 ElMessage
+    testResponse.value = {
+      status: 'ERROR',
+      duration: 0,
+      headers: '',
+      body: `[未捕获错误] ${error?.message || error}\n${error?.stack || ''}`
+    }
+    ElMessage.error('请求失败: ' + (error?.message || error))
   } finally {
     testLoading.value = false
+    // 刷新日志放在 finally,且不 await — 日志失败不应影响测试结果展示
+    loadLogs().catch(err => console.warn('刷新日志失败(非致命):', err))
   }
 }
 
