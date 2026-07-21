@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"devtools/middleware"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -97,7 +99,7 @@ type arcadePlayer struct {
 	PickedIndex int
 	Progress    int
 	FinishedAt  int64
-	conn        *websocket.Conn
+	conn        *middleware.MonitoredWSConn
 	writeMu     sync.Mutex
 }
 
@@ -377,13 +379,15 @@ func (h *GameHandler) ArcadeWS(c *gin.Context) {
 	if err != nil {
 		return
 	}
+	monitored := middleware.NewMonitoredWSConn(h.db, conn, "/api/game/arcade/:id/ws", c.Param("id"), c.ClientIP(), c.Request.UserAgent(), "websocket")
+	wsConn := monitored
 
-	attachArcadeConnection(room, player, conn)
+	attachArcadeConnection(room, player, wsConn)
 	broadcastArcadeState(room)
 
 	defer func() {
 		room.mu.Lock()
-		if player.conn == conn {
+		if player.conn == wsConn {
 			player.Connected = false
 			player.conn = nil
 			player.LastSeenAt = time.Now()
@@ -391,13 +395,13 @@ func (h *GameHandler) ArcadeWS(c *gin.Context) {
 			room.UpdatedAt = time.Now()
 		}
 		room.mu.Unlock()
-		conn.Close()
+		wsConn.Close()
 		broadcastArcadeState(room)
 	}()
 
 	for {
 		var event arcadeClientEvent
-		if err := conn.ReadJSON(&event); err != nil {
+		if err := wsConn.ReadJSON(&event); err != nil {
 			return
 		}
 		h.handleArcadeEvent(room, playerID, event)
@@ -668,7 +672,7 @@ func (h *GameHandler) handleArcadeSequencePick(room *arcadeRoom, playerID string
 	}
 }
 
-func attachArcadeConnection(room *arcadeRoom, player *arcadePlayer, conn *websocket.Conn) {
+func attachArcadeConnection(room *arcadeRoom, player *arcadePlayer, conn *middleware.MonitoredWSConn) {
 	room.mu.Lock()
 	defer room.mu.Unlock()
 

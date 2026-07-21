@@ -30,6 +30,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	householdHandler := handlers.NewHouseholdHandler(db, cfg)
 	photoWallHandler := handlers.NewPhotoWallHandler(db, cfg)
 	consoleHandler := handlers.NewConsoleHandler(db, cfg.Console.AdminPassword)
+	monitoringHandler := handlers.NewMonitoringHandler(db, cfg)
 
 	encryptionService, err := newEncryptionService(cfg)
 	if err != nil {
@@ -52,10 +53,10 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
 	mermaidHandler := handlers.NewMermaidHandler(db, cfg)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
-	proxyHandler := handlers.NewProxyHandler(cfg, npsHandler)
+	proxyHandler := handlers.NewProxyHandler(db, cfg, npsHandler)
 	hermesHandler := handlers.NewHermesHandler(cfg.Hermes)
 	edgeTTSHandler := handlers.NewEdgeTTSHandler(cfg.Chat.TTSServiceURL)
-	gameHandler := handlers.NewGameHandler()
+	gameHandler := handlers.NewGameHandler(db)
 	voiceMemoHandler := handlers.NewVoiceMemoHandler(db, plannerHandler, envOrDefault("ASR_SERVICE_URL", "http://asr-service:9000"), os.Getenv("DIARIZE_SERVICE_URL"))
 	askitSyncHandler := handlers.NewAskitSyncHandler(db, cfg.AskitSync)
 	screenHandler := handlers.NewScreenHandler(db, *cfg)
@@ -76,6 +77,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		householdHandler:          householdHandler,
 		photoWallHandler:          photoWallHandler,
 		consoleHandler:            consoleHandler,
+		monitoringHandler:         monitoringHandler,
 		terminalHandler:           terminalHandler,
 		nfsShareHandler:           nfsShareHandler,
 		ocrHandler:                ocrHandler,

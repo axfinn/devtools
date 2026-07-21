@@ -24,6 +24,7 @@ type routeHandlers struct {
 	householdHandler          *handlers.HouseholdHandler
 	photoWallHandler          *handlers.PhotoWallHandler
 	consoleHandler            *handlers.ConsoleHandler
+	monitoringHandler         *handlers.MonitoringHandler
 	terminalHandler           *handlers.SSHHandler
 	nfsShareHandler           *handlers.NFSShareHandler
 	ocrHandler                *handlers.OCRHandler
@@ -458,15 +459,15 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		nfsshare.POST("", h.nfsShareHandler.Create)                                      // 创建分享（超管）
 		nfsshare.GET("/admin/browse", h.nfsShareHandler.Browse)                          // 浏览目录（超管）
 		nfsshare.GET("/admin/raw", h.nfsShareHandler.AdminRaw)                           // 直读挂载点文件/预览（超管，不计访问次数）
-		nfsshare.POST("/admin/login", h.nfsShareHandler.AdminLogin)                       // 写入 admin cookie(HttpOnly,不再走 query string)
-		nfsshare.POST("/admin/logout", h.nfsShareHandler.AdminLogout)                     // 清 admin cookie
+		nfsshare.POST("/admin/login", h.nfsShareHandler.AdminLogin)                      // 写入 admin cookie(HttpOnly,不再走 query string)
+		nfsshare.POST("/admin/logout", h.nfsShareHandler.AdminLogout)                    // 清 admin cookie
 		nfsshare.GET("/admin/list", h.nfsShareHandler.AdminList)                         // 分享列表（超管）
 		nfsshare.GET("/admin/mounts", h.nfsShareHandler.MountsList)                      // 挂载点列表及状态（超管）
 		nfsshare.POST("/admin/mounts/:name/remount", h.nfsShareHandler.MountsRemount)    // 重新挂载（超管）
 		nfsshare.POST("/admin/mounts/:name/umount", h.nfsShareHandler.MountsUmount)      // 卸载（超管）
 		nfsshare.GET("/admin/:id/logs", h.nfsShareHandler.AdminGetLogs)                  // 访问日志（超管）
 		nfsshare.GET("/admin/:id/summary", h.nfsShareHandler.AdminGetSummary)            // 删除前预览（超管）
-		nfsshare.GET("/admin/recordings", h.nfsShareHandler.AdminListRecordings)          // 跨 share 录音库（超管，含已删 share 孤儿录音）
+		nfsshare.GET("/admin/recordings", h.nfsShareHandler.AdminListRecordings)         // 跨 share 录音库（超管，含已删 share 孤儿录音）
 		nfsshare.PUT("/admin/:id", h.nfsShareHandler.AdminUpdate)                        // 修改配置（超管）
 		nfsshare.DELETE("/admin/:id", h.nfsShareHandler.AdminDelete)                     // 删除分享（超管）
 		nfsshare.POST("/admin/upload/init", h.nfsShareHandler.UploadInit)                // 初始化上传（超管）
@@ -775,6 +776,20 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	api.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+
+	// 监控与访客分析
+	monitor := api.Group("/monitor")
+	{
+		monitor.GET("/verify", h.monitoringHandler.Verify)
+		monitor.GET("/overview", h.monitoringHandler.Overview)
+		monitor.GET("/responses", h.monitoringHandler.Responses)
+		monitor.GET("/logs", h.monitoringHandler.Logs)
+		monitor.GET("/ai", h.monitoringHandler.AI)
+		monitor.GET("/service", h.monitoringHandler.Service)
+		monitor.GET("/sessions", h.monitoringHandler.Sessions)
+		monitor.POST("/archive", h.monitoringHandler.Archive)
+		monitor.DELETE("/logs", h.monitoringHandler.DeleteLogs)
+	}
 
 	// 控制台设置
 	api.GET("/console/settings", h.consoleHandler.GetSettings)

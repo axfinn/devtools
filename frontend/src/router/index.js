@@ -541,6 +541,17 @@ const toolRoutes = [
       description: '管理导航模块显隐'
     }
   },
+  {
+    path: '/monitor',
+    name: 'Monitor',
+    component: () => import('../views/other/MonitorTool.vue'),
+    meta: {
+      title: '监控分析',
+      icon: 'DataAnalysis',
+      category: 'other',
+      description: 'HTTP 流量、访客活跃、归档管理与 AI 网关摘要'
+    }
+  },
 	  {
 	    path: '/voice-inbox',
 	    name: 'VoiceInbox',

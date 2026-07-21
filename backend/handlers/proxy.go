@@ -31,6 +31,8 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/middleware"
+	"devtools/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -850,6 +852,7 @@ func minInt(a, b int) int {
 
 // ProxyHandler 科学上网处理器
 type ProxyHandler struct {
+	db            *models.DB
 	adminPassword string
 	localPort     string // 本地节点代理固定端口，空则随机
 	npcCfg        npcConfig
@@ -916,7 +919,7 @@ type npcConfig struct {
 	binPath    string // 留空则自动查找
 }
 
-func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
+func NewProxyHandler(db *models.DB, cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 	loadPersistedProxy()
 	refreshCfg := cfg.Proxy.SubscriptionRefresh
 	refreshInterval := time.Duration(refreshCfg.IntervalHours) * time.Hour
@@ -936,6 +939,7 @@ func NewProxyHandler(cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
 		preferredSubType = "clash"
 	}
 	h := &ProxyHandler{
+		db:            db,
 		adminPassword: cfg.Proxy.AdminPassword,
 		localPort:     cfg.Proxy.LocalPort,
 		npcTunnelPort: cfg.Proxy.TunnelPort,
@@ -4607,10 +4611,16 @@ func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 	brw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	brw.Flush()
 
-	go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, brw) }()
-	io.Copy(clientConn, upstream)
-	upstream.Close()
-	clientConn.Close()
+	monitoredClient := middleware.NewMonitoredTunnelConn(h.db, clientConn, r.Host, r.RemoteAddr, r.Header.Get("User-Agent"))
+	monitoredUpstream := middleware.NewMonitoredTunnelConn(h.db, upstream, r.Host+"(upstream)", r.RemoteAddr, "")
+	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		io.Copy(monitoredUpstream, brw)
+		monitoredUpstream.Finish("upstream_eof")
+	}()
+	io.Copy(monitoredClient, upstream)
+	monitoredClient.Finish("client_eof")
+	monitoredUpstream.Close()
 }
 
 // TunnelDirect 与 Tunnel 相同，但认证失败返回 407（供 NPS tunnel_port 使用）
@@ -4660,10 +4670,16 @@ func (h *ProxyHandler) TunnelDirect(w http.ResponseWriter, r *http.Request) {
 	brw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	brw.Flush()
 
-	go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, brw) }()
-	io.Copy(clientConn, upstream)
-	upstream.Close()
-	clientConn.Close()
+	monitoredClient := middleware.NewMonitoredTunnelConn(h.db, clientConn, r.Host, r.RemoteAddr, r.Header.Get("User-Agent"))
+	monitoredUpstream := middleware.NewMonitoredTunnelConn(h.db, upstream, r.Host+"(upstream)", r.RemoteAddr, "")
+	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		io.Copy(monitoredUpstream, brw)
+		monitoredUpstream.Finish("upstream_eof")
+	}()
+	io.Copy(monitoredClient, upstream)
+	monitoredClient.Finish("client_eof")
+	monitoredUpstream.Close()
 }
 func (h *ProxyHandler) checkProxyAuth(header string) bool {
 	if h.adminPassword == "" {

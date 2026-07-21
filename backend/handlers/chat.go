@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/middleware"
 	"devtools/models"
 	"devtools/utils"
 
@@ -152,7 +153,7 @@ type Room struct {
 }
 
 type Client struct {
-	conn     *websocket.Conn
+	conn     *middleware.MonitoredWSConn
 	room     *Room
 	nickname string
 	send     chan []byte
@@ -680,11 +681,13 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	rawConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
+	monitored := middleware.NewMonitoredWSConn(h.db, rawConn, "/api/chat/room/:id/ws", roomID, c.ClientIP(), c.Request.UserAgent(), "websocket")
+	conn := monitored
 
 	// 获取或创建房间
 	h.mu.Lock()

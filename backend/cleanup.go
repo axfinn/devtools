@@ -14,7 +14,11 @@ import (
 // startCleanupRoutine 启动定时清理协程，每小时清理过期数据
 func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler, cfg *config.Config) {
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(time.Hour)
 		for range ticker.C {
 			// 清理过期粘贴板
@@ -113,6 +117,15 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			aiLogCount, err := db.CleanOldAIAPIRequestLogs(cfg.AIGateway.RequestRetentionDays)
 			if err == nil && aiLogCount > 0 {
 				log.Printf("已清理 %d 条旧 AI Gateway 请求明细", aiLogCount)
+			}
+			if cfg.Monitoring.Enabled {
+				archiveBefore := time.Now().UTC().Truncate(time.Hour)
+				monitorResult, monitorErr := db.ArchiveHTTPRequestLogs(archiveBefore, cfg.Monitoring.DetailRetentionDays, cfg.Monitoring.ArchiveRetentionDays)
+				if monitorErr != nil {
+					log.Printf("监控请求归档失败: %v", monitorErr)
+				} else if monitorResult.ArchivedDetails > 0 || monitorResult.DeletedDetails > 0 {
+					log.Printf("监控请求已归档 %d 条，清理明细 %d 条", monitorResult.ArchivedDetails, monitorResult.DeletedDetails)
+				}
 			}
 			// 扫描事项提醒
 			plannerHandler.ProcessDueReminders()

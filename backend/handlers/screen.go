@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/middleware"
 	"devtools/models"
 
 	"github.com/gin-gonic/gin"
@@ -58,7 +59,7 @@ type screenViewer struct {
 }
 
 type screenClient struct {
-	conn     *websocket.Conn
+	conn     *middleware.MonitoredWSConn
 	send     chan []byte
 	peerID   string
 	isHost   bool
@@ -401,10 +402,11 @@ func (h *ScreenHandler) ScreenSignalingWS(c *gin.Context) {
 		}
 	}
 
-	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	rawConn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
+	conn := middleware.NewMonitoredWSConn(h.db, rawConn, "/api/screen/sessions/:id/ws", id, c.ClientIP(), c.Request.UserAgent(), "websocket")
 	peerID := randomPeerID()
 
 	roomVal, _ := h.rooms.LoadOrStore(id, newScreenRoom())
@@ -767,10 +769,11 @@ func (h *ScreenHandler) ScreenRelayHostWS(c *gin.Context) {
 		return
 	}
 
-	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	rawConn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
+	conn := middleware.NewMonitoredWSConn(h.db, rawConn, "/api/screen/sessions/:id/relay-host", id, c.ClientIP(), c.Request.UserAgent(), "websocket")
 
 	roomVal, _ := h.relayRooms.LoadOrStore(id, newRelayRoom())
 	room := roomVal.(*relayRoom)
@@ -897,10 +900,11 @@ func (h *ScreenHandler) ScreenRelayViewerWS(c *gin.Context) {
 		}
 	}
 
-	conn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	rawConn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
+	conn := middleware.NewMonitoredWSConn(h.db, rawConn, "/api/screen/sessions/:id/relay-viewer", id, c.ClientIP(), c.Request.UserAgent(), "websocket")
 
 	roomVal, _ := h.relayRooms.LoadOrStore(id, newRelayRoom())
 	room := roomVal.(*relayRoom)

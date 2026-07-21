@@ -11,6 +11,16 @@ database:
   path: "./data/paste.db"  # 数据库文件路径（也可通过环境变量 DB_PATH 设置）
   max_connections: 10       # 最大数据库连接数
 
+# 监控与访客分析
+monitoring:
+  enabled: true
+  # 留空时依次复用 ai_gateway.super_admin_password、console.admin_password
+  admin_password: ""
+  # 请求明细先归档再按此天数删除
+  detail_retention_days: 30
+  # 小时汇总和日活跃数据保留天数
+  archive_retention_days: 730
+
 # Redis 瞬时状态存储
 redis:
   # 启用后，限流、图像理解任务状态、Paste 分片上传状态将转存到 Redis

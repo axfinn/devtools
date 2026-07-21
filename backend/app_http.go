@@ -23,11 +23,13 @@ func newHTTPRouter(rt *appRuntime, handlers *routeHandlers) *gin.Engine {
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:  []string{"*"},
 		AllowMethods:  []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:  []string{"Origin", "Content-Type", "Authorization"},
+		AllowHeaders:  []string{"Origin", "Content-Type", "Authorization", "X-Super-Admin-Password"},
 		ExposeHeaders: []string{"Content-Length"},
 		MaxAge:        12 * time.Hour,
 	}))
 	router.Use(middleware.ContentSizeLimiter(200 * 1024 * 1024))
+	requestLogger := middleware.NewRequestLogger(rt.db, rt.cfg.Monitoring.Enabled)
+	router.Use(requestLogger.Middleware())
 
 	createRateLimiter := middleware.NewRateLimiter(10, time.Minute, rt.transientStore)
 	api := router.Group("/api")
@@ -104,7 +106,11 @@ func startTunnelProxyServer(cfg *config.Config, proxyHandler *handlers.ProxyHand
 		log.Printf("警告：proxy.tunnel_port 已配置但 proxy.admin_password 为空，代理端口将拒绝所有连接")
 	}
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		tunnelSrv := &http.Server{
 			Addr: ":" + cfg.Proxy.TunnelPort,
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

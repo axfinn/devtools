@@ -46,6 +46,7 @@ type Config struct {
 	NPS                 NPSConfig                 `yaml:"nps"`
 	Mermaid             MermaidConfig             `yaml:"mermaid"`
 	Hermes              HermesConfig              `yaml:"hermes"`
+	Monitoring          MonitoringConfig          `yaml:"monitoring"`
 	AskitSync           AskitSyncConfig           `yaml:"askit_sync"`
 }
 
@@ -80,6 +81,13 @@ type HermesConfig struct {
 // ConsoleConfig 控制台配置
 type ConsoleConfig struct {
 	AdminPassword string `yaml:"admin_password"` // 控制台管理员密码，为空则禁用
+}
+
+type MonitoringConfig struct {
+	Enabled              bool   `yaml:"enabled"`
+	AdminPassword        string `yaml:"admin_password"`
+	DetailRetentionDays  int    `yaml:"detail_retention_days"`
+	ArchiveRetentionDays int    `yaml:"archive_retention_days"`
 }
 
 // NPSConfig NPS 端口映射管理配置
@@ -362,23 +370,23 @@ type BailianModelConfig struct {
 }
 
 type AIGatewayConfig struct {
-	SuperAdminPassword      string                   `yaml:"super_admin_password"`
-	DefaultKeyExpiresDays   int                      `yaml:"default_key_expires_days"`
-	DefaultRateLimitPerHour int                      `yaml:"default_rate_limit_per_hour"`
-	RequestRetentionDays    int                      `yaml:"request_retention_days"`
-	UpstreamTimeoutSeconds  int                      `yaml:"upstream_timeout_seconds"`
-	Proxy                   AIGatewayProxyConfig        `yaml:"proxy"`
-	AnthropicProviders      []AnthropicProviderConfig   `yaml:"anthropic_providers"`
-	Pricing                 []AIGatewayPricingConfig    `yaml:"pricing"`
+	SuperAdminPassword      string                    `yaml:"super_admin_password"`
+	DefaultKeyExpiresDays   int                       `yaml:"default_key_expires_days"`
+	DefaultRateLimitPerHour int                       `yaml:"default_rate_limit_per_hour"`
+	RequestRetentionDays    int                       `yaml:"request_retention_days"`
+	UpstreamTimeoutSeconds  int                       `yaml:"upstream_timeout_seconds"`
+	Proxy                   AIGatewayProxyConfig      `yaml:"proxy"`
+	AnthropicProviders      []AnthropicProviderConfig `yaml:"anthropic_providers"`
+	Pricing                 []AIGatewayPricingConfig  `yaml:"pricing"`
 }
 
 // AnthropicProviderConfig 定义 Anthropic 协议代理的下游提供商
 type AnthropicProviderConfig struct {
-	Name         string                `yaml:"name"`         // 提供商名称，用于日志
-	APIURL       string                `yaml:"api_url"`      // 上游 Anthropic 兼容 base URL
-	APIKey       string                `yaml:"api_key"`      // 上游 API Key
-	Models       []string              `yaml:"models"`       // 该提供商支持的模型列表（直通）
-	Aliases      []AnthropicModelAlias `yaml:"aliases"`      // 模型别名：用户写 alias 名，云端映射到真实模型
+	Name         string                `yaml:"name"`          // 提供商名称，用于日志
+	APIURL       string                `yaml:"api_url"`       // 上游 Anthropic 兼容 base URL
+	APIKey       string                `yaml:"api_key"`       // 上游 API Key
+	Models       []string              `yaml:"models"`        // 该提供商支持的模型列表（直通）
+	Aliases      []AnthropicModelAlias `yaml:"aliases"`       // 模型别名：用户写 alias 名，云端映射到真实模型
 	DefaultModel string                `yaml:"default_model"` // 默认模型：未匹配时使用
 	IsDefault    bool                  `yaml:"is_default"`    // 是否为默认线路
 }
@@ -562,6 +570,11 @@ func DefaultConfig() *Config {
 			DashboardURL: "http://host.docker.internal:8086",
 			APIBaseURL:   "http://host.docker.internal:8642/v1",
 			Model:        "hermes-agent",
+		},
+		Monitoring: MonitoringConfig{
+			Enabled:              true,
+			DetailRetentionDays:  30,
+			ArchiveRetentionDays: 730,
 		},
 		AskitSync: AskitSyncConfig{
 			RegistrationMode: "closed",

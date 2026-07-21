@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/middleware"
 	"devtools/models"
 	"devtools/utils"
 
@@ -805,7 +806,7 @@ type watchBroadcast struct {
 
 // watchClient 单个 WebSocket 连接
 type watchClient struct {
-	conn        *websocket.Conn
+	conn        *middleware.MonitoredWSConn
 	nickname    string
 	isHost      bool
 	isPending   bool   // 匿名监听连接(nickname=__pending__),不计入可见人数

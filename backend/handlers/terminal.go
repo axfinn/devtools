@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"devtools/middleware"
 	"devtools/models"
 	"devtools/utils"
 
@@ -1126,11 +1127,12 @@ func (h *SSHHandler) HandleWebSocket(c *gin.Context) {
 	}
 
 	// 升级到 WebSocket
-	conn, err := sshUpgrader.Upgrade(c.Writer, c.Request, nil)
+	rawConn, err := sshUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
+	conn := middleware.NewMonitoredWSConn(h.db, rawConn, "/api/terminal/:id/ws", c.Param("id"), c.ClientIP(), c.Request.UserAgent(), "websocket")
 	defer conn.Close()
 
 	// 恢复或创建 SSH 会话

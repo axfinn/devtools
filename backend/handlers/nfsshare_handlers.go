@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/middleware"
 	"devtools/models"
 	"devtools/utils"
 
@@ -1299,10 +1300,11 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	}
 	isHost := h.verifyAdminFromContext(c)
 
-	conn, err := watchUpgrader.Upgrade(c.Writer, c.Request, nil)
+	rawConn, err := watchUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
+	conn := middleware.NewMonitoredWSConn(h.db, rawConn, "/api/nfsshare/:id/watch", id, c.ClientIP(), c.Request.UserAgent(), "websocket")
 
 	// 获取或创建 watchRoom
 	roomVal, _ := h.watchRooms.LoadOrStore(id, newWatchRoom())
