@@ -171,6 +171,22 @@
           <!-- Diff -->
           <el-tab-pane label="Diff" name="diff">
             <div class="diff-pane">
+              <div class="diff-toolbar">
+                <el-button-group size="small">
+                  <el-button @click="formatDiffBoth">格式化两侧</el-button>
+                  <el-button @click="swapDiffSides" :disabled="!diffInputA && !diffInputB">交换 A/B</el-button>
+                  <el-button @click="copyDiffResult" :disabled="diffVisibleRows.length === 0">复制 diff</el-button>
+                  <el-button @click="clearDiffSides">清除</el-button>
+                </el-button-group>
+                <el-checkbox v-model="diffOnlyChanges" size="small">只显示差异</el-checkbox>
+                <el-checkbox v-model="diffWordHighlight" size="small" :disabled="diffVisibleRows.length === 0">词级高亮</el-checkbox>
+                <span class="diff-toolbar-spacer"></span>
+                <span class="diff-legend">
+                  <span class="legend-add">+ {{ diffStats.added }}</span>
+                  <span class="legend-rem">- {{ diffStats.removed }}</span>
+                  <span class="legend-eq">= {{ diffStats.equal }}</span>
+                </span>
+              </div>
               <div class="diff-inputs">
                 <div class="diff-side">
                   <div class="diff-side-header">
@@ -180,11 +196,17 @@
                       type="file"
                       ref="diffFileA"
                       style="display:none"
-                      accept=".json"
+                      accept=".json,.txt,.yaml,.yml,.toml"
                       @change="(e) => onDiffFilePick(e, 'a')"
                     />
                   </div>
-                  <textarea v-model="diffInputA" class="code-editor" spellcheck="false" />
+                  <textarea
+                    v-model="diffInputA"
+                    class="code-editor"
+                    spellcheck="false"
+                    @scroll="onDiffScroll('a', $event)"
+                    ref="diffTextareaA"
+                  />
                 </div>
                 <div class="diff-side">
                   <div class="diff-side-header">
@@ -194,30 +216,33 @@
                       type="file"
                       ref="diffFileB"
                       style="display:none"
-                      accept=".json"
+                      accept=".json,.txt,.yaml,.yml,.toml"
                       @change="(e) => onDiffFilePick(e, 'b')"
                     />
                   </div>
-                  <textarea v-model="diffInputB" class="code-editor" spellcheck="false" />
+                  <textarea
+                    v-model="diffInputB"
+                    class="code-editor"
+                    spellcheck="false"
+                    @scroll="onDiffScroll('b', $event)"
+                    ref="diffTextareaB"
+                  />
                 </div>
               </div>
               <div class="diff-result">
-                <div v-if="diffParts.length === 0" class="empty-state">两侧都填入合法的 JSON 后,会自动显示差异</div>
+                <div v-if="diffVisibleRows.length === 0" class="empty-state">两侧都填入内容后,会自动显示差异</div>
                 <div v-else>
-                  <div class="diff-legend">
-                    <span class="legend-add">+ 新增 {{ diffStats.added }}</span>
-                    <span class="legend-rem">- 删除 {{ diffStats.removed }}</span>
-                    <span class="legend-eq">= 相同 {{ diffStats.equal }}</span>
-                  </div>
                   <div class="diff-body">
                     <div
-                      v-for="(part, i) in diffParts"
+                      v-for="(row, i) in diffVisibleRows"
                       :key="i"
                       class="diff-line"
-                      :class="partClass(part)"
+                      :class="rowClass(row)"
                     >
-                      <span class="diff-prefix">{{ part.added ? '+' : part.removed ? '-' : ' ' }}</span>
-                      <pre>{{ part.value }}</pre>
+                      <span class="diff-gutter diff-gutter-a">{{ row.aLine ?? '' }}</span>
+                      <span class="diff-gutter diff-gutter-b">{{ row.bLine ?? '' }}</span>
+                      <span class="diff-prefix">{{ rowPrefix(row) }}</span>
+                      <pre class="diff-text" v-html="renderDiffRowText(row)"></pre>
                     </div>
                   </div>
                 </div>
@@ -278,7 +303,7 @@ import yaml from 'js-yaml'
 import Papa from 'papaparse'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
-import { diffLines } from 'diff'
+import { diffLines, diffWords } from 'diff'
 
 // ===== 基础状态 =====
 const isFullscreen = ref(false)
@@ -656,18 +681,29 @@ const runJsonPath = () => {
 }
 
 // ===== Diff =====
+// 数据流:
+//   diffInputA / diffInputB  →  diffTryParse(每侧)
+//   → diffRawParts(diffLines 出的 parts) → diffRows(摊平为行,A/B 行号,词级 segments)
+//   → diffVisibleRows(可选过滤 equal 行,带前后 1 行 context)
 const diffInputA = ref('')
 const diffInputB = ref('')
 const diffFileA = ref(null)
 const diffFileB = ref(null)
+const diffTextareaA = ref(null)
+const diffTextareaB = ref(null)
+const diffOnlyChanges = ref(false)
+const diffWordHighlight = ref(true)
+const diffParseErrorA = ref('')
+const diffParseErrorB = ref('')
+
 const triggerDiffLoad = (which) => (which === 'a' ? diffFileA.value : diffFileB.value)?.click()
+
 const onDiffFilePick = async (e, which) => {
   const file = e.target.files?.[0]
   e.target.value = ''
   if (!file) return
   try {
     const text = await file.text()
-    try { JSON.parse(text) } catch { ElMessage.warning('已加载,但不是合法 JSON') }
     if (which === 'a') diffInputA.value = text
     else diffInputB.value = text
     ElMessage.success(`已加载 ${file.name} 到 ${which.toUpperCase()}`)
@@ -675,38 +711,218 @@ const onDiffFilePick = async (e, which) => {
     ElMessage.error('读取失败: ' + err.message)
   }
 }
-const diffParts = computed(() => {
-  const a = diffInputA.value
-  const b = diffInputB.value
-  if (!a && !b) return []
+
+// 两侧独立 try parse:能 parse 就 pretty,不能 parse 就当文本对比(允许任意格式 diff)
+const diffTryParse = (raw) => {
+  if (!raw || !raw.trim()) return { text: '', error: '' }
   try {
-    const aFmt = a.trim() ? JSON.stringify(JSON.parse(a), null, 2) + '\n' : ''
-    try {
-      const bFmt = b.trim() ? JSON.stringify(JSON.parse(b), null, 2) + '\n' : ''
-      return diffLines(aFmt, bFmt)
-    } catch (e) {
-      // B 解析失败,显示 A 的全部行 + 标记
-      return diffLines(aFmt, '').concat([{ value: '\n[B 解析失败: ' + e.message + ']\n', added: false, removed: false }])
-    }
+    return { text: JSON.stringify(JSON.parse(raw), null, 2) + '\n', error: '' }
   } catch (e) {
-    // A 解析失败
-    return [{ value: '[A 解析失败: ' + e.message + ']', added: false, removed: false }]
+    return { text: raw.endsWith('\n') ? raw : raw + '\n', error: e.message }
   }
+}
+
+const formatDiffBoth = () => {
+  // 一键格式化两侧:能 parse 的 pretty,不能 parse 的保持原样
+  const a = diffTryParse(diffInputA.value)
+  const b = diffTryParse(diffInputB.value)
+  diffInputA.value = a.text
+  diffInputB.value = b.text
+  ElMessage.success('已格式化两侧(无法 parse 的保持原样)')
+}
+
+const swapDiffSides = () => {
+  const tmp = diffInputA.value
+  diffInputA.value = diffInputB.value
+  diffInputB.value = tmp
+  ElMessage.success('已交换 A/B')
+}
+
+const clearDiffSides = () => {
+  diffInputA.value = ''
+  diffInputB.value = ''
+}
+
+// ===== 同步滚动 =====
+// 用一个 flag 防止 A 滚动触发 B 滚动,反过来又触发 A 的循环。
+let syncing = false
+const onDiffScroll = (which, e) => {
+  if (syncing) return
+  const src = e.target
+  const dst = which === 'a' ? diffTextareaB.value : diffTextareaA.value
+  if (!dst) return
+  syncing = true
+  dst.scrollTop = src.scrollTop
+  dst.scrollLeft = src.scrollLeft
+  // 用 rAF 解锁,比 setTimeout 0 更稳:Vue 模板更新在 rAF 里 commit
+  requestAnimationFrame(() => { syncing = false })
+}
+
+// ===== 原始 parts (diffLines) =====
+const diffRawParts = computed(() => {
+  const aRes = diffTryParse(diffInputA.value)
+  const bRes = diffTryParse(diffInputB.value)
+  diffParseErrorA.value = aRes.error
+  diffParseErrorB.value = bRes.error
+  if (!aRes.text && !bRes.text) return []
+  return diffLines(aRes.text, bRes.text)
 })
+
+// 把 part.value 切成单行(diffLines 的 value 末尾带 \n,空 part 也会有空行)
+const splitPartLines = (part) => {
+  const v = part.value
+  if (!v) return []
+  const lines = v.split('\n')
+  // 末尾的 \n 会产生一个空串,去掉;但纯空 part(value === '\n')应该得到 [''] 不行,实际是 ['', ''] → 去掉两个空 → 0 行
+  // diff.js 习惯:part.value 已经把 trailing \n 算进去,所以 'a\nb\n' 切出来是 ['a','b',''],我们去尾空
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
+// 找连续 removed+added 的 part 对,在 part 内部做词级 diff
+// 返回 [{part, lineWordSegments: Map<lineIdx, segments>}, ...]
+const buildPartWordMap = (parts) => {
+  const result = new Map() // partIdx -> Map(lineIdx -> segments)
+  for (let i = 0; i + 1 < parts.length; i++) {
+    if (parts[i].removed && parts[i + 1].added) {
+      const aLines = splitPartLines(parts[i])
+      const bLines = splitPartLines(parts[i + 1])
+      const aMap = new Map()
+      const bMap = new Map()
+      const len = Math.max(aLines.length, bLines.length)
+      for (let k = 0; k < len; k++) {
+        const a = aLines[k] ?? null
+        const b = bLines[k] ?? null
+        if (a !== null && b !== null) {
+          aMap.set(k, diffWords(a, b))
+          bMap.set(k, diffWords(a, b))
+        }
+      }
+      result.set(i, aMap)
+      result.set(i + 1, bMap)
+      i++ // 跳过下一个 added
+    }
+  }
+  return result
+}
+
+// 摊平为行:每行带 A/B 行号 + 内容 + (可选) 词级 segments
+const diffRows = computed(() => {
+  const parts = diffRawParts.value
+  if (parts.length === 0) return []
+  const wordMap = buildPartWordMap(parts)
+  const rows = []
+  let aLine = 1
+  let bLine = 1
+
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]
+    const lines = splitPartLines(p)
+    const isPaired = wordMap.has(i)
+    lines.forEach((text, lineIdx) => {
+      if (p.added) {
+        rows.push({ kind: 'add', bLine, text, words: isPaired ? wordMap.get(i).get(lineIdx) : null })
+        bLine++
+      } else if (p.removed) {
+        rows.push({ kind: 'rem', aLine, text, words: isPaired ? wordMap.get(i).get(lineIdx) : null })
+        aLine++
+      } else {
+        rows.push({ kind: 'eq', aLine, bLine, text })
+        aLine++
+        bLine++
+      }
+    })
+  }
+  return rows
+})
+
+// "只显示差异" + 前后 1 行 context
+const diffVisibleRows = computed(() => {
+  const rows = diffRows.value
+  if (!diffOnlyChanges.value) return rows
+  if (rows.length === 0) return rows
+  const hasChange = rows.some(r => r.kind !== 'eq')
+  if (!hasChange) return rows
+  const keep = new Array(rows.length).fill(false)
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].kind !== 'eq') {
+      keep[i] = true
+      if (i > 0) keep[i - 1] = true
+      if (i + 1 < rows.length) keep[i + 1] = true
+    }
+  }
+  return rows.filter((_, i) => keep[i])
+})
+
 const diffStats = computed(() => {
   let added = 0, removed = 0, equal = 0
-  for (const p of diffParts.value) {
-    const lines = p.value.split('\n').filter((_, i, arr) => i < arr.length - 1 || arr[arr.length - 1] !== '').length || 1
-    if (p.added) added += lines
-    else if (p.removed) removed += lines
-    else equal += lines
+  for (const r of diffRows.value) {
+    if (r.kind === 'add') added++
+    else if (r.kind === 'rem') removed++
+    else equal++
   }
   return { added, removed, equal }
 })
-const partClass = (p) => {
-  if (p.added) return 'diff-line--add'
-  if (p.removed) return 'diff-line--rem'
+
+const rowClass = (r) => {
+  if (r.kind === 'add') return 'diff-line--add'
+  if (r.kind === 'rem') return 'diff-line--rem'
   return 'diff-line--eq'
+}
+
+const rowPrefix = (r) => r.kind === 'add' ? '+' : r.kind === 'rem' ? '-' : ' '
+
+const escapeHtml = (s) => {
+  const div = document.createElement('div')
+  div.textContent = s
+  return div.innerHTML
+}
+
+// 词级高亮:把 removed/added 段标底色,equal 段不变。
+// 关掉开关就只返回 escape 后的原文。
+const renderDiffRowText = (r) => {
+  const text = escapeHtml(r.text || '')
+  if (!diffWordHighlight.value || !r.words) return text
+  // words 是 diffWords 的输出(只在有 paired 行的 add/rem 上有)
+  // 把 segments 拼回去,removed/added 加 span
+  let out = ''
+  for (const seg of r.words) {
+    const html = escapeHtml(seg.value)
+    if (r.kind === 'rem') {
+      if (seg.removed) out += `<span class="word-rem">${html}</span>`
+      else if (!seg.added) out += html
+      // 另一半(added)是 B 独有的,这里不显示
+    } else if (r.kind === 'add') {
+      if (seg.added) out += `<span class="word-add">${html}</span>`
+      else if (!seg.removed) out += html
+    } else {
+      out += html
+    }
+  }
+  return out
+}
+
+// 复制 unified diff 文本(unified diff 格式,贴到任何 diff 工具里都能识别)
+const copyDiffResult = async () => {
+  if (diffRows.value.length === 0) {
+    ElMessage.warning('没有 diff 可复制')
+    return
+  }
+  const out = []
+  out.push('--- A')
+  out.push('+++ B')
+  out.push(`@@ -1,${diffStats.value.removed + diffStats.value.equal} +1,${diffStats.value.added + diffStats.value.equal} @@`)
+  for (const r of diffRows.value) {
+    const prefix = r.kind === 'add' ? '+' : r.kind === 'rem' ? '-' : ' '
+    out.push(prefix + (r.text || ''))
+  }
+  const text = out.join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制 unified diff')
+  } catch {
+    ElMessage.error('复制失败')
+  }
 }
 
 // ===== Schema 校验(ajv 2020-12) =====
@@ -999,6 +1215,22 @@ const toTypeScript = () => {
   height: 100%;
   min-height: 0;
 }
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-base);
+  flex-wrap: wrap;
+}
+.diff-toolbar-spacer { flex: 1; }
+.diff-toolbar .diff-legend {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+}
 .diff-inputs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1033,7 +1265,7 @@ const toTypeScript = () => {
 }
 .diff-legend {
   display: flex;
-  gap: 16px;
+  gap: 14px;
   padding: 6px 12px;
   background: var(--bg-secondary);
   font-size: 12px;
@@ -1045,14 +1277,27 @@ const toTypeScript = () => {
 .diff-body {
   font-family: var(--font-family-mono);
   font-size: 13px;
+  /* 关键:让 pre 里的内容不会被 nowrap 截断;行内允许折行,行号与 prefix 仍对齐 */
+  white-space: pre;
 }
 .diff-line {
   display: flex;
-  padding: 0 12px;
-  white-space: pre;
+  align-items: stretch;
   border-left: 3px solid transparent;
+  min-height: 18px;
+  line-height: 1.5;
 }
-.diff-line pre { margin: 0; padding: 0; }
+.diff-gutter {
+  display: inline-block;
+  width: 38px;
+  flex-shrink: 0;
+  text-align: right;
+  padding: 0 6px;
+  color: #999;
+  background: rgba(0, 0, 0, 0.04);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
 .diff-prefix {
   display: inline-block;
   width: 16px;
@@ -1061,9 +1306,34 @@ const toTypeScript = () => {
   color: var(--text-secondary);
   user-select: none;
 }
+.diff-text {
+  flex: 1;
+  margin: 0;
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
 .diff-line--add { background: #e8f5e9; border-left-color: #67c23a; }
+.diff-line--add .diff-gutter { background: rgba(103, 194, 58, 0.12); }
 .diff-line--rem { background: #ffebee; border-left-color: #f56c6c; }
+.diff-line--rem .diff-gutter { background: rgba(245, 108, 108, 0.12); }
 .diff-line--eq { color: var(--text-secondary); }
+.diff-line--eq .diff-gutter { color: #bbb; }
+
+/* 词级高亮:在 add 行标 inserted 词,rem 行标 deleted 词 */
+.word-add {
+  background: rgba(103, 194, 58, 0.35);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.word-rem {
+  background: rgba(245, 108, 108, 0.35);
+  border-radius: 2px;
+  padding: 0 1px;
+  text-decoration: line-through;
+  text-decoration-color: rgba(245, 108, 108, 0.6);
+}
 
 /* Schema dialog */
 .schema-dialog {
