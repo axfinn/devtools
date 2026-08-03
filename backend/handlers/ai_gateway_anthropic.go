@@ -466,6 +466,12 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		return
 	}
 
+	// DeepSeek Anthropic 端点会返回 type="thinking" 内容块，
+	// 标准 Anthropic 客户端下一轮请求把 thinking 原样回传时会 400；网关层统一剥离。
+	if isDeepSeekProvider(provider) {
+		raw = stripThinkingBlocks(raw)
+	}
+
 	h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusOK, true, "", string(bodyBytes), string(raw), c.ClientIP(), time.Since(start), usageSummary{})
 
 	c.Data(http.StatusOK, "application/json", raw)
@@ -486,7 +492,7 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	req.Header.Set("Authorization", "Bearer "+provider.APIKey)
 	req.Header.Set("Accept", "text/event-stream")
 
-	// 透传客户端的 Anthropic 相关头
+	// 透传客户端的 Anthropic 相关头（先于默认值设置，保留客户端自定义）
 	for key, values := range c.Request.Header {
 		ck := http.CanonicalHeaderKey(key)
 		switch ck {
@@ -498,6 +504,15 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		for _, v := range values {
 			req.Header.Add(key, v)
 		}
+	}
+
+	// 与直连路径对齐：补齐 anthropic-version + x-api-key，
+	// 客户端没传时也能保证上游识别为 Anthropic 协议（MiniMax/DeepSeek 必需）。
+	if req.Header.Get("x-api-key") == "" {
+		req.Header.Set("x-api-key", provider.APIKey)
+	}
+	if req.Header.Get("anthropic-version") == "" {
+		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 
 	// 使用 streamClient（无超时），避免 http.Client.Timeout 在长流时强制断开
@@ -558,8 +573,14 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	defer close(heartbeatDone)
 
 	buf := make([]byte, 1024)
+	// DeepSeek Anthropic 端点会返回 type="thinking" 的内容块，标准 Anthropic 客户端
+	// 无法识别，多轮对话会 400；这里在网关层过滤掉 thinking 事件再透传。
+	var bodyReader io.Reader = resp.Body
+	if isDeepSeekProvider(provider) {
+		bodyReader = newSSEThinkingFilter(resp.Body)
+	}
 	for {
-		n, readErr := resp.Body.Read(buf)
+		n, readErr := bodyReader.Read(buf)
 		if n > 0 {
 			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
 				cancel() // 客户端断开，取消上游请求
@@ -829,6 +850,19 @@ func stripThinkingBlocks(raw []byte) []byte {
 	return out
 }
 
+// isDeepSeekProvider 判断是否为 DeepSeek 上游（按 provider.Name 或 URL 启发式匹配）。
+// DeepSeek 的 Anthropic 端点会返回 thinking 内容块，需要在网关层过滤。
+func isDeepSeekProvider(provider *config.AnthropicProviderConfig) bool {
+	if provider == nil {
+		return false
+	}
+	if strings.EqualFold(provider.Name, "DeepSeek") || strings.EqualFold(provider.Name, "deepseek") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(provider.APIURL), "deepseek.com")
+}
+
+// isModelAllowed 判断 model 是否在白名单中
 func isModelAllowed(model string, allowed []string) bool {
 	for _, m := range allowed {
 		if m == model {

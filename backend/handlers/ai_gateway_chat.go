@@ -557,6 +557,24 @@ func (h *AIGatewayHandler) callProxyChat(req ChatCompletionRequest) (gin.H, map[
 	if req.TopP != nil {
 		bodyMap["top_p"] = *req.TopP
 	}
+	if req.Stop != nil {
+		bodyMap["stop"] = req.Stop
+	}
+	if len(req.ResponseFormat) > 0 {
+		bodyMap["response_format"] = req.ResponseFormat
+	}
+	if len(req.Tools) > 0 {
+		bodyMap["tools"] = req.Tools
+	}
+	if req.ToolChoice != nil {
+		bodyMap["tool_choice"] = req.ToolChoice
+	}
+	if strings.TrimSpace(req.ReasoningEffort) != "" {
+		bodyMap["reasoning_effort"] = strings.TrimSpace(req.ReasoningEffort)
+	}
+	for key, value := range req.ExtraBody {
+		bodyMap[key] = value
+	}
 
 	endpoint := strings.TrimRight(h.cfg.AIGateway.Proxy.APIURL, "/") + "/chat/completions"
 	raw, err := h.doJSONRequest(endpoint, h.cfg.AIGateway.Proxy.APIKey, bodyMap)
@@ -611,19 +629,26 @@ func (h *AIGatewayHandler) doRawRequest(url, apiKey, method string, body []byte,
 }
 
 // doRawRequestWithResp 转发原始请求到上游，返回响应体、Content-Type 和错误
+// 仅 Anthropic 协议代理路径（/api/anthropic/*、/api/minimax/anthropic/*、/api/deepseek/anthropic/*）调用，
+// 因此可以安全地补齐 anthropic-version 和 x-api-key，客户端不传也能走通。
 
 func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body []byte, headers http.Header) ([]byte, string, error) {
-	return h.doRequestWithClient(h.noProxyClient, url, apiKey, method, body, headers)
+	return h.doRequestWithClient(h.noProxyClient, url, apiKey, method, body, headers, true)
 }
 
 // doMediaRequestWithResp 使用启用压缩的 mediaClient 发送请求。
 // MiniMax 图片/视频/音乐/TTS 端点要求 Accept-Encoding 头，否则会断连（EOF）。
 
 func (h *AIGatewayHandler) doMediaRequestWithResp(url, apiKey, method string, body []byte, headers http.Header) ([]byte, string, error) {
-	return h.doRequestWithClient(h.mediaClient, url, apiKey, method, body, headers)
+	return h.doRequestWithClient(h.mediaClient, url, apiKey, method, body, headers, false)
 }
 
-func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey, method string, body []byte, headers http.Header) ([]byte, string, error) {
+// doRequestWithClient 通用请求转发。
+// anthropicMode=true 时补齐 anthropic-version + x-api-key（即使客户端没传也保证上游识别为 Anthropic 协议）；
+// =false 时按 OpenAI 兼容端点处理（不强行写 Anthropic 头）。
+// 客户端已传的 anthropic-version/x-api-key 优先（透传），仅在缺失时填默认。
+
+func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey, method string, body []byte, headers http.Header, anthropicMode bool) ([]byte, string, error) {
 	req, err := http.NewRequest(method, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", err
@@ -631,6 +656,8 @@ func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey,
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	// 透传必要的 headers（过滤掉代理相关和可能导致 HTTP/2 问题的 headers）
+	// 客户端的 anthropic-version / x-api-key 会先于此处填默认值的逻辑，
+	// 因此下游"填默认"只补缺失的，不会覆盖客户端值。
 	skipHeaders := map[string]bool{
 		"Content-Type":      true,
 		"Authorization":     true,
@@ -652,6 +679,16 @@ func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey,
 		}
 		for _, v := range values {
 			req.Header.Add(key, v)
+		}
+	}
+	// anthropicMode=true 时补齐 anthropic-version + x-api-key（即使客户端没传也保证上游识别为 Anthropic 协议）；
+	// =false 时按 OpenAI 兼容端点处理（不强行写 Anthropic 头）。
+	if anthropicMode {
+		if req.Header.Get("x-api-key") == "" {
+			req.Header.Set("x-api-key", apiKey)
+		}
+		if req.Header.Get("anthropic-version") == "" {
+			req.Header.Set("anthropic-version", "2023-06-01")
 		}
 	}
 	resp, err := client.Do(req)

@@ -337,7 +337,7 @@ func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, ups
 	start := time.Now()
 	// 音乐生成是同步接口（直接返回 data.audio），阻塞时长取决于音频长度（5 分钟音频常见 1-3 分钟）。
 	// 必须用 musicSubmitClient(5 分钟超时)，否则 90s mediaClient 超时会在生成完成前断连。
-	respBody, respContentType, err := h.doRequestWithClient(h.pickMediaSubmitClient(model), upstreamURL, apiKey, "POST", bodyBytes, nil)
+	respBody, respContentType, err := h.doRequestWithClient(h.pickMediaSubmitClient(model), upstreamURL, apiKey, "POST", bodyBytes, nil, false)
 
 	if err != nil {
 		task.Status = "failed"

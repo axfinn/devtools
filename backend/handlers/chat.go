@@ -1415,6 +1415,7 @@ func (h *ChatHandler) callMiniMax(ctx context.Context, systemPrompt string, hist
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.minimax.APIKey)
+	req.Header.Set("x-api-key", h.minimax.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := h.minimaxClient.Do(req)
