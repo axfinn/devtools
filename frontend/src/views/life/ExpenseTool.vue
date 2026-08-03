@@ -1551,11 +1551,12 @@ const recordSummary = computed(() => {
 })
 
 function summarizeTransactions(rows) {
+  const list = Array.isArray(rows) ? rows : []
   let income = 0
   let expense = 0
   const byCategory = new Map()
   let maxExpense = null
-  rows.forEach(row => {
+  list.forEach(row => {
     if (row.type === 'income') {
       income += Number(row.amount) || 0
       return
@@ -2304,8 +2305,9 @@ function getTransactionMetaChips(row) {
 }
 
 function aggregateRows(rows, labelGetter, type = '') {
+  const list = Array.isArray(rows) ? rows : []
   const bucket = new Map()
-  rows.forEach(row => {
+  list.forEach(row => {
     if (type && row.type !== type) return
     const name = String(labelGetter(row) || '未标注').trim() || '未标注'
     const current = bucket.get(name) || { name, amount: 0, count: 0 }
@@ -3237,8 +3239,11 @@ async function loadTransactions() {
     const url = `${API_BASE}/expense/${profileId.value}/transactions?start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`
     const res = await expenseFetch(url)
     if (res.ok) {
-      transactions.value = await res.json()
+      const data = await res.json()
+      transactions.value = Array.isArray(data) ? data : []
       recordPage.value = 1
+    } else {
+      transactions.value = []
     }
   } catch (e) {
     console.error('Failed to load transactions:', e)
@@ -3284,8 +3289,11 @@ async function loadCalendarTransactions() {
     const url = `${API_BASE}/expense/${profileId.value}/transactions?start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`
     const res = await expenseFetch(url)
     if (res.ok) {
-      calendarTransactions.value = await res.json()
+      const data = await res.json()
+      calendarTransactions.value = Array.isArray(data) ? data : []
       generateCalendarDays()
+    } else {
+      calendarTransactions.value = []
     }
   } catch (e) {
     console.error('Failed to load calendar transactions:', e)
@@ -3337,7 +3345,10 @@ async function loadStatsDetailTransactions() {
     const url = `${API_BASE}/expense/${profileId.value}/transactions?start_date=${encodeURIComponent(range.startDate)}&end_date=${encodeURIComponent(range.endDate)}`
     const res = await expenseFetch(url)
     if (res.ok) {
-      statsDetailTransactions.value = await res.json()
+      const data = await res.json()
+      statsDetailTransactions.value = Array.isArray(data) ? data : []
+    } else {
+      statsDetailTransactions.value = []
     }
   } catch (e) {
     console.error('Failed to load stats detail transactions:', e)

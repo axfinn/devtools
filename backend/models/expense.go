@@ -275,7 +275,7 @@ func (db *DB) GetExpenseAccounts(profileID string) ([]*ExpenseAccount, error) {
 	}
 	defer rows.Close()
 
-	var accounts []*ExpenseAccount
+	accounts := make([]*ExpenseAccount, 0)
 	for rows.Next() {
 		a := &ExpenseAccount{}
 		if err := rows.Scan(&a.ID, &a.ProfileID, &a.Name, &a.Type, &a.Balance,
@@ -355,7 +355,7 @@ func (db *DB) GetExpenseCategories(profileID string) ([]*ExpenseCategory, error)
 	}
 	defer rows.Close()
 
-	var categories []*ExpenseCategory
+	categories := make([]*ExpenseCategory, 0)
 	for rows.Next() {
 		c := &ExpenseCategory{}
 		if err := rows.Scan(&c.ID, &c.ProfileID, &c.Name, &c.Type,
@@ -438,7 +438,7 @@ func (db *DB) GetExpenseTransactions(profileID string, startDate, endDate string
 	}
 	defer rows.Close()
 
-	var txs []*ExpenseTransaction
+	txs := make([]*ExpenseTransaction, 0)
 	for rows.Next() {
 		t := &ExpenseTransaction{}
 		if err := rows.Scan(&t.ID, &t.ProfileID, &t.AccountID, &t.CategoryID, &t.Amount, &t.Type,
@@ -497,7 +497,7 @@ func (db *DB) GetExpenseTransactionsDetailed(profileID string, startDate, endDat
 	}
 	defer rows.Close()
 
-	var txs []*ExpenseTransactionDetail
+	txs := make([]*ExpenseTransactionDetail, 0)
 	for rows.Next() {
 		t := &ExpenseTransactionDetail{}
 		if err := rows.Scan(
