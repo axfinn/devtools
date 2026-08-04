@@ -31,6 +31,15 @@
         </div>
       </section>
 
+      <MusicLyricsPlayer
+        v-if="showMusicPlayer"
+        class="share-music"
+        :audio-url="audioAsset.asset_url"
+        :lyrics="musicLyrics"
+        :title="musicTitle"
+        :subtitle="musicSubtitle"
+      />
+
       <section class="content-grid">
         <el-card class="share-card" shadow="never">
           <template #header>
@@ -60,8 +69,8 @@
             </div>
           </template>
 
-          <div v-if="share.assets?.length" class="asset-grid">
-            <div v-for="asset in share.assets" :key="asset.id" class="asset-card">
+          <div v-if="visibleAssets?.length" class="asset-grid">
+            <div v-for="asset in visibleAssets" :key="asset.id" class="asset-card">
               <img v-if="asset.kind === 'image'" :src="asset.asset_url" :alt="asset.filename" />
               <video v-else-if="asset.kind === 'video'" :src="asset.asset_url" controls playsinline />
               <audio v-else-if="asset.kind === 'audio'" :src="asset.asset_url" controls />
@@ -75,7 +84,7 @@
               </div>
             </div>
           </div>
-          <div v-else class="empty-block">这个分享不包含媒体资产。</div>
+          <div v-else class="empty-block">{{ showMusicPlayer ? '音频已在上方播放器中提供,这里没有其他资产。' : '这个分享不包含媒体资产。' }}</div>
         </el-card>
       </section>
 
@@ -96,6 +105,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import MusicLyricsPlayer from '../../components/MusicLyricsPlayer.vue'
 
 const route = useRoute()
 const loading = ref(true)
@@ -117,6 +127,34 @@ const summaryLabel = computed(() => {
   if (primaryText.value) return '文本摘要'
   if (featureId.value) return 'Feature ID'
   return '结构化结果'
+})
+
+// 音频资产 + 歌词都齐全时,渲染音乐播放器专用卡片(避免在公开资产里再放一份 <audio>)
+const audioAsset = computed(() => {
+  const assets = share.value?.assets || []
+  return assets.find(a => a?.kind === 'audio') || null
+})
+const musicLyrics = computed(() => {
+  const raw = payload.value || {}
+  return raw.full_lyrics || raw.lyrics || raw.text || ''
+})
+const musicTitle = computed(() => {
+  const raw = payload.value || {}
+  return raw.song_title || raw.title || share.value?.title || ''
+})
+const musicSubtitle = computed(() => {
+  const model = share.value?.model || ''
+  const artist = payload.value?.artist || payload.value?.singer || ''
+  return [artist, model].filter(Boolean).join(' · ')
+})
+const showMusicPlayer = computed(() => Boolean(audioAsset.value?.asset_url) && Boolean(musicLyrics.value.trim()))
+// 已被 MusicLyricsPlayer 托管的音频,不再在公开资产里重复出现
+const visibleAssets = computed(() => {
+  const assets = share.value?.assets || []
+  if (showMusicPlayer.value) {
+    return assets.filter(a => a?.kind !== 'audio')
+  }
+  return assets
 })
 
 onMounted(() => {
@@ -204,6 +242,11 @@ async function safeJson(res) {
   display: grid;
   grid-template-columns: 1.4fr minmax(240px, 360px);
   gap: 18px;
+  margin-bottom: 18px;
+}
+
+.share-music {
+  display: block;
   margin-bottom: 18px;
 }
 
