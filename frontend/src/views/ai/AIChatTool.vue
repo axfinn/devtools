@@ -267,6 +267,40 @@ function extractTaskUrls(task) {
   return Array.from(new Set(urls))
 }
 
+// 异步歌词生成:旧同步版阻塞 25-30s 会被 CF(t.jaxiu.cn) 100s origin read timeout 掐掉返 524。
+//   POST /api/minimax/music/v1/lyrics_generation → 立即拿 task_id(<100ms)
+//   GET  /api/minimax/music/v1/lyrics_tasks/:id   → 轮询直到 status ∈ {succeeded, failed}
+async function submitLyricsAndPoll(payload, { interval = 1500, timeout = 300000 } = {}) {
+  const resp = await fetch(`${API_BASE}/api/minimax/music/v1/lyrics_generation`, {
+    method: 'POST',
+    headers: mediaHeaders(),
+    body: JSON.stringify(payload)
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(data.base_resp?.status_msg || data.error || '歌词任务提交失败')
+
+  const taskId = data.task_id
+  if (!taskId) throw new Error('歌词任务未返回 task_id')
+
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, interval))
+    const tResp = await fetch(`${API_BASE}/api/minimax/music/v1/lyrics_tasks/${encodeURIComponent(taskId)}`, {
+      headers: mediaHeaders()
+    })
+    const tData = await tResp.json().catch(() => ({}))
+    if (!tResp.ok) throw new Error(tData.error || `轮询失败 HTTP ${tResp.status}`)
+    if (tData.status === 'succeeded') {
+      // 摊平 result 到顶层,保持和旧同步版响应 shape 一致,extractLyricsText 不需要改
+      return tData.result || tData
+    }
+    if (tData.status === 'failed') {
+      throw new Error(tData.error || '歌词生成失败')
+    }
+  }
+  throw new Error('歌词生成超时,请稍后重试')
+}
+
 // 异步媒体模型（图片/音乐/视频）需轮询任务直到完成
 async function submitAndPollMediaTask(body, { interval = 4000, timeout = 480000 } = {}) {
   const resp = await fetch(`${API_BASE}/api/minimax/token-plan/v1/generations`, {
@@ -547,13 +581,9 @@ async function handleTTS(text) {
 async function handleMusic(prompt) {
   if (!prompt) throw new Error('请描述音乐风格')
   featureLoadingText.value = '🎵 正在生成歌词...'
-  const lyricsResp = await fetch(`${API_BASE}/api/minimax/music/v1/lyrics_generation`, {
-    method: 'POST',
-    headers: mediaHeaders(),
-    body: JSON.stringify({ mode: 'write_full_song', prompt })
-  })
-  const lyricsData = await lyricsResp.json()
-  if (!lyricsResp.ok || lyricsData.base_resp?.status_code) throw new Error(lyricsData.base_resp?.status_msg || lyricsData.error || '歌词生成失败')
+  // 异步歌词生成:旧同步版阻塞 25-30s 会被 CF(t.jaxiu.cn) 100s origin read timeout 掐掉返 524
+  const lyricsData = await submitLyricsAndPoll({ mode: 'write_full_song', prompt }, { interval: 1500, timeout: 300000 })
+  if (lyricsData.base_resp?.status_code) throw new Error(lyricsData.base_resp?.status_msg || lyricsData.error || '歌词生成失败')
   const lyrics = lyricsData.lyrics || lyricsData.data?.lyrics || ''
   const title = lyricsData.song_title || lyricsData.data?.title || '未命名'
 

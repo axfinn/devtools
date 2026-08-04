@@ -618,6 +618,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	// MiniMax Music 工作流代理
 	api.GET("/minimax/music/docs", h.aiGatewayHandler.GetMiniMaxMusicDocs)
 	api.POST("/minimax/music/v1/lyrics_generation", h.aiGatewayHandler.MiniMaxLyricsGeneration)
+	api.GET("/minimax/music/v1/lyrics_tasks/:id", h.aiGatewayHandler.GetMiniMaxLyricsTask)
 	api.POST("/minimax/music/v1/cover_preprocess", h.aiGatewayHandler.MiniMaxMusicCoverPreprocess)
 
 	// MiniMax 结果分享

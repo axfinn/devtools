@@ -1595,7 +1595,9 @@ async function runOneClickMusic() {
     if (oneClickForm.value.language && oneClickForm.value.language !== 'auto') {
       lyricsPayload.advancedParams = { language: oneClickForm.value.language }
     }
-    const lyricsData = await postJSON('/api/minimax/music/v1/lyrics_generation', lyricsPayload)
+    // 异步歌词生成：POST 立即返回 task_id(<100ms),后台 goroutine 跑最多 5 分钟。
+    // 旧同步版会被 CF(t.jaxiu.cn) 100s origin read timeout 掐掉返 524,所以改成轮询。
+    const lyricsData = await submitLyricsAndPoll(lyricsPayload, { interval: 1500, timeout: 300000 })
     const lyricsErr = extractUpstreamError(lyricsData)
     if (lyricsErr) throw new Error(lyricsErr)
 
@@ -2271,6 +2273,43 @@ function extractLyricsText(payload) {
   // 兼容 root / nested / 多种字段名：upstream / 老代理代码 / 不同模型都出现过
   const data = payload.data || payload
   return data.lyrics || data.lyric || data.full_lyrics || data.text || ''
+}
+
+// submitLyricsAndPoll 异步歌词生成：
+//   POST /api/minimax/music/v1/lyrics_generation → 立即拿 task_id
+//   GET  /api/minimax/music/v1/lyrics_tasks/:id → 轮询直到 status ∈ {succeeded, failed}
+//   succeeded 时返回 result 字段(等价于旧同步版响应体,extractLyricsText/extractSongTitle 直接读)
+// 解决线上 524:同步版要阻塞 25-30s,CF(t.jaxiu.cn) 100s origin read timeout 会掐掉客户端连接。
+async function submitLyricsAndPoll(payload, { interval = 1500, timeout = 300000 } = {}) {
+  const resp = await fetch('/api/minimax/music/v1/lyrics_generation', {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload)
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(data.base_resp?.status_msg || data.error || '歌词任务提交失败')
+
+  const taskId = data.task_id
+  if (!taskId) throw new Error('歌词任务未返回 task_id')
+
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, interval))
+    const tResp = await fetch(`/api/minimax/music/v1/lyrics_tasks/${encodeURIComponent(taskId)}`, {
+      headers: jsonHeaders()
+    })
+    const tData = await tResp.json().catch(() => ({}))
+    if (!tResp.ok) throw new Error(tData.error || `轮询失败 HTTP ${tResp.status}`)
+    if (tData.status === 'succeeded') {
+      // 把 result 字段摊平到顶层,保持和旧同步版响应 shape 一致,
+      // 让 extractLyricsText / extractSongTitle / extractUpstreamError 不需要改。
+      return tData.result || tData
+    }
+    if (tData.status === 'failed') {
+      throw new Error(tData.error || '歌词生成失败')
+    }
+  }
+  throw new Error('歌词生成超时,请稍后重试')
 }
 
 function extractCoverFeatureId(payload) {

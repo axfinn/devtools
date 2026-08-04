@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,6 +50,9 @@ func setupOneClickMusicTest(t *testing.T) (*gin.Engine, *httptest.Server, *atomi
 	if err := db.InitMiniMaxResultShares(); err != nil {
 		t.Fatalf("init result shares: %v", err)
 	}
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init media tasks: %v", err)
+	}
 
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
@@ -57,10 +62,52 @@ func setupOneClickMusicTest(t *testing.T) (*gin.Engine, *httptest.Server, *atomi
 	h := NewAIGatewayHandler(db, cfg, nil, nil)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
 
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 	return router, upstream, &hits
+}
+
+// pollLyricsUntilDone 异步歌词任务:拿到 task_id 后轮询 /api/minimax/music/v1/lyrics_tasks/:id,
+// 直到 status ∈ {succeeded, failed} 或超时。返回最后一次轮询的响应。
+func pollLyricsUntilDone(t *testing.T, router *gin.Engine, taskID, adminPwd string, timeout time.Duration) *httptest.ResponseRecorder {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastWR *httptest.ResponseRecorder
+	for time.Now().Before(deadline) {
+		req := httptest.NewRequest(http.MethodGet, "/api/minimax/music/v1/lyrics_tasks/"+taskID, nil)
+		req.Header.Set("X-Super-Admin-Password", adminPwd)
+		wr := httptest.NewRecorder()
+		router.ServeHTTP(wr, req)
+		lastWR = wr
+		if wr.Code != http.StatusOK {
+			return wr
+		}
+		var resp map[string]interface{}
+		_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+		switch resp["status"] {
+		case "succeeded", "failed":
+			return wr
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return lastWR
+}
+
+// submitLyricsAsync 提交异步歌词生成,返回 (status code, task_id, body)。
+func submitLyricsAsync(t *testing.T, router *gin.Engine, body []byte, adminPwd string) (int, string, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader(body))
+	req.Header.Set("X-Super-Admin-Password", adminPwd)
+	req.Header.Set("Content-Type", "application/json")
+	wr := httptest.NewRecorder()
+	router.ServeHTTP(wr, req)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	taskID, _ := resp["task_id"].(string)
+	return wr.Code, taskID, wr.Body.Bytes()
 }
 
 // lyricsResponseFor 造一个同时含 root + nested 两种字段的歌词响应，
@@ -100,9 +147,11 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// TestLyricsProxyPassthroughRootAndNestedShapes 锁定 /api/minimax/music/v1/lyrics_generation 代理透传：
-// upstream 同时返回 root 和 nested 字段时，响应里都还在，让前端 extractLyricsText / runOneClickMusic 都能解析。
+// TestLyricsProxyPassthroughRootAndNestedShapes 锁定 lyrics 异步任务透传:
+// POST 立即返回 202 + task_id;轮询 task 后 result 字段里含 root + nested 两种字段。
+// 前端 runOneClickMusic / extractLyricsText 从 task.result 里拿 lyrics。
 func TestLyricsProxyPassthroughRootAndNestedShapes(t *testing.T) {
+	withZeroRetryBackoff(t)
 	router, _, hits := setupOneClickMusicTest(t)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -112,35 +161,46 @@ func TestLyricsProxyPassthroughRootAndNestedShapes(t *testing.T) {
 			"language": "zh",
 		},
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader(body))
-	req.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	status, taskID, submitBody := submitLyricsAsync(t, router, body, "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202, body = %s", status, submitBody)
+	}
+	if taskID == "" {
+		t.Fatalf("submit missing task_id, body = %s", submitBody)
+	}
+
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	if wr.Code != http.StatusOK {
+		t.Fatalf("poll status = %d, body = %s", wr.Code, wr.Body.String())
 	}
 	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(wr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("task status = %q, want succeeded, body = %s", got, wr.Body.String())
+	}
 
-	if got, _ := resp["lyrics"].(string); got == "" {
-		t.Fatalf("missing root-level lyrics, body = %s", w.Body.String())
+	result, _ := resp["result"].(map[string]interface{})
+	if result == nil {
+		t.Fatalf("missing nested result, body = %s", wr.Body.String())
 	}
-	if got, _ := resp["song_title"].(string); got == "" {
-		t.Fatalf("missing root-level song_title, body = %s", w.Body.String())
+	if got, _ := result["lyrics"].(string); got == "" {
+		t.Fatalf("missing root-level lyrics, body = %s", wr.Body.String())
 	}
-	data, _ := resp["data"].(map[string]interface{})
+	if got, _ := result["song_title"].(string); got == "" {
+		t.Fatalf("missing root-level song_title, body = %s", wr.Body.String())
+	}
+	data, _ := result["data"].(map[string]interface{})
 	if data == nil {
-		t.Fatalf("missing nested data, body = %s", w.Body.String())
+		t.Fatalf("missing nested data, body = %s", wr.Body.String())
 	}
 	if got, _ := data["lyrics"].(string); got == "" {
-		t.Fatalf("missing nested data.lyrics, body = %s", w.Body.String())
+		t.Fatalf("missing nested data.lyrics, body = %s", wr.Body.String())
 	}
 	if got, _ := data["title"].(string); got == "" {
-		t.Fatalf("missing nested data.title, body = %s", w.Body.String())
+		t.Fatalf("missing nested data.title, body = %s", wr.Body.String())
 	}
 
 	if hits.Load() != 1 {
@@ -158,8 +218,8 @@ func TestLyricsProxyRejectsWithoutAuth(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code == http.StatusOK {
-		t.Fatalf("expected non-200 without admin pwd, got %d body=%s", w.Code, w.Body.String())
+	if w.Code == http.StatusAccepted || w.Code == http.StatusOK {
+		t.Fatalf("expected non-2xx without admin pwd, got %d body=%s", w.Code, w.Body.String())
 	}
 	if hits.Load() != 0 {
 		t.Fatalf("upstream hit count = %d, want 0", hits.Load())
@@ -172,6 +232,7 @@ func TestLyricsProxyRejectsWithoutAuth(t *testing.T) {
 //   3. devtools 后端后台轮询 /v1/tasks/<ext-id>，upstream 返回 success + audio URL
 //   4. 前端轮询 GET /api/minimax/token-plan/tasks/:local-id，最终拿到 status=succeeded + result_urls 含音频 URL
 func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
+	withZeroRetryBackoff(t)
 	gin.SetMode(gin.TestMode)
 
 	const (
@@ -256,27 +317,29 @@ func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 	router.POST("/api/minimax/token-plan/v1/generations", h.ProxyMinimaxTokenPlan)
 	router.GET("/api/minimax/token-plan/tasks/:id", h.GetMinimaxTokenPlanTask)
 
-	// 模拟前端一键生成第 1 步：拿歌词
+	// 模拟前端一键生成第 1 步：异步提交歌词任务 + 轮询拿到结果
 	lyricsBody, _ := json.Marshal(map[string]interface{}{
 		"mode":   "write_full_song",
 		"prompt": "我在北疆自驾了一周",
 		"advancedParams": map[string]interface{}{"language": "zh"},
 	})
-	lyricsReq := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader(lyricsBody))
-	lyricsReq.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	lyricsReq.Header.Set("Content-Type", "application/json")
-	lyricsW := httptest.NewRecorder()
-	router.ServeHTTP(lyricsW, lyricsReq)
-	if lyricsW.Code != http.StatusOK {
-		t.Fatalf("lyrics proxy status = %d, body = %s", lyricsW.Code, lyricsW.Body.String())
+	lyricsStatus, lyricsTaskID, lyricsBody2 := submitLyricsAsync(t, router, lyricsBody, "test-admin-pw")
+	if lyricsStatus != http.StatusAccepted {
+		t.Fatalf("lyrics submit status = %d, want 202, body = %s", lyricsStatus, lyricsBody2)
 	}
-	var lyricsResp map[string]interface{}
-	_ = json.Unmarshal(lyricsW.Body.Bytes(), &lyricsResp)
+	lyricsWR := pollLyricsUntilDone(t, router, lyricsTaskID, "test-admin-pw", 5*time.Second)
+	var lyricsRespOuter map[string]interface{}
+	_ = json.Unmarshal(lyricsWR.Body.Bytes(), &lyricsRespOuter)
+	lyricsResp, _ := lyricsRespOuter["result"].(map[string]interface{})
+	if lyricsResp == nil {
+		t.Fatalf("lyrics task result empty, body = %s", lyricsWR.Body.String())
+	}
 	if got, _ := lyricsResp["lyrics"].(string); got == "" {
-		t.Fatalf("lyrics empty, body = %s", lyricsW.Body.String())
+		t.Fatalf("lyrics empty, body = %s", lyricsWR.Body.String())
 	}
 	if lyricsHits.Load() != 1 {
 		t.Fatalf("lyrics upstream hits = %d, want 1", lyricsHits.Load())
@@ -355,6 +418,7 @@ func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 //  3. 最后一次返回 success + audio URL
 // 前端最终拿到的是 success 那一帧的 URL（不是更早的 running/空数据）。
 func TestOneClickMusicPollingBackoffReturnsFinalURLAfterFailure(t *testing.T) {
+	withZeroRetryBackoff(t)
 	gin.SetMode(gin.TestMode)
 
 	const wantAudioURL = "https://minimax.chat/music/recovery.mp3"
@@ -417,21 +481,23 @@ func TestOneClickMusicPollingBackoffReturnsFinalURLAfterFailure(t *testing.T) {
 
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 	router.POST("/api/minimax/token-plan/v1/generations", h.ProxyMinimaxTokenPlan)
 	router.GET("/api/minimax/token-plan/tasks/:id", h.GetMinimaxTokenPlanTask)
 
-	// lyrics 步
+	// lyrics 步:异步提交 + 轮询
 	lyricsBody, _ := json.Marshal(map[string]interface{}{"mode": "write_full_song", "prompt": "test"})
-	w1 := httptest.NewRecorder()
-	r1 := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader(lyricsBody))
-	r1.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	r1.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w1, r1)
-	if w1.Code != http.StatusOK {
-		t.Fatalf("lyrics: %s", w1.Body.String())
+	lyricsStatus, lyricsTaskID, lyricsBody2 := submitLyricsAsync(t, router, lyricsBody, "test-admin-pw")
+	if lyricsStatus != http.StatusAccepted {
+		t.Fatalf("lyrics submit: status=%d body=%s", lyricsStatus, lyricsBody2)
 	}
-	var lyricsResp map[string]interface{}
-	_ = json.Unmarshal(w1.Body.Bytes(), &lyricsResp)
+	w1 := pollLyricsUntilDone(t, router, lyricsTaskID, "test-admin-pw", 5*time.Second)
+	var lyricsRespOuter map[string]interface{}
+	_ = json.Unmarshal(w1.Body.Bytes(), &lyricsRespOuter)
+	lyricsResp, _ := lyricsRespOuter["result"].(map[string]interface{})
+	if lyricsResp == nil {
+		t.Fatalf("lyrics task result empty, body = %s", w1.Body.String())
+	}
 
 	// submit
 	musicBody, _ := json.Marshal(map[string]interface{}{
@@ -496,6 +562,7 @@ func TestOneClickMusicPollingBackoffReturnsFinalURLAfterFailure(t *testing.T) {
 //  4. 返回的 share payload 含 lyrics/theme/model 等上下文
 //  5. 文件大小 > 1KB，且 magic bytes 是合法音频（mp3 ID3 头）
 func TestOneClickMusicShareDownloadsAudioAndExposesAsset(t *testing.T) {
+	withZeroRetryBackoff(t)
 	gin.SetMode(gin.TestMode)
 
 	// 切换到临时目录,避免污染 repo 下的 data/minimax_result_shares
@@ -574,27 +641,29 @@ func TestOneClickMusicShareDownloadsAudioAndExposesAsset(t *testing.T) {
 
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 	router.POST("/api/minimax/token-plan/v1/generations", h.ProxyMinimaxTokenPlan)
 	router.GET("/api/minimax/token-plan/tasks/:id", h.GetMinimaxTokenPlanTask)
 	router.POST("/api/minimax/result-shares", h.CreateMiniMaxResultShare)
 	router.GET("/api/minimax/result-shares/:id", h.GetMiniMaxResultShare)
 
-	// Step 1: 拿歌词
+	// Step 1: 异步提交歌词任务 + 轮询拿到结果
 	lyricsBody, _ := json.Marshal(map[string]interface{}{
 		"mode":   "write_full_song",
 		"prompt": "我在北疆自驾了一周",
 		"advancedParams": map[string]interface{}{"language": "zh"},
 	})
-	w1 := httptest.NewRecorder()
-	r1 := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader(lyricsBody))
-	r1.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	r1.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w1, r1)
-	if w1.Code != http.StatusOK {
-		t.Fatalf("lyrics proxy status=%d body=%s", w1.Code, w1.Body.String())
+	lyricsStatus, lyricsTaskID, lyricsBody2 := submitLyricsAsync(t, router, lyricsBody, "test-admin-pw")
+	if lyricsStatus != http.StatusAccepted {
+		t.Fatalf("lyrics submit status=%d body=%s", lyricsStatus, lyricsBody2)
 	}
-	var lyricsResp map[string]interface{}
-	_ = json.Unmarshal(w1.Body.Bytes(), &lyricsResp)
+	w1 := pollLyricsUntilDone(t, router, lyricsTaskID, "test-admin-pw", 5*time.Second)
+	var lyricsRespOuter map[string]interface{}
+	_ = json.Unmarshal(w1.Body.Bytes(), &lyricsRespOuter)
+	lyricsResp, _ := lyricsRespOuter["result"].(map[string]interface{})
+	if lyricsResp == nil {
+		t.Fatalf("lyrics task result empty, body = %s", w1.Body.String())
+	}
 
 	// Step 2: 提交并轮询到 succeeded,模拟前端拿到了 sourceUrl
 	musicBody, _ := json.Marshal(map[string]interface{}{
@@ -758,7 +827,7 @@ func TestOneClickMusicShareDownloadsAudioAndExposesAsset(t *testing.T) {
 }
 
 // TestLyricsProxyRetriesOn524ThenSucceeds 验证歌词接口偶发 524 (Cloudflare origin timeout)
-// 会被后端自动重试:前两次返回 524,第三次返回 200,前端只看到一次成功响应。
+// 会被后端自动重试:前 3 次返回 5xx,第 4 次返回 200,异步任务最终 status=succeeded。
 func TestLyricsProxyRetriesOn524ThenSucceeds(t *testing.T) {
 	withZeroRetryBackoff(t)
 
@@ -767,7 +836,7 @@ func TestLyricsProxyRetriesOn524ThenSucceeds(t *testing.T) {
 	var hits atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := hits.Add(1)
-		if n < 3 {
+		if n < 4 {
 			http.Error(w, "upstream busy", http.StatusBadGateway)
 			return
 		}
@@ -781,7 +850,11 @@ func TestLyricsProxyRetriesOn524ThenSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create db: %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init media tasks: %v", err)
+	}
 
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
@@ -790,36 +863,42 @@ func TestLyricsProxyRetriesOn524ThenSucceeds(t *testing.T) {
 
 	h := NewAIGatewayHandler(db, cfg, nil, nil)
 	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
 
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader([]byte(`{"mode":"write_full_song","prompt":"test"}`)))
-	req.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	status, taskID, submitBody := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"test"}`), "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202, body = %s", status, submitBody)
+	}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 after retries, got %d body=%s", w.Code, w.Body.String())
-	}
-	if got := hits.Load(); got != 3 {
-		t.Fatalf("upstream hits = %d, want 3 (2 retries + 1 success)", got)
-	}
-	if rc := w.Header().Get("X-Retry-Count"); rc != "2" {
-		t.Fatalf("X-Retry-Count = %q, want \"2\"", rc)
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	if wr.Code != http.StatusOK {
+		t.Fatalf("poll status = %d, body = %s", wr.Code, wr.Body.String())
 	}
 	var resp map[string]interface{}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v body=%s", err, w.Body.String())
+	if err := json.Unmarshal(wr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v body=%s", err, wr.Body.String())
 	}
-	if got, _ := resp["lyrics"].(string); got == "" {
-		t.Fatalf("missing lyrics, body=%s", w.Body.String())
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("task status = %q, want succeeded, body=%s", got, wr.Body.String())
+	}
+	result, _ := resp["result"].(map[string]interface{})
+	if result == nil {
+		t.Fatalf("missing result, body=%s", wr.Body.String())
+	}
+	if got, _ := result["lyrics"].(string); got == "" {
+		t.Fatalf("missing lyrics, body=%s", wr.Body.String())
+	}
+	if got := hits.Load(); got != 4 {
+		t.Fatalf("upstream hits = %d, want 4 (3 retries + 1 success)", got)
 	}
 }
 
 // TestLyricsProxyDoesNotRetryOn4xx 验证 4xx (客户端错误,如 401/400) 不会被重试:
-// 鉴权或参数错误重试也没用,白白浪费请求。
+// 鉴权或参数错误重试也没用,白白浪费请求。异步任务最终 status=failed,error 字段带上游错误。
 func TestLyricsProxyDoesNotRetryOn4xx(t *testing.T) {
 	withZeroRetryBackoff(t)
 
@@ -836,7 +915,11 @@ func TestLyricsProxyDoesNotRetryOn4xx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create db: %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
 
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
@@ -845,28 +928,33 @@ func TestLyricsProxyDoesNotRetryOn4xx(t *testing.T) {
 
 	h := NewAIGatewayHandler(db, cfg, nil, nil)
 	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader([]byte(`{"mode":"write_full_song","prompt":"test"}`)))
-	req.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	status, taskID, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"test"}`), "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202", status)
+	}
 
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 passthrough, got %d body=%s", w.Code, w.Body.String())
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "failed" {
+		t.Fatalf("task status = %q, want failed (4xx 不重试), body=%s", got, wr.Body.String())
+	}
+	errStr, _ := resp["error"].(string)
+	if !strings.Contains(errStr, "401") {
+		t.Fatalf("error 字段应该含 401 状态码, got %q", errStr)
 	}
 	if got := hits.Load(); got != 1 {
 		t.Fatalf("upstream hits = %d, want 1 (no retry on 4xx)", got)
 	}
-	if rc := w.Header().Get("X-Retry-Count"); rc != "" {
-		t.Fatalf("X-Retry-Count should be empty on 4xx, got %q", rc)
-	}
 }
 
-// TestLyricsProxyGivesUpAfterMaxRetries 验证 3 次尝试全部失败时,
-// 返回最后一次的 5xx 状态(让前端知道是上游超时,而不是显示成"未知错误")。
+// TestLyricsProxyGivesUpAfterMaxRetries 验证 4 次尝试全部失败时,
+// 异步任务最终 status=failed,error 字段含上游最后一次的错误信息(让前端知道是上游超时)。
 func TestLyricsProxyGivesUpAfterMaxRetries(t *testing.T) {
 	withZeroRetryBackoff(t)
 
@@ -883,7 +971,11 @@ func TestLyricsProxyGivesUpAfterMaxRetries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create db: %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
 
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
@@ -892,28 +984,29 @@ func TestLyricsProxyGivesUpAfterMaxRetries(t *testing.T) {
 
 	h := NewAIGatewayHandler(db, cfg, nil, nil)
 	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader([]byte(`{"mode":"write_full_song","prompt":"test"}`)))
-	req.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	status, taskID, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"test"}`), "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202", status)
+	}
 
-	if w.Code != 524 {
-		t.Fatalf("expected 524 after exhausting retries, got %d body=%s", w.Code, w.Body.String())
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "failed" {
+		t.Fatalf("task status = %q, want failed, body=%s", got, wr.Body.String())
 	}
-	if got := hits.Load(); got != 3 {
-		t.Fatalf("upstream hits = %d, want 3 (initial + 2 retries)", got)
-	}
-	if rc := w.Header().Get("X-Retry-Count"); rc != "2" {
-		t.Fatalf("X-Retry-Count = %q, want \"2\"", rc)
+	if got := hits.Load(); got != 4 {
+		t.Fatalf("upstream hits = %d, want 4 (initial + 3 retries)", got)
 	}
 }
 
 // TestLyricsProxyRetriesOnNetworkError 验证底层网络错误(timeout/connection reset)
-// 也会触发重试,而不是直接把"EOF/timeout"吐给前端。
+// 也会触发重试,而不是直接把"EOF/timeout"吐给前端。异步任务最终 succeeded。
 func TestLyricsProxyRetriesOnNetworkError(t *testing.T) {
 	withZeroRetryBackoff(t)
 
@@ -943,7 +1036,11 @@ func TestLyricsProxyRetriesOnNetworkError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create db: %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
 
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
@@ -952,17 +1049,21 @@ func TestLyricsProxyRetriesOnNetworkError(t *testing.T) {
 
 	h := NewAIGatewayHandler(db, cfg, nil, nil)
 	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader([]byte(`{"mode":"write_full_song","prompt":"test"}`)))
-	req.Header.Set("X-Super-Admin-Password", "test-admin-pw")
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	status, taskID, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"test"}`), "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202", status)
+	}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 after network-error retry, got %d body=%s", w.Code, w.Body.String())
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("task status = %q, want succeeded, body=%s", got, wr.Body.String())
 	}
 	if got := hits.Load(); got != 2 {
 		t.Fatalf("upstream hits = %d, want 2 (1 network error + 1 success)", got)
@@ -976,6 +1077,465 @@ func withZeroRetryBackoff(t *testing.T) {
 	orig := musicProxyRetryBackoff
 	musicProxyRetryBackoff = func(attempt int) time.Duration { return 0 }
 	t.Cleanup(func() { musicProxyRetryBackoff = orig })
+}
+
+// TestLyricsAsyncAcceptsEmptyFromUpstream 后端不画蛇添足判定歌词空:上游 base_resp.status_code=0
+// 就当 succeeded,把空 lyrics 留给前端 extractLyricsText 报"歌词为空,请重试"。
+// 这是 2026-08-04 线上炸了的修法:之前后端强制判定空就 retry 3 次再 failed,反而把整个歌曲生成流程打断。
+func TestLyricsAsyncAcceptsEmptyFromUpstream(t *testing.T) {
+	withZeroRetryBackoff(t)
+	gin.SetMode(gin.TestMode)
+
+	var totalHits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		totalHits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		// 上游 200 + 空歌词:后端要直传,不能误判 failed
+		_, _ = w.Write([]byte(`{"lyrics":"","song_title":"","base_resp":{"status_code":0,"status_msg":"success"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	db, err := models.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init media tasks: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	cfg := config.DefaultConfig()
+	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
+	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
+	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
+
+	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h.musicSubmitClient.Timeout = 5 * time.Second
+
+	router := gin.New()
+	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"mode":   "write_full_song",
+		"prompt": "上游返回空歌词的回归测试",
+	})
+	code, taskID, _ := submitLyricsAsync(t, router, body, "test-admin-pw")
+	if code != http.StatusAccepted {
+		t.Fatalf("submit failed: status=%d", code)
+	}
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("status=%q want succeeded (后端不该自己判空 failed), error=%v", got, resp["error"])
+	}
+	// 必须只打上游一次:不再做"空内容再重试 N 次"的怪动作
+	if got := totalHits.Load(); got != 1 {
+		t.Fatalf("upstream hits = %d, want 1 (不该再 retry)", got)
+	}
+	// result 透传,lyrics 字段空字符串照常返回给前端
+	result, _ := resp["result"].(map[string]interface{})
+	if result == nil {
+		t.Fatalf("result 字段缺失: %+v", resp)
+	}
+	if _, ok := result["base_resp"]; !ok {
+		t.Fatalf("result 缺 base_resp,没透传上游响应: %+v", result)
+	}
+}
+
+// TestLyricsProxyDecompressesGzipBodyWithoutHeader 兜底测试:
+// 上游漏写 Content-Encoding 头但 body 是真 gzip(0x1f 0x8b magic),后端必须按 magic 解压,
+// 否则前端拿到二进制就报"歌词生成成功但内容为空"。
+func TestLyricsProxyDecompressesGzipBodyWithoutHeader(t *testing.T) {
+	withZeroRetryBackoff(t)
+	gin.SetMode(gin.TestMode)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		plain := lyricsResponseFor(body)
+		// 注意:故意不写 Content-Encoding,模拟"CF 漏标头"的真实故障
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, _ = gz.Write(plain)
+		_ = gz.Close()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(buf.Bytes())
+	}))
+	t.Cleanup(upstream.Close)
+
+	db, err := models.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init media tasks: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	cfg := config.DefaultConfig()
+	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
+	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
+	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
+	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h.musicSubmitClient.Timeout = 5 * time.Second
+	router := gin.New()
+	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
+
+	body, _ := json.Marshal(map[string]interface{}{"mode": "write_full_song", "prompt": "测试 gzip magic 兜底解压"})
+	code, taskID, _ := submitLyricsAsync(t, router, body, "test-admin-pw")
+	if code != http.StatusAccepted {
+		t.Fatalf("submit status=%d", code)
+	}
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("status=%q (上游返 gzip 但没 Content-Encoding 头,后端没解压), error=%v", got, resp["error"])
+	}
+	// 关键:result.lyrics 必须有内容,不是空字符串(那意味着还是二进制)
+	result, _ := resp["result"].(map[string]interface{})
+	lyrics, _ := result["lyrics"].(string)
+	if strings.TrimSpace(lyrics) == "" {
+		t.Fatalf("result.lyrics 为空,后端没解压 gzip,前端会报'歌词生成成功但内容为空', body=%s", wr.Body.String())
+	}
+}
+
+// TestMaybeGunzip 单元测一下兜底解压函数
+func TestMaybeGunzip(t *testing.T) {
+	plain := []byte(`{"lyrics":"测试歌词","base_resp":{"status_code":0}}`)
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	_, _ = gz.Write(plain)
+	_ = gz.Close()
+	gzipped := buf.Bytes()
+	if got := maybeGunzip(gzipped); string(got) != string(plain) {
+		t.Fatalf("maybeGunzip(gzip) = %q, want %q", got, plain)
+	}
+	// 不是 gzip magic 的原样返回
+	notGz := []byte(`{"lyrics":"明文 JSON"}`)
+	if got := maybeGunzip(notGz); string(got) != string(notGz) {
+		t.Fatalf("maybeGunzip(plain) = %q, want %q", got, notGz)
+	}
+	// 空 body 也安全
+	if got := maybeGunzip(nil); got != nil {
+		t.Fatalf("maybeGunzip(nil) = %q, want nil", got)
+	}
+}
+
+// TestLyricsProxySucceedsOnLastAttemptAfter524s 压测边界:连续 3 次 524 后第 4 次才成功。
+// 这是 Cloudflare 偶发抖动最严重的场景,验证重试次数够用。异步任务最终 succeeded。
+func TestLyricsProxySucceedsOnLastAttemptAfter524s(t *testing.T) {
+	withZeroRetryBackoff(t)
+
+	gin.SetMode(gin.TestMode)
+
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		if n < 4 {
+			http.Error(w, "cloudflare origin timeout", 524)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		_, _ = w.Write(lyricsResponseFor(body))
+	}))
+	defer upstream.Close()
+
+	db, err := models.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
+	cfg.MiniMaxTokenPlan.APIKey = "test-key"
+	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
+
+	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
+
+	router := gin.New()
+	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
+
+	status, taskID, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"jitter-test"}`), "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202", status)
+	}
+
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("task status = %q, want succeeded, body=%s", got, wr.Body.String())
+	}
+	if got := hits.Load(); got != 4 {
+		t.Fatalf("upstream hits = %d, want 4 (3×524 + 1×200)", got)
+	}
+}
+
+// TestLyricsProxyRetriesOn500ThenSucceeds 验证 500 Internal Server Error 也会触发重试:
+// 上游服务过载时 500 跟 524 本质一样,只是 CF 没接住;重试常常能过。异步任务最终 succeeded。
+func TestLyricsProxyRetriesOn500ThenSucceeds(t *testing.T) {
+	withZeroRetryBackoff(t)
+
+	gin.SetMode(gin.TestMode)
+
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		if n < 3 {
+			http.Error(w, `{"error":"upstream overloaded"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		_, _ = w.Write(lyricsResponseFor(body))
+	}))
+	defer upstream.Close()
+
+	db, err := models.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
+	cfg.MiniMaxTokenPlan.APIKey = "test-key"
+	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
+
+	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
+
+	router := gin.New()
+	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
+
+	status, taskID, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"500-retry"}`), "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202", status)
+	}
+
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("task status = %q, want succeeded, body=%s", got, wr.Body.String())
+	}
+	if got := hits.Load(); got != 3 {
+		t.Fatalf("upstream hits = %d, want 3 (2×500 + 1×200)", got)
+	}
+}
+
+// TestLyricsProxyRetriesOnMixedTransientFailures 压测混合失败:502→503→524→200。
+// 模拟上游不同节点/不同原因轮流报错的真实场景,确认任何一种 5xx 都能触发重试。
+// 异步任务最终 succeeded。
+func TestLyricsProxyRetriesOnMixedTransientFailures(t *testing.T) {
+	withZeroRetryBackoff(t)
+
+	gin.SetMode(gin.TestMode)
+
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		switch n {
+		case 1:
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+		case 2:
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		case 3:
+			http.Error(w, "cf origin timeout", 524)
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			body, _ := io.ReadAll(r.Body)
+			_, _ = w.Write(lyricsResponseFor(body))
+		}
+	}))
+	defer upstream.Close()
+
+	db, err := models.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
+	cfg.MiniMaxTokenPlan.APIKey = "test-key"
+	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
+
+	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
+
+	router := gin.New()
+	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
+
+	status, taskID, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"mixed"}`), "test-admin-pw")
+	if status != http.StatusAccepted {
+		t.Fatalf("submit status = %d, want 202", status)
+	}
+
+	wr := pollLyricsUntilDone(t, router, taskID, "test-admin-pw", 5*time.Second)
+	var resp map[string]interface{}
+	_ = json.Unmarshal(wr.Body.Bytes(), &resp)
+	if got, _ := resp["status"].(string); got != "succeeded" {
+		t.Fatalf("task status = %q, want succeeded, body=%s", got, wr.Body.String())
+	}
+	if got := hits.Load(); got != 4 {
+		t.Fatalf("upstream hits = %d, want 4 (502+503+524+200)", got)
+	}
+}
+
+// TestMusicProxyRetryBackoffHasJitter 验证 musicProxyRetryBackoff 在每档基础值上叠加抖动:
+//  1. base 必须是指数(1s, 2s, 4s, 8s),确保重试间隔够长
+//  2. 多次调用同一 attempt 得到的值不完全相等(抖动生效)
+//  3. 抖动幅度不超过 ±25%
+func TestMusicProxyRetryBackoffHasJitter(t *testing.T) {
+	orig := musicProxyRetryBackoff
+	t.Cleanup(func() { musicProxyRetryBackoff = orig })
+
+	// 用 200ms 基数让抖动幅度计算稳定可读
+	musicProxyRetryBackoff = func(attempt int) time.Duration {
+		if attempt < 1 {
+			return 0
+		}
+		base := time.Duration(200*(1<<(attempt-1))) * time.Millisecond
+		if base <= 0 {
+			return 0
+		}
+		span := int64(base) / 4
+		if span == 0 {
+			return base
+		}
+		jitter := rand.Int64N(2*span+1) - span
+		d := base + time.Duration(jitter)
+		if d < 0 {
+			return 0
+		}
+		return d
+	}
+
+	// 1) 指数增长
+	wantBase := []time.Duration{
+		200 * time.Millisecond,
+		400 * time.Millisecond,
+		800 * time.Millisecond,
+		1600 * time.Millisecond,
+	}
+	for attempt, want := range wantBase {
+		attempt++ // 1-based
+		got := musicProxyRetryBackoff(attempt)
+		// 抖动范围 ±25%,容差给到 ±30% 防止边界抖动把测试搞挂
+		lo := time.Duration(float64(want) * 0.70)
+		hi := time.Duration(float64(want) * 1.30)
+		if got < lo || got > hi {
+			t.Fatalf("attempt=%d base=%v got=%v, want within [%v, %v]", attempt, want, got, lo, hi)
+		}
+	}
+
+	// 2) 同 attempt 多次调用应该不全相等(抖动真的生效了)
+	seen := map[time.Duration]struct{}{}
+	for i := 0; i < 50; i++ {
+		seen[musicProxyRetryBackoff(2)] = struct{}{}
+	}
+	if len(seen) < 2 {
+		t.Fatalf("expected jitter to produce varying values, got %d unique values across 50 calls", len(seen))
+	}
+}
+
+// TestLyricsProxyRealisticLoadExhaustsThenSucceeds 模拟"用户连点 5 次生成,前几次都 524"的真实场景:
+// 第一个异步任务 4 次尝试全部 524 → failed;
+// 第二个异步任务再 524 一次后第 7 次请求命中 200 → succeeded。
+// 这覆盖了实际生产中观察到的"524 一波一波来"的模式。
+func TestLyricsProxyRealisticLoadExhaustsThenSucceeds(t *testing.T) {
+	withZeroRetryBackoff(t)
+
+	gin.SetMode(gin.TestMode)
+
+	var hitCount atomic.Int32
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits := hitCount.Add(1)
+		// 第 1-4 次返回 524(第一次请求),第 5-6 次返回 524(第二次请求),
+		// 第 7 次起返回 200
+		if hits <= 6 {
+			http.Error(w, "cf 524 burst", 524)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
+		_, _ = w.Write(lyricsResponseFor(body))
+	}))
+	defer upstream.Close()
+
+	db, err := models.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() })
+	if err := db.InitMiniMaxMediaTasks(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
+	cfg.MiniMaxTokenPlan.APIKey = "test-key"
+	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
+
+	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h.mediaClient.Timeout = 5 * time.Second
+	h.musicSubmitClient.Timeout = 5 * time.Second
+
+	router := gin.New()
+	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
+	router.GET("/api/minimax/music/v1/lyrics_tasks/:id", h.GetMiniMaxLyricsTask)
+
+	// 第一次:4 次尝试全部 524
+	_, taskID1, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"burst-1"}`), "test-admin-pw")
+	wr1 := pollLyricsUntilDone(t, router, taskID1, "test-admin-pw", 5*time.Second)
+	var r1 map[string]interface{}
+	_ = json.Unmarshal(wr1.Body.Bytes(), &r1)
+	if got, _ := r1["status"].(string); got != "failed" {
+		t.Fatalf("first burst: expected failed after exhausting retries, got %q body=%s", got, wr1.Body.String())
+	}
+
+	// 第二次:再 524 一次后第 7 次请求命中 200
+	_, taskID2, _ := submitLyricsAsync(t, router, []byte(`{"mode":"write_full_song","prompt":"burst-2"}`), "test-admin-pw")
+	wr2 := pollLyricsUntilDone(t, router, taskID2, "test-admin-pw", 5*time.Second)
+	var r2 map[string]interface{}
+	_ = json.Unmarshal(wr2.Body.Bytes(), &r2)
+	if got, _ := r2["status"].(string); got != "succeeded" {
+		t.Fatalf("second burst: expected succeeded, got %q body=%s", got, wr2.Body.String())
+	}
+
+	total := hitCount.Load()
+	if total != 7 {
+		t.Fatalf("total upstream hits = %d, want 7 (4+1+1+1)", total)
+	}
 }
 
 func TestExtractMediaURLsSupportsMusicPollShape(t *testing.T) {

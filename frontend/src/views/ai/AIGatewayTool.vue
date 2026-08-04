@@ -59,7 +59,7 @@
             <el-form-item label="下游线路（Anthropic）">
               <el-select v-model="form.anthropic_provider_id" placeholder="默认（走全局默认线路）" clearable style="width: 100%;">
                 <el-option :value="0" label="默认（走全局默认线路）" />
-                <el-option v-for="p in anthropicProviders" :key="p.id" :value="p.id" :label="p.name + ' — ' + (p.default_model || p.models[0] || '')" />
+                <el-option v-for="p in anthropicProviders" :key="p.id" :value="p.id" :label="p.name + ' — ' + (p.default_model || p.models?.[0] || '')" />
               </el-select>
             </el-form-item>
             <el-button type="primary" :loading="creating" @click="createKey">生成 Key</el-button>
@@ -840,7 +840,7 @@ export ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M2.5-highspeed"</pre>
               <p style="color: #94a3b8; margin: 0 0 10px 0; font-size: 13px;">
                 <el-tag v-if="p.is_default" size="small" type="danger" effect="dark" style="margin-right: 6px;">默认线路</el-tag>
                 以下配置使用 <strong style="color: #60a5fa;">{{ p.name }}</strong> 下游，
-                默认模型：<code style="color: #fbbf24;">{{ p.default_model || p.models[0] }}</code>
+                默认模型：<code style="color: #fbbf24;">{{ p.default_model || p.models?.[0] }}</code>
               </p>
               <p style="color: #64748b; margin: 0 0 8px 0; font-size: 12px;">
                 可选模型：<el-tag v-for="m in p.user_models || p.models" :key="m" size="small" effect="plain" style="margin-left: 4px;">{{ m }}</el-tag>
@@ -851,22 +851,22 @@ export ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M2.5-highspeed"</pre>
   "env": {
     "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
-    "ANTHROPIC_MODEL": "{{ p.default_model || p.models[0] || '' }}",
-    "ANTHROPIC_SMALL_FAST_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models[1] || p.models[0] || '') }}",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.default_model || p.models[0] || '' }}",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.default_model || p.models[0] || '' }}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models[p.models.length - 1] || p.models[0] || '') }}"
+    "ANTHROPIC_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
+    "ANTHROPIC_SMALL_FAST_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[1] || p.models?.[0] || '') }}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[p.models.length - 1] || p.models?.[0] || '') }}"
   }
 }</pre>
                 </el-tab-pane>
                 <el-tab-pane label="环境变量">
                   <pre class="doc-code">export ANTHROPIC_BASE_URL="https://t.jaxiu.cn/api/anthropic"
 export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"
-# 默认模型：{{ p.default_model || p.models[0] || '' }}
-export ANTHROPIC_MODEL="{{ p.default_model || p.models[0] || '' }}"</pre>
+# 默认模型：{{ p.default_model || p.models?.[0] || '' }}
+export ANTHROPIC_MODEL="{{ p.default_model || p.models?.[0] || '' }}"</pre>
                   <pre class="doc-code" style="margin-top: 6px;" v-if="p.aliases && p.aliases.length > 0"># 推荐用别名（管理员可控切换下游）
 export ANTHROPIC_SMALL_FAST_MODEL="{{ p.aliases[1] ? p.aliases[1].model : p.aliases[0].model }}"</pre>
-                  <pre class="doc-code" style="margin-top: 6px;" v-else>export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models[1] || p.models[0] || '' }}"</pre>
+                  <pre class="doc-code" style="margin-top: 6px;" v-else>export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models?.[1] || p.models?.[0] || '' }}"</pre>
                 </el-tab-pane>
               </el-tabs>
             </div>
