@@ -588,6 +588,17 @@ const toolRoutes = [
 	      description: 'AI 生成的音乐、视频、图片作品画廊'
 	    }
 	  },
+	  {
+	    path: '/skills',
+	    name: 'Skills',
+	    component: () => import('../views/other/SkillsTool.vue'),
+	    meta: {
+	      title: 'Skills 工具入口',
+	      icon: 'Connection',
+	      category: 'other',
+	      description: '把 DevTools 基础能力开放给 codex/Claude Code 等外部 AI(OpenAI tools + MCP Streamable HTTP)'
+	    }
+	  },
   // 分享类路由（不显示在侧边栏）
   {
     path: '/md/:id',

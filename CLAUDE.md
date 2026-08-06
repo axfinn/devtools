@@ -245,6 +245,28 @@ Docker exposes the backend on port 8082.
   - Frontend behavior: preferred `keep_alive` session auto-restore on reload, foreground, or network recovery
   - Mobile behavior: inline command bar with `Ctrl+C`, `Tab`, send, and enter shortcuts
 
+**Skills 模块(对外工具入口):**
+- `GET  /api/skills/manifest`: OpenAI function-calling 风格清单(同时输出 `parameters` / `input_schema` 双格式,Claude + OpenAI + Cursor 都认)
+- `GET  /api/skills/install`: 各客户端一键安装命令(默认 `text/plain` README 风格,`?format=json` 拿结构化配置,`?client=claude_code|codex|cursor|vscode|continue|curl` 拿单一客户端)
+- `GET  /api/skills/install.sh`: 直接 `curl | bash` 的 shell 脚本(每个客户端块独立、可单跑)
+- `GET  /.well-known/skills`: AI agent 标准发现端点(JSON 目录,无 guard 也可访问)
+- `POST /api/skills/invoke`: 内部 JSON-RPC,请求 `{name, arguments}`,响应 `{ok, data}` 或 `{ok:false, error, code}`
+- `GET  /api/skills/mcp`: MCP server info / SSE stream
+- `POST /api/skills/mcp`: MCP Streamable HTTP,JSON-RPC;覆盖 `initialize` / `tools/list` / `tools/call` / `ping` / `notifications/initialized` 等 method;client 在 `Accept` 头声明 `text/event-stream` 时走 SSE 响应
+- MCP 协议版本协商:支持 `2024-11-05` / `2025-03-26` / `2025-06-18`,client 发什么就 echo 什么(在白名单内),否则回最新;**绝不要塞不存在的日期**(会直接握手失败)
+- 暴露 4 个 skill(严格只留"只有这个服务能做"的,本地能算的都不暴露):
+  - `shorturl_create`(URL ≤ 512B,过期固定 48h,max_clicks 200,5/min/IP)
+  - `paste_create`(全功能,与 `/api/paste` 行为对齐 — 通过 `PasteHandler.createPasteCore` 复用,支持 `content` / `title` / `language` / `password` / `expires_in`(小时,1-168,默认 24) / `max_views`(1-1000 或 admin 999999) / `admin_password` / `file_ids`(关联附件);响应含 `has_password` / `file_count`;PasteHandler 未注入时回落到 8KB 瘦壳,5/min/IP)
+  - `paste_upload_init` / `paste_upload_chunk` / `paste_upload_merge`(附件分片上传三件套:init 返回 file_id,chunk 接受 base64 编码分片,merge 输出最终 filename + url,可被 paste_create 的 file_ids 引用;与 `/api/paste` chunk upload 共享存储路径;3 个 skill 都是 5/min/IP)
+  - `ip_lookup`(从 X-Forwarded-For 读客户端的公网 IP)
+  - `dns_lookup`(拒绝 localhost/RFC1918/CGNAT/link-local,防 SSRF)
+- MCP `tools/list` 响应严格遵守 2025-06-18 规范:每个 tool 仅 `{name, description, inputSchema}` 三字段;`risk` / `parameters` / snake_case `input_schema` 均不输出(那些是 OpenAI 工具格式 / 内部状态,见 `toolMetadata` vs `openAIToolsMetadata` 两个函数)
+- 默认未启用,需在 `config.yaml` 设 `skills.enabled: true`(或 env `SKILLS_ENABLED=1`)
+- 限流:`middleware.SkillsGuard`,POST 走总配额 60/min/IP;写库类还过专项 `CheckWriteLimit` 5/min/IP per skill
+- 0 鉴权但带 Origin 白名单可选(`skills.allowed_origins`);主动读 `X-Forwarded-For` 第 1 个 IP,因后端 `engine.SetTrustedProxies` 当前未设置
+- 防 SSRF/DoS:`hostBlacklisted` 拒绝 localhost/RFC1918/CGNAT/link-local;regex 50ms timeout + 输入长度上限;`shorturl_create` 内容上限在 skill 层硬编码截断(URL ≤ 512B);`paste_create` 已通过 `createPasteCore` 复用 `/api/paste` 的 XSS / 内容安全 / 上限校验
+- 一键安装(claude code 举例):`claude mcp add --transport http devtools https://t.jaxiu.cn/api/skills/mcp`;其它客户端命令见 `/api/skills/install` 文本或 `install_info` skill
+
 **Health:**
 - `GET /api/health`: Health check endpoint
 
