@@ -4,8 +4,10 @@ import (
 	"archive/zip"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -287,79 +289,97 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// 检查是否有内容或文件
-	if req.Content == "" && len(req.FileIDs) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请输入内容或上传文件", "code": 400})
+	ip := c.ClientIP()
+	paste, err := h.createPasteCore(c.Request.Context(), req, ip, createPasteOptions{})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if pe, ok := err.(*pasteError); ok {
+			status = pe.status
+		}
+		c.JSON(status, gin.H{"error": err.Error(), "code": status})
 		return
 	}
 
-	// 文本内容限制（100KB）
-	if len(req.Content) > 100*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "文本内容超过 100KB 限制", "code": 400})
-		return
+	c.JSON(http.StatusCreated, gin.H{
+		"id":         paste.ID,
+		"expires_at": paste.ExpiresAt,
+		"max_views":  paste.MaxViews,
+	})
+}
+
+// createPasteCore 是 Create handler 的核心逻辑,无 c.JSON / 无 IP/storage 限流,
+// 返回 *models.Paste + error。供 skills/内部调用复用,与 HTTP handler 行为对齐。
+//
+// opts 控制可选行为:
+//   - MaxContentBytes:content 长度上限(0 = 不限,默认 100KB)
+//   - SkipFiles:true 时忽略 req.FileIDs(技能调用没有 multipart 上传链路)
+//   - SkipRateLimit:true 时跳过 IP/storage 上限(由调用方自行保证)
+func (h *PasteHandler) createPasteCore(ctx context.Context, req CreatePasteRequest, ip string, opts createPasteOptions) (*models.Paste, error) {
+	// 必须有内容或文件(skill 路径通常没有文件)
+	if req.Content == "" && len(req.FileIDs) == 0 && !opts.SkipFiles {
+		return nil, errPaste("请输入内容或上传文件", 400)
 	}
 
-	// XSS安全检查：检测潜在的XSS攻击
+	// 文本内容限制
+	maxContent := opts.MaxContentBytes
+	if maxContent == 0 {
+		maxContent = 100 * 1024
+	}
+	if int64(len(req.Content)) > maxContent {
+		return nil, errPaste(fmt.Sprintf("文本内容超过 %d 限制", maxContent), 400)
+	}
+
+	// XSS 安全检查
 	if utils.DetectPotentialXSS(req.Content) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "内容包含不安全字符", "code": 400})
-		return
+		return nil, errPaste("内容包含不安全字符", 400)
 	}
 
 	// 内容安全扫描
 	securityResult := utils.ScanContent(req.Content)
 	if !securityResult.IsSafe {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":    "内容包含不安全元素",
-			"warnings": securityResult.Warnings,
-			"code":     400,
-		})
-		return
+		return nil, errPaste("内容包含不安全元素: "+strings.Join(securityResult.Warnings, "; "), 400)
 	}
 
-	ip := c.ClientIP()
+	cfg := config.Get()
 
-	// 检查 IP 限流
-	count, err := h.db.CountByIP(ip, time.Now().Add(-h.ipWindow))
-	if err == nil && count >= h.maxPerIP {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "创建过于频繁，请稍后再试", "code": 429})
-		return
-	}
+	if !opts.SkipRateLimit {
+		// IP 限流
+		count, err := h.db.CountByIP(ip, time.Now().Add(-h.ipWindow))
+		if err == nil && count >= h.maxPerIP {
+			return nil, errPaste("创建过于频繁，请稍后再试", 429)
+		}
+		hourlyCount, err := h.db.CountByIP(ip, time.Now().Add(-time.Hour))
+		if err == nil && hourlyCount >= 100 {
+			return nil, errPaste("创建过于频繁，请稍后再试", 429)
+		}
 
-	hourlyCount, err := h.db.CountByIP(ip, time.Now().Add(-time.Hour))
-	if err == nil && hourlyCount >= 100 {
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "创建过于频繁，请稍后再试", "code": 429})
-		return
-	}
-
-	// 检查总量限制
-	total, err := h.db.TotalCount()
-	if err == nil && total >= h.maxTotal {
-		h.db.CleanExpired()
-		total, _ = h.db.TotalCount()
-		if total >= h.maxTotal {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "存储已满，请稍后再试", "code": 503})
-			return
+		// 总量限制
+		total, err := h.db.TotalCount()
+		if err == nil && total >= h.maxTotal {
+			h.db.CleanExpired()
+			total, _ = h.db.TotalCount()
+			if total >= h.maxTotal {
+				return nil, errPaste("存储已满，请稍后再试", 503)
+			}
 		}
 	}
 
-	// 设置默认值
+	// 默认语言
 	if req.Language == "" {
-		// 自动检测语言
 		req.Language = utils.DetectLanguage(req.Content)
-		// 如果检测到的是 markdown，设置内容类型
 		contentType := utils.DetectContentType(req.Content, req.Language)
 		if contentType == "markdown" {
 			req.Language = "markdown"
 		}
 	}
 
-	// 对内容进行XSS防护消毒。HTML 粘贴需要保留原始标记用于 iframe 渲染，
-	// 前面的安全扫描会拒绝明显危险内容，查看页再通过 sandbox 隔离执行环境。
+	// 内容消毒(HTML 保留原始标记供 iframe 渲染)
 	if req.Language != "html" {
 		req.Content = utils.SanitizeContent(req.Content)
 	}
 	req.Title = utils.SanitizeContent(req.Title)
 
+	// 过期时间:默认 24h,硬上限 168h(7d)
 	if req.ExpiresIn <= 0 {
 		req.ExpiresIn = 24
 	}
@@ -367,68 +387,67 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		req.ExpiresIn = 168
 	}
 
-	cfg := config.Get()
-
-	// 检查文件并生成元数据
+	// 处理文件(skill 路径可跳过)
 	var files []*FileMetadata
 	hasVideo := false
-	for _, fileID := range req.FileIDs {
-		filePath := filepath.Join(pasteUploadDir, fileID)
-		info, err := os.Stat(filePath)
-		if err != nil {
-			continue // 跳过不存在的文件
+	if !opts.SkipFiles {
+		for _, fileID := range req.FileIDs {
+			filePath := filepath.Join(pasteUploadDir, fileID)
+			info, err := os.Stat(filePath)
+			if err != nil {
+				continue
+			}
+			f, err := os.Open(filePath)
+			if err != nil {
+				continue
+			}
+			magicBytes := make([]byte, 16)
+			_, _ = f.Read(magicBytes)
+			f.Close()
+			detectedType := detectFileType(magicBytes)
+			fileType := getFileCategory(detectedType)
+			if fileType == "video" {
+				hasVideo = true
+			}
+			files = append(files, &FileMetadata{
+				Filename:     fileID,
+				OriginalName: fileID,
+				Type:         fileType,
+				Size:         info.Size(),
+				URL:          "/api/paste/files/" + fileID,
+			})
 		}
-
-		// 检测文件类型
-		f, err := os.Open(filePath)
-		if err != nil {
-			continue // 文件被并发删除或权限不足时跳过
-		}
-		magicBytes := make([]byte, 16)
-		_, _ = f.Read(magicBytes)
-		f.Close()
-
-		detectedType := detectFileType(magicBytes)
-		fileType := getFileCategory(detectedType)
-		if fileType == "video" {
-			hasVideo = true
-		}
-
-		files = append(files, &FileMetadata{
-			Filename:     fileID,
-			OriginalName: fileID,
-			Type:         fileType,
-			Size:         info.Size(),
-			URL:          "/api/paste/files/" + fileID,
-		})
 	}
 
-	// 视频访问次数限制
+	// 默认 max_views
 	if req.MaxViews <= 0 {
 		if hasVideo {
 			req.MaxViews = cfg.Paste.DefaultVideoMaxViews
+			if req.MaxViews <= 0 {
+				req.MaxViews = 10
+			}
 		} else {
 			req.MaxViews = 100
 		}
 	}
 
-	// 管理员可以设置更多次数或永久
+	// 管理员模式(允许更高的 max_views / 永久)
+	isAdmin := false
 	if req.AdminPassword != "" {
-		// 用户输入了管理员密码
 		if cfg.Paste.AdminPassword == "" {
-			c.JSON(http.StatusForbidden, gin.H{"error": "系统未设置管理员密码，请联系管理员在config.yaml中配置paste.admin_password", "code": 403})
-			return
+			return nil, errPaste("系统未设置管理员密码", 403)
 		}
 		if req.AdminPassword != cfg.Paste.AdminPassword {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "管理员密码错误", "code": 401})
-			return
+			return nil, errPaste("管理员密码错误", 401)
 		}
-		// 管理员模式，使用用户指定的值
+		isAdmin = true
 		if req.MaxViews == 0 {
 			req.MaxViews = 999999 // 近似永久
 		}
-	} else {
-		// 非管理员模式，限制最大访问次数
+	}
+
+	// 非管理员 max_views 上限
+	if !isAdmin {
 		if hasVideo && req.MaxViews > cfg.Paste.DefaultVideoMaxViews {
 			req.MaxViews = cfg.Paste.DefaultVideoMaxViews
 		} else if !hasVideo && req.MaxViews > 1000 {
@@ -436,7 +455,7 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		}
 	}
 
-	// 将文件元数据转为 JSON
+	// 文件元数据 JSON
 	filesJSON := ""
 	if len(files) > 0 {
 		jsonBytes, _ := json.Marshal(files)
@@ -453,26 +472,37 @@ func (h *PasteHandler) Create(c *gin.Context) {
 		Files:     filesJSON,
 	}
 
-	// 密码加密存储
+	// 密码加密
 	if req.Password != "" {
 		hashedPassword, err := utils.HashPassword(req.Password)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "密码处理失败", "code": 500})
-			return
+			return nil, errPaste("密码处理失败: "+err.Error(), 500)
 		}
 		paste.Password = hashedPassword
 	}
 
 	if err := h.db.CreatePaste(paste); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败", "code": 500})
-		return
+		return nil, errPaste("创建失败: "+err.Error(), 500)
 	}
+	return paste, nil
+}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"id":         paste.ID,
-		"expires_at": paste.ExpiresAt,
-		"max_views":  paste.MaxViews,
-	})
+// createPasteOptions createPasteCore 的可选行为
+type createPasteOptions struct {
+	MaxContentBytes int64 // 0 = 默认 100KB
+	SkipFiles       bool  // true 忽略 req.FileIDs
+	SkipRateLimit   bool  // true 跳过 IP/storage 限流
+}
+
+// errPaste 把 HTTP 状态码附在 error 上,handler 据此选 status
+type pasteError struct {
+	msg    string
+	status int
+}
+
+func (e *pasteError) Error() string { return e.msg }
+func errPaste(msg string, status int) error {
+	return &pasteError{msg: msg, status: status}
 }
 
 func (h *PasteHandler) Get(c *gin.Context) {
@@ -517,8 +547,17 @@ func (h *PasteHandler) Get(c *gin.Context) {
 		}
 	}
 
-	// 增加访问次数
-	h.db.IncrementViews(id)
+	// 增加访问次数（原子,超过 max_views 直接拒绝）
+	if err := h.db.IncrementViews(id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.cleanupPasteFiles(paste.Files)
+			h.db.DeletePaste(id)
+			c.JSON(http.StatusGone, gin.H{"error": "该分享已达到最大访问次数", "code": 410})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新访问次数失败", "code": 500})
+		return
+	}
 	paste.Views++
 
 	// 解析文件 JSON
@@ -796,45 +835,13 @@ func (h *PasteHandler) InitChunkUpload(c *gin.Context) {
 		return
 	}
 
-	cfg := config.Get()
-
-	// 检查文件大小
-	if req.FileSize > cfg.Paste.MaxFileSize {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("文件大小超过限制 (最大 %dMB)", cfg.Paste.MaxFileSize/1024/1024),
-			"code":  400,
-		})
-		return
-	}
-
-	// 生成文件ID
-	randomBytes := make([]byte, 16)
-	if _, err := rand.Read(randomBytes); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
-		return
-	}
-	fileID := hex.EncodeToString(randomBytes)
-
-	// 确保分片目录存在
-	chunkPath := filepath.Join(chunkDir, fileID)
-	if err := os.MkdirAll(chunkPath, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
-		return
-	}
-
-	// 创建分片上传信息
-	uploadInfo := &state.ChunkUploadInfo{
-		FileID:         fileID,
-		FileName:       req.FileName,
-		TotalChunks:    req.TotalChunks,
-		ChunkSize:      req.ChunkSize,
-		FileSize:       req.FileSize,
-		UploadedChunks: []int{},
-		CreatedAt:      time.Now(),
-	}
-
-	if err := h.saveChunkUpload(uploadInfo); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存上传会话失败", "code": 500})
+	fileID, err := h.initChunkUploadCore(req.FileName, req.FileSize, req.ChunkSize, req.TotalChunks)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if pe, ok := err.(*pasteError); ok {
+			status = pe.status
+		}
+		c.JSON(status, gin.H{"error": err.Error(), "code": status})
 		return
 	}
 
@@ -847,62 +854,45 @@ func (h *PasteHandler) InitChunkUpload(c *gin.Context) {
 // UploadChunk 上传分片
 func (h *PasteHandler) UploadChunk(c *gin.Context) {
 	fileID := c.Param("file_id")
-	chunkIndex := c.PostForm("chunk_index")
+	chunkIndexStr := c.PostForm("chunk_index")
 
-	if fileID == "" || chunkIndex == "" {
+	if fileID == "" || chunkIndexStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少必要参数", "code": 400})
 		return
 	}
 
-	// 获取上传信息
-	uploadInfo, exists := h.getChunkUpload(fileID)
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
+	var chunkIdx int
+	if _, err := fmt.Sscanf(chunkIndexStr, "%d", &chunkIdx); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "chunk_index 格式错误", "code": 400})
 		return
 	}
 
-	// 检查是否已超时
-	if time.Since(uploadInfo.CreatedAt) > h.chunkUploadTTL {
-		h.CleanupChunkUpload(fileID)
-		c.JSON(http.StatusGone, gin.H{"error": "上传会话已过期", "code": 410})
-		return
-	}
-
-	// 接收分片数据
 	file, _, err := c.Request.FormFile("chunk")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "读取分片失败", "code": 400})
 		return
 	}
 	defer file.Close()
-
-	// 保存分片
-	chunkPath := filepath.Join(chunkDir, fileID, chunkIndex)
-	out, err := os.Create(chunkPath)
+	data, err := io.ReadAll(file)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存分片失败", "code": 500})
-		return
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, file); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存分片失败", "code": 500})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取分片失败", "code": 500})
 		return
 	}
 
-	// 更新已上传分片列表
-	var chunkIdx int
-	fmt.Sscanf(chunkIndex, "%d", &chunkIdx)
-	uploadedCount, err := h.markChunkUploaded(fileID, chunkIdx)
+	uploadedCount, totalChunks, err := h.uploadChunkCore(fileID, chunkIdx, data)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新上传状态失败", "code": 500})
+		status := http.StatusInternalServerError
+		if pe, ok := err.(*pasteError); ok {
+			status = pe.status
+		}
+		c.JSON(status, gin.H{"error": err.Error(), "code": status})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":         "分片上传成功",
 		"uploaded_chunks": uploadedCount,
-		"total_chunks":    uploadInfo.TotalChunks,
+		"total_chunks":    totalChunks,
 	})
 }
 
@@ -910,146 +900,29 @@ func (h *PasteHandler) UploadChunk(c *gin.Context) {
 func (h *PasteHandler) MergeChunks(c *gin.Context) {
 	fileID := c.Param("file_id")
 
-	// 获取上传信息
-	uploadInfo, exists := h.getChunkUpload(fileID)
-	if !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "上传会话不存在", "code": 404})
-		return
-	}
-
-	// 检查所有分片是否都已上传
-	if len(uploadInfo.UploadedChunks) != uploadInfo.TotalChunks {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":           "分片未全部上传",
-			"uploaded_chunks": len(uploadInfo.UploadedChunks),
-			"total_chunks":    uploadInfo.TotalChunks,
-			"code":            400,
-		})
-		return
-	}
-
-	// 确保上传目录存在
-	if err := os.MkdirAll(pasteUploadDir, 0755); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "服务器错误", "code": 500})
-		return
-	}
-
-	// 读取第一个分片检测文件类型
-	firstChunkPath := filepath.Join(chunkDir, fileID, "0")
-	firstChunk, err := os.ReadFile(firstChunkPath)
+	fm, err := h.mergeChunksCore(fileID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取分片失败", "code": 500})
+		status := http.StatusInternalServerError
+		if pe, ok := err.(*pasteError); ok {
+			status = pe.status
+		}
+		c.JSON(status, gin.H{"error": err.Error(), "code": status})
 		return
 	}
 
-	magicBytes := firstChunk
-	if len(firstChunk) > 16 {
-		magicBytes = firstChunk[:16]
-	}
-
-	detectedType := detectFileType(magicBytes)
-
-	// 不支持的文件类型：将合并后的分片透明打包为 zip 后存储
-	if detectedType == "" {
-		readers := make([]io.Reader, 0, uploadInfo.TotalChunks)
-		closers := make([]io.Closer, 0, uploadInfo.TotalChunks)
-		for i := 0; i < uploadInfo.TotalChunks; i++ {
-			chunkPath := filepath.Join(chunkDir, fileID, fmt.Sprintf("%d", i))
-			f, err := os.Open(chunkPath)
-			if err != nil {
-				for _, c := range closers {
-					c.Close()
-				}
-				h.CleanupChunkUpload(fileID)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "读取分片失败", "code": 500})
-				return
-			}
-			readers = append(readers, f)
-			closers = append(closers, f)
-		}
-
-		finalFilename, zipName, zipSize, err := zipUnsupportedFile(io.MultiReader(readers...), uploadInfo.FileName, fileID)
-		for _, c := range closers {
-			c.Close()
-		}
-		h.CleanupChunkUpload(fileID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存文件失败", "code": 500})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"id":            finalFilename,
-			"url":           "/api/paste/files/" + finalFilename,
-			"filename":      finalFilename,
-			"original_name": zipName,
-			"type":          "archive",
-			"size":          zipSize,
-			"zipped":        true,
-			"message":       "文件合并成功",
-		})
-		return
-	}
-
-	fileCategory := getFileCategory(detectedType)
-
-	// 确定最终文件扩展名
-	ext := strings.ToLower(filepath.Ext(uploadInfo.FileName))
-	if ext == "" {
-		ext = getExtFromMimeType(detectedType)
-	}
-
-	finalFilename := fmt.Sprintf("%s%s", fileID, ext)
-	finalPath := filepath.Join(pasteUploadDir, finalFilename)
-
-	// 创建最终文件
-	finalFile, err := os.Create(finalPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建文件失败", "code": 500})
-		return
-	}
-	defer finalFile.Close()
-
-	// 按顺序合并分片
-	for i := 0; i < uploadInfo.TotalChunks; i++ {
-		chunkPath := filepath.Join(chunkDir, fileID, fmt.Sprintf("%d", i))
-		chunkData, err := os.ReadFile(chunkPath)
-		if err != nil {
-			h.CleanupChunkUpload(fileID)
-			os.Remove(finalPath)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取分片失败", "code": 500})
-			return
-		}
-
-		if _, err := finalFile.Write(chunkData); err != nil {
-			h.CleanupChunkUpload(fileID)
-			os.Remove(finalPath)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "合并分片失败", "code": 500})
-			return
-		}
-	}
-
-	// 清理分片临时文件
-	h.CleanupChunkUpload(fileID)
-
-	// 获取文件大小
-	fileInfo, _ := os.Stat(finalPath)
-	fileSize := int64(0)
-	if fileInfo != nil {
-		fileSize = fileInfo.Size()
-	}
-
-	// 返回文件信息
-	fileURL := "/api/paste/files/" + finalFilename
-	c.JSON(http.StatusOK, gin.H{
-		"id":            finalFilename,
-		"url":           fileURL,
-		"filename":      finalFilename,
-		"original_name": uploadInfo.FileName,
-		"type":          fileCategory,
-		"size":          fileSize,
+	resp := gin.H{
+		"id":            fm.Filename,
+		"url":           fm.URL,
+		"filename":      fm.Filename,
+		"original_name": fm.OriginalName,
+		"type":          fm.Type,
+		"size":          fm.Size,
 		"message":       "文件合并成功",
-	})
+	}
+	if fm.Type == "archive" {
+		resp["zipped"] = true
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // CheckChunkStatus 检查分片上传状态
@@ -1079,6 +952,198 @@ func (h *PasteHandler) CleanupChunkUpload(fileID string) {
 	// 删除临时分片目录
 	chunkPath := filepath.Join(chunkDir, fileID)
 	os.RemoveAll(chunkPath)
+}
+
+// ============================================================
+// 分片上传 core helpers(供 HTTP handler 与 skills 复用)
+// 接受 []byte,不依赖 multipart.FileHeader,便于 JSON-RPC / base64 场景
+// ============================================================
+
+// initChunkUploadCore 初始化一个分片上传会话,返回 fileID
+func (h *PasteHandler) initChunkUploadCore(fileName string, fileSize, chunkSize int64, totalChunks int) (string, error) {
+	cfg := config.Get()
+
+	if fileSize > cfg.Paste.MaxFileSize {
+		return "", errPaste(fmt.Sprintf("文件大小超过限制 (最大 %dMB)", cfg.Paste.MaxFileSize/1024/1024), 400)
+	}
+	if totalChunks <= 0 {
+		return "", errPaste("total_chunks 必须 > 0", 400)
+	}
+	if chunkSize <= 0 {
+		return "", errPaste("chunk_size 必须 > 0", 400)
+	}
+
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", errPaste("服务器错误", 500)
+	}
+	fileID := hex.EncodeToString(randomBytes)
+
+	chunkPath := filepath.Join(chunkDir, fileID)
+	if err := os.MkdirAll(chunkPath, 0755); err != nil {
+		return "", errPaste("服务器错误", 500)
+	}
+
+	uploadInfo := &state.ChunkUploadInfo{
+		FileID:         fileID,
+		FileName:       fileName,
+		TotalChunks:    totalChunks,
+		ChunkSize:      chunkSize,
+		FileSize:       fileSize,
+		UploadedChunks: []int{},
+		CreatedAt:      time.Now(),
+	}
+	if err := h.saveChunkUpload(uploadInfo); err != nil {
+		return "", errPaste("保存上传会话失败", 500)
+	}
+	return fileID, nil
+}
+
+// uploadChunkCore 保存单个分片;返回 (已上传分片数, 总分片数)
+// 注意:chunkSize 上限在这里强制 — 每个分片不允许超过 cfg.Paste.MaxFileSize
+func (h *PasteHandler) uploadChunkCore(fileID string, chunkIndex int, data []byte) (int, int, error) {
+	if fileID == "" {
+		return 0, 0, errPaste("file_id 必填", 400)
+	}
+	if chunkIndex < 0 {
+		return 0, 0, errPaste("chunk_index 必须 >= 0", 400)
+	}
+	cfg := config.Get()
+	if int64(len(data)) > cfg.Paste.MaxFileSize {
+		return 0, 0, errPaste("分片过大", 400)
+	}
+
+	uploadInfo, exists := h.getChunkUpload(fileID)
+	if !exists {
+		return 0, 0, errPaste("上传会话不存在", 404)
+	}
+	if time.Since(uploadInfo.CreatedAt) > h.chunkUploadTTL {
+		h.CleanupChunkUpload(fileID)
+		return 0, 0, errPaste("上传会话已过期", 410)
+	}
+
+	chunkPath := filepath.Join(chunkDir, fileID, fmt.Sprintf("%d", chunkIndex))
+	if err := os.MkdirAll(filepath.Dir(chunkPath), 0755); err != nil {
+		return 0, 0, errPaste("服务器错误", 500)
+	}
+	if err := os.WriteFile(chunkPath, data, 0644); err != nil {
+		return 0, 0, errPaste("保存分片失败", 500)
+	}
+
+	uploadedCount, err := h.markChunkUploaded(fileID, chunkIndex)
+	if err != nil {
+		return 0, 0, errPaste("更新上传状态失败", 500)
+	}
+	return uploadedCount, uploadInfo.TotalChunks, nil
+}
+
+// mergeChunksCore 合并分片为最终文件,返回 *FileMetadata(包含 filename / url / type / size)
+// 支持的格式直接落 pasteUploadDir;不支持的格式透明打成 zip 后保存
+func (h *PasteHandler) mergeChunksCore(fileID string) (*FileMetadata, error) {
+	uploadInfo, exists := h.getChunkUpload(fileID)
+	if !exists {
+		return nil, errPaste("上传会话不存在", 404)
+	}
+	if len(uploadInfo.UploadedChunks) != uploadInfo.TotalChunks {
+		return nil, errPaste(
+			fmt.Sprintf("分片未全部上传 (已上传 %d / 共 %d)", len(uploadInfo.UploadedChunks), uploadInfo.TotalChunks),
+			400)
+	}
+
+	if err := os.MkdirAll(pasteUploadDir, 0755); err != nil {
+		return nil, errPaste("服务器错误", 500)
+	}
+
+	// 读取第一个分片检测文件类型
+	firstChunkPath := filepath.Join(chunkDir, fileID, "0")
+	firstChunk, err := os.ReadFile(firstChunkPath)
+	if err != nil {
+		return nil, errPaste("读取分片失败", 500)
+	}
+	magicBytes := firstChunk
+	if len(firstChunk) > 16 {
+		magicBytes = firstChunk[:16]
+	}
+	detectedType := detectFileType(magicBytes)
+
+	// 不支持的文件类型:打成 zip
+	if detectedType == "" {
+		var readers []io.Reader
+		var closers []io.Closer
+		for i := 0; i < uploadInfo.TotalChunks; i++ {
+			p := filepath.Join(chunkDir, fileID, fmt.Sprintf("%d", i))
+			f, err := os.Open(p)
+			if err != nil {
+				for _, cl := range closers {
+					cl.Close()
+				}
+				h.CleanupChunkUpload(fileID)
+				return nil, errPaste("读取分片失败", 500)
+			}
+			readers = append(readers, f)
+			closers = append(closers, f)
+		}
+		finalFilename, zipName, zipSize, err := zipUnsupportedFile(io.MultiReader(readers...), uploadInfo.FileName, fileID)
+		for _, cl := range closers {
+			cl.Close()
+		}
+		h.CleanupChunkUpload(fileID)
+		if err != nil {
+			return nil, errPaste("保存文件失败", 500)
+		}
+		return &FileMetadata{
+			Filename:     finalFilename,
+			OriginalName: zipName,
+			Type:         "archive",
+			Size:         zipSize,
+			URL:          "/api/paste/files/" + finalFilename,
+		}, nil
+	}
+
+	fileCategory := getFileCategory(detectedType)
+	ext := strings.ToLower(filepath.Ext(uploadInfo.FileName))
+	if ext == "" {
+		ext = getExtFromMimeType(detectedType)
+	}
+	finalFilename := fmt.Sprintf("%s%s", fileID, ext)
+	finalPath := filepath.Join(pasteUploadDir, finalFilename)
+
+	finalFile, err := os.Create(finalPath)
+	if err != nil {
+		return nil, errPaste("创建文件失败", 500)
+	}
+	defer finalFile.Close()
+
+	for i := 0; i < uploadInfo.TotalChunks; i++ {
+		chunkPath := filepath.Join(chunkDir, fileID, fmt.Sprintf("%d", i))
+		chunkData, err := os.ReadFile(chunkPath)
+		if err != nil {
+			h.CleanupChunkUpload(fileID)
+			os.Remove(finalPath)
+			return nil, errPaste("读取分片失败", 500)
+		}
+		if _, err := finalFile.Write(chunkData); err != nil {
+			h.CleanupChunkUpload(fileID)
+			os.Remove(finalPath)
+			return nil, errPaste("合并分片失败", 500)
+		}
+	}
+
+	h.CleanupChunkUpload(fileID)
+
+	fileInfo, _ := os.Stat(finalPath)
+	var fileSize int64
+	if fileInfo != nil {
+		fileSize = fileInfo.Size()
+	}
+
+	return &FileMetadata{
+		Filename:     finalFilename,
+		OriginalName: uploadInfo.FileName,
+		Type:         fileCategory,
+		Size:         fileSize,
+		URL:          "/api/paste/files/" + finalFilename,
+	}, nil
 }
 
 // cleanupPasteFiles 清理 paste 关联的文件
