@@ -42,6 +42,8 @@ type routeHandlers struct {
 	gameHandler               *handlers.GameHandler
 	askitSyncHandler          *handlers.AskitSyncHandler
 	screenHandler             *handlers.ScreenHandler
+	skillsHandler             *handlers.SkillsHandler
+	skillsGuard               *middleware.SkillsGuard
 }
 
 func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter, h *routeHandlers) {
@@ -796,4 +798,22 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 	api.GET("/console/settings", h.consoleHandler.GetSettings)
 	api.POST("/console/settings", h.consoleHandler.SaveSettings)
 	api.POST("/console/verify", h.consoleHandler.VerifyPassword)
+
+	// Skills 模块 — 对外工具入口。默认 skills.enabled=false,guard 直接返回 404,
+	// 启用后 skillsGuard 才放行;Guard 包含 enabled + 可选 Origin 白名单 +
+	// 总配额限流(POST 才有)。写库类(paste_create/shorturl_create)走 Invoke
+	// 内更严的 per-skill 限流,叠加再防。
+	skills := api.Group("/skills", h.skillsGuard.Middleware())
+	{
+		skills.GET("/manifest", h.skillsHandler.GetManifest)
+		skills.GET("/install", h.skillsHandler.GetInstall)
+		skills.GET("/install.sh", h.skillsHandler.GetInstallShell)
+		skills.GET("/mcp", h.skillsHandler.MCPGetHandler)
+		skills.POST("/mcp", h.skillsHandler.MCPPostHandler)
+		skills.POST("/invoke", h.skillsHandler.Invoke)
+	}
+
+	// AI agent 标准发现端点(.well-known/skills),无 guard 也能匿名访问
+	// (它本身只描述自身,不调用任何 skill)
+	api.GET("/.well-known/skills", h.skillsHandler.GetDirectory)
 }

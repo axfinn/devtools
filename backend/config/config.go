@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -48,6 +49,17 @@ type Config struct {
 	Hermes              HermesConfig              `yaml:"hermes"`
 	Monitoring          MonitoringConfig          `yaml:"monitoring"`
 	AskitSync           AskitSyncConfig           `yaml:"askit_sync"`
+	Skills              SkillsConfig              `yaml:"skills"`
+}
+
+// SkillsConfig 对外工具入口(skills)配置 — 让 codex/Claude Code 等外部 AI 可发现并调用非鉴权基础能力。
+// 默认 Enabled=false,管理员显式打开以避免冷启动被扫描滥用;一旦打开走 IP 限流 + 可选 Origin 白名单。
+type SkillsConfig struct {
+	Enabled                bool     `yaml:"enabled"`                  // 是否对外暴露 skills 接口
+	RateLimitPerMinute     int      `yaml:"rate_limit_per_minute"`    // 全局每 IP 每分钟总配额,默认 60
+	WriteRateLimitPerMinute int     `yaml:"write_rate_limit_per_minute"` // 写库类(skills.shorturl_create / paste_create)每 IP 每分钟专项配额,默认 5
+	AllowedOrigins         []string `yaml:"allowed_origins"`          // 可选 Origin 白名单,空 = 全部放行(配合 CORS "*");非空时不在白名单的 Origin 直接 403
+	WriteClassTools        []string `yaml:"write_class_tools"`        // 自定义写库类 skill 名单,追加到默认值之上
 }
 
 // AskitSyncConfig AskIt 扩展云同步配置(无密码 · 邮箱验证码登录)
@@ -584,6 +596,16 @@ func DefaultConfig() *Config {
 			CodeTTLMinutes:   30,
 			SMTPPort:         465,
 		},
+		Skills: SkillsConfig{
+			Enabled:                 false,
+			RateLimitPerMinute:      60,
+			WriteRateLimitPerMinute: 5,
+			AllowedOrigins:          []string{},
+			WriteClassTools: []string{
+				"shorturl_create",
+				"paste_create",
+			},
+		},
 		Proxy: ProxyConfig{
 			SubscriptionRefresh: ProxySubscriptionRefreshConfig{
 				IntervalHours:    24,
@@ -787,6 +809,31 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.MiniMaxVoiceCloning.APIKey == "" {
 		cfg.MiniMaxVoiceCloning.APIKey = cfg.MiniMax.APIKey
+	}
+
+	// Skills 模块环境变量覆盖
+	if v := os.Getenv("SKILLS_ENABLED"); v != "" {
+		cfg.Skills.Enabled = v == "1" || v == "true" || v == "TRUE"
+	}
+	if v := os.Getenv("SKILLS_RATE_LIMIT"); v != "" {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.Skills.RateLimitPerMinute = n
+		}
+	}
+	if v := os.Getenv("SKILLS_WRITE_RATE_LIMIT"); v != "" {
+		if n, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.Skills.WriteRateLimitPerMinute = n
+		}
+	}
+	if v := os.Getenv("SKILLS_ALLOWED_ORIGINS"); v != "" {
+		parts := strings.Split(v, ",")
+		cleaned := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				cleaned = append(cleaned, s)
+			}
+		}
+		cfg.Skills.AllowedOrigins = cleaned
 	}
 
 	globalConfig = cfg

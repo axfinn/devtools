@@ -8,6 +8,7 @@ import (
 
 	"devtools/config"
 	"devtools/handlers"
+	"devtools/middleware"
 	"devtools/utils"
 )
 
@@ -61,6 +62,15 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	askitSyncHandler := handlers.NewAskitSyncHandler(db, cfg.AskitSync)
 	screenHandler := handlers.NewScreenHandler(db, *cfg)
 
+	// Skills 模块:对外工具入口,默认未启用(cfg.Skills.Enabled = false),
+	// 由管理员在 config.yaml 显式打开后才对外暴露。
+	// Guard 在 db 初始化后单独构造,AttachGuard 给 SkillsHandler 注入写库专项限流。
+	skillsHandler := handlers.NewSkillsHandler(db)
+	skillsGuard := middleware.NewSkillsGuard(cfg.Skills, rt.transientStore)
+	skillsHandler.AttachGuard(skillsGuard)
+	// paste_create 复用 PasteHandler 全套逻辑(title/language/password/expires_in/max_views/admin_password)
+	skillsHandler.AttachPasteHandler(pasteHandler)
+
 	return &routeHandlers{
 		pasteHandler:              pasteHandler,
 		dnsHandler:                dnsHandler,
@@ -95,6 +105,8 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		voiceMemoHandler:          voiceMemoHandler,
 		askitSyncHandler:          askitSyncHandler,
 		screenHandler:             screenHandler,
+		skillsHandler:             skillsHandler,
+		skillsGuard:               skillsGuard,
 	}, nil
 }
 
