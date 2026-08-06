@@ -492,13 +492,13 @@ func (h *MockAPIHandler) Execute(c *gin.Context) {
 	h.db.IncrementCallCount(id)
 
 	// Ensure CORS headers are set first (before user headers)
-	if c.GetHeader("Access-Control-Allow-Origin") == "" {
+	if c.Writer.Header().Get("Access-Control-Allow-Origin") == "" {
 		c.Header("Access-Control-Allow-Origin", "*")
 	}
-	if c.GetHeader("Access-Control-Allow-Methods") == "" {
+	if c.Writer.Header().Get("Access-Control-Allow-Methods") == "" {
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 	}
-	if c.GetHeader("Access-Control-Allow-Headers") == "" {
+	if c.Writer.Header().Get("Access-Control-Allow-Headers") == "" {
 		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
 	}
 
@@ -510,14 +510,9 @@ func (h *MockAPIHandler) Execute(c *gin.Context) {
 		}
 	}
 
-	// Determine Content-Type with UTF-8 charset for Chinese support
-	contentType := c.GetHeader("Content-Type")
+	contentType := c.Writer.Header().Get("Content-Type")
 	if contentType == "" {
-		// Default to text/plain with UTF-8 if not set
 		contentType = "text/plain; charset=utf-8"
-	} else if !strings.Contains(strings.ToLower(contentType), "charset") {
-		// Add charset=utf-8 if not present
-		contentType += "; charset=utf-8"
 	}
 
 	// Send response

@@ -918,8 +918,9 @@ function applySyncMsg(msg) {
 // ---- 房主同步事件 ----
 function onHostPlay() {
   if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) {
-    // 观众在一起看中不能自己控制播放，强制暂停
-    if (watchConnected.value && !isHost.value && syncLockCount === 0) {
+    // 观众路径:程序化播放触发的 play 事件,先消耗同步锁;否则强制暂停
+    if (syncLockCount > 0) { syncLockCount--; return }
+    if (watchConnected.value && !isHost.value) {
       art?.video?.pause()
     }
     return
@@ -928,12 +929,20 @@ function onHostPlay() {
   wsSend({ type: 'sync', action: 'play', time: art?.video?.currentTime ?? 0 })
 }
 function onHostPause() {
-  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) {
+    // 观众路径:程序化暂停触发的 pause 事件,消耗同步锁,避免计数器泄漏导致后续 onHostPlay 强制暂停失效
+    if (syncLockCount > 0) { syncLockCount--; return }
+    return
+  }
   if (syncLockCount > 0) { syncLockCount--; return }
   wsSend({ type: 'sync', action: 'pause', time: art?.video?.currentTime ?? 0 })
 }
 function onHostSeek() {
-  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (!isHost.value || !ws || ws.readyState !== WebSocket.OPEN) {
+    // 观众路径:程序化 seek 触发的 seeked 事件,消耗同步锁
+    if (syncLockCount > 0) { syncLockCount--; return }
+    return
+  }
   if (syncLockCount > 0) { syncLockCount--; return }
   wsSend({ type: 'sync', action: 'seek', time: art?.video?.currentTime ?? 0 })
 }
@@ -1146,7 +1155,7 @@ function sendDanmaku() {
   if (!text) return
   wsSend({ type: 'danmaku', text })
   danmakuInput.value = ''
-  fireDanmaku(text) // 自己也显示
+  // 自己也显示交给后端 broadcastAll 回传的 echo 处理(同 sendChat 的模式)
 }
 
 function addSystemMsg(text) {
@@ -1340,9 +1349,11 @@ onUnmounted(() => {
   if (art) { art.destroy(); art = null }
   if (hls) { hls.destroy(); hls = null }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+  if (downloadAbort) { downloadAbort.abort(); downloadAbort = null }
   watchManualClose = true
   if (watchReconnectTimer) { clearTimeout(watchReconnectTimer); watchReconnectTimer = null }
   if (ws) { ws.close(); ws = null }
+  if (pendingWs) { pendingWs.onclose = null; pendingWs.close(); pendingWs = null }
   if (voiceActive.value) stopVoice()
   stopRecording()
   window.removeEventListener('pagehide', stopRecording)

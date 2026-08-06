@@ -540,12 +540,10 @@ const saveToCloud = async () => {
       return
     }
 
-    // Save creator key and password
     saveCreatorKey(data.id, data.creator_key, {
       title: cloudSaveForm.value.title,
       expires_at: data.expires_at,
-      is_permanent: data.is_permanent,
-      password: cloudSaveForm.value.password // Save password for easier management
+      is_permanent: data.is_permanent
     })
 
     // Show result
@@ -578,7 +576,18 @@ const copyAndCloseResult = () => {
 // Creator keys management
 const getCreatorKeys = () => {
   try {
-    return JSON.parse(localStorage.getItem('excalidraw_creator_keys') || '{}')
+    const keys = JSON.parse(localStorage.getItem('excalidraw_creator_keys') || '{}')
+    let changed = false
+    for (const data of Object.values(keys)) {
+      if (data && typeof data === 'object' && 'password' in data) {
+        delete data.password
+        changed = true
+      }
+    }
+    if (changed) {
+      localStorage.setItem('excalidraw_creator_keys', JSON.stringify(keys))
+    }
+    return keys
   } catch {
     return {}
   }

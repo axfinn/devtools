@@ -86,6 +86,11 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			if err == nil && recipeCount > 0 {
 				log.Printf("已清理 %d 个过期菜谱", recipeCount)
 			}
+			// 清理过期家庭物品档案
+			householdCount, err := db.CleanExpiredHouseholdProfiles()
+			if err == nil && householdCount > 0 {
+				log.Printf("已清理 %d 个过期家庭物品档案", householdCount)
+			}
 			// 清理过期 SSH 会话
 			sshExpiredCount, err := db.CleanExpiredSSHSessions()
 			if err == nil && sshExpiredCount > 0 {

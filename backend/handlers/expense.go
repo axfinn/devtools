@@ -1087,7 +1087,13 @@ func (h *ExpenseHandler) Analyze(c *gin.Context) {
 	}
 	expenseAnalyzeJobs.Store(job.ID, job)
 
-	go h.runAnalyzeJob(job.ID, profileID, req)
+	go func() {
+		h.runAnalyzeJob(job.ID, profileID, req)
+		// job 完成后 30 分钟过期,防止 sync.Map 内存泄漏
+		time.AfterFunc(30*time.Minute, func() {
+			expenseAnalyzeJobs.Delete(job.ID)
+		})
+	}()
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"job_id":     job.ID,

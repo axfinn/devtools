@@ -173,8 +173,14 @@ func (h *VoiceMemoHandler) Upload(c *gin.Context) {
 		fmt.Sscanf(ds, "%f", &durationSec)
 	}
 
-	ext := filepath.Ext(file.Filename)
-	if ext == "" {
+	// 扩展名白名单:仅允许常见音频格式,避免用户上传 .exe/.sh 等被原样保存
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	switch ext {
+	case ".webm", ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac":
+		// OK
+	case "":
+		ext = ".webm"
+	default:
 		ext = ".webm"
 	}
 	filename := fmt.Sprintf("memo_%s_%d%s", generateVoiceMemoID(), time.Now().UnixNano(), ext)

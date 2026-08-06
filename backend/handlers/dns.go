@@ -19,12 +19,12 @@ type MXRecord struct {
 }
 
 type DNSResult struct {
-	A     []string    `json:"a,omitempty"`
-	AAAA  []string    `json:"aaaa,omitempty"`
-	CNAME []string    `json:"cname,omitempty"`
-	MX    []MXRecord  `json:"mx,omitempty"`
-	NS    []string    `json:"ns,omitempty"`
-	TXT   []string    `json:"txt,omitempty"`
+	A     []string   `json:"a,omitempty"`
+	AAAA  []string   `json:"aaaa,omitempty"`
+	CNAME []string   `json:"cname,omitempty"`
+	MX    []MXRecord `json:"mx,omitempty"`
+	NS    []string   `json:"ns,omitempty"`
+	TXT   []string   `json:"txt,omitempty"`
 }
 
 // GetIP 返回客户端 IP 地址
@@ -81,7 +81,7 @@ func (h *DNSHandler) Lookup(c *gin.Context) {
 		result.NS = lookupNS(domain)
 	case "TXT":
 		result.TXT = lookupTXT(domain)
-	default:
+	case "", "ALL":
 		// 查询所有类型
 		result.A = lookupA(domain)
 		result.AAAA = lookupAAAA(domain)
@@ -89,6 +89,9 @@ func (h *DNSHandler) Lookup(c *gin.Context) {
 		result.MX = lookupMX(domain)
 		result.NS = lookupNS(domain)
 		result.TXT = lookupTXT(domain)
+	default:
+		c.JSON(400, gin.H{"error": "不支持的 DNS 记录类型"})
+		return
 	}
 
 	c.JSON(200, result)
@@ -130,7 +133,8 @@ func lookupCNAME(domain string) []string {
 	}
 	// 去掉末尾的点
 	cname = strings.TrimSuffix(cname, ".")
-	if cname != "" && cname != domain {
+	domain = strings.TrimSuffix(domain, ".")
+	if cname != "" && !strings.EqualFold(cname, domain) {
 		result = append(result, cname)
 	}
 	return result

@@ -63,7 +63,7 @@
         <el-alert :title="dnsError" type="error" show-icon :closable="false" />
       </div>
 
-      <div v-if="dnsResults && Object.keys(dnsResults).length > 0" class="dns-results">
+      <div v-if="dnsResults" class="dns-results">
         <!-- A 记录 -->
         <div v-if="dnsResults.a && dnsResults.a.length > 0" class="record-group">
           <div class="record-type">A 记录 (IPv4)</div>

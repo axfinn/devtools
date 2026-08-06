@@ -573,7 +573,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch, computed } from 'vue'
+import { ref, nextTick, watch, computed, onActivated, onDeactivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus,
@@ -1089,19 +1089,26 @@ const formatDateTime = (dateStr) => {
 }
 
 // 监听自动刷新
-watch(autoRefresh, (newVal) => {
-  if (newVal && createdMock.value) {
+const stopAutoRefresh = () => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+const startAutoRefresh = () => {
+  stopAutoRefresh()
+  if (autoRefresh.value && createdMock.value) {
     refreshTimer = setInterval(() => {
       loadLogs()
       refreshStats()
     }, 5000)
-  } else {
-    if (refreshTimer) {
-      clearInterval(refreshTimer)
-      refreshTimer = null
-    }
   }
-})
+}
+
+watch(autoRefresh, startAutoRefresh)
+onActivated(startAutoRefresh)
+onDeactivated(stopAutoRefresh)
 
 // 监听更新对话框打开
 watch(updateMockDialog, (newVal) => {
