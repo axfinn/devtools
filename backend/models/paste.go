@@ -132,9 +132,20 @@ func (db *DB) GetPaste(id string) (*Paste, error) {
 	return paste, nil
 }
 
+// IncrementViews 原子自增访问次数，并拒绝超过上限的访问（防并发绕过 max_views）
 func (db *DB) IncrementViews(id string) error {
-	_, err := db.conn.Exec("UPDATE pastes SET views = views + 1 WHERE id = ?", id)
-	return err
+	result, err := db.conn.Exec("UPDATE pastes SET views = views + 1 WHERE id = ? AND views < max_views", id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (db *DB) DeletePaste(id string) error {

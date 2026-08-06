@@ -324,6 +324,14 @@ func (db *DB) BatchCreateGlucoseRecords(records []*GlucoseRecord) error {
 
 // CleanExpiredGlucoseProfiles 清理过期的血糖档案
 func (db *DB) CleanExpiredGlucoseProfiles() (int64, error) {
+	// 先清理 history（glucose_record_history 表没有 FK CASCADE，避免孤儿行）
+	db.conn.Exec(`
+		DELETE FROM glucose_record_history
+		WHERE profile_id IN (
+			SELECT id FROM glucose_profiles
+			WHERE expires_at IS NOT NULL AND expires_at < ?
+		)
+	`, time.Now())
 	result, err := db.conn.Exec(`DELETE FROM glucose_profiles WHERE expires_at IS NOT NULL AND expires_at < ?`, time.Now())
 	if err != nil {
 		return 0, err

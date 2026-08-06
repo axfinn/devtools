@@ -460,8 +460,9 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 
 	pp, err := h.parsePath(share.FilePath)
 	if err != nil {
+		log.Printf("nfsshare Access parsePath 失败 id=%s err=%v", id, err)
 		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "error", 0)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "挂载点不可用: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "挂载点不可用"})
 		return
 	}
 
@@ -469,7 +470,10 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 	// 否则浏览器一次播放会产生几十次访问记录
 	countAccess := isInitialAccessRequest(c)
 	if countAccess {
-		h.db.IncrementNFSShareViews(id)
+		if err := h.db.IncrementNFSShareViews(id); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "分享次数已用完"})
+			return
+		}
 	}
 	filename := filepath.Base(share.FilePath)
 
@@ -487,8 +491,9 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 		}
 		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		c.Header("Content-Type", share.MimeType)
-		c.Header("Content-Length", fmt.Sprintf("%d", size))
-		io.Copy(c.Writer, f)
+		// 用 http.ServeContent 支持 Range 请求(断点续传);
+		// modtime 传零值表示不输出 Last-Modified
+		http.ServeContent(c.Writer, c.Request, filename, time.Time{}, f)
 	} else {
 		// NFS / local：直接 sendfile
 		info, err := os.Stat(pp.absPath)
@@ -831,6 +836,8 @@ func (h *NFSShareHandler) UploadRecord(c *gin.Context) {
 	if ext == "" {
 		ext = ".webm"
 	}
+	// id 兜底防穿越:虽然 Gin 路由不接收 `/`,但 `..` 可透传;filepath.Base 取最后一段
+	id = filepath.Base(id)
 	chunkDir := filepath.Join("./data/records", id, "chunks", sessionID)
 	if err := os.MkdirAll(chunkDir, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "目录创建失败"})
@@ -873,6 +880,7 @@ func (h *NFSShareHandler) ServeRecord(c *gin.Context) {
 	filename := c.Param("filename")
 	// 防路径穿越
 	filename = filepath.Base(filename)
+	id = filepath.Base(id) // id 兜底,防 `..` 跳出 records 目录
 	path := filepath.Join("./data/records", id, filename)
 	if _, err := os.Stat(path); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "录音不存在"})
@@ -1045,14 +1053,18 @@ func (h *NFSShareHandler) Stream(c *gin.Context) {
 
 	pp, err := h.parsePath(share.FilePath)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "挂载点不可用: " + err.Error()})
+		log.Printf("nfsshare Stream parsePath 失败 id=%s err=%v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "挂载点不可用"})
 		return
 	}
 
 	// 首请求才计入 view 与 success 日志;Range seek / HEAD 不计
 	countAccess := isInitialAccessRequest(c)
 	if countAccess {
-		h.db.IncrementNFSShareViews(id)
+		if err := h.db.IncrementNFSShareViews(id); err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "分享次数已用完"})
+			return
+		}
 	}
 	mimeType := share.MimeType
 	if mimeType == "" || mimeType == "application/octet-stream" {
@@ -1071,8 +1083,10 @@ func (h *NFSShareHandler) Stream(c *gin.Context) {
 			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", size)
 		}
 		c.Header("Content-Type", mimeType)
-		c.Header("Content-Length", fmt.Sprintf("%d", size))
-		io.Copy(c.Writer, f)
+		// 用 http.ServeContent 支持 Range 请求（浏览器 seek）;
+		// SMB 暴露 ReadSeekCloser,size 已知 → 与 local 路径行为一致
+		// modtime 传零值表示不输出 Last-Modified(SMB Open 未暴露 mtime)
+		http.ServeContent(c.Writer, c.Request, filepath.Base(share.FilePath), time.Time{}, f)
 	} else {
 		if countAccess {
 			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", share.FileSize)
@@ -1081,6 +1095,7 @@ func (h *NFSShareHandler) Stream(c *gin.Context) {
 		// 用 http.ServeContent 支持 Range 请求（浏览器 seek）
 		f, err := os.Open(pp.absPath)
 		if err != nil {
+			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "file_missing", 0)
 			c.JSON(http.StatusNotFound, gin.H{"error": "源文件不存在"})
 			return
 		}
@@ -1216,7 +1231,10 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 			alreadyCounted = jobVal.(*hlsJob).viewCounted
 		}
 		if !alreadyCounted {
-			h.db.IncrementNFSShareViews(id)
+			if err := h.db.IncrementNFSShareViews(id); err != nil {
+				c.JSON(http.StatusForbidden, gin.H{"error": "分享次数已用完"})
+				return
+			}
 			h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", 0)
 		}
 		c.Header("Content-Type", "application/vnd.apple.mpegurl")
@@ -1231,8 +1249,12 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 
 	if !loaded {
 		// 本次请求触发新转码，计入一次 view
+		if err := h.db.IncrementNFSShareViews(id); err != nil {
+			h.hlsJobs.Delete(key)
+			c.JSON(http.StatusForbidden, gin.H{"error": "分享次数已用完"})
+			return
+		}
 		job.viewCounted = true
-		h.db.IncrementNFSShareViews(id)
 		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", 0)
 		go func() {
 		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
@@ -1244,7 +1266,8 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 
 	// 等待可播放状态（有2个分片即可，最多等2分钟）
 	if err := waitForPlayable(outDir, job, 2*time.Minute); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "转码失败: " + err.Error()})
+		log.Printf("nfsshare HLSPlaylist 转码失败 id=%s quality=%s err=%v", id, qualityName, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "转码失败"})
 		return
 	}
 
@@ -1666,7 +1689,8 @@ func (h *NFSShareHandler) UploadInit(c *gin.Context) {
 	if targetDir != "" {
 		pp, err := h.parsePath(targetDir + "/.keep")
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "目标目录无效: " + err.Error()})
+			log.Printf("nfsshare UploadInit target_dir 无效 dir=%q err=%v", targetDir, err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "目标目录无效"})
 			return
 		}
 		// 对于 local/nfs，确保目录存在
@@ -1706,6 +1730,7 @@ func (h *NFSShareHandler) UploadChunk(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 token"})
 		return
 	}
+	token = filepath.Base(token) // 防御性:token 实际为 hex,但兜底防路径穿越
 	tmpDir := filepath.Join("./data/uploads/.tmp", token)
 	if _, err := os.Stat(tmpDir); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的 token"})
@@ -1760,6 +1785,7 @@ func (h *NFSShareHandler) UploadComplete(c *gin.Context) {
 	if !h.requireAdmin(c, req.AdminPassword) {
 		return
 	}
+	token = filepath.Base(token) // 防御性:token 实际为 hex,但兜底防路径穿越
 	tmpDir := filepath.Join("./data/uploads/.tmp", token)
 	metaBytes, err := os.ReadFile(filepath.Join(tmpDir, ".meta"))
 	if err != nil {

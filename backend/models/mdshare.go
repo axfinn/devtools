@@ -2,8 +2,11 @@ package models
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 )
+
+var ErrMDShareMaxViews = errors.New("markdown share max views reached")
 
 func init() {
 	RegisterInit("Markdown分享(markdown_shares)", (*DB).InitMDShare)
@@ -118,8 +121,33 @@ func (db *DB) UpdateMDShareShortCode(id, shortCode string) error {
 }
 
 func (db *DB) IncrementMDShareViews(id string) error {
-	_, err := db.conn.Exec("UPDATE markdown_shares SET views = views + 1, updated_at = ? WHERE id = ?", time.Now(), id)
-	return err
+	result, err := db.conn.Exec("UPDATE markdown_shares SET views = views + 1, updated_at = ? WHERE id = ? AND views < max_views", time.Now(), id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected > 0 {
+		return nil
+	}
+
+	var views, maxViews int
+	err = db.conn.QueryRow(
+		"SELECT views, max_views FROM markdown_shares WHERE id = ?", id,
+	).Scan(&views, &maxViews)
+	if err == sql.ErrNoRows {
+		return errors.New("markdown share not found")
+	}
+	if err != nil {
+		return err
+	}
+	if views >= maxViews {
+		return ErrMDShareMaxViews
+	}
+	return errors.New("markdown share not found")
 }
 
 func (db *DB) DeleteMDShare(id string) error {

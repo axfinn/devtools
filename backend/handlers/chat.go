@@ -681,6 +681,15 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
+	// 验证房间密码（与 JoinRoom 一致）：密码房必须在 query 带 password
+	if room, err := h.db.GetRoom(roomID); err == nil && room.Password != "" {
+		provided := c.Query("password")
+		if provided == "" || !utils.VerifyPassword(provided, room.Password) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "密码错误", "code": 401})
+			return
+		}
+	}
+
 	rawConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
@@ -1476,9 +1485,10 @@ func (h *ChatHandler) AdminDeleteRoom(c *gin.Context) {
 	// 从内存中移除房间
 	h.mu.Lock()
 	if room, exists := h.rooms[roomID]; exists {
-		// 关闭所有连接
+		// 关闭所有连接：先从 map 删除，避免 readPump 退出时 removeClient 二次 close
 		room.mu.Lock()
 		for client := range room.clients {
+			delete(room.clients, client)
 			close(client.send)
 			client.conn.Close()
 		}

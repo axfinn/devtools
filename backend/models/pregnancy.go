@@ -140,6 +140,14 @@ func (db *DB) DeletePregnancyProfile(id string) error {
 }
 
 func (db *DB) CleanExpiredPregnancyProfiles() (int64, error) {
+	// 先清掉过期 profile 对应的 device_token,再删 profile
+	db.conn.Exec(`
+		DELETE FROM pregnancy_device_tokens
+		WHERE profile_id IN (
+			SELECT id FROM pregnancy_profiles
+			WHERE expires_at IS NOT NULL AND expires_at < ?
+		)
+	`, time.Now())
 	result, err := db.conn.Exec(`
 		DELETE FROM pregnancy_profiles
 		WHERE expires_at IS NOT NULL AND expires_at < ?

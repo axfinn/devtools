@@ -398,7 +398,17 @@ func ServeCachedBackground(c *gin.Context) {
 		return
 	}
 
-	filePath := filepath.Join(cachePath, filename)
+	// 防止路径穿越:仅取 base name,并校验解析后仍在 cachePath 内
+	safeName := filepath.Base(filename)
+	if safeName != filename || strings.Contains(filename, "..") || strings.ContainsAny(safeName, "/\\") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法文件名"})
+		return
+	}
+	if !isImageFile(safeName) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非图片文件"})
+		return
+	}
+	filePath := filepath.Join(cachePath, safeName)
 	c.File(filePath)
 }
 

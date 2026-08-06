@@ -129,10 +129,20 @@ func (db *DB) GetNFSShare(id string) (*NFSShare, error) {
 	return s, nil
 }
 
-// IncrementNFSShareViews 原子自增访问次数
+// IncrementNFSShareViews 原子自增访问次数，并拒绝超过上限的访问
 func (db *DB) IncrementNFSShareViews(id string) error {
-	_, err := db.conn.Exec(`UPDATE nfs_shares SET views = views + 1 WHERE id = ?`, id)
-	return err
+	result, err := db.conn.Exec(`UPDATE nfs_shares SET views = views + 1 WHERE id = ? AND views < max_views`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // AddNFSShareLog 记录一条访问日志

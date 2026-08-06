@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+var ErrShortURLMaxClicks = errors.New("short URL max clicks reached")
+
 func init() {
 	RegisterInit("短链(short_urls)", (*DB).InitShortURL)
 }
@@ -183,9 +185,9 @@ func (db *DB) GetShortURL(id string) (*ShortURL, error) {
 	return &shortURL, nil
 }
 
-// IncrementClicks atomically increments the click count
+// IncrementClicks atomically increments the click count while enforcing the limit
 func (db *DB) IncrementClicks(id string) error {
-	result, err := db.conn.Exec("UPDATE short_urls SET clicks = clicks + 1 WHERE id = ?", id)
+	result, err := db.conn.Exec("UPDATE short_urls SET clicks = clicks + 1 WHERE id = ? AND clicks < max_clicks", id)
 	if err != nil {
 		return err
 	}
@@ -194,11 +196,24 @@ func (db *DB) IncrementClicks(id string) error {
 	if err != nil {
 		return err
 	}
-	if rowsAffected == 0 {
-		return errors.New("short URL not found")
+	if rowsAffected > 0 {
+		return nil
 	}
 
-	return nil
+	var clicks, maxClicks int
+	err = db.conn.QueryRow(
+		"SELECT clicks, max_clicks FROM short_urls WHERE id = ?", id,
+	).Scan(&clicks, &maxClicks)
+	if err == sql.ErrNoRows {
+		return errors.New("short URL not found")
+	}
+	if err != nil {
+		return err
+	}
+	if clicks >= maxClicks {
+		return ErrShortURLMaxClicks
+	}
+	return errors.New("short URL not found")
 }
 
 // DeleteShortURL deletes a short URL by ID

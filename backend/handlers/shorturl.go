@@ -84,6 +84,7 @@ func (h *ShortURLHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
 		return
 	}
+	req.OriginalURL = strings.TrimSpace(req.OriginalURL)
 
 	// 检查是否配置了管理密码
 	hasAdminPassword := h.password != ""
@@ -216,6 +217,11 @@ func (h *ShortURLHandler) Redirect(c *gin.Context) {
 
 	// Increment clicks atomically
 	if err := h.db.IncrementClicks(id); err != nil {
+		if errors.Is(err, models.ErrShortURLMaxClicks) {
+			h.db.DeleteShortURL(id)
+			c.JSON(http.StatusGone, gin.H{"error": "Short URL has reached its maximum click limit"})
+			return
+		}
 		// Even if increment fails, we should still redirect
 		// This is a best-effort tracking
 	}
@@ -269,8 +275,8 @@ func (h *ShortURLHandler) Update(c *gin.Context) {
 	var req struct {
 		OriginalURL string `json:"original_url"`
 		MaxClicks   *int   `json:"max_clicks"`
-		ExpiresIn   *int   `json:"expires_in"`   // 续期小时数（正数延期，0=立即失效）
-		Invalidate  bool   `json:"invalidate"`   // true=立即失效
+		ExpiresIn   *int   `json:"expires_in"` // 续期小时数（正数延期，0=立即失效）
+		Invalidate  bool   `json:"invalidate"` // true=立即失效
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -284,17 +290,22 @@ func (h *ShortURLHandler) Update(c *gin.Context) {
 	}
 
 	if req.OriginalURL != "" {
-		if err := validateURL(req.OriginalURL); err != nil {
+		normalizedURL := strings.TrimSpace(req.OriginalURL)
+		if err := validateURL(normalizedURL); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		shortURL.OriginalURL = req.OriginalURL
+		shortURL.OriginalURL = normalizedURL
 	}
 
 	if req.MaxClicks != nil {
 		mc := *req.MaxClicks
-		if mc < 1 { mc = 1 }
-		if mc > 100000 { mc = 100000 }
+		if mc < 1 {
+			mc = 1
+		}
+		if mc > 100000 {
+			mc = 100000
+		}
 		shortURL.MaxClicks = mc
 	}
 
@@ -302,6 +313,10 @@ func (h *ShortURLHandler) Update(c *gin.Context) {
 		past := time.Now().Add(-time.Second)
 		shortURL.ExpiresAt = &past
 	} else if req.ExpiresIn != nil {
+		if *req.ExpiresIn < 0 || *req.ExpiresIn > 8760 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "expires_in 必须在 0 到 8760 小时之间"})
+			return
+		}
 		t := time.Now().Add(time.Duration(*req.ExpiresIn) * time.Hour)
 		shortURL.ExpiresAt = &t
 	}

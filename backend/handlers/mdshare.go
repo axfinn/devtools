@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -39,48 +40,48 @@ func NewMDShareHandler(db *models.DB, adminPassword string, defaultMaxViews, def
 type CreateMDShareRequest struct {
 	Content   string `json:"content" binding:"required"`
 	Title     string `json:"title"`
-	MaxViews  int    `json:"max_views"` // 2-10
+	MaxViews  int    `json:"max_views"`  // 2-10
 	ExpiresIn int    `json:"expires_in"` // days, 0 = use default
 }
 
 type CreateMDShareResponse struct {
-	ID           string    `json:"id"`
-	CreatorKey   string    `json:"creator_key"`
-	AccessKey    string    `json:"access_key"`
-	ShortCode    string    `json:"short_code"`
-	ShareURL     string    `json:"share_url"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	MaxViews     int       `json:"max_views"`
+	ID         string    `json:"id"`
+	CreatorKey string    `json:"creator_key"`
+	AccessKey  string    `json:"access_key"`
+	ShortCode  string    `json:"short_code"`
+	ShareURL   string    `json:"share_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	MaxViews   int       `json:"max_views"`
 }
 
 type MDShareContentResponse struct {
-	ID            string     `json:"id"`
-	Title         string     `json:"title"`
-	Content       string     `json:"content"`
-	MaxViews      int        `json:"max_views"`
-	Views         int        `json:"views"`
-	RemainingViews int       `json:"remaining_views"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID             string     `json:"id"`
+	Title          string     `json:"title"`
+	Content        string     `json:"content"`
+	MaxViews       int        `json:"max_views"`
+	Views          int        `json:"views"`
+	RemainingViews int        `json:"remaining_views"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type UpdateMDShareRequest struct {
-	Action       string `json:"action"`        // "extend", "reshare", "edit"
-	Content      string `json:"content"`
-	Title        string `json:"title"`
-	MaxViews     int    `json:"max_views"`
-	ExpiresIn    int    `json:"expires_in"`
-	CreatorKey   string `json:"creator_key"`
+	Action     string `json:"action"` // "extend", "reshare", "edit"
+	Content    string `json:"content"`
+	Title      string `json:"title"`
+	MaxViews   int    `json:"max_views"`
+	ExpiresIn  int    `json:"expires_in"`
+	CreatorKey string `json:"creator_key"`
 }
 
 type UpdateMDShareResponse struct {
-	Success       bool       `json:"success"`
-	AccessKey     string     `json:"access_key,omitempty"`
-	ShortCode     string     `json:"short_code,omitempty"`
-	ShareURL      string     `json:"share_url,omitempty"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-	MaxViews      int        `json:"max_views,omitempty"`
-	Views         int        `json:"views,omitempty"`
+	Success   bool       `json:"success"`
+	AccessKey string     `json:"access_key,omitempty"`
+	ShortCode string     `json:"short_code,omitempty"`
+	ShareURL  string     `json:"share_url,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	MaxViews  int        `json:"max_views,omitempty"`
+	Views     int        `json:"views,omitempty"`
 }
 
 func (h *MDShareHandler) Create(c *gin.Context) {
@@ -144,14 +145,14 @@ func (h *MDShareHandler) Create(c *gin.Context) {
 	}
 
 	share := &models.MDShare{
-		Content:     req.Content,
-		Title:       req.Title,
-		CreatorKey:  hashedCreatorKey,
-		AccessKey:   hashedAccessKey,
-		MaxViews:    maxViews,
-		Views:       0,
-		ExpiresAt:   &expiresAt,
-		CreatorIP:   ip,
+		Content:    req.Content,
+		Title:      req.Title,
+		CreatorKey: hashedCreatorKey,
+		AccessKey:  hashedAccessKey,
+		MaxViews:   maxViews,
+		Views:      0,
+		ExpiresAt:  &expiresAt,
+		CreatorIP:  ip,
 	}
 
 	if err := h.db.CreateMDShare(share); err != nil {
@@ -224,8 +225,16 @@ func (h *MDShareHandler) Get(c *gin.Context) {
 		return
 	}
 
-	// Increment views
-	h.db.IncrementMDShareViews(id)
+	// Increment views atomically; reject if we just hit the limit
+	if err := h.db.IncrementMDShareViews(id); err != nil {
+		if errors.Is(err, models.ErrMDShareMaxViews) {
+			h.cleanupShare(share)
+			c.JSON(http.StatusGone, gin.H{"error": "该分享已达到最大访问次数", "code": 410})
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "未找到该分享", "code": 404})
+		return
+	}
 	share.Views++
 
 	c.JSON(http.StatusOK, MDShareContentResponse{
