@@ -2,13 +2,17 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"devtools/config"
@@ -511,28 +515,32 @@ func messageContentToString(content interface{}) string {
 
 func (h *AIGatewayHandler) doMiniMaxAnthropicRequest(url, apiKey string, bodyMap map[string]interface{}) (map[string]interface{}, error) {
 	body, _ := json.Marshal(bodyMap)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := h.noProxyClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
 	var payload map[string]interface{}
-	_ = json.Unmarshal(respBody, &payload)
-	if resp.StatusCode >= 400 {
-		return payload, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
-	}
-	return payload, nil
+	err := doWithRetry(func() error {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+
+		resp, err := h.longChatClient().Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		respBody, _ := io.ReadAll(resp.Body)
+		payload = nil
+		_ = json.Unmarshal(respBody, &payload)
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+		}
+		return nil
+	})
+	return payload, err
 }
 
 // ProxyMinimaxAnthropic 转发 Anthropic 协议格式的请求到 MiniMax Anthropic 兼容端点
@@ -599,26 +607,38 @@ func (h *AIGatewayHandler) callProxyChat(req ChatCompletionRequest) (gin.H, map[
 	return result, raw, nil
 }
 
+// longChatClient 返回长超时聊天客户端；未注入时（测试等直接构造 handler 的场景）回退到 noProxyClient。
+func (h *AIGatewayHandler) longChatClient() *http.Client {
+	if h.longNoProxyClient != nil {
+		return h.longNoProxyClient
+	}
+	return h.noProxyClient
+}
+
 func (h *AIGatewayHandler) doJSONRequest(url, apiKey string, bodyMap map[string]interface{}) (map[string]interface{}, error) {
 	body, _ := json.Marshal(bodyMap)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	resp, err := h.noProxyClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
 	var payload map[string]interface{}
-	_ = json.Unmarshal(respBody, &payload)
-	if resp.StatusCode >= 400 {
-		return payload, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
-	}
-	return payload, nil
+	err := doWithRetry(func() error {
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		resp, err := h.longChatClient().Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(resp.Body)
+		payload = nil
+		_ = json.Unmarshal(respBody, &payload)
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+		}
+		return nil
+	})
+	return payload, err
 }
 
 // doRawRequest 转发原始请求到上游
@@ -636,6 +656,13 @@ func (h *AIGatewayHandler) doRawRequestWithResp(url, apiKey, method string, body
 	return h.doRequestWithClient(h.noProxyClient, url, apiKey, method, body, headers, true)
 }
 
+// doRawRequestLong 使用长超时客户端转发非流式请求（Anthropic 代理路径）。
+// DeepSeek reasoner / MiniMax M3 等长推理模型非流式响应常超过 90s，需放宽超时。
+func (h *AIGatewayHandler) doRawRequestLong(url, apiKey, method string, body []byte, headers http.Header) ([]byte, error) {
+	respBody, _, err := h.doRequestWithClient(h.longChatClient(), url, apiKey, method, body, headers, true)
+	return respBody, err
+}
+
 // doMediaRequestWithResp 使用启用压缩的 mediaClient 发送请求。
 // MiniMax 图片/视频/音乐/TTS 端点要求 Accept-Encoding 头，否则会断连（EOF）。
 
@@ -649,59 +676,104 @@ func (h *AIGatewayHandler) doMediaRequestWithResp(url, apiKey, method string, bo
 // 客户端已传的 anthropic-version/x-api-key 优先（透传），仅在缺失时填默认。
 
 func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey, method string, body []byte, headers http.Header, anthropicMode bool) ([]byte, string, error) {
-	req, err := http.NewRequest(method, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	// 透传必要的 headers（过滤掉代理相关和可能导致 HTTP/2 问题的 headers）
-	// 客户端的 anthropic-version / x-api-key 会先于此处填默认值的逻辑，
-	// 因此下游"填默认"只补缺失的，不会覆盖客户端值。
-	skipHeaders := map[string]bool{
-		"Content-Type":      true,
-		"Authorization":     true,
-		"Accept":            true,
-		"Accept-Encoding":   true,
-		"Connection":        true,
-		"Proxy-Connection":  true,
-		"Upgrade":           true,
-		"Keep-Alive":        true,
-		"TE":                true,
-		"Trailer":           true,
-		"Transfer-Encoding": true,
-		"Host":              true,
-		"Content-Length":    true,
-	}
-	for key, values := range headers {
-		if skipHeaders[http.CanonicalHeaderKey(key)] {
-			continue
+	var respBody []byte
+	var contentType string
+	err := doWithRetry(func() error {
+		req, err := http.NewRequest(method, url, bytes.NewReader(body))
+		if err != nil {
+			return err
 		}
-		for _, v := range values {
-			req.Header.Add(key, v)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		// 透传必要的 headers（过滤掉代理相关和可能导致 HTTP/2 问题的 headers）
+		// 客户端的 anthropic-version / x-api-key 会先于此处填默认值的逻辑，
+		// 因此下游"填默认"只补缺失的，不会覆盖客户端值。
+		skipHeaders := map[string]bool{
+			"Content-Type":      true,
+			"Authorization":     true,
+			"Accept":            true,
+			"Accept-Encoding":   true,
+			"Connection":        true,
+			"Proxy-Connection":  true,
+			"Upgrade":           true,
+			"Keep-Alive":        true,
+			"TE":                true,
+			"Trailer":           true,
+			"Transfer-Encoding": true,
+			"Host":              true,
+			"Content-Length":    true,
+		}
+		for key, values := range headers {
+			if skipHeaders[http.CanonicalHeaderKey(key)] {
+				continue
+			}
+			for _, v := range values {
+				req.Header.Add(key, v)
+			}
+		}
+		// anthropicMode=true 时补齐 anthropic-version + x-api-key（即使客户端没传也保证上游识别为 Anthropic 协议）；
+		// =false 时按 OpenAI 兼容端点处理（不强行写 Anthropic 头）。
+		if anthropicMode {
+			if req.Header.Get("x-api-key") == "" {
+				req.Header.Set("x-api-key", apiKey)
+			}
+			if req.Header.Get("anthropic-version") == "" {
+				req.Header.Set("anthropic-version", "2023-06-01")
+			}
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		respBody, _ = io.ReadAll(resp.Body)
+		contentType = resp.Header.Get("Content-Type")
+		if resp.StatusCode >= 400 {
+			return fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+		}
+		return nil
+	})
+	return respBody, contentType, err
+}
+
+// transientRetryAttempts 瞬时网络错误的最大尝试次数（含首次）。
+const transientRetryAttempts = 2
+
+// doWithRetry 对瞬时连接级错误做有限重试（最多 2 次，间隔 200/300ms）。
+// 只在请求尚未成功建立响应时重试：连接被拒/重置/管道破裂/拨号握手超时等。
+// HTTP 状态码错误（429/5xx 等）不属于瞬时连接错误，直接返回，避免重复计费。
+func doWithRetry(fn func() error) error {
+	var err error
+	for attempt := 0; attempt < transientRetryAttempts; attempt++ {
+		err = fn()
+		if err == nil || !isTransientConnErr(err) {
+			return err
+		}
+		if attempt < transientRetryAttempts-1 {
+			time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
 		}
 	}
-	// anthropicMode=true 时补齐 anthropic-version + x-api-key（即使客户端没传也保证上游识别为 Anthropic 协议）；
-	// =false 时按 OpenAI 兼容端点处理（不强行写 Anthropic 头）。
-	if anthropicMode {
-		if req.Header.Get("x-api-key") == "" {
-			req.Header.Set("x-api-key", apiKey)
-		}
-		if req.Header.Get("anthropic-version") == "" {
-			req.Header.Set("anthropic-version", "2023-06-01")
-		}
+	return err
+}
+
+// isTransientConnErr 判断错误是否属于"可安全重试"的瞬时连接级错误。
+// 客户端主动取消（context.Canceled）不算瞬时错误，不应重试。
+func isTransientConnErr(err error) bool {
+	if err == nil {
+		return false
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, "", err
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
 	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	contentType := resp.Header.Get("Content-Type")
-	if resp.StatusCode >= 400 {
-		return respBody, contentType, fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
+	// 连接建立/复用阶段失败：拒绝、重置、管道破裂
+	if errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE) {
+		return true
 	}
-	return respBody, contentType, nil
+	// 拨号 / TLS 握手 / 响应头超时（net.Error.Timeout 统一覆盖 *url.Error 与 *net.OpError）
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func (h *AIGatewayHandler) resolveChatProvider(model string) string {

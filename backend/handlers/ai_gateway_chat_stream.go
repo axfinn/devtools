@@ -10,10 +10,57 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// sseWriter 对 SSE 写操作加锁：心跳 goroutine 与主复制循环会并发 Write+Flush，
+// 不加锁时 net/http 的 Flush 与 Write 在底层 bufio 上存在数据竞争。
+type sseWriter struct {
+	mu      sync.Mutex
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func newSSEWriter(w http.ResponseWriter, flusher http.Flusher) *sseWriter {
+	return &sseWriter{w: w, flusher: flusher}
+}
+
+// write 原子地写入并 flush；失败返回错误，供调用方结束流。
+func (s *sseWriter) write(p []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.w.Write(p); err != nil {
+		return err
+	}
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+	return nil
+}
+
+// doStreamRequest 执行流式上游请求，对瞬时连接级错误做一次安全重试。
+// 重试只发生在"尚未拿到任何响应"（client.Do 失败）之前，已开始读到响应体后不重试。
+// 客户端已断开（context 取消）时返回原始错误，不重试。
+func doStreamRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !isTransientConnErr(err) || req.GetBody == nil {
+		return nil, err
+	}
+	body, bodyErr := req.GetBody()
+	if bodyErr != nil {
+		return nil, err
+	}
+	clone := req.Clone(req.Context())
+	clone.Body = body
+	time.Sleep(300 * time.Millisecond)
+	return client.Do(clone)
+}
 
 // StreamChatCompletions 处理 OpenAI 兼容格式的流式聊天请求
 // 当 ChatCompletions 收到 stream: true 时调用此方法
@@ -39,6 +86,8 @@ func (h *AIGatewayHandler) StreamChatCompletions(c *gin.Context, req ChatComplet
 }
 
 // streamOpenAICompatible 透传 OpenAI 兼容格式的 SSE 流
+// 带 20s 心跳（DeepSeek reasoner 长思考期可能长时间无 data 事件，
+// 中间代理/CDN 会因空闲超时断开连接）。
 func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatCompletionRequest, endpoint, apiKey string) {
 	bodyMap := map[string]interface{}{
 		"model":    req.Model,
@@ -86,7 +135,7 @@ func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatComple
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := h.streamClient.Do(httpReq)
+	resp, err := doStreamRequest(h.streamClient, httpReq)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -99,26 +148,56 @@ func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatComple
 		return
 	}
 
+	// 先校验 Flusher 再 WriteHeader，避免非流式场景留下半截响应。
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
+	writer := newSSEWriter(c.Writer, flusher)
+
+	// 先发一个心跳，让客户端立即感知连接已建立
+	if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
+		cancel()
 		return
 	}
+
+	// 持续心跳：每 20s 发一条 SSE 注释，防止 thinking 阶段空闲被中间层断开
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
+					return
+				}
+			case <-ctx.Done():
+				return
+			case <-heartbeatDone:
+				return
+			}
+		}
+	}()
+	defer close(heartbeatDone)
 
 	buf := make([]byte, 1024)
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
-				cancel()
+			if err := writer.write(buf[:n]); err != nil {
+				cancel() // 客户端断开，取消上游请求
 				return
 			}
-			flusher.Flush()
 		}
 		if readErr != nil {
 			return
@@ -158,7 +237,7 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := h.streamClient.Do(httpReq)
+	resp, err := doStreamRequest(h.streamClient, httpReq)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
@@ -171,18 +250,28 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 		return
 	}
 
+	// 先校验 Flusher 再 WriteHeader，避免非流式场景留下半截响应。
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
+	writer := newSSEWriter(c.Writer, flusher)
+
+	// 先发一个心跳，让客户端立即感知连接已建立
+	if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
+		cancel()
 		return
 	}
 
-	// 心跳 goroutine
+	// 心跳 goroutine（写操作与主循环通过 sseWriter 串行化）
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer func() {
@@ -195,10 +284,9 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 		for {
 			select {
 			case <-ticker.C:
-				if _, err := c.Writer.Write([]byte(": heartbeat\n\n")); err != nil {
+				if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
 					return
 				}
-				flusher.Flush()
 			case <-ctx.Done():
 				return
 			case <-heartbeatDone:
@@ -208,9 +296,11 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 	}()
 	defer close(heartbeatDone)
 
-	// 将 Anthropic SSE 转换为 OpenAI SSE 格式
+	// 将 Anthropic SSE 转换为 OpenAI SSE 格式。
+	// 行缓冲放宽到 1MB：单个大分片（长代码/长文本）超过 64KB 时
+	// bufio.Scanner 会静默截断流，导致客户端收到不完整的回复。
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -218,8 +308,7 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			c.Writer.Write([]byte("data: [DONE]\n\n"))
-			flusher.Flush()
+			_ = writer.write([]byte("data: [DONE]\n\n"))
 			return
 		}
 
@@ -251,8 +340,10 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 				},
 			}
 			chunkJSON, _ := json.Marshal(chunk)
-			c.Writer.Write([]byte("data: " + string(chunkJSON) + "\n\n"))
-			flusher.Flush()
+			if err := writer.write([]byte("data: " + string(chunkJSON) + "\n\n")); err != nil {
+				cancel()
+				return
+			}
 
 		case "message_stop":
 			chunk := map[string]interface{}{
@@ -269,9 +360,8 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 				},
 			}
 			chunkJSON, _ := json.Marshal(chunk)
-			c.Writer.Write([]byte("data: " + string(chunkJSON) + "\n\n"))
-			c.Writer.Write([]byte("data: [DONE]\n\n"))
-			flusher.Flush()
+			_ = writer.write([]byte("data: " + string(chunkJSON) + "\n\n"))
+			_ = writer.write([]byte("data: [DONE]\n\n"))
 			return
 		}
 	}

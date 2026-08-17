@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -16,9 +17,10 @@ type AIGatewayHandler struct {
 	imageHandler      *ImageUnderstandingHandler
 	client            *http.Client // 带代理，用于 OpenAI 兼容接口
 	noProxyClient     *http.Client // 不走代理，禁用压缩（用于 Chat/Anthropic 避免 Brotli）
+	longNoProxyClient *http.Client // 不走代理，禁用压缩，超时放宽到 5 分钟（非流式长推理聊天：DeepSeek reasoner / MiniMax M3）
 	mediaClient       *http.Client // 不走代理，启用压缩（用于 MiniMax 媒体 API：图片/视频/TTS）
 	musicSubmitClient *http.Client // 音乐生成专用：MiniMax /v1/music_generation 是同步接口，会阻塞到音频生成完成才返回（5 分钟音频常见 1-3 分钟），不能复用 mediaClient 的 90s 超时
-	streamClient      *http.Client // 不走代理，用于 SSE 流式请求（无超时，依赖 context 取消）
+	streamClient      *http.Client // 不走代理，用于 SSE 流式请求（body 无超时，依赖 context 取消；但连接/握手/响应头有显式超时兜底）
 }
 
 type usageSummary struct {
@@ -185,19 +187,36 @@ type TTSRequest struct {
 }
 
 func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler, imageHandler *ImageUnderstandingHandler) *AIGatewayHandler {
-	noProxyTransport := &http.Transport{
-		Proxy: nil,
-		// DisableCompression=true：不发 Accept-Encoding，上游返回原始未压缩数据。
-		// 避免上游返回 Brotli（br）时 Go 标准库无法解压导致 JSON 解析失败。
-		// gzip 解压由各调用点按需处理，或直接透传给客户端。
-		DisableCompression: true,
+	// 上游 HTTP 传输统一显式配置拨号/TLS 超时与连接池。零值 Transport 下
+	// TLSHandshakeTimeout / ResponseHeaderTimeout 均为 0（无限等待），上游"连上但
+	// 不回响应头"会永久卡死请求 goroutine 并泄漏连接 —— 这是代理连接不稳定的主因之一。
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	buildTransport := func(disableCompression bool, responseHeaderTimeout time.Duration) *http.Transport {
+		return &http.Transport{
+			Proxy:                 nil,
+			DialContext:           dialer.DialContext,
+			ForceAttemptHTTP2:     false,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   16,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: responseHeaderTimeout,
+			// DisableCompression=true：不发 Accept-Encoding，上游返回原始未压缩数据。
+			// 避免上游返回 Brotli（br）时 Go 标准库无法解压导致 JSON 解析失败。
+			// gzip 解压由各调用点按需处理，或直接透传给客户端。
+			DisableCompression: disableCompression,
+		}
 	}
+	// 非流式：不设 ResponseHeaderTimeout，长推理（DeepSeek reasoner 等）要等
+	// generation 完成后才返回响应头，总时长由各 client 的 Timeout 兜底。
+	noProxyTransport := buildTransport(true, 0)
+	// 流式：响应头必须在 60s 内到达（防止上游挂起无限等待），body 无超时由 context 控制。
+	streamTransport := buildTransport(true, 60*time.Second)
 	// mediaTransport 启用压缩：MiniMax 图片/视频/音乐/TTS 端点要求 Accept-Encoding，
 	// 否则会直接断开连接（EOF）。这些端点不返回 Brotli，安全启用。
-	mediaTransport := &http.Transport{
-		Proxy:              nil,
-		DisableCompression: false,
-	}
+	// TTS 生成可能耗时较长，不设响应头超时（由 mediaClient 90s Timeout 兜底）。
+	mediaTransport := buildTransport(false, 0)
+
 	return &AIGatewayHandler{
 		db:           db,
 		cfg:          cfg,
@@ -206,6 +225,12 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		client:       &http.Client{Timeout: 600 * time.Second},
 		noProxyClient: &http.Client{
 			Timeout:   90 * time.Second,
+			Transport: noProxyTransport,
+		},
+		// 非流式聊天调用专用：DeepSeek reasoner / MiniMax M3 长推理 90s 常被截断，
+		// 放宽到 5 分钟（连接/握手仍由 transport 的 10s 超时兜底）。
+		longNoProxyClient: &http.Client{
+			Timeout:   5 * time.Minute,
 			Transport: noProxyTransport,
 		},
 		mediaClient: &http.Client{
@@ -220,7 +245,7 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		// 对 SSE 长流会在 90s 后强制断开。改用 context 取消（客户端断开时自动传播）。
 		streamClient: &http.Client{
 			Timeout:   0,
-			Transport: noProxyTransport,
+			Transport: streamTransport,
 		},
 	}
 }

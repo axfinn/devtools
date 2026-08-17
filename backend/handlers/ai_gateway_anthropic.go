@@ -459,7 +459,8 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		return
 	}
 
-	raw, err := h.doRawRequest(upstreamURL, provider.APIKey, "POST", bodyBytes, c.Request.Header)
+	// 非流式转发用长超时客户端：DeepSeek reasoner / MiniMax M3 长推理响应常超 90s。
+	raw, err := h.doRawRequestLong(upstreamURL, provider.APIKey, "POST", bodyBytes, c.Request.Header)
 	if err != nil {
 		h.logAPIRequest(key, model, "anthropic", logPath, "chat", http.StatusBadGateway, false, err.Error(), string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
@@ -515,8 +516,9 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 
-	// 使用 streamClient（无超时），避免 http.Client.Timeout 在长流时强制断开
-	resp, err := h.streamClient.Do(req)
+	// 使用 streamClient（body 无超时），避免 http.Client.Timeout 在长流时强制断开；
+	// 连接/握手/响应头超时由 streamTransport 兜底，瞬时连接错误在拿响应前做一次重试。
+	resp, err := doStreamRequest(h.streamClient, req)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err
@@ -527,6 +529,12 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		errBody, _ := io.ReadAll(resp.Body)
 		c.Data(resp.StatusCode, "application/json", errBody)
 		return resp.StatusCode, fmt.Errorf("upstream error %d", resp.StatusCode)
+	}
+
+	// 先校验 Flusher 再 WriteHeader，避免非流式场景留下半截响应。
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
 	}
 
 	// 透传上游响应头
@@ -540,14 +548,13 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
-	}
+	// 心跳与主循环并发写 c.Writer，用 sseWriter 串行化 Write+Flush 避免数据竞争。
+	writer := newSSEWriter(c.Writer, flusher)
 
 	// 先发一个 SSE 心跳，让客户端立即知道连接已建立
-	c.Writer.Write([]byte(": heartbeat\n\n"))
-	flusher.Flush()
+	if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
+		return http.StatusOK, context.Canceled
+	}
 
 	// 持续心跳 goroutine：每 20s 发一次 SSE 注释，防止 thinking 阶段无数据时
 	// 中间代理（nginx/CDN）或客户端因空闲超时断开连接
@@ -559,10 +566,9 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		for {
 			select {
 			case <-ticker.C:
-				if _, err := c.Writer.Write([]byte(": heartbeat\n\n")); err != nil {
+				if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
 					return
 				}
-				flusher.Flush()
 			case <-ctx.Done():
 				return
 			case <-heartbeatDone:
@@ -582,11 +588,10 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	for {
 		n, readErr := bodyReader.Read(buf)
 		if n > 0 {
-			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
+			if err := writer.write(buf[:n]); err != nil {
 				cancel() // 客户端断开，取消上游请求
 				return http.StatusOK, context.Canceled
 			}
-			flusher.Flush()
 		}
 		if readErr != nil {
 			if readErr != io.EOF {

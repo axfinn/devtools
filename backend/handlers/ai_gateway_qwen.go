@@ -250,7 +250,7 @@ func (h *AIGatewayHandler) streamMiniMaxVision(c *gin.Context, model, prompt str
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := h.streamClient.Do(httpReq)
+	resp, err := doStreamRequest(h.streamClient, httpReq)
 	if err != nil {
 		writeLog(http.StatusBadGateway, false, err.Error(), "", time.Since(start))
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
