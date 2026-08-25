@@ -46,7 +46,8 @@ type ProxyNode struct {
 	Server  string                 `json:"server"`
 	Port    int                    `json:"port"`
 	Extra   map[string]interface{} `json:"extra,omitempty"`
-	Latency int64                  `json:"latency"` // ms，-1=失败
+	Latency int64                  `json:"latency"`          // ms，-1=失败
+	Status  string                 `json:"status,omitempty"` // 节点状态: "unsupported"=已知协议但 devtools 暂未实现,等待 sing-box 集成
 }
 
 // proxyPersist 持久化到磁盘的数据
@@ -86,6 +87,7 @@ type proxySession struct {
 	aiNodeRegex      string
 	active           *ProxyNode
 	listener         net.Listener // HTTP CONNECT 代理监听
+	adminPassword    string       // 代理管理密码(用于 sing-box mixed inbound 鉴权,缓存自 ProxyHandler)
 }
 
 var globalSession = &proxySession{}
@@ -145,7 +147,11 @@ func loadPersistedProxy() {
 
 // savePersistedProxy 将节点配置写入磁盘
 func savePersistedProxy() {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in savePersistedProxy: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in savePersistedProxy: %v", r)
+		}
+	}()
 	globalSession.mu.RLock()
 	p := proxyPersist{
 		SourceURL:        firstSourceURL(globalSession.sourceURLs, globalSession.sourceURL),
@@ -486,7 +492,11 @@ func (h *ProxyHandler) fetchSubscriptions(sourceURLs []string) (string, []ProxyN
 	for i, sourceURL := range urls {
 		wg.Add(1)
 		go func(idx int, rawURL string) {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in background goroutine: %v", r)
+				}
+			}()
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -720,11 +730,13 @@ func subscriptionURLForType(rawURL, subType string) string {
 		query.Del("list")
 		query.Del("surfboard")
 		query.Del("sub")
+		query.Del("clash") // 避免已有 clash=2(clashr) 与 clash=1 同时存在导致后端解析歧义
 		query.Set("clash", "1")
 	case "clashr":
 		query.Del("list")
 		query.Del("surfboard")
 		query.Del("sub")
+		query.Del("clash")
 		query.Set("clash", "2")
 	case "shadowrocket":
 		query.Del("clash")
@@ -866,6 +878,7 @@ type ProxyHandler struct {
 	smtpPort      int
 	smtpUser      string
 	smtpPass      string
+	xrayConfig    config.XrayConfig // sing-box 嵌入配置,Start 时启 mixed inbound
 	subRefresh    proxySubscriptionRefreshRuntime
 	subRefreshMu  sync.Mutex
 	subStateMu    sync.RWMutex
@@ -950,6 +963,7 @@ func NewProxyHandler(db *models.DB, cfg *config.Config, npsHandler *NPSHandler) 
 		smtpPort:      cfg.Proxy.SMTPPort,
 		smtpUser:      cfg.Proxy.SMTPUser,
 		smtpPass:      cfg.Proxy.SMTPPass,
+		xrayConfig:    cfg.Proxy.Xray,
 		subRefresh: proxySubscriptionRefreshRuntime{
 			enabled:          refreshCfg.Enabled,
 			interval:         refreshInterval,
@@ -970,6 +984,8 @@ func NewProxyHandler(db *models.DB, cfg *config.Config, npsHandler *NPSHandler) 
 			LastCheckStatus: "未执行",
 		},
 	}
+	// 暴露 XrayConfig 给 dialUpstream 做 lazy start(检查节点时无需先 /api/proxy/start)
+	setGlobalXrayCfg(cfg.Proxy.Xray)
 	if cfg.NPS.VKey != "" {
 		bridgePort := cfg.NPS.BridgePort
 		if bridgePort == "" {
@@ -1236,14 +1252,22 @@ func (h *ProxyHandler) refreshPublishedSubscriptionCaches(sourceURLs []string) {
 
 // serveForceProxy 强制通过指定节点代理所有请求（绕过 GFW 检查）
 func serveForceProxy(ln net.Listener, node *ProxyNode) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in serveForceProxy: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in serveForceProxy: %v", r)
+		}
+	}()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
 		go func(c net.Conn) {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in background goroutine: %v", r)
+				}
+			}()
 			defer c.Close()
 			c.SetDeadline(time.Now().Add(30 * time.Second))
 			br := bufio.NewReader(c)
@@ -1261,7 +1285,14 @@ func serveForceProxy(ln net.Listener, node *ProxyNode) {
 					return
 				}
 				c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-				go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, br) }()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("PANIC in background goroutine: %v", r)
+						}
+					}()
+					io.Copy(upstream, br)
+				}()
 				io.Copy(c, upstream)
 				upstream.Close()
 			} else {
@@ -1278,7 +1309,14 @@ func serveForceProxy(ln net.Listener, node *ProxyNode) {
 					upstream.Close()
 					return
 				}
-				go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, c) }()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("PANIC in background goroutine: %v", r)
+						}
+					}()
+					io.Copy(upstream, c)
+				}()
 				io.Copy(c, upstream)
 				upstream.Close()
 			}
@@ -1316,7 +1354,11 @@ func (h *ProxyHandler) buildNodeClientsForURL(testURL string, timeout time.Durat
 	for i := range nodes {
 		wg.Add(1)
 		go func(n ProxyNode) {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in background goroutine: %v", r)
+				}
+			}()
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -1344,7 +1386,11 @@ func (h *ProxyHandler) buildNodeClientsForURL(testURL string, timeout time.Durat
 		}(nodes[i])
 	}
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		wg.Wait()
 		close(results)
 	}()
@@ -1685,7 +1731,11 @@ func (h *ProxyHandler) TriggerSubscriptionRefresh(c *gin.Context) {
 	}
 	h.markSubscriptionState("手动刷新已启动，正在后台执行", "", "", "manual", "", false, false)
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		defer h.subRefreshMu.Unlock()
 		h.refreshManagedSubscriptionLocked()
 	}()
@@ -1736,7 +1786,11 @@ func (h *ProxyHandler) AutoSelectOnStartup() {
 	}
 
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		globalSession.mu.RLock()
 		nodes := make([]ProxyNode, len(globalSession.nodes))
 		copy(nodes, globalSession.nodes)
@@ -1984,7 +2038,11 @@ func collectReachableNodes(nodes []ProxyNode, limit int, checker func(ProxyNode)
 	for i, node := range nodes {
 		wg.Add(1)
 		go func(idx int, n ProxyNode) {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in background goroutine: %v", r)
+				}
+			}()
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -2094,7 +2152,11 @@ func (h *ProxyHandler) waitForActiveProxy(timeout time.Duration) {
 // StartAutoMaintenance 启动后台维护：定期更新订阅 + 定期探测切换
 func (h *ProxyHandler) StartAutoMaintenance() {
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		subInterval := 6 * time.Hour
 		if h.subRefresh.enabled {
 			subInterval = h.subRefresh.interval
@@ -2173,7 +2235,11 @@ func (h *ProxyHandler) startNPC() {
 	h.npcMu.Unlock()
 	cmd.Start()
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		cmd.Wait()
 		h.npcMu.Lock()
 		if h.npcCmd == cmd {
@@ -2196,6 +2262,13 @@ func (h *ProxyHandler) stopNPC() {
 // clashConfig Clash YAML 顶层结构（只取 proxies）
 type clashConfig struct {
 	Proxies []map[string]interface{} `yaml:"proxies"`
+}
+
+// proxyNodeDialableType devtools 自研 dialUpstream 已实现的协议;仅在 sing-box 未启用时生效。
+// sing-box 启用后所有协议(本列表 + vless/vmess/ss/hy2/anytls/tuic 等)都通过 handlers/singbox.go 走 sing-box,
+// 因此 markNodeDialStatus 改 noop,前端不再标"未启用"。
+var proxyNodeDialableType = map[string]bool{
+	"http": true, "socks5": true, "trojan": true,
 }
 
 // parseClashYAML 解析 Clash YAML 文本，返回节点列表
@@ -2229,6 +2302,7 @@ func parseClashYAML(data string) ([]ProxyNode, error) {
 			}
 		}
 		node.Latency = -1
+		markNodeDialStatus(&node)
 		if node.Name != "" && node.Server != "" && node.Port > 0 {
 			nodes = append(nodes, node)
 		}
@@ -2251,46 +2325,133 @@ func parseShadowrocketSubscription(text string) ([]ProxyNode, error) {
 	}
 	lines := strings.Split(string(decoded), "\n")
 	nodes := make([]ProxyNode, 0, len(lines))
+	var dropped int
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "#") {
 			continue
 		}
+		var (
+			n   ProxyNode
+			err error
+		)
 		switch {
 		case strings.HasPrefix(line, "vmess://"):
-			if n, err := parseVmessURL(line); err == nil {
-				nodes = append(nodes, n)
-			}
+			n, err = parseVmessURL(line)
 		case strings.HasPrefix(line, "vless://"):
-			if n, err := parseVlessURL(line); err == nil {
-				nodes = append(nodes, n)
-			}
+			n, err = parseVlessURL(line)
 		case strings.HasPrefix(line, "trojan://"):
-			if n, err := parseTrojanURL(line); err == nil {
-				nodes = append(nodes, n)
-			}
+			n, err = parseTrojanURL(line)
 		case strings.HasPrefix(line, "ss://"):
-			if n, err := parseSSURL(line); err == nil {
-				nodes = append(nodes, n)
-			}
+			n, err = parseSSURL(line)
 		case strings.HasPrefix(line, "ssr://"):
-			if n, err := parseSSRURL(line); err == nil {
-				nodes = append(nodes, n)
-			}
+			n, err = parseSSRURL(line)
 		case strings.HasPrefix(line, "http://") || strings.HasPrefix(line, "https://"):
-			if n, err := parseHTTPProxyURL(line); err == nil {
-				nodes = append(nodes, n)
-			}
+			n, err = parseHTTPProxyURL(line)
 		case strings.HasPrefix(line, "socks5://"):
-			if n, err := parseSOCKSURL(line); err == nil {
-				nodes = append(nodes, n)
-			}
+			n, err = parseSOCKSURL(line)
+		case strings.HasPrefix(line, "anytls://"),
+			strings.HasPrefix(line, "hysteria://"),
+			strings.HasPrefix(line, "hysteria2://"),
+			strings.HasPrefix(line, "hy2://"),
+			strings.HasPrefix(line, "tuic://"):
+			// 已知但 devtools 暂不实现的协议:识别出来,但标 unknown 等 sing-box 集成。
+			// 仍解析 host/port/name 让前端能展示"识别但未启用"。
+			n, err = parseUnknownProxyURL(line)
+		default:
+			// 未知协议:不静默吞,打 log 方便用户排查
+			dropped++
+			log.Printf("proxy: subscription 跳过未识别行: %.120s", line)
+			continue
 		}
+		if err != nil {
+			dropped++
+			log.Printf("proxy: subscription 解析失败 (协议 %s): %v 行: %.120s", protocolOfLine(line), err, line)
+			continue
+		}
+		markNodeDialStatus(&n)
+		nodes = append(nodes, n)
+	}
+	if dropped > 0 {
+		log.Printf("proxy: subscription 共丢弃 %d 行 (查看上方日志定位具体行)", dropped)
 	}
 	if len(nodes) == 0 {
 		return nil, errors.New("no valid proxy nodes found in subscription")
 	}
 	return nodes, nil
+}
+
+// protocolOfLine 从 URI 提取协议前缀,只用于日志
+func protocolOfLine(line string) string {
+	if idx := strings.Index(line, "://"); idx > 0 {
+		return line[:idx]
+	}
+	return "?"
+}
+
+// markNodeDialStatus 标记节点是否可用 devtools 拨号。
+// 2026-08-19 改造:sing-box 嵌入后,所有协议(vless/vmess/ss/hy2/anytls/tuic 等)
+// 都由 sing-box 接管,前端不再有"未启用"标签;此函数保留为 noop,仅为兼容旧调用方。
+func markNodeDialStatus(node *ProxyNode) {
+	if node == nil {
+		return
+	}
+	// 显式不写 Status,前端不显示"未启用"标签。
+	// proxyNodeDialableType 仍保留供 dialUpstream fallback 路径判断。
+}
+
+// parseUnknownProxyURL 识别已知但暂未实现协议的 URI,把 host/port/name 抽出来,
+// 类型标记为 "unknown:协议名",前端可见。后续接入 sing-box 时根据 node.Extra["scheme"] 转真实协议
+//
+// 2026-08-19 修复:之前完全丢弃 query 参数,导致 anytls:// 的 password/sni/insecure
+// 全丢,sing-box nodeToOutbound 找不到 password 就跳过节点(32 个 anytls 全死)。
+// 现在按 url.Parse 标准解析 query,把所有参数放进 Extra,让 nodeToOutbound
+// 递归时能读到正确字段。
+func parseUnknownProxyURL(uri string) (ProxyNode, error) {
+	scheme := protocolOfLine(uri)
+	node := ProxyNode{
+		Type:   "unknown:" + scheme,
+		Extra:  map[string]interface{}{"scheme": scheme},
+		Status: "unsupported",
+	}
+	// 通用 url.Parse 能处理任何 scheme,但 query 解析对非标准 scheme 也能正常工作
+	u, err := url.Parse(uri)
+	if err != nil {
+		return node, fmt.Errorf("%s: url parse: %w", scheme, err)
+	}
+	if u.User != nil {
+		// shadowrocket anytls://PASSWORD@host:port — username 就是 password
+		// hysteria://auth_string@host:port — username 是 password
+		// tuic://uuid:password@host:port — username=uuid, password=password
+		if pw, ok := u.User.Password(); ok && pw != "" {
+			node.Extra["password"] = pw
+			if un := u.User.Username(); un != "" {
+				node.Extra["uuid"] = un
+			}
+		} else if un := u.User.Username(); un != "" {
+			node.Extra["password"] = un
+			node.Extra["uuid"] = un
+		}
+	}
+	node.Server = u.Hostname()
+	if node.Server == "" {
+		return node, fmt.Errorf("%s: missing server", scheme)
+	}
+	node.Port = portFromHost(u.Host)
+	if node.Port <= 0 || node.Port > 65535 {
+		return node, fmt.Errorf("%s: invalid port %d", scheme, node.Port)
+	}
+	// query 参数全塞 Extra,sing-box nodeToOutbound 会按需取(sni / pbk / sid / fp / insecure 等)
+	for k, vs := range u.Query() {
+		if len(vs) > 0 {
+			node.Extra[k] = vs[0]
+		}
+	}
+	node.Name = nodeNameFromFragment(u.Fragment)
+	if node.Name == "" {
+		node.Name = fmt.Sprintf("%s %s:%d", strings.ToUpper(scheme), node.Server, node.Port)
+	}
+	return node, nil
 }
 
 func parseSSURL(uri string) (ProxyNode, error) {
@@ -2438,13 +2599,24 @@ func parseVlessURL(uri string) (ProxyNode, error) {
 	node := ProxyNode{Type: "vless", Extra: make(map[string]interface{})}
 	u, err := url.Parse(uri)
 	if err != nil {
-		return node, err
+		return node, fmt.Errorf("vless: url parse: %w", err)
 	}
 	node.Server = u.Hostname()
-	node.Port = portFromHost(u.Host)
-	if u.User != nil {
-		node.Extra["uuid"] = u.User.Username()
+	if node.Server == "" {
+		return node, errors.New("vless: missing server")
 	}
+	node.Port = portFromHost(u.Host)
+	if node.Port <= 0 || node.Port > 65535 {
+		return node, fmt.Errorf("vless: invalid port %d", node.Port)
+	}
+	uuid := ""
+	if u.User != nil {
+		uuid = u.User.Username()
+	}
+	if uuid == "" {
+		return node, errors.New("vless: missing uuid")
+	}
+	node.Extra["uuid"] = uuid
 	for k, v := range u.Query() {
 		if len(v) > 0 {
 			node.Extra[k] = v[0]
@@ -2461,13 +2633,24 @@ func parseTrojanURL(uri string) (ProxyNode, error) {
 	node := ProxyNode{Type: "trojan", Extra: make(map[string]interface{})}
 	u, err := url.Parse(uri)
 	if err != nil {
-		return node, err
+		return node, fmt.Errorf("trojan: url parse: %w", err)
 	}
 	node.Server = u.Hostname()
-	node.Port = portFromHost(u.Host)
-	if u.User != nil {
-		node.Extra["password"] = u.User.Username()
+	if node.Server == "" {
+		return node, errors.New("trojan: missing server")
 	}
+	node.Port = portFromHost(u.Host)
+	if node.Port <= 0 || node.Port > 65535 {
+		return node, fmt.Errorf("trojan: invalid port %d", node.Port)
+	}
+	password := ""
+	if u.User != nil {
+		password = u.User.Username()
+	}
+	if password == "" {
+		return node, errors.New("trojan: missing password")
+	}
+	node.Extra["password"] = password
 	for k, v := range u.Query() {
 		if len(v) > 0 {
 			node.Extra[k] = v[0]
@@ -2572,6 +2755,15 @@ func parseManualProxyAddr(addr string) (*ProxyNode, error) {
 	}, nil
 }
 
+// nodesToClashYAMLTurndownFields 节点内字段里纯内部使用、转 Clash YAML 时需要剔除的 key
+// (这些不是代理协议字段,是 devtools 内部状态或与 Clash proxies.* 重名,分享订阅给外部客户端不应该出现)
+var nodesToClashYAMLTurndownFields = map[string]struct{}{
+	"name":   {}, // 已提升到 top-level,避免 YAML 重复 key
+	"server": {}, // 同上
+	"port":   {}, // 同上
+	"type":   {}, // devtools 复用了 vmess.json 里的"type"字段(伪装类型);但 Clash proxies.type 是协议类型,不能混
+}
+
 func nodesToClashYAML(nodes []ProxyNode) (string, error) {
 	if len(nodes) == 0 {
 		return "", errors.New("no nodes to convert")
@@ -2585,15 +2777,12 @@ func nodesToClashYAML(nodes []ProxyNode) (string, error) {
 			"port":   n.Port,
 		}
 		for k, v := range n.Extra {
-			switch k {
-			case "uuid", "password", "cipher", "network", "host", "path", "tls", "sni", "alpn",
-				"protocol", "obfs", "plugin", "alterId", "username":
-				if v != nil && v != "" {
-					proxy[k] = v
-				}
-			default:
-				proxy[k] = v
+			if _, turndown := nodesToClashYAMLTurndownFields[k]; turndown {
+				continue
 			}
+			// 全量透传,不再白名单过滤——避免 skip-cert-verify / flow /
+			// client-fingerprint / reality-opts / udp 等 Clash.Meta 关键字段被吞
+			proxy[k] = v
 		}
 		proxies[i] = proxy
 	}
@@ -2685,6 +2874,25 @@ func fetchSubscriptionWithClientMode(client *http.Client, rawURL string, decodeB
 }
 
 // LoadConfig POST /api/proxy/config
+// globalXrayCfg 是 LoadConfig / Start / checkNodeReachability 共享的 XrayConfig 配置,
+// 用 mutex 保护;只被 NewProxyHandler 写入,读取并发安全。
+var (
+	globalXrayCfgMu sync.RWMutex
+	globalXrayCfg   config.XrayConfig
+)
+
+func getGlobalXrayCfg() config.XrayConfig {
+	globalXrayCfgMu.RLock()
+	defer globalXrayCfgMu.RUnlock()
+	return globalXrayCfg
+}
+
+func setGlobalXrayCfg(cfg config.XrayConfig) {
+	globalXrayCfgMu.Lock()
+	defer globalXrayCfgMu.Unlock()
+	globalXrayCfg = cfg
+}
+
 func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 	var req struct {
 		AdminPassword    string   `json:"admin_password"`
@@ -2801,7 +3009,18 @@ func (h *ProxyHandler) LoadConfig(c *gin.Context) {
 	globalSession.defaultNodeRegex = defaultNodeRegex
 	globalSession.aiNodeName = aiNodeName
 	globalSession.aiNodeRegex = aiNodeRegex
+	globalSession.adminPassword = h.adminPassword
 	globalSession.mu.Unlock()
+
+	// 节点列表变了,重启 sing-box 让新节点立即生效(若用户已 /api/proxy/start 过,
+	// mixed port 会保留;否则 dialUpstream 会 lazy start)。
+	if h.xrayConfig.Enabled {
+		if err := globalBox.Start(nodes, h.xrayConfig, h.adminPassword, ""); err != nil {
+			log.Printf("proxy: LoadConfig 后重启 sing-box 失败: %v", err)
+		}
+	} else {
+		globalBox.Stop()
+	}
 
 	go savePersistedProxy()
 	if len(sourceURLs) > 0 {
@@ -2897,6 +3116,12 @@ func tcpPing(host string, port int) int64 {
 
 // checkNodeReachability 通过节点实际发 HTTP 请求到 testURL，验证代理真实可用性
 // 返回延迟 ms，失败返回 -1
+//
+// 2026-08-24 完全回滚到 HEAD 行为:用临时 HTTP CONNECT 代理 + dialUpstream
+// (含 default 分支的直连 fallback)测节点能不能拿来代理到 testURL。
+// 上一版我改成 tcpPing 是错的 — tcpPing 不走 dialUpstream,等于把 dialUpstream
+// 的自研 fallback / 直连 fallback 链路全跳过了,UI 上看到 6/52,实际部署里反而
+// 把能用国内/直连路径的节点全判死。
 func checkNodeReachability(node *ProxyNode, testURL string) int64 {
 	// 临时启动一个无密码代理监听
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -2986,7 +3211,11 @@ func (h *ProxyHandler) CheckNodes(c *gin.Context) {
 
 	h.markCheckState(fmt.Sprintf("节点可用性检测已启动，目标 %d 个", len(targets)), true, nil)
 	go func(targets []ProxyNode) {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		defer h.checkMu.Unlock()
 		h.runCheckNodesLocked(targets)
 	}(append([]ProxyNode(nil), targets...))
@@ -3078,7 +3307,21 @@ func (h *ProxyHandler) Start(c *gin.Context) {
 		}
 	}
 
-	// 停止旧代理（startProxyListener 内部会处理，这里保留以便提前释放）
+	// 1. sing-box 接管所有协议(vless/vmess/ss/hy2/anytls/tuic/http/socks5/trojan)
+	//    必须先于 startProxyListener,这样 dialUpstream 走 sing-box mixed port,
+	//    而不是落到自研兜底的"暂未实现"。
+	if h.xrayConfig.Enabled {
+		globalSession.mu.RLock()
+		nodes := make([]ProxyNode, len(globalSession.nodes))
+		copy(nodes, globalSession.nodes)
+		globalSession.mu.RUnlock()
+		if err := globalBox.Start(nodes, h.xrayConfig, h.adminPassword, ""); err != nil {
+			log.Printf("proxy: sing-box 启动失败,继续走自研兜底: %v", err)
+		}
+	}
+
+	// 2. 启动 devtools HTTP CONNECT 监听器,客户端字节透传给 active 节点。
+	//    (sing-box 接管时,devtools 不再解析协议字节,只透传到 sing-box mixed port)
 	ln, err := startProxyListener(target, h.adminPassword, h.localPort)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "启动失败: " + err.Error()})
@@ -3121,7 +3364,11 @@ func (h *ProxyHandler) triggerAutoSelect() {
 	}
 
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		globalSession.mu.RLock()
 		nodes := make([]ProxyNode, len(globalSession.nodes))
 		copy(nodes, globalSession.nodes)
@@ -3194,6 +3441,8 @@ func (h *ProxyHandler) Stop(c *gin.Context) {
 	globalSession.active = nil
 	globalSession.mu.Unlock()
 
+	// 关 sing-box,释放 mixed inbound 端口(下次 Start 时重启)
+	globalBox.Stop()
 	h.stopNPC()
 	c.JSON(200, gin.H{"ok": true})
 }
@@ -3738,7 +3987,11 @@ const fakeWebPage = "HTTP/1.1 200 OK\r\nServer: nginx/1.24.0\r\nContent-Type: te
 // serveHTTPProxy 运行一个简单的 HTTP CONNECT 代理，转发到目标节点
 // 支持 http/socks5 类型节点的上游代理，其他类型直连
 func serveHTTPProxy(ln net.Listener, node *ProxyNode, adminPassword string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in serveHTTPProxy: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in serveHTTPProxy: %v", r)
+		}
+	}()
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -3749,7 +4002,11 @@ func serveHTTPProxy(ln net.Listener, node *ProxyNode, adminPassword string) {
 }
 
 func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in handleProxyConn: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in handleProxyConn: %v", r)
+		}
+	}()
 	defer clientConn.Close()
 	clientConn.SetDeadline(time.Now().Add(30 * time.Second))
 
@@ -3786,7 +4043,14 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string)
 			return
 		}
 		clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-		go func() { defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }(); io.Copy(upstream, br) }()
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in background goroutine: %v", r)
+				}
+			}()
+			io.Copy(upstream, br)
+		}()
 		io.Copy(clientConn, upstream)
 		upstream.Close()
 	} else {
@@ -3811,6 +4075,13 @@ func handleProxyConn(clientConn net.Conn, node *ProxyNode, adminPassword string)
 }
 
 // dialUpstream 根据节点类型建立到目标的连接
+//
+// 2026-08-24 完全回滚到 HEAD 行为:支持的真实协议只有 http/socks5/trojan,
+// 其它协议直接 dial targetHost(注释里写"仅测速可用",实际是 devtools 当 TCP
+// 转发器的隐式 VPN — 上周用户线上 NPS 隧道全靠这条 + devtools 出网)。
+//
+// 切勿删除 default 分支的 net.DialTimeout(targetHost),否则 sing-box 配错 /
+// 节点后端被 GFW RST 时整条 NPS 链路会 502。
 func dialUpstream(node *ProxyNode, targetHost string) (net.Conn, error) {
 	nodeAddr := net.JoinHostPort(node.Server, strconv.Itoa(node.Port))
 
@@ -4168,7 +4439,11 @@ var lastFailover time.Time
 
 // triggerFailover 请求失败时触发节点切换，60s 内只触发一次
 func triggerFailover() {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in triggerFailover: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in triggerFailover: %v", r)
+		}
+	}()
 	failoverMu.Lock()
 	if time.Since(lastFailover) < 60*time.Second {
 		failoverMu.Unlock()
@@ -4371,7 +4646,11 @@ func writeBase64Lines(dst *strings.Builder, data []byte) {
 
 // sendAlert 发送告警邮件（SMTP SSL，465 端口）
 func (h *ProxyHandler) sendAlertWithAttachment(subject, body string, attachment *mailAttachment) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in sendAlertWithAttachment: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in sendAlertWithAttachment: %v", r)
+		}
+	}()
 	if !h.alertEnabled || h.alertEmail == "" || h.smtpHost == "" || h.smtpUser == "" || h.smtpPass == "" {
 		return
 	}
@@ -4614,7 +4893,11 @@ func (h *ProxyHandler) Tunnel(w http.ResponseWriter, r *http.Request) {
 	monitoredClient := middleware.NewMonitoredTunnelConn(h.db, clientConn, r.Host, r.RemoteAddr, r.Header.Get("User-Agent"))
 	monitoredUpstream := middleware.NewMonitoredTunnelConn(h.db, upstream, r.Host+"(upstream)", r.RemoteAddr, "")
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		io.Copy(monitoredUpstream, brw)
 		monitoredUpstream.Finish("upstream_eof")
 	}()
@@ -4673,7 +4956,11 @@ func (h *ProxyHandler) TunnelDirect(w http.ResponseWriter, r *http.Request) {
 	monitoredClient := middleware.NewMonitoredTunnelConn(h.db, clientConn, r.Host, r.RemoteAddr, r.Header.Get("User-Agent"))
 	monitoredUpstream := middleware.NewMonitoredTunnelConn(h.db, upstream, r.Host+"(upstream)", r.RemoteAddr, "")
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		io.Copy(monitoredUpstream, brw)
 		monitoredUpstream.Finish("upstream_eof")
 	}()
@@ -5073,7 +5360,11 @@ func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 
 	// ws → tcp
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		for {
 			_, msg, err := wsConn.ReadMessage()
 			if err != nil {

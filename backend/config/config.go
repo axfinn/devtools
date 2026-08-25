@@ -126,6 +126,18 @@ type ProxyConfig struct {
 	SMTPUser            string                         `yaml:"smtp_user"`            // SMTP 登录用户名（发件人邮箱）
 	SMTPPass            string                         `yaml:"smtp_pass"`            // SMTP 授权码/密码
 	SubscriptionRefresh ProxySubscriptionRefreshConfig `yaml:"subscription_refresh"` // 托管订阅自动刷新
+	Xray                XrayConfig                     `yaml:"xray"`                 // sing-box 嵌入配置(默认关闭,生产建议启用)
+}
+
+// XrayConfig 嵌入代理配置 — 让 devtools 用 sing-box 处理所有代理协议,
+// 取代自研 dialTrojan/dialSocks5/dialHTTP。
+// (类型名沿用 XrayConfig 以保持 yaml 向后兼容;字段语义已迁移到 sing-box)
+type XrayConfig struct {
+	Enabled       bool   `yaml:"enabled"`        // 是否启用嵌入 sing-box,默认 false
+	MixedPort     int    `yaml:"mixed_port"`     // sing-box mixed inbound 监听端口,默认 18099;devtools dialUpstream 内部 dial 此端口
+	MixedUser     string `yaml:"mixed_user"`     // mixed inbound 鉴权用户名,默认 "proxy"
+	MixedPassword string `yaml:"mixed_password"` // mixed inbound 鉴权密码,默认 = cfg.Proxy.AdminPassword
+	LogLevel      string `yaml:"log_level"`      // sing-box 日志级别,默认 "warn"
 }
 
 type ProxySubscriptionRefreshConfig struct {
@@ -612,6 +624,16 @@ func DefaultConfig() *Config {
 				LoginPath:        "/auth/login",
 				UserPath:         "/user",
 				PreferredSubType: "clash",
+			},
+			// 默认启用 sing-box 嵌入 — 不开的话 dialUpstream 回退到自研 3 协议(http/socks5/trojan),
+			// vless/reality/anytls/hy2/tuic/vmess/ss 全部报"暂未实现",用户看到 0/可用。
+			// Production 必须为 true;只有在 macOS 开发 + 不想跑 sing-box in-process 时可改 false。
+			Xray: XrayConfig{
+				Enabled:       true,
+				MixedPort:     18099,
+				MixedUser:     "proxy",
+				MixedPassword: "",
+				LogLevel:      "warn",
 			},
 		},
 	}

@@ -155,7 +155,16 @@
         <el-table :data="sortedNodes" @row-click="selectNode" highlight-current-row
           :row-class-name="rowClass" size="small" max-height="300">
           <el-table-column label="节点名" prop="name" min-width="200" show-overflow-tooltip />
-          <el-table-column label="类型" prop="type" width="80" />
+          <el-table-column label="类型" width="120">
+            <template #default="{ row }">
+              <span>{{ row.type }}</span>
+              <el-tag v-if="row.status === 'unsupported'" type="warning" size="small" effect="plain"
+                style="margin-left:4px"
+                title="devtools 暂未实现此协议的拨号,需等待 sing-box 集成后才能用作代理(已能被解析,可参与测速)">
+                未启用
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="服务器" prop="server" min-width="140" show-overflow-tooltip />
           <el-table-column label="端口" prop="port" width="70" />
           <el-table-column label="延迟" width="90">

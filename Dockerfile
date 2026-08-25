@@ -22,7 +22,7 @@ RUN npm install
 RUN npm run build
 RUN cd dist && zip -r /app/askit-extension.zip .
 
-FROM golang:1.22-alpine AS backend-builder
+FROM golang:1.25.5-alpine AS backend-builder
 
 WORKDIR /app/backend
 
@@ -35,10 +35,11 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 COPY backend/ ./
-RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o server .
+# -tags with_utls 启用 sing-box Reality 所需的 uTLS 指纹(否则启动失败: "uTLS ... is not included in this build")
+RUN CGO_ENABLED=1 GOOS=linux go build -tags with_utls -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
 # 编译 proxy-client 跨平台二进制
-FROM golang:1.22-alpine AS proxy-client-builder
+FROM golang:1.25.5-alpine AS proxy-client-builder
 
 WORKDIR /app/proxy-client
 
