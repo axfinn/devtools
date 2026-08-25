@@ -27,6 +27,9 @@ backend/data/backgrounds/  # 背景图缓存
 *.swo
 *.code-workspace
 
+# Claude Code (本地权限/会话配置,不入库)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db
