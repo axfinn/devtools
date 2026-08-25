@@ -12,7 +12,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/sagernet/sing v0.9.0-beta.2
 	github.com/sagernet/sing-box v1.14.0-beta.17
-	github.com/yuin/goldmark v1.7.1
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/crypto v0.54.0
 	gopkg.in/yaml.v3 v3.0.1
 )
