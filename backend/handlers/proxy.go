@@ -92,6 +92,14 @@ type proxySession struct {
 
 var globalSession = &proxySession{}
 
+// proxyDB is the shared models.DB instance for proxy storage.
+// It is set once via SetProxyDB() called from NewProxyHandler.
+var proxyDB *models.DB
+
+// SetProxyDB registers the models.DB for proxy storage (Phase 1 SQLite migration).
+// Must be called before any proxy storage operations.
+func SetProxyDB(db *models.DB) { proxyDB = db }
+
 const (
 	proxyRouteModeSmart      = "smart"
 	proxyRouteModeGlobal     = "global"
@@ -122,8 +130,32 @@ var aiDedicatedDomains = []string{
 	"perplexity.ai",
 }
 
-// loadPersistedProxy 启动时从磁盘恢复节点配置
+// loadPersistedProxy 启动时从 SQLite（Phase 1 主源）或 JSON（兼容）恢复节点配置
 func loadPersistedProxy() {
+	// Phase 1: Try SQLite first
+	if proxyDB != nil {
+		cfg, err := proxyDB.GetProxyConfig()
+		nodes, err2 := proxyDB.GetAllProxyNodes()
+		if err == nil && err2 == nil {
+			globalSession.mu.Lock()
+			globalSession.nodes = nodesFromRows(nodes)
+			globalSession.sourceURL = cfg.SourceURL
+			var urls []string
+			if cfg.SourceURLs != "" {
+				json.Unmarshal([]byte(cfg.SourceURLs), &urls)
+			}
+			globalSession.sourceURLs = normalizeSourceURLs(urls, cfg.SourceURL)
+			globalSession.yamlContent = cfg.YAMLContent
+			globalSession.routingMode = normalizeProxyRouteMode(cfg.RoutingMode)
+			globalSession.defaultNodeName = strings.TrimSpace(cfg.DefaultNodeName)
+			globalSession.defaultNodeRegex = strings.TrimSpace(cfg.DefaultNodeRegex)
+			globalSession.aiNodeName = strings.TrimSpace(cfg.AINodeName)
+			globalSession.aiNodeRegex = strings.TrimSpace(cfg.AINodeRegex)
+			globalSession.mu.Unlock()
+			return
+		}
+	}
+	// Fallback: JSON file
 	data, err := os.ReadFile(proxyDataFile)
 	if err != nil {
 		return
@@ -145,7 +177,26 @@ func loadPersistedProxy() {
 	globalSession.mu.Unlock()
 }
 
-// savePersistedProxy 将节点配置写入磁盘
+// nodesFromRows converts ProxyNodeRow slice to ProxyNode slice for in-memory use
+func nodesFromRows(rows []models.ProxyNodeRow) []ProxyNode {
+	nodes := make([]ProxyNode, len(rows))
+	for i, r := range rows {
+		nodes[i] = ProxyNode{
+			Name:    r.Name,
+			Type:    r.Type,
+			Server:  r.Server,
+			Port:    r.Port,
+			Status:  r.Status,
+			Latency: r.Latency,
+		}
+		if r.Extra != "" && r.Extra != "{}" {
+			json.Unmarshal([]byte(r.Extra), &nodes[i].Extra)
+		}
+	}
+	return nodes
+}
+
+// savePersistedProxy 将节点配置写入 SQLite（Phase 1 主源）和 JSON（兼容）
 func savePersistedProxy() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -164,7 +215,41 @@ func savePersistedProxy() {
 		AINodeRegex:      globalSession.aiNodeRegex,
 		Nodes:            globalSession.nodes,
 	}
+	// Write SQLite (Phase 1 primary)
+	if proxyDB != nil {
+		urlsJSON, _ := json.Marshal(p.SourceURLs)
+		cfg := &models.ProxyConfigRow{
+			SourceURL:        p.SourceURL,
+			SourceURLs:       string(urlsJSON),
+			YAMLContent:      p.YAMLContent,
+			RoutingMode:      p.RoutingMode,
+			DefaultNodeName:  p.DefaultNodeName,
+			DefaultNodeRegex: p.DefaultNodeRegex,
+			AINodeName:       p.AINodeName,
+			AINodeRegex:      p.AINodeRegex,
+		}
+		proxyDB.SaveProxyConfig(cfg)
+		nodeRows := make([]models.ProxyNodeRow, len(p.Nodes))
+		for i, n := range p.Nodes {
+			extra := "{}"
+			if n.Extra != nil {
+				b, _ := json.Marshal(n.Extra)
+				extra = string(b)
+			}
+			nodeRows[i] = models.ProxyNodeRow{
+				Name:    n.Name,
+				Type:    n.Type,
+				Server:  n.Server,
+				Port:    n.Port,
+				Extra:   extra,
+				Latency: n.Latency,
+				Status:  n.Status,
+			}
+		}
+		proxyDB.ReplaceAllProxyNodes(nodeRows)
+	}
 	globalSession.mu.RUnlock()
+	// Write JSON (backward compatibility)
 	data, _ := json.Marshal(p)
 	os.WriteFile(proxyDataFile, data, 0644)
 }
@@ -215,6 +300,11 @@ func saveSubscriptionCacheEntry(subType, sourceURL, content string) {
 	if subType == "" || content == "" {
 		return
 	}
+	// Phase 1: Write SQLite first
+	if proxyDB != nil {
+		proxyDB.SetProxySubscriptionCacheEntry(subType, content)
+	}
+	// Update in-memory cache and write JSON
 	cache := loadSubscriptionCache()
 	cache[subType] = proxySubscriptionFormatCache{
 		SourceURL: strings.TrimSpace(sourceURL),
@@ -233,6 +323,13 @@ func loadSubscriptionCacheEntry(subType string) (string, string, bool) {
 	if subType == "" {
 		return "", "", false
 	}
+	// Phase 1: Try SQLite first
+	if proxyDB != nil {
+		if content, found, err := proxyDB.GetProxySubscriptionCacheEntry(subType); err == nil && found {
+			return strings.TrimSpace(content), "", true
+		}
+	}
+	// Fallback: in-memory cache from JSON file
 	entry, ok := loadSubscriptionCache()[subType]
 	if !ok || strings.TrimSpace(entry.Content) == "" {
 		return "", "", false
@@ -937,6 +1034,8 @@ type npcConfig struct {
 }
 
 func NewProxyHandler(db *models.DB, cfg *config.Config, npsHandler *NPSHandler) *ProxyHandler {
+	// Phase 1: Register DB for dual-write storage (SQLite primary, JSON fallback)
+	SetProxyDB(db)
 	loadPersistedProxy()
 	refreshCfg := cfg.Proxy.SubscriptionRefresh
 	refreshInterval := time.Duration(refreshCfg.IntervalHours) * time.Hour
