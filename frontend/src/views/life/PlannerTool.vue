@@ -34,6 +34,10 @@
       </div>
     </transition>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: entry — 档案入口（登录/创建） -->
+    <!-- ======================================================================== -->
     <section v-if="!profileId" class="entry-layout">
       <div class="entry-hero">
         <p class="eyebrow">Planner Archive</p>
@@ -2118,6 +2122,10 @@
     </transition>
       </section>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: main_shell — 主界面骨架 + 导航栏 -->
+    <!-- ======================================================================== -->
     <el-drawer v-model="settingsVisible" title="档案设置" :size="drawerSize">
       <div class="drawer-stack">
         <el-input v-model="profileForm.name" placeholder="档案名称" />
@@ -2240,6 +2248,10 @@
       </div>
     </el-drawer>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: settings_drawer — 档案设置抽屉 -->
+    <!-- ======================================================================== -->
     <el-drawer v-model="taskDrawerVisible" :title="taskForm.id ? '编辑事项' : '事项详情'" :size="detailDrawerSize">
       <div class="drawer-stack">
         <el-input v-model="taskForm.title" placeholder="事项标题" />
@@ -2525,6 +2537,10 @@
       </div>
     </el-drawer>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: task_drawer — 事项详情/编辑抽屉 -->
+    <!-- ======================================================================== -->
     <el-drawer v-model="activityDrawerVisible" title="事项生命周期" :size="drawerSize">
       <div class="drawer-stack">
         <div class="activity-timeline">
@@ -2542,6 +2558,10 @@
       </div>
     </el-drawer>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: activity_drawer — 事项生命周期抽屉 -->
+    <!-- ======================================================================== -->
     <el-dialog v-model="aiDialogVisible" title="AI 整理事项" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="panel-heading-actions">
@@ -2777,6 +2797,10 @@
       </div>
     </el-dialog>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: ai_dialogs — AI 整理 / 总结 / 阶段回顾 对话框 -->
+    <!-- ======================================================================== -->
     <el-dialog v-model="voiceDialogVisible" title="语音录入" :width="voiceDialogWidth" :fullscreen="isMobile" @closed="resetVoiceDraft">
       <div class="drawer-stack">
         <div class="voice-panel-card">
@@ -2826,6 +2850,10 @@
       </template>
     </el-dialog>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: voice_dialog — 语音录入对话框 -->
+    <!-- ======================================================================== -->
     <el-dialog v-model="adminDialogVisible" title="超级管理员" :width="dialogWidth" :fullscreen="isMobile">
       <div class="drawer-stack">
         <div class="quick-row">
@@ -2853,6 +2881,10 @@
       </div>
     </el-dialog>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: admin — 超级管理员面板 -->
+    <!-- ======================================================================== -->
     <el-drawer v-model="adminDetailVisible" title="超管查看档案" :size="detailDrawerSize">
       <div class="drawer-stack">
         <div class="soft-note">{{ adminDetail.profile.id || '' }}</div>
@@ -2876,6 +2908,10 @@
       </div>
     </el-drawer>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: meeting — 会议纪要对话框 -->
+    <!-- ======================================================================== -->
     <el-drawer
       v-model="meetingDialogVisible"
       title="会议纪要"
@@ -2988,6 +3024,10 @@
       </template>
     </el-drawer>
 
+
+    <!-- ======================================================================== -->
+    <!-- section: search — 搜索结果对话框 -->
+    <!-- ======================================================================== -->
     <el-dialog
       v-model="shortcutHelpVisible"
       title="键盘快捷键"
@@ -3145,6 +3185,10 @@
   </div>
 </template>
 
+
+<!-- ======================================================================== -->
+<!-- section: script — Vue Composition API 逻辑 -->
+<!-- ======================================================================== -->
 <script setup>
 import { computed, defineComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -10373,6 +10417,10 @@ const QuickCommentPopover = defineComponent({
 })
 </script>
 
+
+/* ======================================================================== */
+/* section: style — 全局样式 */
+/* ======================================================================== */
 <style scoped>
 .planner-shell {
   position: relative;
