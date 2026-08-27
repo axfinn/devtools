@@ -863,6 +863,10 @@ func minInt(a, b int) int {
 }
 
 // ProxyHandler 科学上网处理器
+
+// ========================================================================
+// proxy/section2: ProxyHandler 科学上网处理器 & 订阅管理 (lines 866-2020)
+// ========================================================================
 type ProxyHandler struct {
 	db            *models.DB
 	adminPassword string
@@ -2018,6 +2022,10 @@ func (h *ProxyHandler) DownloadSubscription(c *gin.Context) {
 
 const probeURL = "https://www.google.com"
 
+
+// ========================================================================
+// proxy/section3: 节点测速 & 选优 (lines ~2021-3500)
+// ========================================================================
 type proxyNodeReachability struct {
 	node    ProxyNode
 	latency int64
@@ -3498,6 +3506,10 @@ func (h *ProxyHandler) CreateNPSTunnel(c *gin.Context) {
 
 // AutoStart POST /api/proxy/auto-start
 // 测速后自动选延迟最低的可用节点启动代理
+
+// ========================================================================
+// proxy/section4: HTTP handlers & 运行时控制 (lines ~3501-5391)
+// ========================================================================
 func (h *ProxyHandler) AutoStart(c *gin.Context) {
 	var req struct {
 		AdminPassword string `json:"admin_password"`
