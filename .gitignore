@@ -65,6 +65,10 @@ build/
 *.so
 *.dylib
 
+# Frontend assets (pre-built, downloaded at build time)
+frontend/public/neon/
+frontend/public/gallery-bg/
+
 # Test coverage
 coverage/
 *.coverprofile
