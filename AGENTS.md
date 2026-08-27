@@ -1,434 +1,232 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+本文件是 DevTools 项目的唯一权威文档。供 AI Agent（Claude Code / Codex）使用。所有其他文档为辅助参考，以本文件为准。
 
-## Project Overview
+---
 
-DevTools is a web-based developer tools suite providing JSON formatting, text diff, Markdown preview/sharing, shared pastebin, Base64 encoding/decoding, URL encoding/decoding, timestamp conversion, regex testing, text escaping, Mermaid diagrams, IP/DNS lookup, chat rooms, URL shortening, Mock API testing, Excalidraw drawing, SSH Terminal, and PhotoWall archives.
+## 34 模块地图
 
-**Tech Stack:**
-- Frontend: Vue 3 + Vite + Element Plus + TailwindCSS
-- Backend: Go (Gin framework) + SQLite
-- Deployment: Docker multi-stage build
+| # | 模块 | Handler 文件 | Route 文件 | View 组件 | 主要功能 |
+|---|------|------------|----------|---------|---------|
+| 1 | **Paste 粘贴板** | `handlers/paste.go` | `routes/paste.go` | `views/collab/PasteBin.vue` | 临时分享，最大 100KB，访问次数/过期时间限制 |
+| 2 | **ShortURL 短链** | `handlers/shorturl.go` | `routes/shorturl.go` | `views/collab/ShortUrl.vue` | 短链接服务，支持自定义 ID，限流 10/h/IP |
+| 3 | **MockAPI** | `handlers/mockapi.go` | `routes/mockapi.go` | `views/dev/MockApi.vue` | Mock API 端点，任意 HTTP 方法，支持请求日志 |
+| 4 | **MDShare Markdown** | `handlers/mdshare.go` | `routes/mdshare.go` | `views/draw/MarkdownTool.vue` | 可分享 Markdown，2-10 次访问限制 |
+| 5 | **Excalidraw** | `handlers/excalidraw.go` | `routes/excalidraw.go` | `views/draw/ExcalidrawTool.vue` | Excalidraw 画图，支持云端保存、密码保护、导出 PNG/SVG |
+| 6 | **PhotoWall 照片墙** | `handlers/photowall.go` | `routes/photowall.go` | `views/life/PhotoWallTool.vue` | 档案照片墙，分类/时间线，打包下载 ZIP |
+| 7 | **Chat 聊天室** | `handlers/chat.go` | `routes/chat.go` | `views/collab/ChatRoom.vue` | WebSocket 实时聊天，图片/视频上传，AI 机器人，TTS |
+| 8 | **Terminal SSH** | `handlers/terminal.go` | `routes/terminal.go` | `views/dev/TerminalTool.vue` | Web SSH，支持密码/私钥，keep_alive，命令历史 |
+| 9 | **DNS IP** | `handlers/dns.go` | `routes/dns_image.go` | `views/convert/DnsTool.vue` | DNS 解析（A/AAAA/CNAME/MX/NS/TXT），客户端 IP 查询 |
+| 10 | **Analysis 分析** | `handlers/analysis.go` | `routes/analysis.go` | — | URL 内容分析，提取最新站点 URL |
+| 11 | **EdgeTTS** | `handlers/edge_tts.go` | `routes/edge_tts.go` | `views/dev/EdgeTTSTool.vue` | Edge 语音合成（TTS），Python FastAPI + edge-tts |
+| 12 | **Game 游戏** | `handlers/game.go` | `routes/game.go` | `views/life/GameHall.vue` | 游戏大厅，Arcade Room 实时对战 |
+| 13 | **VoiceMemo 语音** | `handlers/voicememo.go` | `routes/voicememo.go` | `views/life/VoiceInboxTool.vue` | 语音录制/转写（Whisper），AI 总结，自动创建待办 |
+| 14 | **JSON 工具** | `handlers/json.go` | `routes/paste.go` | `views/dev/JsonTool.vue` | JSON 格式化/压缩/校验，转 Go Struct / TypeScript Interface |
+| 15 | **Diff 对比** | `handlers/diff.go` | `routes/paste.go` | `views/dev/DiffTool.vue` | 文本对比，行级/词级/字符级差异高亮 |
+| 16 | **Regex 正则** | `handlers/regex.go` | `routes/paste.go` | `views/dev/RegexTool.vue` | 正则实时匹配，常用模板 |
+| 17 | **Pregnancy 孕期** | `handlers/pregnancy.go` | `routes/pregnancy.go` | `views/life/PregnancyTool.vue` | 孕周计算，产检提醒，宝宝发育参考 |
+| 18 | **Expense 记账** | `handlers/expense.go` | `routes/expense.go` | `views/life/ExpenseTool.vue` | 收支记录，分类统计，趋势分析，AI 总结 |
+| 19 | **Glucose 血糖** | `handlers/glucose.go` | `routes/glucose.go` | `views/life/GlucoseTool.vue` | 血糖记录，达标率，趋势图表 |
+| 20 | **Planner 待办** | `handlers/planner*.go` (6 文件) | `routes/planner.go` | `views/life/PlannerTool.vue` | 工作/生活分离，时间线，专注模式，AI 建议，会议纪要 |
+| 21 | **Recipe 菜谱** | `handlers/recipe.go` | `routes/recipe.go` | `views/life/RecipeTool.vue` | 每日菜谱，分类浏览，收藏 |
+| 22 | **Household 家庭** | `handlers/household.go` (7 分段) | `routes/household.go` | `views/life/HouseholdTool.vue` | 物品/位置/模板管理，通知，AI 智能添加/分析，OCR |
+| 23 | **NFSShare** | `handlers/nfsshare*.go` (5 文件) | `routes/nfsshare.go` | `views/collab/NFSShareTool.vue` | SMB/NFS 文件共享，WebRTC 流媒体，HLS 分片 |
+| 24 | **ImageUnderstanding** | `handlers/image_understanding.go` | `routes/image_understanding.go` | `views/ai/ImageUnderstandingTool.vue` | 图像理解（VLM），Base64/URL 输入，返回描述 |
+| 25 | **Bailian 百炼** | `handlers/bailian.go` | `routes/bailian.go` | — | 阿里百炼图像理解 API 封装 |
+| 26 | **AIGateway** | `handlers/ai_gateway*.go` (10 文件) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/百炼，Token 计划，费用分析 |
+| 27 | **Askit 同步** | `handlers/askit*.go` (3 文件) | `routes/askit.go` | `views/other/AskitInviteTool.vue` | 跨设备数据同步，邀请码，Blob 大文件，快照 |
+| 28 | **Screen 屏幕共享** | `handlers/screen.go` | `routes/screen.go` | `views/collab/ScreenShareTool.vue` | WebRTC 点对点屏幕共享，TURN 中继 |
+| 29 | **APIGateway** | `handlers/apigateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
+| 30 | **AutoDev** | `handlers/autodev.go` (6 分段) | `routes/autodev.go` | `views/dev/AutoDevTool.vue` | Claude Code / Codex CLI 集成，Ask/Extend/Submit/List |
+| 31 | **Mermaid** | `handlers/mermaid.go` | `routes/mermaid.go` | `views/draw/MermaidTool.vue` | Mermaid 图表，实时渲染，导出 SVG/PNG |
+| 32 | **Proxy 代理** | `handlers/proxy.go` (4 分段) | `routes/proxy.go` | `views/other/ProxyTool.vue` | sing-box 嵌入式代理，节点订阅/测速/选优，NPS 隧道 |
+| 33 | **NPS NPS** | `handlers/nps.go` | `routes/nps.go` | `views/other/NPSTool.vue` | NPS 内网穿透管理 |
+| 34 | **Hermes** | `handlers/hermes.go` | `routes/hermes.go` | `views/dev/HermesTool.vue` | Hermes 工具 |
+| 35 | **Background 背景图** | `handlers/background.go` | `routes/bg.go` | `views/other/BackgroundTool.vue` | 背景图库，本地缓存，分页浏览 |
+| 36 | **Monitor 监控** | `handlers/monitoring.go` | `routes/monitor.go` | `views/other/MonitorTool.vue` | AI Gateway 使用监控，费用分析，实时日志 |
+| 37 | **Console 控制台** | `handlers/console.go` | `routes/console.go` | `views/other/ConsoleTool.vue` | 管理控制台 |
+| 38 | **Skills+MCP** | `handlers/skills*.go` (3 文件) | `routes/skills.go` | `views/other/SkillsTool.vue` | OpenAI function-calling 风格清单，MCP 协议，5 个 skill |
+| 39 | **OCR** | `handlers/ocr.go` | `routes/ocr.go` | — | 二维码识别 + OCR，Python RapidOCR |
+| 40 | **Health** | 内联 | `routes/health.go` | — | `GET /api/health` 健康检查 |
 
-## Development Commands
+---
 
-### Frontend Development
+## 技术栈
+
+- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（72 个 View 组件）
+- **后端**：Go (Gin) + SQLite + **Redis（软依赖，失败自动降级到内存存储）**
+- **辅助服务**：
+  - `ocr-service`：Python FastAPI + RapidOCR（二维码识别/OCR，端口 8000）
+  - `asr-service`：Python FastAPI + faster-whisper（语音识别，端口 9000）
+  - `tts-service`：Python FastAPI + edge-tts（语音合成，端口 8083，容器内）
+  - `diarize-service`（独立）：说话人识别（CUDA GPU 加速，可选）
+- **AI**：Anthropic Claude（via MiniMax 代理）、OpenAI、MiniMax、百炼、sing-box
+- **部署**：Docker Compose（4 服务：devtools / redis / ocr-service / asr-service）
+
+---
+
+## 开发命令
+
+### 前端
 ```bash
 cd frontend
-npm install              # Install dependencies
-npm run dev              # Start dev server (default: http://localhost:5173)
-npm run build            # Build for production (output: frontend/dist)
-npm run preview          # Preview production build
+npm install
+npm run dev          # http://localhost:5173
+npm run build
 ```
 
-### Backend Development
+### 后端
 ```bash
 cd backend
-go mod tidy              # Install/update dependencies
-go run main.go           # Start backend server (default: :8080 or :8082)
+go mod tidy
+go run main.go      # :8080（开发），:8082（Docker）
 ```
 
-### Docker Deployment
+### Docker
 ```bash
-docker-compose up -d                    # Start services
-docker-compose down                     # Stop services
-docker-compose logs -f devtools         # View logs
+docker compose up -d
+docker compose logs -f devtools
 ```
 
-Docker exposes the backend on port 8082.
+---
 
-## Architecture
+## 项目结构
 
-### Frontend Structure
-- **Views**: Self-contained tool components in `frontend/src/views/`
-  - Each tool (JsonTool, DiffTool, MarkdownTool, etc.) is a standalone Vue component
-  - PasteBin.vue: Create shared pastes
-  - PasteView.vue: View shared pastes by ID
-- **Router**: Vue Router configuration in `frontend/src/router/index.js`
-  - Routes are dynamically loaded for code splitting
-  - Menu items are auto-generated from routes with `meta.title` and `meta.icon`
-- **Layout**: App.vue provides responsive layout with:
-  - Desktop: Collapsible sidebar navigation
-  - Mobile: Drawer-based navigation with top bar
-
-### Backend Structure
-- **main.go**: Entry point
-  - Initializes SQLite database with automatic schema creation
-  - Configures Gin with CORS, rate limiting, and content size limits
-  - Starts background goroutine for hourly cleanup (expired pastes, inactive chat rooms, old messages, expired short URLs)
-  - Serves static frontend files from `./dist` directory
-- **handlers/paste.go**: PasteBin API handlers
-  - Rate limiting: 5 creates per IP per minute, 60 requests total per minute
-  - Content limits: 100KB max per paste, 1000 max views, 7 days max expiration
-  - Password protection with SHA256 hashing
-  - Auto-delete on expiration or max views reached
-- **handlers/chat.go**: WebSocket-based chat room handlers
-  - Real-time messaging via gorilla/websocket
-  - In-memory room/client management with sync.RWMutex
-  - Image/video upload (5MB/50MB limits)
-  - Password-protected rooms with SHA256 hashing
-- **handlers/shorturl.go**: URL shortener handlers
-  - Rate limiting: 10 per IP per hour
-  - Default 30-day expiration, 1000 max clicks
-  - Auto-delete on expiration or max clicks
-- **handlers/dns.go**: IP/DNS lookup handlers
-- **handlers/mockapi.go**: Mock API endpoint handlers
-  - Rate limiting: 10 creates per IP per minute
-  - Supports all HTTP methods (GET, POST, PUT, DELETE, etc.)
-  - Custom response status codes and bodies
-  - Request logging with optional expiration
-- **handlers/mdshare.go**: Markdown share handlers
-  - Shareable Markdown with 2-10 view limit, shows remaining views
-  - Auto-generates short URL (`/s/xxx`) for easy sharing
-  - Creator key for management (stored in localStorage)
-  - Admin password for global management (list, view, delete all)
-  - Reshare generates new access key and short URL
-  - Supports image paste/drag (Base64 embedded, max 1MB per image)
-- **handlers/excalidraw.go**: Excalidraw drawing handlers
-  - Cloud save with password protection (required)
-  - Default 30-day expiration, configurable 1-365 days
-  - Admin password can set permanent save (no expiration)
-  - Creator key for management (stored in localStorage)
-  - Content compressed with gzip (max 10MB)
-  - Auto-generates short URL for sharing
-- **handlers/photowall.go**: PhotoWall archive handlers
-  - Profile-style photo wall with categories and timeline aggregation
-  - Regular users can set expiration up to 180 days; admin can create permanent archives
-  - Share link + short URL generation, reshare rotates access key
-  - Single image upload endpoint; frontend supports batch selection and mobile camera capture
-  - Selected download returns original file, multi-select returns ZIP package
-- **handlers/terminal.go**: SSH terminal handlers
-  - Supports password/private key authentication and encrypted credential storage
-  - `keep_alive` sessions are restored preferentially by the frontend and retained longer during idle cleanup
-  - Mobile UI provides a command bar and reconnect handling for network/page lifecycle changes
-- **config/config.go**: Configuration file loader for YAML config
-- **models/paste.go**: SQLite operations for pastes
-  - Generates 8-character random hex IDs
-- **models/chat.go**: SQLite operations for chat rooms and messages
-- **models/shorturl.go**: SQLite operations for short URLs
-- **models/mockapi.go**: SQLite operations for Mock APIs and request logs
-- **models/mdshare.go**: SQLite operations for Markdown shares
-- **models/excalidraw.go**: SQLite operations for Excalidraw drawings (with gzip compression)
-- **models/photowall.go**: SQLite operations for PhotoWall archives and items
-- **models/terminal.go**: SQLite operations for SSH sessions/history, `keep_alive` idle retention
-- **middleware/ratelimit.go**: IP-based rate limiting middleware
-- **utils/crypto.go**: Password hashing utilities (SHA256)
-- **utils/cleanup.go**: File cleanup utilities for expired uploads
-
-### API Endpoints
-
-**PasteBin:**
-- `POST /api/paste`: Create shared paste (requires `content`, optional `title`, `language`, `password`, `expires_in`, `max_views`)
-- `GET /api/paste/:id?password=xxx`: Get paste content (increments view count)
-- `GET /api/paste/:id/info`: Get paste metadata without content
-
-**IP/DNS:**
-- `GET /api/ip`: Get client IP address
-- `GET /api/dns?domain=xxx`: DNS lookup for a domain
-
-**Chat Rooms:**
-- `POST /api/chat/room`: Create a chat room (requires `name`, optional `password`)
-- `GET /api/chat/rooms`: List recent rooms
-- `GET /api/chat/room/:id`: Get room info
-- `POST /api/chat/room/:id/join`: Join room (requires `nickname`, optional `password`)
-- `GET /api/chat/room/:id/ws?nickname=xxx`: WebSocket connection for real-time chat
-- `POST /api/chat/upload`: Upload image/video (max 5MB image, 50MB video)
-
-**Short URL:**
-- `POST /api/shorturl`: Create short URL (requires `original_url`, optional `expires_in`, `max_clicks`, `custom_id`, `password`)
-- `GET /api/shorturl/list`: List short URLs
-- `GET /api/shorturl/:id/stats`: Get click stats
-- `GET /s/:id`: Redirect to original URL (non-API route)
-
-**Mock API:**
-- `POST /api/mockapi`: Create Mock API endpoint (requires `method`, `response_status`, `response_body`, optional `name`, `description`, `expires_in`)
-- `GET /api/mockapi/:id`: Get Mock API details
-- `GET /api/mockapi/:id/logs`: Get request logs for Mock API
-- `PUT /api/mockapi/:id`: Update Mock API endpoint
-- `DELETE /api/mockapi/:id`: Delete Mock API endpoint
-- `ANY /mock/:id`: Execute Mock API endpoint (logs request and returns configured response)
-
-**Markdown Share:**
-- `POST /api/mdshare`: Create Markdown share (requires `content`, optional `title`, `max_views` 2-10, `expires_in` days)
-  - Returns `id`, `creator_key`, `access_key`, `short_code`, `share_url`
-- `GET /api/mdshare/:id?key=xxx`: Get content (increments view count, returns `remaining_views`)
-- `GET /api/mdshare/:id/creator?creator_key=xxx`: Get content for creator (no view increment)
-- `PUT /api/mdshare/:id`: Manage share (actions: `extend`, `reshare`, `edit`)
-- `DELETE /api/mdshare/:id?creator_key=xxx`: Delete share
-- `GET /api/mdshare/admin/list?admin_password=xxx`: Admin list all shares
-- `GET /api/mdshare/admin/:id?admin_password=xxx`: Admin view any share
-- `DELETE /api/mdshare/admin/:id?admin_password=xxx`: Admin delete any share
-- `GET /md/:id?key=xxx`: Frontend view route (auto-generates short URL `/s/xxx`)
-
-**Excalidraw:**
-- `POST /api/excalidraw`: Create drawing (requires `content`, `password`, optional `title`, `expires_in` days, `admin_password` for permanent)
-  - Returns `id`, `creator_key`, `short_code`, `share_url`, `expires_at`, `is_permanent`
-- `GET /api/excalidraw/:id?password=xxx`: Get drawing content (requires password)
-- `GET /api/excalidraw/:id/creator?creator_key=xxx`: Get drawing for creator
-- `PUT /api/excalidraw/:id`: Manage drawing (actions: `extend`, `edit`, `set_permanent`)
-- `DELETE /api/excalidraw/:id?creator_key=xxx`: Delete drawing
-- `GET /api/excalidraw/admin/list?admin_password=xxx`: Admin list all drawings
-- `GET /api/excalidraw/admin/:id?admin_password=xxx`: Admin view any drawing
-- `DELETE /api/excalidraw/admin/:id?admin_password=xxx`: Admin delete any drawing
-- `GET /draw/:id`: Frontend view route
-
-**PhotoWall:**
-- `POST /api/photowall/profile`: Create archive (requires `password`, optional `title`, `expires_in`, `admin_password`)
-  - Returns `id`, `creator_key`, `access_key`, `short_code`, `share_url`, `expires_at`, `is_permanent`
-- `POST /api/photowall/profile/login`: Login by archive password
-- `GET /api/photowall/profile/:id?password=xxx`: Get archive content for manager/creator
-- `PUT /api/photowall/profile/:id`: Manage archive (actions: `rename`, `extend`, `reshare`)
-- `DELETE /api/photowall/profile/:id?creator_key=xxx`: Delete archive
-- `POST /api/photowall/profile/:id/items`: Upload image item (`multipart/form-data`)
-- `PUT /api/photowall/profile/:id/items/:itemId`: Update image metadata
-- `DELETE /api/photowall/profile/:id/items/:itemId?creator_key=xxx`: Delete image item
-- `GET /api/photowall/profile/:id/download`: Download selected images; ZIP when multiple files are requested
-- `GET /api/photowall/share/:id?key=xxx`: Shared view by access key
-- `GET /api/photowall/files/:filename`: Serve uploaded photo file
-- `GET /api/photowall/admin/list?admin_password=xxx`: Admin list all archives
-- `GET /api/photowall/admin/:id?admin_password=xxx`: Admin view any archive
-- `PUT /api/photowall/admin/:id`: Admin manage archive (actions: `extend`, `set_permanent`)
-- `DELETE /api/photowall/admin/:id?admin_password=xxx`: Admin delete any archive
-- `GET /wall/:id?key=xxx`: Frontend share route
-
-**SSH Terminal:**
-- `POST /api/terminal`: Create new SSH session (requires `host`, `port`, `username`, `password` or `private_key`, `user_token`, optional `keep_alive`)
-  - Returns `id`, `creator_key`, `status`, `created_at`, `expires_at`, `keep_alive`
-- `POST /api/terminal/login`: User login to get/generate user token
-- `GET /api/terminal/list?user_token=xxx`: List all sessions for a user
-- `GET /api/terminal/:id?user_token=xxx`: Get session details
-- `GET /api/terminal/:id/creator?creator_key=xxx`: Get session for creator
-- `GET /api/terminal/:id/history?user_token=xxx`: Get command history
-- `POST /api/terminal/:id/resume`: Resume/reconnect to SSH session
-- `POST /api/terminal/:id/disconnect`: Disconnect SSH but keep session record
-- `PUT /api/terminal/:id`: Update session (actions: `rename`, `resize`, `extend`)
-- `DELETE /api/terminal/:id?creator_key=xxx`: Delete session
-- `GET /api/terminal/:id/ws?user_token=xxx`: WebSocket connection for SSH I/O
-- `GET /api/terminal/admin/list?admin_password=xxx`: Admin list all sessions
-- `DELETE /api/terminal/admin/:id?admin_password=xxx`: Admin delete any session
-  - Frontend behavior: preferred `keep_alive` session auto-restore on reload, foreground, or network recovery
-  - Mobile behavior: inline command bar with `Ctrl+C`, `Tab`, send, and enter shortcuts
-
-**Health:**
-- `GET /api/health`: Health check endpoint
-
-**Background Images:**
-- `GET /api/bg`: Get background images list (cached first, then external)
-- `POST /api/bg/cache`: Cache external images to local storage (max 1000)
-- `POST /api/bg/replace?count=10`: Randomly replace cached images
-- `GET /api/bg/random`: Get random background image (redirect)
-- `GET /api/bg/cached/:filename`: Serve cached image
-
-**OCR (二维码识别):**
-- `POST /api/ocr`: 图像 OCR 识别 + 二维码检测
-  - 请求: `{ "image": "base64编码图片" }`
-  - 响应: `{ "text": "文字内容", "lines": [...], "qr_codes": [{"data": "二维码内容", "type": "QRCODE", "rect": {...}}] }`
-
-### Docker Build Process
-The Dockerfile uses multi-stage builds:
-1. **frontend-builder**: Node 20 Alpine - builds Vue app
-2. **backend-builder**: Go 1.21 Alpine - compiles static binary with CGO for SQLite
-3. **Production**: Alpine with ca-certificates and tzdata, copies both artifacts
-
-### Environment Variables
-- `PORT`: Backend server port (default: 8080 in dev, 8082 in Docker)
-- `DB_PATH`: SQLite database file path (default: ./data/paste.db)
-- `CONFIG_PATH`: Config file path (default: ./config.yaml)
-- `TZ`: Timezone (default: Asia/Shanghai)
-- `GIN_MODE`: Gin mode, set to "release" in production
-- `HOST_PORT`: Host port for Docker exposure (default: 8082)
-- `OCR_SERVICE_URL`: OCR 服务地址 (default: http://ocr-service:8000)
-- `DEEPSEEK_API_KEY`: DeepSeek API 密钥 (用于记账 AI 分析)
-
-### Configuration File
-Copy `backend/config.example.yaml` to `backend/config.yaml`:
-```yaml
-shorturl:
-  password: "your_password"  # 设置后可使用自定义短链ID
-
-mdshare:
-  admin_password: ""         # 管理员密码
-  default_max_views: 5       # 默认最大查看次数 (2-10)
-  default_expires_days: 30   # 默认过期天数
-
-excalidraw:
-  admin_password: ""         # 管理员密码（可永久保存）
-  default_expires_days: 30   # 默认过期天数
-  max_content_size: 10485760 # 最大内容大小（10MB）
-
-ssh:
-  admin_password: ""          # 管理员密码
-  host_key_verification: true # 是否校验主机密钥
-  max_sessions_per_user: 10   # 每个用户最大会话数
-  session_idle_timeout: 5     # WebSocket 断开后的基础空闲超时（分钟）
-  history_max_age_days: 30    # 历史记录保留天数
-  session_max_age_days: 7     # 非 keep_alive 会话最大保留天数
-  encryption_key: ""          # SSH 凭据加密密钥
-
-photowall:
-  admin_password: ""         # 超级管理员密码，可设永久档案
-  default_expires_days: 90   # 默认过期天数
-  max_expires_days: 180      # 普通用户最长半年
-  max_photo_size_mb: 10      # 单张图片大小上限（MB）
+### 前端（72 View 组件）
+```
+frontend/src/views/
+├── ai/         # AI 相关（6）：AIGatewayTool, AIChatTool, BailianImage, EnglishTutor, ImageUnderstanding, MiniMaxStudio
+├── collab/     # 协作（8）：ChatRoom, NFSShareTool, PasteBin, ScreenShare, ScreenView, ShortUrl, ...
+├── convert/    # 转换（8）：Base64, Dns, QrCode, Replace, Text, Timestamp, Url
+├── dev/        # 开发（9）：AutoDev, Diff, EdgeTTS, Hermes, Json, MockApi, Regex, Terminal
+├── draw/       # 绘图（4）：Excalidraw, Markdown, Mermaid, MindMap
+├── home/       # 首页
+├── household/  # 家庭（9 个子组件）
+├── life/       # 生活（11）：Counter, Expense, GameHall, Glucose, HouseholdSpace3D, HouseholdTool, PhotoWall, Planner, Pregnancy, Recipe, VoiceInbox
+├── other/      # 其他（9）：Askit, Background, Console, ImageViewer, Monitor, Neon, NPS, Proxy, Skills, VibeMotion
+└── share/      # 分享视图（9）
 ```
 
-**Short URL modes:**
-- 无密码：随机ID，有限流（10/小时/IP）
-- 有密码：可自定义ID如 `/s/1` `/s/abc`，无限流
-
-**Markdown Share:**
-- 创建者密钥自动存储在浏览器 localStorage
-- 访问密钥用于分享给他人查看
-- 管理员密码可管理所有分享（查看、删除）
-- 管理员面板入口：Markdown 编辑器页面右上角"管理"按钮
-- 管理员密码存储在 sessionStorage（关闭浏览器失效）
-
-**Excalidraw:**
-- 云端保存需要设置访问密码（必填）
-- 默认30天过期，可设置1-365天
-- 管理员密码可设置永久保存（无过期）
-- 创建者密钥自动存储在浏览器 localStorage
-- 支持本地保存到浏览器 localStorage
-- 支持导出 PNG、SVG、JSON 格式
-- 内容使用 gzip 压缩存储（最大10MB）
-
-**PhotoWall:**
-- 同一管理密码对应同一个档案，适合长期维护家庭/成长相册
-- 普通用户最长 180 天，超管可设永久档案
-- 自动生成分享链接和短链，重新分享会轮换访问密钥
-- 前端支持多选上传、手机直拍、分类筛选、时间线筛选和打包下载
-
-**SSH Terminal:**
-- `keep_alive` 会话会被前端记为首选，在刷新、回前台和网络恢复后优先恢复
-- 非 `keep_alive` 的 idle 会话会按清理策略删除；`keep_alive` 会话服务端保留时间更长
-- 移动端提供命令输入栏和常用快捷键按钮
-
-## Key Design Patterns
-
-### Frontend
-- **Keep-alive**: Router views are cached for better performance
-- **Responsive Design**: Mobile-first approach with breakpoints at 768px and 480px
-- **Dynamic Icons**: Element Plus icons loaded via component :is directive
-- **Code Splitting**: Lazy-loaded routes reduce initial bundle size
-
-### Backend
-- **Security**: Rate limiting per IP, content size limits, password hashing (SHA256), input validation
-- **Auto-cleanup**: Background goroutine removes expired data every hour (pastes, chat rooms inactive >7 days, messages >7 days old, expired short URLs, expired Mock APIs, expired Markdown shares, expired Excalidraw drawings, expired PhotoWall archives, uploaded files >7 days old)
-- **Graceful Degradation**: Attempts cleanup when storage limit reached before rejecting
-- **Static-first**: SPA routing handled by serving index.html for unmatched routes
-- **Config System**: YAML-based configuration loaded from `./config.yaml` or `CONFIG_PATH` env var
-
-## Database Schema
-
-The SQLite database contains tables for `pastes`, `chat_rooms`, `chat_messages`, `short_urls`, `mock_apis` (with `mock_api_logs`), `markdown_shares`, `excalidraw_shares`, `ssh_sessions`/`ssh_history`, and `photowall_profiles`/`photowall_items`. Most tables use 8-character hex IDs and include cleanup-related indexes. Schema is auto-created on startup in `models/*.go` files.
-
-## Common Tasks
-
-### Adding a New Tool
-1. Create new Vue component in `frontend/src/views/YourTool.vue`
-2. Add route to `frontend/src/router/index.js` with `meta.title` and `meta.icon`
-3. Icon automatically appears in navigation menu
-
-### Modifying Rate Limits
-- Global create rate limit: `middleware.NewRateLimiter()` in main.go (10 per IP per minute)
-- Paste creation limit: `maxPerIP` and `ipWindow` in handlers/paste.go (5 per minute)
-- Short URL limit: `CountShortURLsByIP()` check in handlers/shorturl.go (10 per IP per hour)
-- Mock API limit: Same as global create rate limit (10 per IP per minute)
-- Content size limit: `middleware.ContentSizeLimiter()` in main.go (55MB for video upload support)
-
-### Testing PasteBin
-Use curl or API clients:
-```bash
-# Create paste
-curl -X POST http://localhost:8082/api/paste \
-  -H "Content-Type: application/json" \
-  -d '{"content":"test","title":"Test","expires_in":1}'
-
-# Get paste (returns id in response)
-curl http://localhost:8082/api/paste/{id}
+### 后端路由拆分（routes/ 38 个文件）
+```
+backend/routes/
+├── index.go              # RouteHandlers struct + RegisterAllRoutes（入口）
+├── paste.go / analysis.go / dns_image.go / chat.go / edge_tts.go / game.go
+├── voicememo.go / shorturl.go / mockapi.go / mdshare.go / excalidraw.go
+├── pregnancy.go / expense.go / glucose.go / planner.go / recipe.go / household.go
+├── photowall.go / terminal.go / nfsshare.go / image_understanding.go / bailian.go
+├── ai_gateway.go / askit.go / screen.go / apigateway.go / autodev.go / mermaid.go
+├── proxy.go / nps.go / hermes.go / bg.go / monitor.go / console.go / skills.go
+├── ocr.go / health.go
 ```
 
-### Testing Markdown Share
-```bash
-# Create share
-curl -X POST http://localhost:8082/api/mdshare \
-  -H "Content-Type: application/json" \
-  -d '{"content":"# Hello\nThis is **Markdown**","title":"Test","max_views":5,"expires_in":30}'
-
-# Response: {"id":"abc12345","creator_key":"xxx","access_key":"yyy","short_code":"zzz","share_url":"/s/zzz"}
-
-# View share (consumes 1 view)
-curl "http://localhost:8082/api/mdshare/{id}?key={access_key}"
-
-# View as creator (no view consumption)
-curl "http://localhost:8082/api/mdshare/{id}/creator?creator_key={creator_key}"
-
-# Reshare (generate new access key)
-curl -X PUT http://localhost:8082/api/mdshare/{id} \
-  -H "Content-Type: application/json" \
-  -d '{"action":"reshare","max_views":5,"creator_key":"xxx"}'
-
-# Delete share
-curl -X DELETE "http://localhost:8082/api/mdshare/{id}?creator_key={creator_key}"
-
-# Admin: List all shares (requires admin_password in config.yaml)
-curl "http://localhost:8082/api/mdshare/admin/list?admin_password=your_password"
-
-# Admin: View any share
-curl "http://localhost:8082/api/mdshare/admin/{id}?admin_password=your_password"
-
-# Admin: Delete any share
-curl -X DELETE "http://localhost:8082/api/mdshare/admin/{id}?admin_password=your_password"
+### Handler 文件分组
+```
+handlers/
+├── 核心工具（8）：paste, shorturl, mockapi, mdshare, excalidraw, photowall, terminal, dns
+├── AI 网关（14）：ai_gateway*, bailian, image_understanding, minimax_*, planner_ai
+├── 订阅/代理（5）：proxy*, singbox*, gfwlist, nps, apigateway_proxy
+├── 家庭/健康（5）：household, pregnancy, expense, glucose, recipe
+├── 实时功能（4）：chat, voicememo, screen, nfsshare
+├── 内容创作（3）：mermaid, game, hermes
+├── 开发者（3）：autodev, analysis, console
+├── 辅助（7）：background, monitoring, ocr, edge_tts, skills*, askit*, fileutils, security_enhance, content_parser
+└── 测试（20+）：*_test.go
 ```
 
-### Testing Excalidraw
-```bash
-# Create cloud save (password required)
-curl -X POST http://localhost:8082/api/excalidraw \
-  -H "Content-Type: application/json" \
-  -d '{"content":"{\"type\":\"excalidraw\",\"elements\":[]}","title":"Test","password":"123456","expires_in":30}'
+---
 
-# Response: {"id":"abc12345","creator_key":"xxx","short_code":"zzz","share_url":"/s/zzz","expires_at":"...","is_permanent":false}
+## API 快速索引
 
-# Get drawing (requires password)
-curl "http://localhost:8082/api/excalidraw/{id}?password=123456"
+### 工具类
+- `POST /api/paste` — 创建粘贴
+- `POST /api/shorturl` — 创建短链
+- `POST /api/mockapi` — 创建 Mock API
+- `ANY /mock/:id` — 执行 Mock API
+- `POST /api/mdshare` — 创建 Markdown 分享
+- `POST /api/excalidraw` — 创建 Excalidraw 画图
+- `GET /api/dns?domain=` — DNS 查询
+- `GET /api/ip` — 客户端 IP
 
-# Get as creator (no password needed)
-curl "http://localhost:8082/api/excalidraw/{id}/creator?creator_key={creator_key}"
+### 档案/社交
+- `POST /api/chat/room` — 创建聊天室（+ WebSocket `/api/chat/room/:id/ws`）
+- `POST /api/photowall/profile` — 创建照片墙档案
+- `POST /api/terminal` — 创建 SSH 会话（+ WebSocket `/api/terminal/:id/ws`）
+- `POST /api/skills/invoke` — 调用 skill（JSON-RPC）
 
-# Extend expiration
-curl -X PUT http://localhost:8082/api/excalidraw/{id} \
-  -H "Content-Type: application/json" \
-  -d '{"action":"extend","expires_in":30,"creator_key":"xxx"}'
+### AI
+- `POST /api/ai-gateway/chat` — AI 对话
+- `POST /api/ai-gateway/image` — 图像理解
+- `POST /api/image-understanding` — 图像描述
+- `POST /api/bailian/image` — 百炼图像
+- `POST /api/edge-tts` — 语音合成
+- `GET /api/skills/manifest` — Skills 清单（OpenAI function-calling 格式）
+- `GET /api/skills/mcp` — MCP 发现端点
 
-# Set permanent (admin only)
-curl -X PUT http://localhost:8082/api/excalidraw/{id} \
-  -H "Content-Type: application/json" \
-  -d '{"action":"set_permanent","admin_password":"your_password"}'
+### 代理
+- `POST /api/proxy/trigger-refresh` — 触发订阅刷新
+- `GET /api/proxy/nodes` — 节点列表
+- `POST /api/proxy/start` — 启动代理
+- `POST /api/proxy/stop` — 停止代理
+- `POST /api/proxy/speed-test` — 节点测速
 
-# Delete drawing
-curl -X DELETE "http://localhost:8082/api/excalidraw/{id}?creator_key={creator_key}"
+### 健康
+- `GET /api/health` — 健康检查
 
-# Admin: List all drawings
-curl "http://localhost:8082/api/excalidraw/admin/list?admin_password=your_password"
-```
+---
 
-### WebSocket Chat Architecture
-The chat system uses in-memory state management with gorilla/websocket:
-- **Room/Client Management**: `sync.RWMutex` protects shared state for concurrent access
-- **Message Broadcasting**: Messages are broadcast to all clients in a room via goroutines
-- **File Uploads**: Images/videos are stored in `./data/uploads` with 7-day auto-cleanup
-- **Connection Handling**: Each WebSocket connection runs in its own goroutine with read/write loops
-- **Cleanup**: Rooms inactive for 7+ days and messages older than 7 days are auto-deleted
+## 关键设计模式
+
+### 前端
+- **动态菜单**：routes 自动生成侧边栏（`meta.title` + `meta.icon`）
+- **代码分割**：所有路由懒加载
+- **响应式**：移动端 Drawer 导航
+
+### 后端
+- **Redis 软依赖**：Redis 不可用时自动降级到内存存储（`state.New()` → `NewMemoryStore()`）
+- **路由拆分**：`routes.go` → `routes/` 包（38 文件，34 分组）
+- **自动清理**：每小时清理过期数据（pastes/shorturls/mdshares/excalidraws/photowalls/terminals）
+- **静态优先**：未匹配路由返回 `index.html`（SPA 支持）
+- **配置**：YAML 配置文件（`config.yaml`）
+
+---
+
+## 添加新工具流程
+
+1. 创建 View 组件：`frontend/src/views/category/YourTool.vue`
+2. 添加路由：`frontend/src/router/index.js`（设置 `meta.title` 和 `meta.icon`）
+3. 创建 Handler：`backend/handlers/yourtool.go`
+4. 添加路由文件：`backend/routes/yourtool.go`（注册 `RegisterYourToolRoutes`）
+5. 在 `backend/routes/index.go` 的 `RegisterAllRoutes` 中添加调用
+6. 更新本文件 `34 模块地图` 表格
+
+---
+
+## 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | 8080 | 后端端口 |
+| `DB_PATH` | `./data/paste.db` | SQLite 路径 |
+| `CONFIG_PATH` | `./config.yaml` | 配置文件 |
+| `OCR_SERVICE_URL` | `http://ocr-service:8000` | OCR 服务 |
+| `ASR_SERVICE_URL` | `http://asr-service:9000` | ASR 服务 |
+| `DIARIZE_SERVICE_URL` | — | 说话人识别（可选） |
+| `TTS_SERVICE_URL` | `http://127.0.0.1:8083` | TTS 服务 |
+| `MINIMAX_API_KEY` | — | MiniMax API（AI 机器人） |
+| `DEEPSEEK_API_KEY` | — | DeepSeek API（记账 AI） |
+| `GOPROXY` | `https://goproxy.cn,direct` | Go 代理（国内） |
+
+---
 
 ## Module Path
 
-The Go backend uses module path `devtools`. Imports should use this prefix:
+Go 后端使用模块路径 `devtools`：
 ```go
 import (
     "devtools/handlers"
     "devtools/middleware"
     "devtools/models"
+    "devtools/routes"
 )
 ```
