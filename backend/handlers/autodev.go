@@ -1,5 +1,9 @@
 package handlers
 
+// ========================================================================
+// autodev/section2: Ask / Extend 任务提交与结果获取
+// ========================================================================
+
 import (
 	"archive/zip"
 	"bufio"
@@ -236,6 +240,10 @@ func (h *AutoDevHandler) Extend(c *gin.Context) {
 // InitProject handles GET /api/autodev/init/stream?password=xxx&work_dir=xxx
 // Streams `autodev init --path <work_dir>` output via SSE.
 // init_project is pure Python (no claude), so no UID switch needed.
+
+// ========================================================================
+// autodev/section3: InitProject 项目初始化流
+// ========================================================================
 func (h *AutoDevHandler) InitProject(c *gin.Context) {
 	password := c.Query("password")
 	workDir := c.Query("work_dir")
@@ -336,6 +344,10 @@ func (h *AutoDevHandler) GetCapabilities(c *gin.Context) {
 }
 
 // Submit handles POST /api/autodev/tasks — start a new task or resume from breakpoint
+
+// ========================================================================
+// autodev/section4: Task 生命周期管理 (Submit/List/Get/Stop/Terminate/Delete)
+// ========================================================================
 func (h *AutoDevHandler) Submit(c *gin.Context) {
 	var req struct {
 		Type        string `json:"type"` // develop, loop, ask, export (default: develop)
@@ -2149,6 +2161,10 @@ func getCLIInfo(binary string) CLIInfo {
 }
 
 // GetClaudeVersion handles GET /api/autodev/claude/version?password=xxx
+
+// ========================================================================
+// autodev/section5: 版本查询 / CLI 测试 / 自动更新 (Claude / Codex / Clawtest)
+// ========================================================================
 func (h *AutoDevHandler) GetClaudeVersion(c *gin.Context) {
 	if !h.checkPassword(c) {
 		return
@@ -2518,6 +2534,10 @@ func (h *AutoDevHandler) gitSSHCommand() string {
 
 // GetSSHKey handles GET /api/autodev/sshkey — returns (and generates if needed)
 // the public SSH key that should be added to GitHub as a deploy key.
+
+// ========================================================================
+// autodev/section6: SSH Key 管理
+// ========================================================================
 func (h *AutoDevHandler) GetSSHKey(c *gin.Context) {
 	if !h.checkPasswordQuery(c) {
 		return

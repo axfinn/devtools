@@ -1,5 +1,9 @@
 package handlers
 
+// ========================================================================
+// household/section2: 档案 Profile CRUD (CreateProfile ~ ExtendProfile)
+// ========================================================================
+
 import (
 	"bytes"
 	"crypto/sha256"
@@ -418,6 +422,10 @@ func (h *HouseholdHandler) GetProfileLocations(c *gin.Context) {
 }
 
 // GetLocationLibrary 获取位置库
+
+// ========================================================================
+// household/section3: 位置 Location 管理
+// ========================================================================
 func (h *HouseholdHandler) GetLocationLibrary(c *gin.Context) {
 	profileID := c.Param("id")
 	if _, ok := h.requireProfileAccess(c, profileID); !ok {
@@ -522,6 +530,10 @@ func (h *HouseholdHandler) DeleteLocation(c *gin.Context) {
 }
 
 // GetSpaceLayout 获取空间布局
+
+// ========================================================================
+// household/section4: 空间 SpaceLayout & 分享
+// ========================================================================
 func (h *HouseholdHandler) GetSpaceLayout(c *gin.Context) {
 	profileID := c.Param("id")
 	if _, ok := h.requireProfileAccess(c, profileID); !ok {
@@ -790,6 +802,10 @@ func (h *HouseholdHandler) OpenProfileItem(c *gin.Context) {
 // 物品管理 API
 
 // CreateItem 创建物品
+
+// ========================================================================
+// household/section5: 物品 Item & ProfileItem CRUD
+// ========================================================================
 func (h *HouseholdHandler) CreateItem(c *gin.Context) {
 	var item struct {
 		Name        string `json:"name" binding:"required"`
@@ -1081,6 +1097,10 @@ func (h *HouseholdHandler) OpenItem(c *gin.Context) {
 // 模板管理 API
 
 // GetTemplates 获取物品模板
+
+// ========================================================================
+// household/section6: 模板 Templates & 通知 Notifications & 任务 Todos & 统计 Stats
+// ========================================================================
 func (h *HouseholdHandler) GetTemplates(c *gin.Context) {
 	templates, err := h.db.GetItemTemplates()
 	if err != nil {
@@ -1836,6 +1856,10 @@ func (h *HouseholdHandler) parseReceiptItems(textLines []string, existingNames m
 }
 
 // AIFeatureCheck 检查 AI 功能是否可用
+
+// ========================================================================
+// household/section7: AI 功能 / OCR / 条码 / 聊天
+// ========================================================================
 func (h *HouseholdHandler) AIFeatureCheck(c *gin.Context) {
 	enabled := h.cfg.DeepSeek.APIKey != "" || h.cfg.MiniMax.APIKey != ""
 	c.JSON(http.StatusOK, gin.H{
