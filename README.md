@@ -39,6 +39,18 @@
 | **血糖监测** | 血糖记录追踪，达标率统计、趋势图表 |
 | **二维码** | 二维码生成器，支持自定义颜色/尺寸，图片中二维码识别 |
 | **背景图库** | 背景图片管理，本地缓存、分页浏览、API 接口 |
+| **AI Gateway** | 统一 AI 网关，支持 OpenAI / Anthropic / MiniMax / 百炼等多模型，支持图像理解、TTS、语音、Token 计划 |
+| **Proxy 代理** | sing-box 嵌入式代理，支持节点订阅抓取、自动选优、测速、NPS 隧道、节点管理 |
+| **AutoDev** | Claude Code / Codex CLI 集成，本地代码任务执行，支持 Ask/Submit/List 等 API |
+| **Planner 事项** | 工作/生活分离的待办事项管理，时间线、任务、专注模式、AI 建议、会议纪要 |
+| **Household 家庭** | 家庭物品管理，支持物品/位置/模板/通知，AI 智能添加/分析 |
+| **Game 游戏** | 小游戏大厅，支持 Arcade Room 实时对战 |
+| **Monitor 监控** | AI Gateway 使用监控、费用分析、服务状态、实时日志 |
+| **Skills + MCP** | AI 工具标准化入口，OpenAI function-calling 风格 manifest，MCP 协议支持 |
+| **VoiceMemo 语音** | 语音录制、语音转写、AI 总结、自动创建待办 |
+| **Screen 屏幕** | WebRTC 点对点屏幕共享，支持 TURN 中继 |
+| **NFSShare 分享** | SMB/NFS 网络文件共享，支持 WebRTC 流媒体播放、HLS 分片 |
+| **AskIt 同步** | 跨设备数据同步，支持邀请码、Blob 大文件、快照 |
 
 ### 安全与性能
 
@@ -66,9 +78,10 @@
 ## 技术栈
 
 - **前端**：Vue 3 + Vite + Element Plus + TailwindCSS
-- **后端**：Go Gin + SQLite
-- **OCR 服务**：Python FastAPI + RapidOCR + OpenCV (二维码识别)
-- **部署**：Docker + Docker Compose
+- **后端**：Go Gin + SQLite + Redis（软依赖，Redis 不可用时自动降级到内存存储）
+- **辅助服务**：Python FastAPI + edge-tts（TTS 语音合成）、Python FastAPI + faster-whisper（ASR 语音识别）、RapidOCR（二维码识别）
+- **AI 集成**：Anthropic Claude（via MiniMax 代理）、OpenAI、MiniMax、百炼、sing-box（代理）、Claude Code CLI、Codex CLI
+- **部署**：Docker + Docker Compose（4 服务：devtools / redis / ocr-service / asr-service）
 
 ## 快速开始
 
@@ -92,7 +105,12 @@ docker compose logs -f devtools
 open http://localhost:8082
 ```
 
-Docker 默认启动 `devtools`、`redis`、`ocr-service` 三个服务：
+Docker Compose 默认启动 4 个服务：
+
+- `devtools`：主应用（Go + Python TTS venv）
+- `redis`：限流、图像任务状态、分片上传状态（AOF 持久化）
+- `ocr-service`：二维码识别 + OCR
+- `asr-service`：语音识别（Whisper）+ 说话人识别（Diarize，可选）
 - `redis` 用于限流、图像理解任务状态、Paste 分片上传等瞬时状态，并通过 AOF 持久化到 volume，容器重启不会丢
 - `devtools` 的 SQLite、上传文件和运行数据持久化到 `devtools-data` volume
 - `backend/config.yaml` 会在启动时复制到容器内 `/app/config.yaml`
