@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -87,7 +88,8 @@ func New(cfg config.RedisConfig) (TransientStore, error) {
 	defer cancel()
 
 	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, err
+		log.Printf("警告: Redis Ping 失败 (%v)，降级到 MemoryStore（限流/任务状态改用内存，重启后丢失）", err)
+		return NewMemoryStore(), nil
 	}
 
 	prefix := strings.TrimSpace(cfg.KeyPrefix)
