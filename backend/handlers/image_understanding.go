@@ -579,13 +579,13 @@ func (h *ImageUnderstandingHandler) ExecuteWithPath(ctx context.Context, toolNam
 	if err := proc.Initialize(ctx); err != nil {
 		msg := enrichMCPError(err, proc)
 		logMCPError("initialize", msg)
-		return "", "", nil, nil, fmt.Errorf(msg)
+		return "", "", nil, nil, errors.New(msg)
 	}
 	tools, err := proc.ListTools(ctx)
 	if err != nil {
 		msg := enrichMCPError(err, proc)
 		logMCPError("tools/list", msg)
-		return "", "", nil, nil, fmt.Errorf(msg)
+		return "", "", nil, nil, errors.New(msg)
 	}
 
 	tool, ok := resolveTool(toolName, tools)
@@ -599,7 +599,7 @@ func (h *ImageUnderstandingHandler) ExecuteWithPath(ctx context.Context, toolNam
 		msg := enrichMCPError(err, proc)
 		logMCPArgs(tool.Name, payload)
 		logMCPError("tools/call", msg)
-		return tool.Name, "", nil, payload, fmt.Errorf(msg)
+		return tool.Name, "", nil, payload, errors.New(msg)
 	}
 	text := extractToolText(result)
 	return tool.Name, text, result, payload, nil

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )

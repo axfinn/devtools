@@ -11,6 +11,21 @@ frontend/.env.*.local
 backend/server
 backend/data
 
+# 本地数据(含真实数据库,绝不进镜像)
+data/
+*.db
+
+# 构建产物与本地缓存
+frontend/dist
+backend/dist
+node_modules
+.pnpm-store
+
+# 临时/备份文件
+*.bak
+*.bak.*
+*.old
+
 # IDE
 .idea
 .vscode

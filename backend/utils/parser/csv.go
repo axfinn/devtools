@@ -2,6 +2,7 @@ package parser
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -146,7 +147,7 @@ func (p *CSVParser) Format(content string) string {
 func (p *CSVParser) ToTableData(content string) (*TableData, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return nil, fmt.Errorf(result.ParseError)
+		return nil, errors.New(result.ParseError)
 	}
 
 	return &TableData{
@@ -161,7 +162,7 @@ func (p *CSVParser) ToTableData(content string) (*TableData, error) {
 func (p *CSVParser) ToMarkdown(content string) (string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return "", fmt.Errorf(result.ParseError)
+		return "", errors.New(result.ParseError)
 	}
 
 	var buf strings.Builder
@@ -202,7 +203,7 @@ func (p *CSVParser) ToMarkdown(content string) (string, error) {
 func (p *CSVParser) ToHTML(content string) (string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return "", fmt.Errorf(result.ParseError)
+		return "", errors.New(result.ParseError)
 	}
 
 	var buf strings.Builder
@@ -245,7 +246,7 @@ func (p *CSVParser) MergeCSV(csvContents []string) (string, error) {
 	for _, content := range csvContents {
 		result := p.Parse(content)
 		if !result.IsValid {
-			return "", fmt.Errorf(result.ParseError)
+			return "", errors.New(result.ParseError)
 		}
 		allResults = append(allResults, result)
 	}
@@ -276,7 +277,7 @@ func (p *CSVParser) MergeCSV(csvContents []string) (string, error) {
 func (p *CSVParser) FilterCSV(content string, columnIndex int, value string) (string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return "", fmt.Errorf(result.ParseError)
+		return "", errors.New(result.ParseError)
 	}
 
 	if columnIndex < 0 || columnIndex >= result.ColumnCount {
@@ -307,7 +308,7 @@ func (p *CSVParser) FilterCSV(content string, columnIndex int, value string) (st
 func (p *CSVParser) SortCSV(content string, columnIndex int, ascending bool) (string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return "", fmt.Errorf(result.ParseError)
+		return "", errors.New(result.ParseError)
 	}
 
 	if columnIndex < 0 || columnIndex >= result.ColumnCount {
@@ -361,7 +362,7 @@ func (p *CSVParser) Validate(content string) (bool, string) {
 func (p *CSVParser) GetStatistics(content string) (map[string]interface{}, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return nil, fmt.Errorf(result.ParseError)
+		return nil, errors.New(result.ParseError)
 	}
 
 	stats := map[string]interface{}{
@@ -440,7 +441,7 @@ func escapeHTML(s string) string {
 func (p *CSVParser) ConvertToTSV(content string) (string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return "", fmt.Errorf(result.ParseError)
+		return "", errors.New(result.ParseError)
 	}
 
 	var buf strings.Builder
@@ -489,7 +490,7 @@ func (p *CSVParser) DetectHeaders(content string) []string {
 func (p *CSVParser) FillMissingValues(content string, fillValue string) (string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return "", fmt.Errorf(result.ParseError)
+		return "", errors.New(result.ParseError)
 	}
 
 	maxCols := result.ColumnCount
@@ -526,7 +527,7 @@ func (p *CSVParser) FillMissingValues(content string, fillValue string) (string,
 func (p *CSVParser) GetColumn(content string, columnIndex int) ([]string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return nil, fmt.Errorf(result.ParseError)
+		return nil, errors.New(result.ParseError)
 	}
 
 	if columnIndex < 0 || columnIndex >= result.ColumnCount {
@@ -547,7 +548,7 @@ func (p *CSVParser) GetColumn(content string, columnIndex int) ([]string, error)
 func (p *CSVParser) ToJSON(content string) (string, error) {
 	result := p.Parse(content)
 	if !result.IsValid {
-		return "", fmt.Errorf(result.ParseError)
+		return "", errors.New(result.ParseError)
 	}
 
 	type RowData map[string]string

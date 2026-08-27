@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -619,7 +620,7 @@ func (h *BailianHandler) pollOnce(task *models.BailianImageTask) (*models.Bailia
 		task.CompletedAt = &now
 		_ = h.db.UpdateBailianTask(task)
 		h.addEvent(task.ID, "vendor.poll_failed", "failed", msg, tryParseJSON(respText))
-		return task, fmt.Errorf(msg)
+		return task, errors.New(msg)
 	}
 
 	task.VendorStatus = h.extractVendorStatus(payload)

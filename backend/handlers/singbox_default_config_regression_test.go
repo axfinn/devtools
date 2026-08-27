@@ -21,7 +21,6 @@ package handlers
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"strings"

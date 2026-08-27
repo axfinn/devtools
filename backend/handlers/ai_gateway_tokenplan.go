@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -568,7 +569,7 @@ func (h *AIGatewayHandler) retrieveMinimaxFile(apiKey, baseURL, fileID string) (
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf(firstNonEmpty(minimaxBaseRespError(payload), fmt.Sprintf("文件查询失败，状态码 %d", resp.StatusCode)))
+		return nil, errors.New(firstNonEmpty(minimaxBaseRespError(payload), fmt.Sprintf("文件查询失败，状态码 %d", resp.StatusCode)))
 	}
 	return payload, nil
 }

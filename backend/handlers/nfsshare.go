@@ -3,6 +3,7 @@ package handlers
 import (
 	crypto_rand "crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -108,7 +109,7 @@ func (h *NFSShareHandler) doMount(ms *MountStatus) error {
 		if _, err := os.Stat(mc.Export); err != nil {
 			ms.Mounted = false
 			ms.ErrMessage = "本地目录不存在: " + mc.Export
-			return fmt.Errorf(ms.ErrMessage)
+			return errors.New(ms.ErrMessage)
 		}
 		ms.LocalPath = mc.Export
 		ms.Mounted = true
@@ -121,7 +122,7 @@ func (h *NFSShareHandler) doMount(ms *MountStatus) error {
 		// NFS 挂载需要系统 root 权限（Docker 需 --cap-add SYS_ADMIN），暂不支持
 		ms.Mounted = false
 		ms.ErrMessage = "NFS 暂不支持（需要 root/SYS_ADMIN 权限），请改用 smb 或 local 类型"
-		return fmt.Errorf(ms.ErrMessage)
+		return errors.New(ms.ErrMessage)
 
 	default:
 		return fmt.Errorf("不支持的挂载类型: %s（支持 nfs / smb / local）", mc.Type)

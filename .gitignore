@@ -1,6 +1,7 @@
 # Node
 node_modules/
 frontend/node_modules/
+.pnpm-store/
 frontend/dist/
 backend/node_modules/
 backend/dist/
@@ -43,6 +44,7 @@ Thumbs.db
 # Temp & Backup
 *.tmp
 *.bak
+*.bak.*
 *.old
 *.backup
 *.swp
