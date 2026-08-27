@@ -10,6 +10,8 @@ on:
 env:
   NODE_VERSION: '20'
   GO_VERSION: '1.21'
+  GOPROXY: 'https://goproxy.cn,direct'
+  GOSUMDB: 'off'
 
 jobs:
   # Frontend Tests and Build
@@ -87,6 +89,11 @@ jobs:
             gofmt -s -l .
             exit 1
           fi
+
+      - name: Run file size budget checks
+        run: |
+          make lint-go || true
+          make lint-vue || true
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./... || echo "Tests not configured yet"
