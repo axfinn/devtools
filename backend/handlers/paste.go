@@ -818,6 +818,9 @@ func (h *PasteHandler) ServeFile(c *gin.Context) {
 		return
 	}
 
+	// 强制下载：Content-Disposition: attachment 触发浏览器"另存为"对话框
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Header("X-Content-Type-Options", "nosniff")
 	c.File(filePath)
 }
 

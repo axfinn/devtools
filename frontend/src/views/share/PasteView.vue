@@ -1002,8 +1002,10 @@ const downloadHtmlFile = () => {
   const a = document.createElement('a')
   a.href = url
   a.download = currentHtmlFile.value?.original_name || currentHtmlFile.value?.filename || 'page.html'
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 const copyContent = async () => {
@@ -1024,8 +1026,10 @@ const downloadContent = () => {
   const a = document.createElement('a')
   a.href = url
   a.download = `${paste.value.title || paste.value.id}.${ext}`
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 // 代码文件预览的高亮内容
@@ -1085,8 +1089,10 @@ const downloadCodeFile = () => {
   const a = document.createElement('a')
   a.href = url
   a.download = currentCodeFile.value?.original_name || currentCodeFile.value?.filename || 'code.txt'
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 // 解析文件列表
@@ -1148,21 +1154,15 @@ const closeVideoPreview = () => {
   currentVideoFile.value = null
 }
 
-// 下载文件
-const downloadFile = async (file) => {
-  try {
-    const response = await fetch(API_BASE + file.url)
-    const blob = await response.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = file.original_name || file.filename
-    a.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('下载成功')
-  } catch (e) {
-    ElMessage.error('下载失败')
-  }
+// 下载文件 — 走原生浏览器下载，触发"另存为"对话框（Content-Disposition: attachment）
+const downloadFile = (file) => {
+  const a = document.createElement('a')
+  a.href = API_BASE + file.url
+  a.download = file.original_name || file.filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
 }
 
 // 获取文件类型标签
