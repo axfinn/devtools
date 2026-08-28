@@ -812,13 +812,40 @@ func (h *PasteHandler) ServeFile(c *gin.Context) {
 	}
 	filePath := filepath.Join(pasteUploadDir, filename)
 
-	// 检查文件是否存在
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在", "code": 404})
+	// 检查文件是否存在并获取大小（提前发现不存在/无法访问问题）
+	info, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "文件不存在", "code": 404})
+		} else {
+			// 文件状态检查失败（权限问题或磁盘 I/O 错误）
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "文件访问失败", "code": 500})
+		}
 		return
 	}
 
-	c.File(filePath)
+	// Cloudflare 524 超时 100s，设置连接读取超时防止挂起
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("X-Accel-Buffering", "no")
+
+	var f *os.File
+	// 尝试在连接级别设置超时（90s）
+	if hj, ok := c.Writer.(http.Hijacker); ok {
+		conn, _, err := hj.Hijack()
+		if err == nil {
+			defer conn.Close()
+			conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		}
+	}
+
+	f, err = os.Open(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "文件读取失败", "code": 500})
+		return
+	}
+	defer f.Close()
+
+	http.ServeContent(c.Writer, c.Request, filename, info.ModTime(), f)
 }
 
 // InitChunkUpload 初始化分片上传
