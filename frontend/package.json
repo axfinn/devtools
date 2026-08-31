@@ -64,7 +64,7 @@
   },
   "devDependencies": {
     "@rollup/plugin-inject": "^5.0.5",
-    "@tailwindcss/postcss": "^4.1.18",
+    "@tailwindcss/postcss": "^4.3.3",
     "@vitejs/plugin-react": "^5.1.2",
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/test-utils": "^2.4.6",
