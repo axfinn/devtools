@@ -10,7 +10,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/redis/go-redis/v9 v9.18.0
-	github.com/sagernet/sing v0.9.0-beta.2
+	github.com/sagernet/sing v0.9.0-beta.4
 	github.com/sagernet/sing-box v1.14.0-beta.17
 	github.com/yuin/goldmark v1.7.1
 	golang.org/x/crypto v0.54.0
