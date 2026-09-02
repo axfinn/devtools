@@ -5151,6 +5151,19 @@ var extensionFS embed.FS
 
 var extensionTmpl = template.Must(template.ParseFS(extensionFS, "extension/*"))
 
+// pacStringEscape 转义会被拼进 PAC JS 字符串字面量的字符。
+// text/template 只做占位符替换,不做 JS 转义;
+// ProxyHost / AdminPass 一旦含 " 或 \ 会破坏 PAC 脚本。
+// AdminPass 还会进 storage,Chrome popup.js 会回显;
+// 故同时剔 \r \n 防 JS 行截断。
+func pacStringEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
+}
+
 // DownloadExtension GET /api/proxy/extension?admin_password=xxx&host=xxx
 // 生成并下载 Chrome 扩展 zip，导入后自动配置代理
 func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
@@ -5166,19 +5179,33 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
 		proxyHost = c.Request.Host
 	}
 	// 去掉 host 里可能带的端口，换成 tunnel_port（nginx 不支持 CONNECT，必须直连 tunnel_port）
+	// 先剥端口得到纯 hostname 再做 SSRF 检查(否则 example.com:443 会被字面检查漏掉)
+	hostname := proxyHost
+	if hn, _, err := net.SplitHostPort(proxyHost); err == nil {
+		hostname = hn
+	}
+	if IsHostBlacklisted(hostname) {
+		c.JSON(403, gin.H{"error": "host 命中 SSRF 黑名单(内网/loopback/link-local/CGNAT)"})
+		return
+	}
+	if ips, err := net.LookupIP(hostname); err == nil {
+		for _, ip := range ips {
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
+				c.JSON(403, gin.H{"error": "host 解析到内网 IP,SSRF 拒绝"})
+				return
+			}
+		}
+	}
 	tunnelHost := proxyHost
 	if h.npcTunnelPort != "" {
-		hostname := proxyHost
-		if hn, _, err := net.SplitHostPort(proxyHost); err == nil {
-			hostname = hn
-		}
 		tunnelHost = hostname + ":" + h.npcTunnelPort
 	}
 
 	// 模板数据：注入 NPS 隧道 host + 管理员密码到 background.js 占位符
+	// 两值都过 pacStringEscape,防止 " / \ 破坏 PAC JS 字符串字面量
 	tmplData := map[string]string{
-		"ProxyHost": tunnelHost,
-		"AdminPass": password,
+		"ProxyHost": pacStringEscape(tunnelHost),
+		"AdminPass": pacStringEscape(password),
 	}
 
 	// 打包成 zip（extension/* 模板编译进二进制，运行时无需额外文件）
