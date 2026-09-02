@@ -105,14 +105,14 @@ func TestInitPlannerMigratesLegacySchema(t *testing.T) {
 
 func TestPlannerSafeRecordingFilename(t *testing.T) {
 	cases := map[string]string{
-		"":                                                  "",
+		"": "",
 		"/api/planner/recordings/meeting_abc123_1710000000.webm": "meeting_abc123_1710000000.webm",
-		"meeting_xyz_1710000000000.mp3":                       "meeting_xyz_1710000000000.mp3",
-		"/api/planner/recordings/../etc/passwd":               "",
-		"/api/planner/recordings/secret.txt":                  "",
-		"/api/planner/recordings/.hidden":                      "",
-		"/api/planner/recordings/..":                          "",
-		"   ":                                                "",
+		"meeting_xyz_1710000000000.mp3":                          "meeting_xyz_1710000000000.mp3",
+		"/api/planner/recordings/../etc/passwd":                  "",
+		"/api/planner/recordings/secret.txt":                     "",
+		"/api/planner/recordings/.hidden":                        "",
+		"/api/planner/recordings/..":                             "",
+		"   ":                                                    "",
 	}
 	for input, want := range cases {
 		if got := plannerSafeRecordingFilename(input); got != want {
@@ -169,13 +169,13 @@ func TestDeletePlannerMeetingRemovesRecordingFile(t *testing.T) {
 
 func TestVoicememoSafeFilename(t *testing.T) {
 	cases := map[string]string{
-		"":                                                    "",
+		"": "",
 		"/api/voicememo/audio/memo_abc123_1710000000000000000.webm": "memo_abc123_1710000000000000000.webm",
-		"memo_xyz_123.mp3":                                     "memo_xyz_123.mp3",
-		"/api/voicememo/audio/../etc/passwd":                   "",
-		"/api/voicememo/audio/secret.txt":                      "",
-		"/api/voicememo/audio/.hidden":                         "",
-		"   ":                                                  "",
+		"memo_xyz_123.mp3":                   "memo_xyz_123.mp3",
+		"/api/voicememo/audio/../etc/passwd": "",
+		"/api/voicememo/audio/secret.txt":    "",
+		"/api/voicememo/audio/.hidden":       "",
+		"   ":                                "",
 	}
 	for input, want := range cases {
 		if got := voicememoSafeFilename(input); got != want {

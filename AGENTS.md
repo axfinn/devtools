@@ -124,7 +124,7 @@ backend/routes/
 ```
 handlers/
 ├── 核心工具（8）：paste, shorturl, mockapi, mdshare, excalidraw, photowall, terminal, dns
-├── AI 网关（14）：ai_gateway*, bailian, image_understanding, minimax_*, planner_ai
+├── AI 网关（15）：ai_gateway*, bailian, image_understanding, minimax_*, planner_ai, minimax_h3_video
 ├── 订阅/代理（5）：proxy*, singbox*, gfwlist, nps, apigateway_proxy
 ├── 家庭/健康（5）：household, pregnancy, expense, glucose, recipe
 ├── 实时功能（4）：chat, voicememo, screen, nfsshare
@@ -162,6 +162,10 @@ handlers/
 - `POST /api/edge-tts` — 语音合成
 - `GET /api/skills/manifest` — Skills 清单（OpenAI function-calling 格式）
 - `GET /api/skills/mcp` — MCP 发现端点
+- `POST /api/minimax/h3/v2/video_generation` — MiniMax-H3 异步文/图/多模态生视频（立即返回 task_id）
+- `GET /api/minimax/h3/v2/query/video_generation` — H3 任务列表（支持 filter.status/model/task_type）
+- `GET /api/minimax/h3/v2/query/video_generation/:task_id` — H3 单个任务状态查询
+- `DELETE /api/minimax/h3/v2/video_generation/:task_id` — H3 任务取消/删除
 
 ### 代理
 - `POST /api/proxy/trigger-refresh` — 触发订阅刷新
@@ -215,6 +219,8 @@ handlers/
 | `TTS_SERVICE_URL` | `http://127.0.0.1:8083` | TTS 服务 |
 | `MINIMAX_API_KEY` | — | MiniMax API（AI 机器人） |
 | `DEEPSEEK_API_KEY` | — | DeepSeek API（记账 AI） |
+| `TERMINAL_ENCRYPTION_KEY` | 随机生成（重启后丢失） | SSH 终端密码加密主密钥（不设置则用随机密钥,warning） |
+| `DEPLOY_MASTER_KEY` | **必填,缺失则 fatal** | AI Gateway AnthropicProvider API Key AES-256-GCM 加密主密钥（与 SSH 独立） |
 | `GOPROXY` | `https://goproxy.cn,direct` | Go 代理（国内） |
 
 ---

@@ -16,20 +16,20 @@ func init() {
 
 // NFSShare NFS 文件分享记录
 type NFSShare struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	FilePath      string     `json:"file_path"`
-	FileSize      int64      `json:"file_size"`
-	MimeType      string     `json:"mime_type"`
-	MaxViews      int        `json:"max_views"`
-	Views         int        `json:"views"`
-	Password      string     `json:"-"` // bcrypt hash，不对外暴露
-	WatchEnabled  bool       `json:"watch_enabled"`
-	RecordEnabled bool       `json:"record_enabled"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	FilePath            string     `json:"file_path"`
+	FileSize            int64      `json:"file_size"`
+	MimeType            string     `json:"mime_type"`
+	MaxViews            int        `json:"max_views"`
+	Views               int        `json:"views"`
+	Password            string     `json:"-"` // bcrypt hash，不对外暴露
+	WatchEnabled        bool       `json:"watch_enabled"`
+	RecordEnabled       bool       `json:"record_enabled"`
 	ShowRecordIndicator bool       `json:"show_record_indicator"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	CreatorIP     string     `json:"creator_ip"`
+	ExpiresAt           *time.Time `json:"expires_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	CreatorIP           string     `json:"creator_ip"`
 }
 
 // NFSShareLog NFS 分享访问日志
@@ -38,9 +38,9 @@ type NFSShareLog struct {
 	ShareID    string    `json:"share_id"`
 	ClientIP   string    `json:"client_ip"`
 	UserAgent  string    `json:"user_agent"`
-	Status     string    `json:"status"`     // success / denied_views / denied_expired / file_missing / error
+	Status     string    `json:"status"` // success / denied_views / denied_expired / file_missing / error
 	BytesSent  int64     `json:"bytes_sent"`
-	AudioURL   string    `json:"audio_url"`  // 录音文件路径，非空则永久保留
+	AudioURL   string    `json:"audio_url"` // 录音文件路径，非空则永久保留
 	AccessedAt time.Time `json:"accessed_at"`
 }
 
@@ -183,9 +183,10 @@ func (db *DB) LastNFSShareLogID(shareID, clientIP string) int64 {
 }
 
 // GetAllNFSShares 分页获取所有分享（管理员用）;支持按状态/关键字筛选
-//   status: "" / "all" 不过滤; "active" 未过期且未用完; "expired" 已过期;
-//           "exhausted" 次数耗尽
-//   q:      模糊匹配 name / file_path / id
+//
+//	status: "" / "all" 不过滤; "active" 未过期且未用完; "expired" 已过期;
+//	        "exhausted" 次数耗尽
+//	q:      模糊匹配 name / file_path / id
 func (db *DB) GetAllNFSShares(page, pageSize int, status, q string) ([]NFSShare, int, error) {
 	offset := (page - 1) * pageSize
 
@@ -282,7 +283,7 @@ func (db *DB) DeleteNFSShare(id string) error {
 // NFSShareSummary 删除/调整分享前的预览,告诉管理员"会涉及多少东西"
 type NFSShareSummary struct {
 	Share         NFSShare `json:"share"`
-	LogsCount     int      `json:"logs_count"`     // 总访问日志条数
+	LogsCount     int      `json:"logs_count"`      // 总访问日志条数
 	LogsWithAudio int      `json:"logs_with_audio"` // 带录音的日志条数(不会被删除)
 	AudioBytes    int64    `json:"audio_bytes"`     // 关联录音文件总字节数
 }
@@ -402,26 +403,26 @@ func (db *DB) CleanExpiredNFSShares() (int, error) {
 
 // RecordingFilter 跨 share 查录音时的筛选条件
 type RecordingFilter struct {
-	ShareID string // 空字符串表示全部
+	ShareID  string // 空字符串表示全部
 	ClientIP string
-	Since   string // ISO datetime,空字符串表示不限
-	Until   string // ISO datetime
-	Page    int
+	Since    string // ISO datetime,空字符串表示不限
+	Until    string // ISO datetime
+	Page     int
 	PageSize int
 }
 
 // RecordingEntry 录音库条目，附带 share 信息（已被删的 share 也保留 NULL）
 type RecordingEntry struct {
-	LogID      int64     `json:"log_id"`
-	ShareID    string    `json:"share_id"`
-	ShareName  *string   `json:"share_name"` // share 已删时为 null
-	ShareFilePath *string `json:"share_file_path"`
-	ClientIP   string    `json:"client_ip"`
-	UserAgent  string    `json:"user_agent"`
-	Status     string    `json:"status"`
-	AudioURL   string    `json:"audio_url"`
-	AccessedAt time.Time `json:"accessed_at"`
-	ShareDeleted bool    `json:"share_deleted"`
+	LogID         int64     `json:"log_id"`
+	ShareID       string    `json:"share_id"`
+	ShareName     *string   `json:"share_name"` // share 已删时为 null
+	ShareFilePath *string   `json:"share_file_path"`
+	ClientIP      string    `json:"client_ip"`
+	UserAgent     string    `json:"user_agent"`
+	Status        string    `json:"status"`
+	AudioURL      string    `json:"audio_url"`
+	AccessedAt    time.Time `json:"accessed_at"`
+	ShareDeleted  bool      `json:"share_deleted"`
 }
 
 // GetAllRecordings 跨 share 列出所有带 audio_url 的日志（LEFT JOIN nfs_shares，
@@ -436,8 +437,8 @@ func (db *DB) GetAllRecordings(f RecordingFilter) ([]RecordingEntry, int, error)
 	offset := (f.Page - 1) * f.PageSize
 
 	var (
-		where  []string
-		args   []interface{}
+		where []string
+		args  []interface{}
 	)
 	where = append(where, "l.audio_url IS NOT NULL AND l.audio_url != ''")
 	if f.ShareID != "" {

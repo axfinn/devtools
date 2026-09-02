@@ -17,6 +17,7 @@ type Config struct {
 	Security            SecurityConfig            `yaml:"security"`
 	RateLimit           RateLimitConfig           `yaml:"rate_limit"`
 	Limits              LimitsConfig              `yaml:"limits"`
+	DeployMasterKey     string                    `yaml:"deploy_master_key"` // AI Gateway AnthropicProvider API Key 加密主密钥,缺则读 DEPLOY_MASTER_KEY env,再缺则 fatal
 	ShortURL            ShortURLConfig            `yaml:"shorturl"`
 	Paste               PasteConfig               `yaml:"paste"`
 	Chat                ChatConfig                `yaml:"chat"`
@@ -34,6 +35,7 @@ type Config struct {
 	MiniMaxMCP          MiniMaxMCPConfig          `yaml:"minimax_mcp"`
 	MiniMaxTTS          MiniMaxTTSConfig          `yaml:"minimax_tts"`
 	MiniMaxTokenPlan    MiniMaxTokenPlanConfig    `yaml:"minimax_token_plan"`
+	MiniMaxH3Video      MiniMaxH3VideoConfig      `yaml:"minimax_h3_video"`
 	MiniMaxVoiceCloning MiniMaxVoiceCloningConfig `yaml:"minimax_voice_cloning"`
 	DashScope           DashScopeConfig           `yaml:"dashscope"`
 	Bailian             BailianConfig             `yaml:"bailian"`
@@ -55,11 +57,11 @@ type Config struct {
 // SkillsConfig 对外工具入口(skills)配置 — 让 codex/Claude Code 等外部 AI 可发现并调用非鉴权基础能力。
 // 默认 Enabled=false,管理员显式打开以避免冷启动被扫描滥用;一旦打开走 IP 限流 + 可选 Origin 白名单。
 type SkillsConfig struct {
-	Enabled                bool     `yaml:"enabled"`                  // 是否对外暴露 skills 接口
-	RateLimitPerMinute     int      `yaml:"rate_limit_per_minute"`    // 全局每 IP 每分钟总配额,默认 60
-	WriteRateLimitPerMinute int     `yaml:"write_rate_limit_per_minute"` // 写库类(skills.shorturl_create / paste_create)每 IP 每分钟专项配额,默认 5
-	AllowedOrigins         []string `yaml:"allowed_origins"`          // 可选 Origin 白名单,空 = 全部放行(配合 CORS "*");非空时不在白名单的 Origin 直接 403
-	WriteClassTools        []string `yaml:"write_class_tools"`        // 自定义写库类 skill 名单,追加到默认值之上
+	Enabled                 bool     `yaml:"enabled"`                     // 是否对外暴露 skills 接口
+	RateLimitPerMinute      int      `yaml:"rate_limit_per_minute"`       // 全局每 IP 每分钟总配额,默认 60
+	WriteRateLimitPerMinute int      `yaml:"write_rate_limit_per_minute"` // 写库类(skills.shorturl_create / paste_create)每 IP 每分钟专项配额,默认 5
+	AllowedOrigins          []string `yaml:"allowed_origins"`             // 可选 Origin 白名单,空 = 全部放行(配合 CORS "*");非空时不在白名单的 Origin 直接 403
+	WriteClassTools         []string `yaml:"write_class_tools"`           // 自定义写库类 skill 名单,追加到默认值之上
 }
 
 // AskitSyncConfig AskIt 扩展云同步配置(无密码 · 邮箱验证码登录)
@@ -155,9 +157,10 @@ type ProxySubscriptionRefreshConfig struct {
 
 // AutoDevConfig AutoDev AI 任务配置
 type AutoDevConfig struct {
-	AdminPassword string `yaml:"admin_password"` // 访问密码（必填）
-	AutodevPath   string `yaml:"autodev_path"`   // autodev 可执行文件路径，默认 /opt/autodev/autodev
-	DataDir       string `yaml:"data_dir"`       // 任务工作目录，默认 ./data/autodev
+	AdminPassword   string   `yaml:"admin_password"`    // 访问密码（必填）
+	AutodevPath     string   `yaml:"autodev_path"`      // autodev 可执行文件路径，默认 /opt/autodev/autodev
+	DataDir         string   `yaml:"data_dir"`          // 任务工作目录，默认 ./data/autodev
+	AllowedWorkDirs []string `yaml:"allowed_work_dirs"` // workDir 白名单前缀列表。空则允许任意路径(仅本地单租户部署推荐)。生产必须配置,防止 admin pwd 撞库后通过 workDir 在 /etc、/root 等敏感目录执行。
 }
 
 // TURNConfig WebRTC TURN 服务器配置（coturn use-auth-secret 模式）
@@ -346,6 +349,13 @@ type MiniMaxTTSConfig struct {
 type MiniMaxTokenPlanConfig struct {
 	APIKey  string `yaml:"api_key"`  // API Key（可与 MiniMax APIKey 共用）
 	BaseURL string `yaml:"base_url"` // 上游地址，默认 https://api.minimaxi.com
+}
+
+// MiniMaxH3VideoConfig MiniMax H3 视频生成配置（Hailuo-03 / MiniMax-H3 异步视频任务）
+// 上游域名与 api.minimaxi.com 不同，独立配置避免污染现有链路。
+type MiniMaxH3VideoConfig struct {
+	APIKey  string `yaml:"api_key"`  // API Key（可与 MiniMax APIKey 共用）
+	BaseURL string `yaml:"base_url"` // 上游地址，默认 https://api.minimax.cn
 }
 
 // MiniMaxVoiceCloningConfig MiniMax Voice Cloning 音色克隆配置
@@ -544,6 +554,9 @@ func DefaultConfig() *Config {
 		},
 		MiniMaxTokenPlan: MiniMaxTokenPlanConfig{
 			BaseURL: "https://api.minimaxi.com",
+		},
+		MiniMaxH3Video: MiniMaxH3VideoConfig{
+			BaseURL: "https://api.minimax.cn",
 		},
 		DashScope: DashScopeConfig{
 			BaseURL: "https://coding.dashscope.aliyuncs.com/v1",

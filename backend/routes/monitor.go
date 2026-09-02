@@ -6,6 +6,7 @@ func RegisterMonitorRoutes(api *gin.RouterGroup, h *RouteHandlers) {
 	monitor := api.Group("/monitor")
 	{
 		monitor.GET("/verify", h.MonitoringHandler.Verify)
+		monitor.POST("/verify", h.MonitoringHandler.VerifyPassword)
 		monitor.GET("/overview", h.MonitoringHandler.Overview)
 		monitor.GET("/responses", h.MonitoringHandler.Responses)
 		monitor.GET("/logs", h.MonitoringHandler.Logs)

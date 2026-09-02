@@ -1,7 +1,7 @@
 <template>
   <div class="console-tool">
     <!-- 登录 -->
-    <div v-if="!isAdmin" class="login-card">
+    <div v-if="!isAuthenticated" class="login-card">
       <el-card>
         <template #header><span>控制台 — 登录</span></template>
         <el-form @submit.prevent="login">
@@ -9,7 +9,7 @@
             <el-input v-model="passwordInput" type="password" show-password
               placeholder="请输入管理员密码" @keyup.enter="login" />
           </el-form-item>
-          <el-button type="primary" @click="login" :loading="loginLoading">登录</el-button>
+          <el-button type="primary" @click="login" :loading="loggingIn">登录</el-button>
         </el-form>
       </el-card>
     </div>
@@ -45,13 +45,25 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useToolRegistry } from '../../composables/useToolRegistry'
-
-const SESSION_KEY = 'console_admin_pass'
+import { useAdminAuth } from '../../composables/useAdminAuth'
 
 const { allTools, setHiddenRoutes } = useToolRegistry()
-const passwordInput = ref('')
-const isAdmin = ref(false)
-const loginLoading = ref(false)
+
+const {
+  isAuthenticated,
+  passwordInput,
+  loggingIn,
+  login,
+  logout,
+  tryStored,
+  authQuery,
+} = useAdminAuth({
+  storageKey: 'console_admin_pass',
+  verifyEndpoint: '/api/console/verify',
+  credentialMode: 'query',
+  credentialField: 'admin_password',
+})
+
 const saving = ref(false)
 const hiddenSet = reactive({})
 
@@ -70,27 +82,6 @@ const groupedRoutes = allRoutes.reduce((acc, r) => {
   return acc
 }, {})
 
-async function login() {
-  if (!passwordInput.value) { ElMessage.warning('请输入密码'); return }
-  loginLoading.value = true
-  try {
-    const res = await fetch(`/api/console/verify?admin_password=${encodeURIComponent(passwordInput.value)}`, {
-      method: 'POST'
-    })
-    if (res.status === 401) {
-      ElMessage.error('密码错误')
-      return
-    }
-    localStorage.setItem(SESSION_KEY, passwordInput.value)
-    isAdmin.value = true
-    await loadSettings()
-  } catch {
-    ElMessage.error('请求失败')
-  } finally {
-    loginLoading.value = false
-  }
-}
-
 async function loadSettings() {
   const res = await fetch('/api/console/settings')
   const data = await res.json()
@@ -100,10 +91,10 @@ async function loadSettings() {
 
 async function save() {
   saving.value = true
-  const pass = localStorage.getItem(SESSION_KEY)
   const hidden = Object.keys(hiddenSet).filter(k => hiddenSet[k])
   try {
-    const res = await fetch(`/api/console/settings?admin_password=${encodeURIComponent(pass)}`, {
+    const params = new URLSearchParams(authQuery())
+    const res = await fetch(`/api/console/settings?${params.toString()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hidden_routes: hidden })
@@ -118,18 +109,9 @@ async function save() {
   }
 }
 
-function logout() {
-  localStorage.removeItem(SESSION_KEY)
-  isAdmin.value = false
-  passwordInput.value = ''
-}
-
-onMounted(() => {
-  const saved = localStorage.getItem(SESSION_KEY)
-  if (saved) {
-    passwordInput.value = saved
-    login()
-  }
+onMounted(async () => {
+  const ok = await tryStored()
+  if (ok) await loadSettings()
 })
 </script>
 

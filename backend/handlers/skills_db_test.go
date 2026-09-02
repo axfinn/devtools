@@ -223,12 +223,12 @@ func TestSkills_PasteCreate_FullFeatures_WithPasteHandler(t *testing.T) {
 
 	// 一次性把所有可选字段都传过去
 	result, err := skill.Invoke(map[string]any{
-		"content":     "console.log('hi from full-feature paste')",
-		"title":       "my snippet",
-		"language":    "javascript",
-		"password":    "s3cr3t",
-		"expires_in":  48,
-		"max_views":   250,
+		"content":    "console.log('hi from full-feature paste')",
+		"title":      "my snippet",
+		"language":   "javascript",
+		"password":   "s3cr3t",
+		"expires_in": 48,
+		"max_views":  250,
 	}, ctx)
 	if err != nil {
 		t.Fatalf("paste_create 失败: %v", err)

@@ -539,5 +539,3 @@ func (db *DB) GetAskitUsersOverview() ([]AskitUserOverview, error) {
 	}
 	return out, rows.Err()
 }
-
-

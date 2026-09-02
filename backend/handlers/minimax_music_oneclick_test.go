@@ -59,7 +59,7 @@ func setupOneClickMusicTest(t *testing.T) (*gin.Engine, *httptest.Server, *atomi
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -227,10 +227,10 @@ func TestLyricsProxyRejectsWithoutAuth(t *testing.T) {
 }
 
 // TestOneClickMusicEndToEndYieldsAudioURL 端到端验证一键音乐链路：
-//   1. /v1/lyrics_generation 返回歌词
-//   2. /v1/music_generation 提交任务（异步） 返回 external task_id
-//   3. devtools 后端后台轮询 /v1/tasks/<ext-id>，upstream 返回 success + audio URL
-//   4. 前端轮询 GET /api/minimax/token-plan/tasks/:local-id，最终拿到 status=succeeded + result_urls 含音频 URL
+//  1. /v1/lyrics_generation 返回歌词
+//  2. /v1/music_generation 提交任务（异步） 返回 external task_id
+//  3. devtools 后端后台轮询 /v1/tasks/<ext-id>，upstream 返回 success + audio URL
+//  4. 前端轮询 GET /api/minimax/token-plan/tasks/:local-id，最终拿到 status=succeeded + result_urls 含音频 URL
 func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 	withZeroRetryBackoff(t)
 	gin.SetMode(gin.TestMode)
@@ -271,16 +271,16 @@ func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 			// 第 2 次起返回 success + audio url
 			if n == 1 {
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"status":     "processing",
-					"base_resp":  map[string]interface{}{"status_code": 0, "status_msg": "processing"},
+					"status":    "processing",
+					"base_resp": map[string]interface{}{"status_code": 0, "status_msg": "processing"},
 				})
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"status": "success",
 				"data": map[string]interface{}{
-					"audio":     wantAudioURL,
-					"status":    2,
+					"audio":  wantAudioURL,
+					"status": 2,
 					"extra_info": map[string]interface{}{
 						"music_duration": 30000,
 						"bitrate":        256000,
@@ -310,7 +310,7 @@ func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -323,8 +323,8 @@ func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 
 	// 模拟前端一键生成第 1 步：异步提交歌词任务 + 轮询拿到结果
 	lyricsBody, _ := json.Marshal(map[string]interface{}{
-		"mode":   "write_full_song",
-		"prompt": "我在北疆自驾了一周",
+		"mode":           "write_full_song",
+		"prompt":         "我在北疆自驾了一周",
 		"advancedParams": map[string]interface{}{"language": "zh"},
 	})
 	lyricsStatus, lyricsTaskID, lyricsBody2 := submitLyricsAsync(t, router, lyricsBody, "test-admin-pw")
@@ -416,6 +416,7 @@ func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 //  1. upstream 提交返回 task_id（不同步返回媒体）
 //  2. upstream /v1/tasks/<id> 前几次返回 running（还没有音频）
 //  3. 最后一次返回 success + audio URL
+//
 // 前端最终拿到的是 success 那一帧的 URL（不是更早的 running/空数据）。
 func TestOneClickMusicPollingBackoffReturnsFinalURLAfterFailure(t *testing.T) {
 	withZeroRetryBackoff(t)
@@ -474,7 +475,7 @@ func TestOneClickMusicPollingBackoffReturnsFinalURLAfterFailure(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -634,7 +635,7 @@ func TestOneClickMusicShareDownloadsAudioAndExposesAsset(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -649,8 +650,8 @@ func TestOneClickMusicShareDownloadsAudioAndExposesAsset(t *testing.T) {
 
 	// Step 1: 异步提交歌词任务 + 轮询拿到结果
 	lyricsBody, _ := json.Marshal(map[string]interface{}{
-		"mode":   "write_full_song",
-		"prompt": "我在北疆自驾了一周",
+		"mode":           "write_full_song",
+		"prompt":         "我在北疆自驾了一周",
 		"advancedParams": map[string]interface{}{"language": "zh"},
 	})
 	lyricsStatus, lyricsTaskID, lyricsBody2 := submitLyricsAsync(t, router, lyricsBody, "test-admin-pw")
@@ -725,12 +726,12 @@ func TestOneClickMusicShareDownloadsAudioAndExposesAsset(t *testing.T) {
 		"result_type": "audio",
 		"model":       "music-3.0",
 		"payload": map[string]interface{}{
-			"theme":           "我在北疆自驾了一周",
-			"language":        "zh",
-			"model":           "music-3.0",
-			"title":           "我在北疆自驾了一周",
-			"lyrics":          lyricsResp["lyrics"],
-			"elapsed_sec":     42,
+			"theme":            "我在北疆自驾了一周",
+			"language":         "zh",
+			"model":            "music-3.0",
+			"title":            "我在北疆自驾了一周",
+			"lyrics":           lyricsResp["lyrics"],
+			"elapsed_sec":      42,
 			"source_audio_url": sourceAudioURL,
 		},
 		"assets": []map[string]interface{}{
@@ -861,7 +862,7 @@ func TestLyricsProxyRetriesOn524ThenSucceeds(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -926,7 +927,7 @@ func TestLyricsProxyDoesNotRetryOn4xx(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
@@ -982,7 +983,7 @@ func TestLyricsProxyGivesUpAfterMaxRetries(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
@@ -1047,7 +1048,7 @@ func TestLyricsProxyRetriesOnNetworkError(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
@@ -1110,7 +1111,7 @@ func TestLyricsAsyncAcceptsEmptyFromUpstream(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
 	router := gin.New()
@@ -1179,7 +1180,7 @@ func TestLyricsProxyDecompressesGzipBodyWithoutHeader(t *testing.T) {
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
@@ -1261,7 +1262,7 @@ func TestLyricsProxySucceedsOnLastAttemptAfter524s(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -1320,7 +1321,7 @@ func TestLyricsProxyRetriesOn500ThenSucceeds(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -1385,7 +1386,7 @@ func TestLyricsProxyRetriesOnMixedTransientFailures(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -1506,7 +1507,7 @@ func TestLyricsProxyRealisticLoadExhaustsThenSucceeds(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 

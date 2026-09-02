@@ -140,11 +140,12 @@ type FileEntry struct {
 // Browse 浏览目录（超管）
 //
 // 可选 query 参数（全部缺省时退化为老行为：返回全量 entries，不带 total）：
-//   q          - 文件名包含匹配（小写不敏感）
-//   order_by   - name|size|mod_time，默认 name
-//   order_dir  - asc|desc，默认 asc
-//   page       - ≥1，传入即启用分页
-//   page_size  - 1-500，默认 100
+//
+//	q          - 文件名包含匹配（小写不敏感）
+//	order_by   - name|size|mod_time，默认 name
+//	order_dir  - asc|desc，默认 asc
+//	page       - ≥1，传入即启用分页
+//	page_size  - 1-500，默认 100
 //
 // 启用分页时响应额外带 total / page / page_size / has_more。
 // 根目录（"."）只接受分页参数，q/order_by 跳过（挂载点列表不参与搜索/排序）。
@@ -252,7 +253,7 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 				Path:      entryPath,
 				IsDir:     info.IsDir(),
 				Size:      info.Size(),
-				ModTime:  info.ModTime(),
+				ModTime:   info.ModTime(),
 				MimeType:  mt,
 				MountType: "smb",
 			})
@@ -287,8 +288,8 @@ func (h *NFSShareHandler) Browse(c *gin.Context) {
 				Name:      e.Name(),
 				Path:      entryPath,
 				IsDir:     e.IsDir(),
-				Size:     info.Size(),
-				ModTime:  info.ModTime(),
+				Size:      info.Size(),
+				ModTime:   info.ModTime(),
 				MimeType:  mt,
 				MountType: strings.ToLower(pp.ms.Config.Type),
 			})
@@ -513,7 +514,7 @@ func (h *NFSShareHandler) Access(c *gin.Context) {
 
 // AdminRaw 管理员直接预览/下载挂载点下的任意文件（不走 share 计数）
 //
-//   GET /api/nfsshare/admin/raw?path=<mountName>/<relPath>
+//	GET /api/nfsshare/admin/raw?path=<mountName>/<relPath>
 //
 // 仅 admin cookie / X-Admin-Password 鉴权；不消耗访问次数、不写访问日志。
 // 本地/NFS/SMB 都用 http.ServeContent 支持 Range，前端 <video>/<audio> 可正常 seek。
@@ -753,7 +754,8 @@ func (h *NFSShareHandler) AdminGetLogs(c *gin.Context) {
 // AdminListRecordings 跨 share 列出所有带录音的访问日志（超管）。
 // 即使 share 已被 CleanExpiredNFSShares 删除,孤儿日志依然可查。
 // 用于找回已过期 share 的录音、做审计。
-//   GET /api/nfsshare/admin/recordings?share_id=&ip=&since=&until=&page=&page_size=
+//
+//	GET /api/nfsshare/admin/recordings?share_id=&ip=&since=&until=&page=&page_size=
 func (h *NFSShareHandler) AdminListRecordings(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -977,7 +979,8 @@ func (h *NFSShareHandler) AdminUpdate(c *gin.Context) {
 }
 
 // AdminGetSummary 删除前预览,告诉管理员"会涉及多少东西"
-//   GET /api/nfsshare/admin/:id/summary
+//
+//	GET /api/nfsshare/admin/:id/summary
 func (h *NFSShareHandler) AdminGetSummary(c *gin.Context) {
 	if !h.checkEnabled(c) {
 		return
@@ -1257,7 +1260,11 @@ func (h *NFSShareHandler) HLSPlaylist(c *gin.Context) {
 		job.viewCounted = true
 		h.db.AddNFSShareLog(id, c.ClientIP(), c.GetHeader("User-Agent"), "success", 0)
 		go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC in background goroutine: %v", r)
+				}
+			}()
 			defer h.hlsJobs.Delete(key)
 			job.err = h.doTranscode(id, share, preset, outDir, m3u8Path)
 			close(job.done)
@@ -1416,7 +1423,11 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 
 	// 写 goroutine
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		defer conn.Close()
 		for data := range client.send {
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
@@ -1433,7 +1444,11 @@ func (h *NFSShareHandler) WatchWS(c *gin.Context) {
 	})
 	pingTicker := time.NewTicker(30 * time.Second)
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		defer pingTicker.Stop()
 		for range pingTicker.C {
 			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
@@ -1873,7 +1888,11 @@ func (h *NFSShareHandler) UploadComplete(c *gin.Context) {
 	pr, pw := io.Pipe()
 	errCh := make(chan error, 1)
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		errCh <- writeFunc(pr)
 	}()
 	for i := 0; i < req.TotalChunks; i++ {

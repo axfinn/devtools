@@ -25,9 +25,9 @@ func (h *AIGatewayHandler) InternalMinimaxVision(c *gin.Context) {
 	}
 
 	var req struct {
-		Image  string `json:"image"`     // base64 data URL 或 HTTP URL
-		Images []string `json:"images"`  // 兼容多图字段，取第一张
-		Prompt string `json:"prompt"`
+		Image  string   `json:"image"`  // base64 data URL 或 HTTP URL
+		Images []string `json:"images"` // 兼容多图字段，取第一张
+		Prompt string   `json:"prompt"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数解析失败"})

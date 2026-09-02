@@ -37,10 +37,10 @@ import (
 
 // Skill 单个对外工具的元数据 + 行为
 type Skill struct {
-	Name        string                  // tool name,如 "base64_encode"
-	Description string                  // 一句话描述
-	InputSchema map[string]interface{}  // OpenAI tools 风格:{"type":"object","properties":...,"required":[...], "additionalProperties":false}
-	Risk        string                  // "compute" 或 "write",决定是否走更严限流
+	Name        string                 // tool name,如 "base64_encode"
+	Description string                 // 一句话描述
+	InputSchema map[string]interface{} // OpenAI tools 风格:{"type":"object","properties":...,"required":[...], "additionalProperties":false}
+	Risk        string                 // "compute" 或 "write",决定是否走更严限流
 	Invoke      func(args map[string]any, ctx *SkillContext) (any, error)
 }
 
@@ -48,11 +48,11 @@ type Skill struct {
 type SkillContext struct {
 	DB           *models.DB
 	IP           string
-	Host         string              // c.Request.Host(可能含端口)
-	Scheme       string              // "http" / "https",短链/paste 分享链接拼接用
-	Guard        skillsGuardLocal    // SkillsHandler 内部传一个简化 guard,只暴露写库专项限流
-	RequestCtx   context.Context     // 请求级 ctx,转交给 handler 复用 helper
-	PasteHandler *PasteHandler       // 注入后 paste_create 可复用 createPasteCore(全功能)
+	Host         string           // c.Request.Host(可能含端口)
+	Scheme       string           // "http" / "https",短链/paste 分享链接拼接用
+	Guard        skillsGuardLocal // SkillsHandler 内部传一个简化 guard,只暴露写库专项限流
+	RequestCtx   context.Context  // 请求级 ctx,转交给 handler 复用 helper
+	PasteHandler *PasteHandler    // 注入后 paste_create 可复用 createPasteCore(全功能)
 }
 
 type skillsGuardLocal interface {
@@ -83,7 +83,7 @@ func (h *SkillsHandler) AttachGuard(g skillsGuardLocal) {
 }
 
 // AttachPasteHandler 把 PasteHandler 注入 skills,使 paste_create 能复用完整逻辑
-//(支持 title / language / password / expires_in / max_views / admin_password)。
+// (支持 title / language / password / expires_in / max_views / admin_password)。
 // 与 AttachGuard 一样,留空时 skill 走"瘦壳"实现(自己限参数)。
 func (h *SkillsHandler) AttachPasteHandler(p *PasteHandler) {
 	h.pasteHandler = p
@@ -209,7 +209,7 @@ func buildInstallSnippets(base string) map[string]gin.H {
 	invokeURL := base + "/api/skills/invoke"
 	return map[string]gin.H{
 		"claude_code": {
-			"label": "Claude Code (Anthropic CLI)",
+			"label":       "Claude Code (Anthropic CLI)",
 			"one_liner":   "claude mcp add --transport http devtools " + mcpURL,
 			"interactive": "claude mcp add devtools",
 			"config_json": `{
@@ -467,6 +467,7 @@ func buildExternalBase(c *gin.Context) string {
 //   - name         (string, 必填)
 //   - description  (string, 可选但建议)
 //   - inputSchema  (object, 必填, JSON Schema 格式,additionalProperties: false)
+//
 // 注意:不输出 `risk`(服务端内部限流用,非协议字段)、
 // 也不输出 `parameters`(那是 OpenAI 工具格式,见 manifest 端点)。
 // 历史坑:之前误用 snake_case `input_schema`,MCP 客户端按规范查 `inputSchema` 会读到 undefined。
@@ -570,6 +571,7 @@ func (h *SkillsHandler) Invoke(c *gin.Context) {
 //   - 2024-11-05  初始
 //   - 2025-03-26  引入 audio content / structured tool output
 //   - 2025-06-18  最新
+//
 // 绝不要塞不存在的日期(比如 2025-05-06),客户端会拒握手。
 var supportedMCPProtocolVersions = []string{
 	"2025-06-18",
@@ -725,6 +727,7 @@ func acceptsEventStream(accept string) bool {
 // writeMCPResponse 按 sseMode 走两条路径之一:
 //   - JSON 模式: Content-Type: application/json,单次 JSON 响应(默认)
 //   - SSE 模式 : Content-Type: text/event-stream,响应包成单个 message 事件
+//
 // 所有 14 个 skill 都是同步响应,所以 SSE 模式下也只发一个事件再关流。
 func writeMCPResponse(c *gin.Context, sseMode bool, payload any) {
 	if !sseMode {
@@ -775,9 +778,10 @@ func clientIP(c *gin.Context) string {
 	return c.ClientIP()
 }
 
-// hostBlacklisted 用于 dns_lookup,挡掉内网主机做 SSRF 防护。
+// IsHostBlacklisted 用于 dns_lookup,挡掉内网主机做 SSRF 防护。
 // 黑名单覆盖:localhost / *.local / *.internal / RFC1918 / loopback / link-local / CGNAT
-func hostBlacklisted(host string) bool {
+// 已被 proxy.WsTunnel 等模块复用做 SSRF 防御,export 供其它 handler 调用。
+func IsHostBlacklisted(host string) bool {
 	if host == "" {
 		return true
 	}
@@ -822,20 +826,19 @@ func defaultSkillRegistry() []Skill {
 	}
 }
 
-
 // -------- dns_lookup --------
 func dnsLookupSkill() Skill {
 	return Skill{
-		Name: "dns_lookup",
+		Name:        "dns_lookup",
 		Description: "DNS 解析。type 可空,空则返回所有常见记录。支持 A/AAAA/CNAME/MX/NS/TXT。",
-		Risk:  "compute",
+		Risk:        "compute",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"domain": map[string]any{"type": "string", "description": "域名,如 example.com"},
 				"type":   map[string]any{"type": "string", "description": "记录类型 A/AAAA/CNAME/MX/NS/TXT,默认全部"},
 			},
-			"required": []string{"domain"},
+			"required":             []string{"domain"},
 			"additionalProperties": false,
 		},
 		Invoke: func(args map[string]any, _ *SkillContext) (any, error) {
@@ -849,7 +852,7 @@ func dnsLookupSkill() Skill {
 			if domain == "" {
 				return nil, errors.New("domain 不能为空")
 			}
-			if hostBlacklisted(domain) {
+			if IsHostBlacklisted(domain) {
 				return nil, errors.New("拒绝解析内网/保留域名: " + domain)
 			}
 			recordType := strings.ToUpper(strings.TrimSpace(stringArg(args, "type")))
@@ -888,9 +891,9 @@ func dnsLookupSkill() Skill {
 // -------- ip_lookup --------
 func ipLookupSkill() Skill {
 	return Skill{
-		Name: "ip_lookup",
+		Name:        "ip_lookup",
 		Description: "返回服务器看到的客户端 IP(从 X-Forwarded-For 第 1 个读,无则用连接 IP)。",
-		Risk:  "compute",
+		Risk:        "compute",
 		InputSchema: map[string]any{
 			"type":                 "object",
 			"properties":           map[string]any{},
@@ -906,15 +909,15 @@ func ipLookupSkill() Skill {
 // -------- shorturl_create --------
 func shorturlCreateSkill() Skill {
 	return Skill{
-		Name: "shorturl_create",
+		Name:        "shorturl_create",
 		Description: "为长 URL 生成短链。无密码模式,默认 48h 过期、200 次点击上限、5/min/IP;URL ≤ 512B、必须 http/https。",
-		Risk:  "write",
+		Risk:        "write",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"url": map[string]any{"type": "string", "description": "目标 URL,必须 http(s)://"},
 			},
-			"required": []string{"url"},
+			"required":             []string{"url"},
 			"additionalProperties": false,
 		},
 		Invoke: func(args map[string]any, ctx *SkillContext) (any, error) {
@@ -969,7 +972,7 @@ func pasteUploadInitSkill() Skill {
 				"chunk_size":   map[string]any{"type": "integer", "description": "每个分片字节数,客户端按此切分"},
 				"total_chunks": map[string]any{"type": "integer", "description": "总分片数"},
 			},
-			"required":     []string{"file_name", "file_size", "chunk_size", "total_chunks"},
+			"required":             []string{"file_name", "file_size", "chunk_size", "total_chunks"},
 			"additionalProperties": false,
 		},
 		Invoke: func(args map[string]any, ctx *SkillContext) (any, error) {
@@ -994,10 +997,10 @@ func pasteUploadInitSkill() Skill {
 				return nil, err
 			}
 			return gin.H{
-				"file_id":     fileID,
-				"chunk_size":  chunkSize,
+				"file_id":      fileID,
+				"chunk_size":   chunkSize,
 				"total_chunks": totalChunks,
-				"message":     "分片上传初始化成功,后续按 chunk_index 0..N-1 上传",
+				"message":      "分片上传初始化成功,后续按 chunk_index 0..N-1 上传",
 			}, nil
 		},
 	}
@@ -1037,7 +1040,7 @@ func pasteUploadChunkSkill() Skill {
 				"chunk_index": map[string]any{"type": "integer", "description": "分片序号,从 0 开始"},
 				"data_b64":    map[string]any{"type": "string", "description": "base64 编码的分片字节;空串或缺字段视为空分片"},
 			},
-			"required":     []string{"file_id", "chunk_index", "data_b64"},
+			"required":             []string{"file_id", "chunk_index", "data_b64"},
 			"additionalProperties": false,
 		},
 		Invoke: func(args map[string]any, ctx *SkillContext) (any, error) {
@@ -1086,7 +1089,7 @@ func pasteUploadMergeSkill() Skill {
 			"properties": map[string]any{
 				"file_id": map[string]any{"type": "string", "description": "paste_upload_init 返回的 file_id"},
 			},
-			"required":     []string{"file_id"},
+			"required":             []string{"file_id"},
 			"additionalProperties": false,
 		},
 		Invoke: func(args map[string]any, ctx *SkillContext) (any, error) {
@@ -1135,7 +1138,7 @@ func pasteCreateSkill() Skill {
 				"admin_password": map[string]any{"type": "string", "description": "可选管理员密码(后端 config.paste.admin_password 设置后生效);通过后可设更高 max_views"},
 				"file_ids":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选附件 file_id 列表,需先用 paste_upload_init/chunk/merge 三步把文件上传完,合并后即可在 paste 中引用(图片/视频/音频/任意文件)"},
 			},
-			"required": []string{"content"},
+			"required":             []string{"content"},
 			"additionalProperties": false,
 		},
 		Invoke: func(args map[string]any, ctx *SkillContext) (any, error) {
@@ -1159,7 +1162,7 @@ func pasteCreateSkill() Skill {
 				}
 				paste, err := ctx.PasteHandler.createPasteCore(ctx.RequestCtx, req, ctx.IP, createPasteOptions{
 					SkipFiles:     false, // 允许附加 file_ids 引用的上传文件
-					SkipRateLimit: true, // skill 层自己走 SkillsGuard 的 5/min/IP 专项限流,handler 内层不再叠加
+					SkipRateLimit: true,  // skill 层自己走 SkillsGuard 的 5/min/IP 专项限流,handler 内层不再叠加
 				})
 				if err != nil {
 					return nil, err
@@ -1211,7 +1214,6 @@ func pasteCreateSkill() Skill {
 		},
 	}
 }
-
 
 // ============================================================
 // Argument helpers

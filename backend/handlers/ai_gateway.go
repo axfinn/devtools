@@ -8,6 +8,7 @@ import (
 
 	"devtools/config"
 	"devtools/models"
+	"devtools/utils"
 )
 
 type AIGatewayHandler struct {
@@ -15,12 +16,13 @@ type AIGatewayHandler struct {
 	cfg               *config.Config
 	bailian           *BailianHandler
 	imageHandler      *ImageUnderstandingHandler
-	client            *http.Client // 带代理，用于 OpenAI 兼容接口
-	noProxyClient     *http.Client // 不走代理，禁用压缩（用于 Chat/Anthropic 避免 Brotli）
-	longNoProxyClient *http.Client // 不走代理，禁用压缩，超时放宽到 5 分钟（非流式长推理聊天：DeepSeek reasoner / MiniMax M3）
-	mediaClient       *http.Client // 不走代理，启用压缩（用于 MiniMax 媒体 API：图片/视频/TTS）
-	musicSubmitClient *http.Client // 音乐生成专用：MiniMax /v1/music_generation 是同步接口，会阻塞到音频生成完成才返回（5 分钟音频常见 1-3 分钟），不能复用 mediaClient 的 90s 超时
-	streamClient      *http.Client // 不走代理，用于 SSE 流式请求（body 无超时，依赖 context 取消；但连接/握手/响应头有显式超时兜底）
+	enc               *utils.EncryptionService // 用于 AnthropicProvider.APIKey 加解密
+	client            *http.Client             // 带代理，用于 OpenAI 兼容接口
+	noProxyClient     *http.Client             // 不走代理，禁用压缩（用于 Chat/Anthropic 避免 Brotli）
+	longNoProxyClient *http.Client             // 不走代理，禁用压缩，超时放宽到 5 分钟（非流式长推理聊天：DeepSeek reasoner / MiniMax M3）
+	mediaClient       *http.Client             // 不走代理，启用压缩（用于 MiniMax 媒体 API：图片/视频/TTS）
+	musicSubmitClient *http.Client             // 音乐生成专用：MiniMax /v1/music_generation 是同步接口，会阻塞到音频生成完成才返回（5 分钟音频常见 1-3 分钟），不能复用 mediaClient 的 90s 超时
+	streamClient      *http.Client             // 不走代理，用于 SSE 流式请求（body 无超时，依赖 context 取消；但连接/握手/响应头有显式超时兜底）
 }
 
 type usageSummary struct {
@@ -186,7 +188,7 @@ type TTSRequest struct {
 	AudioFormat string  `json:"audio_format"` // mp3/wav/pcm
 }
 
-func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler, imageHandler *ImageUnderstandingHandler) *AIGatewayHandler {
+func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler, imageHandler *ImageUnderstandingHandler, enc *utils.EncryptionService) *AIGatewayHandler {
 	// 上游 HTTP 传输统一显式配置拨号/TLS 超时与连接池。零值 Transport 下
 	// TLSHandshakeTimeout / ResponseHeaderTimeout 均为 0（无限等待），上游"连上但
 	// 不回响应头"会永久卡死请求 goroutine 并泄漏连接 —— 这是代理连接不稳定的主因之一。
@@ -222,6 +224,7 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 		cfg:          cfg,
 		bailian:      bailian,
 		imageHandler: imageHandler,
+		enc:          enc,
 		client:       &http.Client{Timeout: 600 * time.Second},
 		noProxyClient: &http.Client{
 			Timeout:   90 * time.Second,

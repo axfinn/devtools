@@ -53,6 +53,7 @@ func SanitizeContent(content string) string {
 }
 
 // SanitizeHTML 使用bluemonday进行更安全的HTML清理
+// 严格策略 + 白名单 URL scheme(http/https/mailto),防 javascript: / data: / vbscript: 等 XSS 注入。
 func SanitizeHTML(content string) string {
 	if content == "" {
 		return ""
@@ -67,6 +68,11 @@ func SanitizeHTML(content string) string {
 	// 允许特定的属性
 	p.AllowAttrs("href", "alt", "title", "class").OnElements("a", "img")
 	p.AllowAttrs("class").OnElements("code", "pre", "p", "div", "span")
+
+	// 白名单 URL scheme:只允许 http/https/mailto,
+	// 防止 <a href="javascript:..."> <a href="data:text/html;base64,..."> 等 XSS。
+	// 注意:bluemonday 默认不限制 scheme,这是必须的额外配置。
+	p.AllowURLSchemes("http", "https", "mailto")
 
 	return p.Sanitize(content)
 }

@@ -75,10 +75,10 @@ func TestParseChineseAmount(t *testing.T) {
 // TestBasicVoiceParse 测试语音解析完整流程（实际使用场景）
 func TestBasicVoiceParse(t *testing.T) {
 	tests := []struct {
-		input         string
-		wantAmount    float64
-		wantCategory  string
-		wantType      string
+		input        string
+		wantAmount   float64
+		wantCategory string
+		wantType     string
 	}{
 		// 餐饮场景
 		{"吃饭花了35块", 35, "餐饮", "expense"},

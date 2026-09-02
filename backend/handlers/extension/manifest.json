@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "DevTools Proxy",
+  "version": "3.1",
+  "description": "通过服务器 HTTP 代理科学上网，支持自动认证",
+  "permissions": [
+    "storage",
+    "proxy",
+    "webRequest",
+    "webRequestAuthProvider",
+    "alarms"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "DevTools Proxy"
+  }
+}

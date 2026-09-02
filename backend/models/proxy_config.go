@@ -13,30 +13,30 @@ import (
 
 // ProxyNodeRow mirrors the ProxyNode JSON structure
 type ProxyNodeRow struct {
-	ID        int64              `json:"id"`
-	Name      string             `json:"name"`
-	Type      string             `json:"type"`
-	Server    string             `json:"server"`
-	Port      int                `json:"port"`
-	Extra     string             `json:"extra,omitempty"` // JSON map
-	Latency   int64              `json:"latency"`         // ms, -1=failed
-	Status    string             `json:"status,omitempty"`
-	CreatedAt time.Time          `json:"created_at"`
-	UpdatedAt time.Time          `json:"updated_at"`
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	Server    string    `json:"server"`
+	Port      int       `json:"port"`
+	Extra     string    `json:"extra,omitempty"` // JSON map
+	Latency   int64     `json:"latency"`         // ms, -1=failed
+	Status    string    `json:"status,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ProxyConfigRow mirrors the proxyPersist JSON structure
 type ProxyConfigRow struct {
-	ID                int64     `json:"id"`
-	SourceURL         string    `json:"source_url,omitempty"`
-	SourceURLs        string    `json:"source_urls,omitempty"`        // JSON array
-	YAMLContent       string    `json:"yaml_content,omitempty"`
-	RoutingMode       string    `json:"routing_mode,omitempty"`
-	DefaultNodeName   string    `json:"default_node_name,omitempty"`
-	DefaultNodeRegex  string    `json:"default_node_regex,omitempty"`
-	AINodeName        string    `json:"ai_node_name,omitempty"`
-	AINodeRegex       string    `json:"ai_node_regex,omitempty"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID               int64     `json:"id"`
+	SourceURL        string    `json:"source_url,omitempty"`
+	SourceURLs       string    `json:"source_urls,omitempty"` // JSON array
+	YAMLContent      string    `json:"yaml_content,omitempty"`
+	RoutingMode      string    `json:"routing_mode,omitempty"`
+	DefaultNodeName  string    `json:"default_node_name,omitempty"`
+	DefaultNodeRegex string    `json:"default_node_regex,omitempty"`
+	AINodeName       string    `json:"ai_node_name,omitempty"`
+	AINodeRegex      string    `json:"ai_node_regex,omitempty"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // InitProxySchema registers the proxy tables
@@ -245,14 +245,14 @@ func ProxyConfigToJSON(c *ProxyConfigRow, nodes []ProxyNodeRow) ([]byte, error) 
 	}
 
 	type proxyPersist struct {
-		SourceURL        string      `json:"source_url,omitempty"`
-		SourceURLs       []string    `json:"source_urls,omitempty"`
-		YAMLContent      string      `json:"yaml_content,omitempty"`
-		RoutingMode      string      `json:"routing_mode,omitempty"`
-		DefaultNodeName  string      `json:"default_node_name,omitempty"`
-		DefaultNodeRegex string      `json:"default_node_regex,omitempty"`
-		AINodeName       string      `json:"ai_node_name,omitempty"`
-		AINodeRegex      string      `json:"ai_node_regex,omitempty"`
+		SourceURL        string     `json:"source_url,omitempty"`
+		SourceURLs       []string   `json:"source_urls,omitempty"`
+		YAMLContent      string     `json:"yaml_content,omitempty"`
+		RoutingMode      string     `json:"routing_mode,omitempty"`
+		DefaultNodeName  string     `json:"default_node_name,omitempty"`
+		DefaultNodeRegex string     `json:"default_node_regex,omitempty"`
+		AINodeName       string     `json:"ai_node_name,omitempty"`
+		AINodeRegex      string     `json:"ai_node_regex,omitempty"`
 		Nodes            []jsonNode `json:"nodes"`
 	}
 

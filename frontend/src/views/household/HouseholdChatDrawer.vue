@@ -31,7 +31,10 @@
             <el-icon v-else><Service /></el-icon>
           </div>
           <div class="message-content">
-            <div class="message-text" v-html="formatMessage(msg.content)"></div>
+            <!-- 模板字面插值,Vue 自动 escape,前端不返 HTML。后端 Chat() 在写库前 utils.SanitizeHTML 兜底,
+                 保证即便后端被绕过也不会出现 <script>/onerror。配合下面 .message-text 的
+                 white-space:pre-wrap 保留换行。 -->
+            <div class="message-text">{{ msg.content }}</div>
             <div v-if="msg.actions && msg.actions.length > 0" class="message-actions">
               <el-tag v-for="(action, aIdx) in msg.actions" :key="aIdx" size="small" :type="actionTagType(action)">
                 {{ formatChatAction(action) }}
@@ -203,11 +206,6 @@ function scrollToBottom() {
   }, 100)
 }
 
-function formatMessage(text) {
-  if (typeof text !== 'string') return ''
-  return text.replace(/\n/g, '<br>')
-}
-
 function formatChatAction(action) {
   if (!action || !action.type) return '操作'
   const name = action.name || action.target || action.item_id || '物品'
@@ -275,7 +273,7 @@ function stopRecording() {
 .location-candidates { margin-top: 8px; padding: 8px; background: #f5f7fa; border-radius: 6px; }
 .location-candidates-title { font-size: 12px; color: #606266; margin-bottom: 6px; }
 .location-candidates-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.message-text { padding: 10px 14px; border-radius: 8px; background: white; font-size: 14px; line-height: 1.5; word-break: break-word; }
+.message-text { padding: 10px 14px; border-radius: 8px; background: white; font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
 .chat-message.user .message-text { background: #409eff; color: white; }
 .message-text.typing { color: #909399; }
 .message-text .dot { animation: dot 1.4s infinite; }

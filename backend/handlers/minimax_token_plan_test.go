@@ -202,7 +202,7 @@ func TestMinimaxHasInlineMediaResultRecognizesMusic3SyncResponse(t *testing.T) {
 			"status": 2,
 		},
 		"extra_info": map[string]interface{}{
-			"music_duration":   25364,
+			"music_duration":    25364,
 			"music_sample_rate": 44100,
 			"music_channel":     2,
 			"bitrate":           256000,

@@ -1,7 +1,7 @@
 <template>
   <div class="tool-container ai-chat-page">
     <!-- Password gate -->
-    <div v-if="!authenticated" class="auth-gate">
+    <div v-if="!isAuthenticated" class="auth-gate">
       <div class="auth-card">
         <div class="auth-icon">🔒</div>
         <h3>AI Chat 需要密码访问</h3>
@@ -196,8 +196,11 @@ import { ElMessage } from 'element-plus'
 import { Download, Plus, Delete, Setting, Refresh } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import { API_BASE } from '../../api.js'
+import { useAdminAuth } from '../../composables/useAdminAuth'
 
-const md = new MarkdownIt({ html: true, linkify: true, breaks: true })
+// html:false — 拒绝任何原始 HTML 直通 v-html，避免用户/AI 输出里的 <script>/<img onerror> 等触发 XSS。
+// Mermaid / KaTeX / tasklist / footnote 等扩展走 markdown-it 自身机制，不依赖 html:true。
+const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
 
 const FEATURES = [
   { id: 'image-gen', icon: '🎨', label: '绘画', tip: '输入描述生成图片' },
@@ -217,9 +220,22 @@ const FEATURE_PLACEHOLDERS = {
 }
 
 const AUTH_KEY = 'ai-chat-access-token'
-const authenticated = ref(false)
-const passwordInput = ref('')
-const loggingIn = ref(false)
+
+const {
+  isAuthenticated,
+  passwordInput,
+  loggingIn,
+  login,
+  tryStored,
+  authHeader,
+} = useAdminAuth({
+  storageKey: AUTH_KEY,
+  verifyEndpoint: `${API_BASE}/api/ai-chat/verify`,
+  credentialMode: 'body',
+  credentialField: 'password',
+  trustStored: true,
+})
+
 const refreshingExt = ref(false)
 
 const selectedModel = ref('MiniMax-M3')
@@ -246,8 +262,7 @@ const canSend = computed(() => {
 })
 
 function mediaHeaders() {
-  const pw = localStorage.getItem(AUTH_KEY) || ''
-  return { 'Content-Type': 'application/json', 'X-Super-Admin-Password': pw }
+  return { 'Content-Type': 'application/json', ...authHeader() }
 }
 
 function collectMediaUrls(value, bucket) {
@@ -353,33 +368,13 @@ async function fetchTaskAudioBlobUrl(taskId, fallbackUrl) {
   return fallbackUrl
 }
 
-onMounted(() => {
-  const saved = localStorage.getItem(AUTH_KEY)
-  if (saved) {
-    authenticated.value = true
-    initChat()
-  }
+watch(isAuthenticated, (val) => {
+  if (val) initChat()
 })
 
-async function login() {
-  if (!passwordInput.value.trim()) { ElMessage.warning('请输入密码'); return }
-  loggingIn.value = true
-  try {
-    const resp = await fetch(`${API_BASE}/api/ai-chat/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: passwordInput.value })
-    })
-    const data = await resp.json().catch(() => ({}))
-    if (!resp.ok || data.error) throw new Error(data.error || '密码错误')
-    localStorage.setItem(AUTH_KEY, passwordInput.value)
-    authenticated.value = true
-    ElMessage.success('验证通过')
-    initChat()
-  } catch (err) {
-    ElMessage.error(err.message || '验证失败')
-  } finally { loggingIn.value = false }
-}
+onMounted(() => {
+  tryStored()
+})
 
 function initChat() {
   loadConversations()

@@ -134,6 +134,16 @@ func toInt(v interface{}) (int, error) {
 	return 0, fmt.Errorf("无法转换为 int: %v", v)
 }
 
+// VerifyPassword POST /api/nps/verify
+// 单独 verify 端点(给前端 useAdminAuth 用),避免与 Status 这种重型业务端点混用。
+func (h *NPSHandler) VerifyPassword(c *gin.Context) {
+	if !h.checkAdmin(c.Query("admin_password")) {
+		c.JSON(401, gin.H{"error": "密码错误"})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true})
+}
+
 // Status GET /api/nps/status?admin_password=xxx
 func (h *NPSHandler) Status(c *gin.Context) {
 	if !h.checkAdmin(c.Query("admin_password")) {

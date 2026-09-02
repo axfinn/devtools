@@ -351,7 +351,11 @@ func (h *ChatHandler) startBotConversation(room *Room, roomID, userNickname, use
 	room.mu.Unlock()
 
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		defer cancel()
 		defer func() {
 			room.mu.Lock()
@@ -755,7 +759,11 @@ func (h *ChatHandler) HandleWebSocket(c *gin.Context) {
 }
 
 func (h *ChatHandler) readPump(client *Client, roomID string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in readPump: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in readPump: %v", r)
+		}
+	}()
 	defer func() {
 		h.removeClient(client)
 		client.conn.Close()
@@ -835,7 +843,11 @@ func (h *ChatHandler) readPump(client *Client, roomID string) {
 }
 
 func (h *ChatHandler) writePump(client *Client) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in writePump: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in writePump: %v", r)
+		}
+	}()
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
@@ -1505,7 +1517,6 @@ func (h *ChatHandler) AdminDeleteRoom(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "房间删除成功"})
 }
-
 
 // truncateRunes 按 rune 数量截断字符串，避免在多字节 UTF-8 字符中间切割
 func truncateRunes(s string, maxRunes int) string {

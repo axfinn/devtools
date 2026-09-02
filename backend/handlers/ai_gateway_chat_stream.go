@@ -172,7 +172,11 @@ func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatComple
 	// 持续心跳：每 20s 发一条 SSE 注释，防止 thinking 阶段空闲被中间层断开
 	heartbeatDone := make(chan struct{})
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 		for {

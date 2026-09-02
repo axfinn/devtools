@@ -1,7 +1,7 @@
 <template>
   <div class="monitor-tool tool-container">
     <!-- 登录 -->
-    <div v-if="!authenticated" class="login-wrap">
+    <div v-if="!isAuthenticated" class="login-wrap">
       <el-card shadow="hover" class="login-card">
         <template #header>
           <div class="card-header">
@@ -539,13 +539,27 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { DataAnalysis } from '@element-plus/icons-vue'
 import { getECharts } from '../../utils/vendor-loaders'
+import { useAdminAuth } from '../../composables/useAdminAuth'
 
 const API_BASE = '/api/monitor'
-const SESSION_KEY = 'monitor_admin_password'
 
-const passwordInput = ref('')
-const authenticated = ref(false)
-const loggingIn = ref(false)
+const {
+  isAuthenticated,
+  passwordInput,
+  loggingIn,
+  login,
+  logout: authLogout,
+  tryStored,
+  authHeader,
+} = useAdminAuth({
+  storageKey: 'monitor_admin_password',
+  verifyEndpoint: `${API_BASE}/verify`,
+  credentialMode: 'header',
+  headerName: 'X-Super-Admin-Password',
+  storage: 'session',
+  trustStored: false,
+})
+
 const loadingAll = ref(false)
 const loadingOverview = ref(false)
 const loadingLogs = ref(false)
@@ -587,45 +601,8 @@ const statusRef = ref(null)
 let timelineChart = null
 let statusChart = null
 
-function adminPassword() {
-  return sessionStorage.getItem(SESSION_KEY) || ''
-}
-
-function authHeaders(extra = {}) {
-  return {
-    'X-Super-Admin-Password': adminPassword(),
-    ...extra
-  }
-}
-
-async function login() {
-  if (!passwordInput.value.trim()) {
-    ElMessage.warning('请输入密码')
-    return
-  }
-  loggingIn.value = true
-  try {
-    const res = await fetch(`${API_BASE}/verify?super_admin_password=${encodeURIComponent(passwordInput.value)}`, {
-      headers: { 'X-Super-Admin-Password': passwordInput.value }
-    })
-    if (!res.ok) {
-      ElMessage.error('密码错误或未配置')
-      return
-    }
-    sessionStorage.setItem(SESSION_KEY, passwordInput.value)
-    authenticated.value = true
-    await loadAll()
-  } catch (err) {
-    ElMessage.error('登录失败：' + err.message)
-  } finally {
-    loggingIn.value = false
-  }
-}
-
 function logout() {
-  sessionStorage.removeItem(SESSION_KEY)
-  authenticated.value = false
-  passwordInput.value = ''
+  authLogout()
   overview.value = null
   endpoints.value = []
   aiSummary.value = null
@@ -651,10 +628,9 @@ async function loadSessions() {
       type: sessionType.value === 'all' ? '' : sessionType.value,
       limit: '50',
       offset: '0',
-      super_admin_password: adminPassword()
     })
     const res = await fetch(`${API_BASE}/sessions?${params.toString()}`, {
-      headers: authHeaders()
+      headers: authHeader()
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -674,8 +650,8 @@ async function loadOverview() {
   loadingOverview.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/overview?range=${rangeKey.value}&limit=12&super_admin_password=${encodeURIComponent(adminPassword())}`,
-      { headers: authHeaders() }
+      `${API_BASE}/overview?range=${rangeKey.value}&limit=12`,
+      { headers: authHeader() }
     )
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -695,8 +671,8 @@ async function loadOverview() {
 async function loadAI() {
   try {
     const res = await fetch(
-      `${API_BASE}/ai?range=${rangeKey.value}&limit=50&super_admin_password=${encodeURIComponent(adminPassword())}`,
-      { headers: authHeaders() }
+      `${API_BASE}/ai?range=${rangeKey.value}&limit=50`,
+      { headers: authHeader() }
     )
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -712,8 +688,8 @@ async function loadAI() {
 async function loadService() {
   try {
     const res = await fetch(
-      `${API_BASE}/service?super_admin_password=${encodeURIComponent(adminPassword())}`,
-      { headers: authHeaders() }
+      `${API_BASE}/service`,
+      { headers: authHeader() }
     )
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -734,11 +710,10 @@ async function loadLogs() {
     keyword: filters.value.keyword,
     limit: String(filters.value.limit),
     offset: String(offset),
-    super_admin_password: adminPassword()
   })
   try {
     const res = await fetch(`${API_BASE}/logs?${params.toString()}`, {
-      headers: authHeaders()
+      headers: authHeader()
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -771,8 +746,8 @@ async function confirmArchive() {
   archiving.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/archive?super_admin_password=${encodeURIComponent(adminPassword())}`,
-      { method: 'POST', headers: authHeaders() }
+      `${API_BASE}/archive`,
+      { method: 'POST', headers: authHeader() }
     )
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
@@ -804,10 +779,10 @@ async function performDelete() {
   deleting.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/logs?super_admin_password=${encodeURIComponent(adminPassword())}`,
+      `${API_BASE}/logs`,
       {
         method: 'DELETE',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        headers: authHeader({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(deleteForm.value)
       }
     )
@@ -989,19 +964,17 @@ function shortBucket(value) {
 let resizeHandler = null
 let pollTimer = null
 
-onMounted(() => {
-  const saved = sessionStorage.getItem(SESSION_KEY)
-  if (saved) {
-    passwordInput.value = saved
-    login().then(() => {
-      pollTimer = setInterval(() => {
-        if (mainTab.value === 'overview') loadOverview()
-        else if (mainTab.value === 'ai') loadAI()
-        else if (mainTab.value === 'logs') loadLogs()
-        else if (mainTab.value === 'sessions') loadSessions()
-        else if (mainTab.value === 'service') loadService()
-      }, 60000)
-    })
+onMounted(async () => {
+  const ok = await tryStored()
+  if (ok) {
+    await loadAll()
+    pollTimer = setInterval(() => {
+      if (mainTab.value === 'overview') loadOverview()
+      else if (mainTab.value === 'ai') loadAI()
+      else if (mainTab.value === 'logs') loadLogs()
+      else if (mainTab.value === 'sessions') loadSessions()
+      else if (mainTab.value === 'service') loadService()
+    }, 60000)
   }
   resizeHandler = () => resizeCharts()
   window.addEventListener('resize', resizeHandler)

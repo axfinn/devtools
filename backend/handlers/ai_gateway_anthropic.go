@@ -24,7 +24,6 @@ import (
 // 用于保留原始 JSON 格式替换 model 名，避免第三方代理检测到 body 被篡改
 var modelFieldRe = regexp.MustCompile(`"model"\s*:\s*"[^"]*"`)
 
-
 // builtinAnthropicProviders 返回默认内置的 Anthropic 提供商列表
 // 当 config 中未配置 anthropic_providers 时使用
 func (h *AIGatewayHandler) builtinAnthropicProviders() []config.AnthropicProviderConfig {
@@ -166,15 +165,41 @@ func (h *AIGatewayHandler) allAnthropicProviders() []config.AnthropicProviderCon
 }
 
 // dbAnthropicProvidersToConfig 将 DB 模型转换为 config 结构
+// 解密 APIKeyEncrypted;若为空但 legacy APIKey 非空(升级前老数据),懒迁移一次:加密后写回 DB 并清明文。
 func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.AnthropicProvider) []config.AnthropicProviderConfig {
 	result := make([]config.AnthropicProviderConfig, 0, len(dbProviders))
 	for _, p := range dbProviders {
 		cfg := config.AnthropicProviderConfig{
 			Name:         p.Name,
 			APIURL:       p.APIURL,
-			APIKey:       p.APIKey,
 			DefaultModel: p.DefaultModel,
 			IsDefault:    p.IsDefault,
+		}
+		// 优先解密密文;失败/为空时回退 legacy 明文(并触发懒迁移)
+		if p.APIKeyEncrypted != "" {
+			plain, err := h.enc.Decrypt(p.APIKeyEncrypted)
+			if err == nil {
+				cfg.APIKey = plain
+			} else {
+				// 解密失败极少见(主密钥变更/数据损坏),回退 legacy 明文继续工作
+				cfg.APIKey = p.APIKey
+			}
+		} else if p.APIKey != "" {
+			// 旧明文:懒迁移一次
+			cfg.APIKey = p.APIKey
+			enc, err := h.enc.Encrypt(p.APIKey)
+			if err == nil {
+				p.APIKeyEncrypted = enc
+				p.APIKey = ""
+				// 异步写回,不阻塞当前请求(失败下次重启再迁移)
+				go func(pid int64, cipher string) {
+					_ = h.db.UpdateAnthropicProvider(&models.AnthropicProvider{
+						ID:              pid,
+						APIKeyEncrypted: cipher,
+						APIKey:          "",
+					})
+				}(p.ID, enc)
+			}
 		}
 		json.Unmarshal([]byte(p.Models), &cfg.Models)
 		var aliases []config.AnthropicModelAlias
@@ -326,7 +351,6 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 		bodyBytes = rewriteModelField(bodyBytes, upstreamModel)
 		bodyMap["model"] = upstreamModel // 保持 bodyMap 同步，后续 checkModel 用
 	}
-
 
 	allModels := h.allModelsAcrossProviders()
 
@@ -560,7 +584,11 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 中间代理（nginx/CDN）或客户端因空闲超时断开连接
 	heartbeatDone := make(chan struct{})
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 		for {
@@ -612,8 +640,8 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 type sseThinkingFilter struct {
 	src         io.Reader
 	scanner     *bufio.Scanner
-	skipIndices map[int]bool  // 被标记为 thinking 的 content_block index
-	pending     []byte         // 已过滤、待输出的数据
+	skipIndices map[int]bool // 被标记为 thinking 的 content_block index
+	pending     []byte       // 已过滤、待输出的数据
 }
 
 func newSSEThinkingFilter(src io.Reader) io.Reader {

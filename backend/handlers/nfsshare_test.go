@@ -60,9 +60,9 @@ func TestNFSShareAuthPrimitives(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		setup     func(*http.Request)
-		wantOK    bool
+		name   string
+		setup  func(*http.Request)
+		wantOK bool
 	}{
 		{
 			name:   "no auth",
@@ -70,8 +70,8 @@ func TestNFSShareAuthPrimitives(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name: "valid cookie",
-			setup: func(r *http.Request) { nfsAdminCookie(r) },
+			name:   "valid cookie",
+			setup:  func(r *http.Request) { nfsAdminCookie(r) },
 			wantOK: true,
 		},
 		{
@@ -739,11 +739,11 @@ func TestBrowse_PaginationAndFilter(t *testing.T) {
 			t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
 		}
 		var resp struct {
-			Path    string       `json:"path"`
-			Entries []FileEntry  `json:"entries"`
-			Total   *int         `json:"total"`
-			Page    *int         `json:"page"`
-			HasMore *bool        `json:"has_more"`
+			Path    string      `json:"path"`
+			Entries []FileEntry `json:"entries"`
+			Total   *int        `json:"total"`
+			Page    *int        `json:"page"`
+			HasMore *bool       `json:"has_more"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 			t.Fatal(err)

@@ -38,6 +38,22 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		return nil, err
 	}
 
+	// AI Gateway 用独立的 DEPLOY_MASTER_KEY(不复用 TERMINAL_ENCRYPTION_KEY)。
+	// 优先级:cfg.DeployMasterKey > env DEPLOY_MASTER_KEY > fatal。
+	// 缺密钥直接 fatal:AI Provider Key 不能容忍重启丢,所有下游 provider 会瞬间断流。
+	deployMasterKey := cfg.DeployMasterKey
+	if deployMasterKey == "" {
+		deployMasterKey = os.Getenv("DEPLOY_MASTER_KEY")
+	}
+	if deployMasterKey == "" {
+		log.Fatal("FATAL: deploy_master_key 与 DEPLOY_MASTER_KEY 都未设置,AI Gateway 无法加密存储 Anthropic Provider API Key。" +
+			" 请在 config.yaml 设置 deploy_master_key,或 export DEPLOY_MASTER_KEY=<任意非空字符串>")
+	}
+	aiGatewayEnc, err := utils.NewEncryptionService(deployMasterKey)
+	if err != nil {
+		return nil, fmt.Errorf("创建 AI Gateway 加密服务失败: %w", err)
+	}
+
 	sshConfig := &handlers.SSHHandlerConfig{
 		AdminPassword:       cfg.SSH.AdminPassword,
 		HostKeyVerification: cfg.SSH.HostKeyVerification,
@@ -49,9 +65,9 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	ocrHandler := handlers.NewOCRHandler()
 	bailianHandler := handlers.NewBailianHandler(db, cfg)
 	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg, rt.transientStore)
-	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler, imageUnderstandingHandler)
+	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler, imageUnderstandingHandler, aiGatewayEnc)
 	cpaProxyHandler := handlers.NewCPAProxyHandler()
-	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir)
+	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir, cfg.AutoDev.AllowedWorkDirs)
 	mermaidHandler := handlers.NewMermaidHandler(db, cfg)
 	npsHandler := handlers.NewNPSHandler(cfg.NPS, cfg.Proxy.TunnelPort)
 	proxyHandler := handlers.NewProxyHandler(db, cfg, npsHandler)

@@ -337,7 +337,7 @@ func TestProxyAnthropicWithBody_StripsThinkingForDeepSeek(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "admin-pw"
 	h := &AIGatewayHandler{
-		cfg:          cfg,
+		cfg:           cfg,
 		noProxyClient: &http.Client{Timeout: 5 * time.Second},
 	}
 	provider := &config.AnthropicProviderConfig{

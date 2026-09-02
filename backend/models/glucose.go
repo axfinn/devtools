@@ -31,8 +31,8 @@ type GlucoseRecord struct {
 	Time        time.Time `json:"time"`         // 测量时间
 	Note        string    `json:"note"`
 	VoiceText   string    `json:"voice_text"` // 语音识别原文
-	Tags        string    `json:"tags"` // comma-separated
-	Food        string    `json:"food"` // 饮食记录
+	Tags        string    `json:"tags"`       // comma-separated
+	Food        string    `json:"food"`       // 饮食记录
 	Exercise    string    `json:"exercise"`
 	Medication  string    `json:"medication"`
 	Sleep       string    `json:"sleep"`
@@ -42,16 +42,16 @@ type GlucoseRecord struct {
 
 // GlucoseRecordHistory 血糖记录变更历史表
 type GlucoseRecordHistory struct {
-	ID           string    `json:"id"`
-	RecordID     string    `json:"record_id"`
-	ProfileID    string    `json:"profile_id"`
-	Action       string    `json:"action"`        // create, update, delete
-	FieldName    string    `json:"field_name"`    // 变更的字段名
-	OldValue     string    `json:"old_value"`     // 旧值
-	NewValue     string    `json:"new_value"`     // 新值
-	ChangeDesc   string    `json:"change_desc"`   // 变更描述
-	IPAddress    string    `json:"ip_address"`     // 操作者IP
-	CreatedAt    time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	RecordID   string    `json:"record_id"`
+	ProfileID  string    `json:"profile_id"`
+	Action     string    `json:"action"`      // create, update, delete
+	FieldName  string    `json:"field_name"`  // 变更的字段名
+	OldValue   string    `json:"old_value"`   // 旧值
+	NewValue   string    `json:"new_value"`   // 新值
+	ChangeDesc string    `json:"change_desc"` // 变更描述
+	IPAddress  string    `json:"ip_address"`  // 操作者IP
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 func (db *DB) InitGlucose() error {
@@ -425,20 +425,20 @@ func (db *DB) GetGlucoseStats(profileID string, startDate, endDate string) (*Glu
 
 // GlucoseStats 血糖统计数据
 type GlucoseStats struct {
-	TotalCount       int     `json:"total_count"`
-	AvgValue         float64 `json:"avg_value"`
-	MaxValue         float64 `json:"max_value"`
-	MinValue         float64 `json:"min_value"`
-	StdValue         float64 `json:"std_value"`
-	TIR              float64 `json:"tir"`               // Time In Range 目标范围内时间占比
-	HypoglycemiaCount int    `json:"hypoglycemia_count"` // 低血糖次数
-	HyperglycemiaCount int   `json:"hyperglycemia_count"` // 高血糖次数
-	ByMeasureType    map[string]TypeStats `json:"by_measure_type"`
+	TotalCount         int                  `json:"total_count"`
+	AvgValue           float64              `json:"avg_value"`
+	MaxValue           float64              `json:"max_value"`
+	MinValue           float64              `json:"min_value"`
+	StdValue           float64              `json:"std_value"`
+	TIR                float64              `json:"tir"`                 // Time In Range 目标范围内时间占比
+	HypoglycemiaCount  int                  `json:"hypoglycemia_count"`  // 低血糖次数
+	HyperglycemiaCount int                  `json:"hyperglycemia_count"` // 高血糖次数
+	ByMeasureType      map[string]TypeStats `json:"by_measure_type"`
 }
 
 // TypeStats 按测量类型的统计
 type TypeStats struct {
-	Count   int     `json:"count"`
+	Count    int     `json:"count"`
 	AvgValue float64 `json:"avg_value"`
 	MinValue float64 `json:"min_value"`
 	MaxValue float64 `json:"max_value"`

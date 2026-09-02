@@ -86,10 +86,10 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 	// 动态构建 provider 文档列表
 	providerDocs := make([]gin.H, 0, len(providers))
 	providerNameMap := map[string]string{
-		"MiniMax":       "/api/minimax/anthropic",
-		"DashScope":     "/api/dashscope/anthropic",
-		"DeepSeek":      "/api/deepseek/anthropic",
-		"PackyAPI":      "/api/anthropic",
+		"MiniMax":        "/api/minimax/anthropic",
+		"DashScope":      "/api/dashscope/anthropic",
+		"DeepSeek":       "/api/deepseek/anthropic",
+		"PackyAPI":       "/api/anthropic",
 		"OpenClaudeCode": "/api/anthropic",
 	}
 	for _, p := range providers {
@@ -115,13 +115,13 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 		}
 
 		providerDocs = append(providerDocs, gin.H{
-			"name":        p.Name,
-			"base_url":    baseURL,
-			"generic_url": "/api/anthropic",
-			"upstream":    p.APIURL,
-			"models":      p.Models,
-			"aliases":     aliasDocs,
-			"user_models": userModels,
+			"name":          p.Name,
+			"base_url":      baseURL,
+			"generic_url":   "/api/anthropic",
+			"upstream":      p.APIURL,
+			"models":        p.Models,
+			"aliases":       aliasDocs,
+			"user_models":   userModels,
 			"description":   desc,
 			"default_model": p.DefaultModel,
 			"is_default":    p.Name == defaultProviderName,
@@ -456,16 +456,16 @@ func (h *AIGatewayHandler) AdminCreateKey(c *gin.Context) {
 		alertThreshold = 0.8
 	}
 	key := &models.AIAPIKey{
-		Name:             req.Name,
-		KeyPrefix:        prefix,
-		KeyHash:          keyHash,
-		Status:           "active",
-		AllowedModels:    models.MustJSONString(allowedModels),
-		AllowedScopes:    models.MustJSONString(allowedScopes),
-		RateLimitPerHour: rateLimit,
-		BudgetLimit:      req.BudgetLimit,
-		AlertThreshold:   alertThreshold,
-		ExpiresAt:        &expiresAt,
+		Name:                req.Name,
+		KeyPrefix:           prefix,
+		KeyHash:             keyHash,
+		Status:              "active",
+		AllowedModels:       models.MustJSONString(allowedModels),
+		AllowedScopes:       models.MustJSONString(allowedScopes),
+		RateLimitPerHour:    rateLimit,
+		BudgetLimit:         req.BudgetLimit,
+		AlertThreshold:      alertThreshold,
+		ExpiresAt:           &expiresAt,
 		CreatorIP:           c.ClientIP(),
 		Notes:               req.Notes,
 		AnthropicProviderID: req.AnthropicProviderID,
@@ -722,15 +722,23 @@ func (h *AIGatewayHandler) AdminCreateAnthropicProvider(c *gin.Context) {
 	if req.Aliases == "" {
 		req.Aliases = "[]"
 	}
+	// API Key 加密落库(不写明文,前端列表/详情接口靠 json:"-" 也不暴露)
 	p := &models.AnthropicProvider{
 		Name:         req.Name,
 		APIURL:       req.APIURL,
-		APIKey:       req.APIKey,
 		Models:       req.Models,
 		Aliases:      req.Aliases,
 		Enabled:      true,
 		IsDefault:    req.IsDefault,
 		DefaultModel: req.DefaultModel,
+	}
+	if req.APIKey != "" {
+		enc, err := h.enc.Encrypt(req.APIKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "API Key 加密失败: " + err.Error()})
+			return
+		}
+		p.APIKeyEncrypted = enc
 	}
 	if err := h.db.CreateAnthropicProvider(p); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "创建失败: " + err.Error()})
@@ -782,7 +790,13 @@ func (h *AIGatewayHandler) AdminUpdateAnthropicProvider(c *gin.Context) {
 		existing.APIURL = req.APIURL
 	}
 	if req.APIKey != "" {
-		existing.APIKey = req.APIKey
+		enc, err := h.enc.Encrypt(req.APIKey)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "API Key 加密失败: " + err.Error()})
+			return
+		}
+		existing.APIKeyEncrypted = enc
+		existing.APIKey = "" // 旧字段保持为空
 	}
 	if req.Models != "" {
 		existing.Models = req.Models

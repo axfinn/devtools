@@ -362,15 +362,20 @@ import { getMermaid } from '../../utils/vendor-loaders'
 
 const router = useRouter()
 
-// Initialize Markdown-it with all extensions
+// Initialize Markdown-it with all extensions.
+// html:false — 用户自编辑内容不走原始 HTML 直通，避免 v-html XSS。
+// mermaid 块 / hljs 块都已经在回调里 escape 过原文,不依赖 html:true。
 const md = new MarkdownIt({
-  html: true,
+  html: false,
   linkify: true,
   typographer: true,
   breaks: true,
   highlight: function (str, lang) {
     if (lang === 'mermaid') {
-      return `<div class="mermaid">${str}</div>`
+      // 跟 MarkdownShareView 同样范式:escape 后塞 .mermaid 容器,浏览器渲染时由 mermaid
+      // 自家渲染器解析,不会出现 <script> 直通。但 mermaid 渲染完成后还是 textNode,
+      // 标签内的源码含 < > & 不会污染 markup。
+      return `<div class="mermaid">${md.utils.escapeHtml(str)}</div>`
     }
     if (lang && hljs.getLanguage(lang)) {
       try {

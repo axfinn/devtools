@@ -99,10 +99,12 @@ func (db *DB) ReferencedUploadFilenames() (map[string]struct{}, error) {
 func (db *DB) activeNFSUploadFilenames() (map[string]struct{}, error) {
 	return db.ActiveUploadFilenames()
 }
+
 // 识别以下 URL 形态:
 //   - /api/chat/uploads/<filename>
 //   - /api/paste/files/<filename>
 //   - __uploads__/<filename>   (NFS 虚拟路径)
+//
 // 否则尝试取 path.Base。
 // 为减少假阳性,要求文件名至少含一个 "." 且扩展名 ≥ 2 字符。
 func extractUploadFilename(u string) string {

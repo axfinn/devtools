@@ -5,6 +5,7 @@ import "github.com/gin-gonic/gin"
 func RegisterProxyRoutes(api *gin.RouterGroup, h *RouteHandlers) {
 	proxyGroup := api.Group("/proxy")
 	{
+		proxyGroup.POST("/verify", h.ProxyHandler.VerifyPassword)
 		proxyGroup.POST("/config", h.ProxyHandler.LoadConfig)
 		proxyGroup.POST("/speedtest", h.ProxyHandler.SpeedTest)
 		proxyGroup.POST("/start", h.ProxyHandler.Start)

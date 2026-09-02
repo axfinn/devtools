@@ -28,6 +28,14 @@ model: sonnet
    - `backend/handlers/chat_test.go`(TempDir DB 模式)
    - `backend/middleware/skills_test.go` / `ws_monitor_test.go`
 
+## 2026-09 教训:写完测试必须自检 3 件事
+
+1. **被测函数/方法必须存在** — `grep -rn "func (h \*YourHandler) YourMethod" backend/handlers/` 确认签名
+2. **测试中引用的所有 API endpoint 必须存在** — `grep -rn "POST.*/api/xxx" backend/routes/` 验证
+3. **跑 `go build ./...` 验证编译**(用户约束不让主动跑 `go test`,但 build 是廉价静默检查)
+
+案例:本 session 写 ProxyTool/NPSTool 的 `useAdminAuth` 重构时,frontend-writer 假设 `/api/proxy/status` 和 `/api/nps/status` 业务端点能兼 verify,但它们**根本不是 verify**(返回的是 nodes 列表而非 `{ok:true}`)。结果前端调用 404 + verify 失败 → 模块挂掉。**修复链路**:加 `POST /api/proxy/verify` + `POST /api/nps/verify`,改前端 `verifyEndpoint` 指向新的 → 跑 `go build ./...` 验证。
+
 ## 触发场景
 - module-architect 在正向流水线 Step 3 调度你(为新 handler 写测试)
 - 用户说"给 X 加测试""测试一下这个 rate limiter""测试 cleanup goroutine 不会漏"

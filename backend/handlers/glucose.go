@@ -62,7 +62,7 @@ type CreateGlucoseRequest struct {
 
 type CreateGlucoseResponse struct {
 	ID         string     `json:"id"`
-	CreatorKey string    `json:"creator_key"`
+	CreatorKey string     `json:"creator_key"`
 	ExpiresAt  *time.Time `json:"expires_at"`
 }
 
@@ -613,8 +613,8 @@ func (h *GlucoseHandler) UpdateRecord(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"record":  record,
-		"changes":  changes,
-		"message":  "更新成功",
+		"changes": changes,
+		"message": "更新成功",
 	})
 }
 
@@ -735,9 +735,9 @@ func (h *GlucoseHandler) ImportRecords(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"success":      true,
-		"imported":     len(records),
-		"total":        len(req.Records),
+		"success":  true,
+		"imported": len(records),
+		"total":    len(req.Records),
 	})
 }
 
@@ -852,8 +852,8 @@ func (h *GlucoseHandler) callMiniMaxParse(text string) (*GlucoseVoiceParseRespon
 
 	url := "https://api.minimaxi.com/anthropic/v1/messages"
 	reqBody := map[string]interface{}{
-		"model":       model,
-		"max_tokens":  1024,
+		"model":      model,
+		"max_tokens": 1024,
 		"messages": []map[string]string{
 			{"role": "system", "content": "你是一个专业的血糖数据解析助手，擅长从自然语言中提取结构化的血糖检测记录。"},
 			{"role": "user", "content": prompt},

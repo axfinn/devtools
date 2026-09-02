@@ -15,19 +15,19 @@ func init() {
 }
 
 type MockAPI struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Method         string    `json:"method"`
-	ResponseBody   string    `json:"response_body"`
-	ResponseStatus int       `json:"response_status"`
-	ResponseHeaders string   `json:"response_headers"` // JSON string
-	ResponseDelay  int       `json:"response_delay"`   // seconds
-	ExpiresAt      time.Time `json:"expires_at"`
-	MaxCalls       int       `json:"max_calls"`
-	CallCount      int       `json:"call_count"`
-	CreatedAt      time.Time `json:"created_at"`
-	CreatorIP      string    `json:"-"`
-	Password       string    `json:"-"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Method          string    `json:"method"`
+	ResponseBody    string    `json:"response_body"`
+	ResponseStatus  int       `json:"response_status"`
+	ResponseHeaders string    `json:"response_headers"` // JSON string
+	ResponseDelay   int       `json:"response_delay"`   // seconds
+	ExpiresAt       time.Time `json:"expires_at"`
+	MaxCalls        int       `json:"max_calls"`
+	CallCount       int       `json:"call_count"`
+	CreatedAt       time.Time `json:"created_at"`
+	CreatorIP       string    `json:"-"`
+	Password        string    `json:"-"`
 }
 
 type MockAPILog struct {

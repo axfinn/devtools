@@ -114,24 +114,24 @@ type plannerBoardResponse struct {
 }
 
 type plannerReviewResponse struct {
-	Period        string                  `json:"period"`
-	Label         string                  `json:"label"`
-	Summary       string                  `json:"summary"`
-	Stats         map[string]int          `json:"stats"`
-	Wins          []string                `json:"wins"`
-	Drifts        []string                `json:"drifts"`
-	Suggestions   []string                `json:"suggestions"`
-	Highlights    []*plannerTimelineItem  `json:"highlights"`
+	Period        string                    `json:"period"`
+	Label         string                    `json:"label"`
+	Summary       string                    `json:"summary"`
+	Stats         map[string]int            `json:"stats"`
+	Wins          []string                  `json:"wins"`
+	Drifts        []string                  `json:"drifts"`
+	Suggestions   []string                  `json:"suggestions"`
+	Highlights    []*plannerTimelineItem    `json:"highlights"`
 	Cancellations []plannerCancellationItem `json:"cancellations,omitempty"`
-	Postpones     []plannerPostponeItem   `json:"postpones,omitempty"`
+	Postpones     []plannerPostponeItem     `json:"postpones,omitempty"`
 	// 阶段 6:完成感受聚合(分布 + 最近样本) — 与 Cancellations/Postpones 对称
 	CompletionFeelings []plannerCompletionFeelingItem `json:"completion_feelings,omitempty"`
 }
 
 // 阶段 6:完成感受 item — 让 review 显示"我完成的感受分布"
 type plannerCompletionFeelingItem struct {
-	Feeling   string `json:"feeling"`   // 'smooth' / 'learned' / 'rough'
-	Title     string `json:"title"`
+	Feeling     string `json:"feeling"` // 'smooth' / 'learned' / 'rough'
+	Title       string `json:"title"`
 	CompletedAt string `json:"completed_at"`
 }
 
@@ -402,7 +402,7 @@ func normalizePlannerEnergyLevel(level string) string {
 }
 
 // 阶段 6:完成反思 enum — 让用户主动给"这次做完感觉怎么样"打标
-// 'smooth'(顺手)/ 'learned'(学到)/ 'rough'(划水)/ '' (没标)
+// 'smooth'(顺手)/ 'learned'(学到)/ 'rough'(划水)/ ” (没标)
 func normalizePlannerCompletionFeeling(feeling string) string {
 	switch strings.TrimSpace(strings.ToLower(feeling)) {
 	case "smooth":

@@ -3,6 +3,7 @@ package models
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -15,29 +16,29 @@ func init() {
 }
 
 type AIAPIKey struct {
-	ID                string     `json:"id"`
-	Name              string     `json:"name"`
-	KeyPrefix         string     `json:"key_prefix"`
-	KeyHash           string     `json:"-"`
-	Status            string     `json:"status"`
-	AllowedModels     string     `json:"allowed_models"`
-	AllowedScopes     string     `json:"allowed_scopes"`
-	RateLimitPerHour  int        `json:"rate_limit_per_hour"`
-	TotalRequests     int        `json:"total_requests"`
-	TotalInputTokens  int        `json:"total_input_tokens"`
-	TotalOutputTokens int        `json:"total_output_tokens"`
-	TotalTokens       int        `json:"total_tokens"`
-	TotalCost         float64    `json:"total_cost"`
-	BillingCurrency   string     `json:"billing_currency"`
-	BudgetLimit       float64    `json:"budget_limit"`
-	AlertThreshold    float64    `json:"alert_threshold"`
-	LastUsedAt        *time.Time `json:"last_used_at"`
-	ExpiresAt         *time.Time `json:"expires_at"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
-	CreatorIP         string     `json:"creator_ip"`
-	Notes                string     `json:"notes"`
-	AnthropicProviderID  int        `json:"anthropic_provider_id"` // 0=全局默认，非0=强制走指定 Anthropic 提供商
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	KeyPrefix           string     `json:"key_prefix"`
+	KeyHash             string     `json:"-"`
+	Status              string     `json:"status"`
+	AllowedModels       string     `json:"allowed_models"`
+	AllowedScopes       string     `json:"allowed_scopes"`
+	RateLimitPerHour    int        `json:"rate_limit_per_hour"`
+	TotalRequests       int        `json:"total_requests"`
+	TotalInputTokens    int        `json:"total_input_tokens"`
+	TotalOutputTokens   int        `json:"total_output_tokens"`
+	TotalTokens         int        `json:"total_tokens"`
+	TotalCost           float64    `json:"total_cost"`
+	BillingCurrency     string     `json:"billing_currency"`
+	BudgetLimit         float64    `json:"budget_limit"`
+	AlertThreshold      float64    `json:"alert_threshold"`
+	LastUsedAt          *time.Time `json:"last_used_at"`
+	ExpiresAt           *time.Time `json:"expires_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	CreatorIP           string     `json:"creator_ip"`
+	Notes               string     `json:"notes"`
+	AnthropicProviderID int        `json:"anthropic_provider_id"` // 0=全局默认，非0=强制走指定 Anthropic 提供商
 }
 
 type AIAPIRequestLog struct {
@@ -574,18 +575,18 @@ func (db *DB) GetAIUsageReport(groupBy, apiKeyID string, since time.Time) ([]*AI
 
 // MiniMaxMediaTask MiniMax 媒体生成异步任务
 type MiniMaxMediaTask struct {
-	ID              string     `json:"id"`
-	APIKeyID        string     `json:"api_key_id"`
-	Model           string     `json:"model"`
-	Provider        string     `json:"provider"` // minimax
-	Status          string     `json:"status"`   // pending/running/succeeded/failed
-	RequestBody     string     `json:"request_body"`
-	ResultJSON      string     `json:"result_json,omitempty"`
-	ErrorMessage    string     `json:"error_message,omitempty"`
-	ExternalTaskID  string     `json:"external_task_id"` // MiniMax 返回的任务ID
-	ClientIP        string     `json:"client_ip"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID             string     `json:"id"`
+	APIKeyID       string     `json:"api_key_id"`
+	Model          string     `json:"model"`
+	Provider       string     `json:"provider"` // minimax
+	Status         string     `json:"status"`   // pending/running/succeeded/failed
+	RequestBody    string     `json:"request_body"`
+	ResultJSON     string     `json:"result_json,omitempty"`
+	ErrorMessage   string     `json:"error_message,omitempty"`
+	ExternalTaskID string     `json:"external_task_id"` // MiniMax 返回的任务ID
+	ClientIP       string     `json:"client_ip"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // InitMiniMaxMediaTasks 初始化 MiniMax 媒体任务表
@@ -696,9 +697,9 @@ func (db *DB) CountMiniMaxMediaTasks(apiKeyID string) (int, error) {
 type VoiceClone struct {
 	ID        uint   `json:"id"`
 	APIKeyID  string `json:"api_key_id"`
-	VoiceID   string `json:"voice_id"`   // MiniMax 返回的 voice_id
-	Name      string `json:"name"`      // 用户定义的音色名称
-	Status    string `json:"status"`     // pending/active/failed
+	VoiceID   string `json:"voice_id"` // MiniMax 返回的 voice_id
+	Name      string `json:"name"`     // 用户定义的音色名称
+	Status    string `json:"status"`   // pending/active/failed
 	CreatedAt string `json:"created_at"`
 }
 
@@ -798,18 +799,21 @@ func (db *DB) UpdateVoiceCloneStatus(id uint, status string) error {
 }
 
 // AnthropicProvider DB 存储的 Anthropic 下游提供商
+// APIKey 为旧明文字段(legacy,首读后会被迁移到 APIKeyEncrypted)。
+// APIKeyEncrypted 为 AES-256-GCM 密文(base64),不对前端序列化。
 type AnthropicProvider struct {
-	ID        int64  `json:"id"`
-	Name      string `json:"name"`
-	APIURL    string `json:"api_url"`
-	APIKey    string `json:"api_key"`
-	Models    string `json:"models"`   // JSON array
-	Aliases   string `json:"aliases"`  // JSON array of {model, upstream_model}
-	Enabled     bool   `json:"enabled"`
-	IsDefault   bool   `json:"is_default"`
-	DefaultModel string `json:"default_model"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	APIURL          string `json:"api_url"`
+	APIKey          string `json:"-"`       // legacy 明文,首读迁移后清空
+	APIKeyEncrypted string `json:"-"`       // AES-256-GCM 密文(base64)
+	Models          string `json:"models"`  // JSON array
+	Aliases         string `json:"aliases"` // JSON array of {model, upstream_model}
+	Enabled         bool   `json:"enabled"`
+	IsDefault       bool   `json:"is_default"`
+	DefaultModel    string `json:"default_model"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 func (db *DB) InitAnthropicProviders() error {
@@ -819,6 +823,7 @@ func (db *DB) InitAnthropicProviders() error {
 			name TEXT NOT NULL UNIQUE,
 			api_url TEXT NOT NULL,
 			api_key TEXT NOT NULL DEFAULT '',
+			api_key_encrypted TEXT NOT NULL DEFAULT '',
 			models TEXT NOT NULL DEFAULT '[]',
 			aliases TEXT NOT NULL DEFAULT '[]',
 			enabled INTEGER NOT NULL DEFAULT 1,
@@ -832,8 +837,17 @@ func (db *DB) InitAnthropicProviders() error {
 	if err != nil {
 		return err
 	}
-	// Migration: add default_model column for existing tables
-	db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''`)
+	// 幂等迁移:旧表加 default_model + api_key_encrypted 列(SQLite ALTER TABLE 不支持 IF NOT EXISTS)
+	if _, err := db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	if _, err := db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN api_key_encrypted TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
 	// Backfill: set default_model for builtin providers that were seeded before migration
 	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'MiniMax-M2.5' WHERE name = 'MiniMax' AND default_model = ''`)
 	db.conn.Exec(`UPDATE anthropic_providers SET default_model = 'qwen3.5-plus' WHERE name = 'DashScope' AND default_model = ''`)
@@ -882,11 +896,11 @@ func (db *DB) ListEnabledAnthropicProviders() ([]*AnthropicProvider, error) {
 
 // GetDefaultAnthropicProvider 获取默认线路
 func (db *DB) GetDefaultAnthropicProvider() (*AnthropicProvider, error) {
-	return scanAnthropicProvider(db.conn.QueryRow(`SELECT `+anthropicProviderColumns+` FROM anthropic_providers WHERE enabled = 1 AND is_default = 1 LIMIT 1`))
+	return scanAnthropicProvider(db.conn.QueryRow(`SELECT ` + anthropicProviderColumns + ` FROM anthropic_providers WHERE enabled = 1 AND is_default = 1 LIMIT 1`))
 }
 
 func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error) {
-	query := `SELECT id, name, api_url, api_key, models, aliases, enabled, is_default, default_model, created_at, updated_at FROM anthropic_providers `
+	query := `SELECT id, name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model, created_at, updated_at FROM anthropic_providers `
 	if where != "" {
 		query += where
 	}
@@ -900,7 +914,7 @@ func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error)
 	providers := make([]*AnthropicProvider, 0)
 	for rows.Next() {
 		p := &AnthropicProvider{}
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.APIKeyEncrypted, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		providers = append(providers, p)
@@ -908,11 +922,13 @@ func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error)
 	return providers, nil
 }
 
-var anthropicProviderColumns = `id, name, api_url, api_key, models, aliases, enabled, is_default, default_model, created_at, updated_at`
+var anthropicProviderColumns = `id, name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model, created_at, updated_at`
 
-func scanAnthropicProvider(scanner interface{ Scan(dest ...interface{}) error }) (*AnthropicProvider, error) {
+func scanAnthropicProvider(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*AnthropicProvider, error) {
 	p := &AnthropicProvider{}
-	err := scanner.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt)
+	err := scanner.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.APIKeyEncrypted, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
@@ -928,8 +944,8 @@ func (db *DB) GetAnthropicProviderByName(name string) (*AnthropicProvider, error
 
 // CreateAnthropicProvider 新增
 func (db *DB) CreateAnthropicProvider(p *AnthropicProvider) error {
-	res, err := db.conn.Exec(`INSERT INTO anthropic_providers (name, api_url, api_key, models, aliases, enabled, is_default, default_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel)
+	res, err := db.conn.Exec(`INSERT INTO anthropic_providers (name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.APIURL, p.APIKey, p.APIKeyEncrypted, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel)
 	if err != nil {
 		return err
 	}
@@ -940,8 +956,8 @@ func (db *DB) CreateAnthropicProvider(p *AnthropicProvider) error {
 
 // UpdateAnthropicProvider 更新
 func (db *DB) UpdateAnthropicProvider(p *AnthropicProvider) error {
-	_, err := db.conn.Exec(`UPDATE anthropic_providers SET name=?, api_url=?, api_key=?, models=?, aliases=?, enabled=?, is_default=?, default_model=?, updated_at=datetime('now') WHERE id=?`,
-		p.Name, p.APIURL, p.APIKey, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel, p.ID)
+	_, err := db.conn.Exec(`UPDATE anthropic_providers SET name=?, api_url=?, api_key=?, api_key_encrypted=?, models=?, aliases=?, enabled=?, is_default=?, default_model=?, updated_at=datetime('now') WHERE id=?`,
+		p.Name, p.APIURL, p.APIKey, p.APIKeyEncrypted, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel, p.ID)
 	return err
 }
 

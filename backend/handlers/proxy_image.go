@@ -31,7 +31,7 @@ func ProxyImage(c *gin.Context) {
 
 	// 防 SSRF：拒绝 localhost / RFC1918 / link-local / CGNAT 主机
 	host := parsed.Hostname()
-	if host == "" || hostBlacklisted(host) {
+	if host == "" || IsHostBlacklisted(host) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "host not allowed"})
 		return
 	}

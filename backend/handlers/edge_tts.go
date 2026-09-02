@@ -46,14 +46,14 @@ type EdgeTTSVoicesResponse struct {
 // EdgeTTSTTSRequest TTS 请求
 type EdgeTTSTTSRequest struct {
 	Text        string `json:"text" binding:"required"`
-	Voice       string `json:"voice"`         // 音色 ID，默认 zh-CN-XiaoxiaoNeural
-	AudioFormat string `json:"audio_format"`  // mp3 或 wav
+	Voice       string `json:"voice"`        // 音色 ID，默认 zh-CN-XiaoxiaoNeural
+	AudioFormat string `json:"audio_format"` // mp3 或 wav
 }
 
 // EdgeTTSTTSResponse TTS 响应
 type EdgeTTSTTSResponse struct {
-	URL      string `json:"url"`       // 音频文件 URL
-	Filename string `json:"filename"`  // 文件名
+	URL      string `json:"url"`      // 音频文件 URL
+	Filename string `json:"filename"` // 文件名
 }
 
 // ListVoices 获取可用音色列表
@@ -213,7 +213,7 @@ func isValidAudioFilename(filename string) bool {
 func (h *EdgeTTSHandler) ConvertAudioFormat(c *gin.Context) {
 	var req struct {
 		SourceURL string `json:"source_url" binding:"required"` // 源文件 URL 或路径
-		Format    string `json:"format" binding:"required"`      // 目标格式 wav/mp3
+		Format    string `json:"format" binding:"required"`     // 目标格式 wav/mp3
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {

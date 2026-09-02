@@ -1,7 +1,7 @@
 <template>
   <div class="nps-tool">
     <!-- 登录 -->
-    <div v-if="!isAdmin" class="login-card">
+    <div v-if="!isAuthenticated" class="login-card">
       <el-card>
         <template #header><span>NPS 端口映射 — 登录</span></template>
         <el-form @submit.prevent="login">
@@ -9,7 +9,7 @@
             <el-input v-model="passwordInput" type="password" show-password
               placeholder="请输入管理员密码" @keyup.enter="login" />
           </el-form-item>
-          <el-button type="primary" @click="login" :loading="loginLoading">登录</el-button>
+          <el-button type="primary" @click="login" :loading="loggingIn">登录</el-button>
         </el-form>
       </el-card>
     </div>
@@ -113,14 +113,24 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAdminAuth } from '../../composables/useAdminAuth'
 
-const SESSION_KEY = 'nps_admin_password'
-
-const passwordInput = ref('')
-const isAdmin = ref(false)
-const loginLoading = ref(false)
+const {
+  isAuthenticated,
+  passwordInput,
+  loggingIn,
+  login,
+  logout,
+  tryStored,
+  authQuery,
+} = useAdminAuth({
+  storageKey: 'nps_admin_password',
+  verifyEndpoint: '/api/nps/verify',
+  credentialMode: 'query',
+  credentialField: 'admin_password',
+})
 
 const clientInfo = ref(null)
 const portRangeStart = ref(0)
@@ -136,31 +146,7 @@ const deletingId = ref(null)
 const addForm = ref({ type: 'tcp', port: null, target: '', remark: '' })
 
 function adminPassword() {
-  return localStorage.getItem(SESSION_KEY) || ''
-}
-
-function logout() {
-  localStorage.removeItem(SESSION_KEY)
-  isAdmin.value = false
-  passwordInput.value = ''
-}
-
-async function login() {
-  if (!passwordInput.value) { ElMessage.warning('请输入密码'); return }
-  loginLoading.value = true
-  try {
-    const r = await fetch(`/api/nps/status?admin_password=${encodeURIComponent(passwordInput.value)}`)
-    const data = await r.json()
-    if (data.error) {
-      ElMessage.error('密码错误或 NPS 未配置')
-    } else {
-      localStorage.setItem(SESSION_KEY, passwordInput.value)
-      isAdmin.value = true
-      applyStatus(data)
-      loadTunnels()
-    }
-  } catch { ElMessage.error('请求失败') }
-  finally { loginLoading.value = false }
+  return authQuery().admin_password
 }
 
 function applyStatus(data) {
@@ -262,21 +248,18 @@ async function confirmDelete(row) {
   finally { deletingId.value = null }
 }
 
+// 当验证通过(无论是登录还是 tryStored 自动登录)后,拉取状态/隧道列表。
+async function refreshAfterAuth() {
+  await loadStatus()
+  await loadTunnels()
+}
+
+watch(isAuthenticated, async (val) => {
+  if (val) await refreshAfterAuth()
+})
+
 onMounted(() => {
-  const saved = localStorage.getItem(SESSION_KEY)
-  if (!saved) return
-  fetch(`/api/nps/status?admin_password=${encodeURIComponent(saved)}`)
-    .then(r => r.json())
-    .then(data => {
-      if (!data.error) {
-        isAdmin.value = true
-        applyStatus(data)
-        loadTunnels()
-      } else {
-        localStorage.removeItem(SESSION_KEY)
-      }
-    })
-    .catch(() => {})
+  tryStored()
 })
 </script>
 

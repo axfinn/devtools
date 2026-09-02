@@ -22,9 +22,25 @@ model: sonnet
 2. `/Users/finn/.claude/projects/-Volumes-M20-code-docker-devtools/memory/feedback_vue3_template_no_value.md`(R3)
 3. `/Users/finn/.claude/projects/-Volumes-M20-code-docker-devtools/memory/feedback_vue_template_null_index.md`(R4)
 4. `/Users/finn/.claude/projects/-Volumes-M20-code-docker-devtools/memory/feedback_blob_url_unshareable.md`(R6)
-5. `/Users/finn/.claude/projects/-Volumes-M20-code-docker-devtools/memory/feedback_music-cover.md`(R7)
+5. `/Users/finn/.claude/projects/-Volumes-M20-code/docker/devtools/memory/feedback_music-cover.md`(R7)
 6. `/Users/finn/.claude/projects/-Volumes-M20-code-docker-devtools/memory/feedback_skill_scope.md`(R2)
 7. `/Volumes/M20/code/docker/devtools/AGENTS.md`(34 模块地图)
+
+## 2026-09 教训:引用任何后端 endpoint 前必须 grep 确认存在
+
+**严禁盲信 plan / user prompt 里列出的 endpoint 列表。** 写 fetch 调用前必须:
+
+```bash
+# 例:确认 /api/proxy/verify 真的存在
+grep -rn "POST.*\"/proxy/verify\"\|/proxy/verify\"" backend/routes/
+```
+
+案例:本 session 重构 7 个 view 用 `useAdminAuth` 时,plan 里写"ProxyTool / NPSTool 复用 `/api/proxy/status` / `/api/nps/status` 业务端点做 verify",我没 grep 就照抄了。结果前端调用 → 后端返 `{"error":"接口不存在"}` → 整个 Proxy/NPS 模块挂掉。**正确做法**:
+1. 先 `grep -rn "/proxy\|/nps" backend/routes/` 看所有现有路由
+2. 不存在 verify 端点 → 报错"该模块无 verify 路由,需要 backend-writer 加 `POST /<module>/verify`"或自己加路由
+3. 写完所有 fetch 后 `grep -rn "fetch(" frontend/src/views/<module>/` 与 backend 路由对一遍
+
+**通用规则**:任何 `${API_BASE}/xxx/yyy` 路径都先 `grep backend/routes` 确认;改了 `routes/*.go` 后写前端前等 backend-writer 完成。
 
 ## 触发场景
 - module-architect 在正向流水线 Step 2 调度你(写新工具的 frontend 部分)

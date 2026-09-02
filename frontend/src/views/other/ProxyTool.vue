@@ -1,7 +1,7 @@
 <template>
   <div class="proxy-tool">
     <!-- 管理员登录 -->
-    <div v-if="!isAdmin" class="login-card">
+    <div v-if="!isAuthenticated" class="login-card">
       <el-card>
         <template #header><span>科学上网 — 管理员登录</span></template>
         <el-form @submit.prevent="login">
@@ -9,7 +9,7 @@
             <el-input v-model="passwordInput" type="password" show-password
               placeholder="请输入管理员密码" @keyup.enter="login" />
           </el-form-item>
-          <el-button type="primary" @click="login" :loading="loginLoading">登录</el-button>
+          <el-button type="primary" @click="login" :loading="loggingIn">登录</el-button>
         </el-form>
       </el-card>
     </div>
@@ -196,6 +196,35 @@
       <el-card v-if="proxyRunning" class="config-card">
         <template #header><span>代理已启动 — {{ activeNode }}</span></template>
 
+        <!-- Chrome 扩展（一键导入，浏览器自动配置代理） -->
+        <el-alert type="info" :closable="false" style="margin-bottom:12px">
+          <template #title>
+            <span>Chrome 扩展一键接入</span>
+            <el-tag v-if="npsTunnelAddr" type="success" size="small" style="margin-left:8px">
+              NPS 隧道已就绪：{{ npsTunnelAddr }}
+            </el-tag>
+            <el-tag v-else type="warning" size="small" style="margin-left:8px">
+              需配置 NPS 才能远程使用
+            </el-tag>
+          </template>
+          <div style="margin-top:6px;font-size:13px;">
+            下载 zip → Chrome <code>chrome://extensions</code> → 开启开发者模式 → 拖入 zip 即可。导入后自动写代理配置、首次访问自动填认证。
+          </div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="!npsTunnelAddr"
+              @click="downloadExtension(npsTunnelAddr || window.location.host)"
+            >
+              下载 Chrome 扩展（devtools-proxy.zip）
+            </el-button>
+            <span v-if="!npsTunnelAddr" class="proxy-hint" style="margin:0">
+              需在 <code>config.yaml</code> 配置 <code>nps.vkey</code> + <code>proxy.tunnel_port</code> 并启动 npc。
+            </span>
+          </div>
+        </el-alert>
+
         <!-- 方案一：Go 客户端（推荐，无需第三方工具） -->
         <el-alert type="success" :closable="false" style="margin-bottom:12px">
           <template #title><span>方案一：Go 客户端（推荐）</span></template>
@@ -279,9 +308,6 @@
             <b>安全：</b>无认证请求返回伪装页面，不暴露代理特征。需在 NPS 管理页面提前创建端口映射（可用 NPS 工具页面一键映射）。
           </div>
           <div v-if="npsTunnelAddr" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-            <el-button type="primary" size="small" @click="downloadExtension(npsTunnelAddr)">
-              下载 Chrome 插件（自动配置代理）
-            </el-button>
             <el-button type="warning" size="small" :loading="creatingTunnel" @click="createNPSTunnel">
               一键创建端口映射
             </el-button>
@@ -455,15 +481,25 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Close, Plus, ArrowLeft, Refresh } from '@element-plus/icons-vue'
+import { useAdminAuth } from '../../composables/useAdminAuth'
 
-const SESSION_KEY = 'proxy_admin_password'
-
-const passwordInput = ref('')
-const isAdmin = ref(false)
-const loginLoading = ref(false)
+const {
+  isAuthenticated,
+  passwordInput,
+  loggingIn,
+  login,
+  logout,
+  tryStored,
+  authQuery,
+} = useAdminAuth({
+  storageKey: 'proxy_admin_password',
+  verifyEndpoint: '/api/proxy/verify',
+  credentialMode: 'query',
+  credentialField: 'admin_password',
+})
 
 const configTab = ref('url')
 const subscribeURLsText = ref('')
@@ -553,7 +589,7 @@ function navigate(tab) {
   tab.url = u
   tab.title = new URL(u).hostname
   tab.loading = true
-  const p = adminPassword()
+  const p = authQuery().admin_password
   tab.src = `/api/proxy/fetch?admin_password=${encodeURIComponent(p)}&url=${encodeURIComponent(u)}`
 }
 
@@ -580,8 +616,10 @@ function onFrameLoad(tab, e) {
   } catch (_) {}
 }
 
+// Thin wrapper kept so existing call sites keep working with minimal diff.
+// Returns the raw admin password from the auth composable's query helper.
 function adminPassword() {
-  return localStorage.getItem(SESSION_KEY) || ''
+  return authQuery().admin_password
 }
 
 function parseSourceURLs() {
@@ -648,41 +686,25 @@ function applyStatus(data) {
   if (data.npc_server_addr) npcServerAddr.value = data.npc_server_addr
 }
 
-function login() {
-  if (!passwordInput.value) { ElMessage.warning('请输入密码'); return }
-  loginLoading.value = true
-  fetch(`/api/proxy/status?admin_password=${encodeURIComponent(passwordInput.value)}`)
-    .then(r => r.json())
-    .then(data => {
-      if (data.error) {
-        ElMessage.error('密码错误')
-      } else {
-        localStorage.setItem(SESSION_KEY, passwordInput.value)
-        isAdmin.value = true
-        applyStatus(data)
-        fetchCustomDomains()
-      }
-    })
-    .catch(() => ElMessage.error('请求失败'))
-    .finally(() => { loginLoading.value = false })
+// 当验证通过(无论是登录还是 tryStored 自动登录)后,刷新状态数据。
+async function refreshAfterAuth() {
+  const params = new URLSearchParams(authQuery())
+  try {
+    const r = await fetch(`/api/proxy/status?${params.toString()}`)
+    const data = await r.json()
+    if (data.error) { ElMessage.error(data.error); return }
+    applyStatus(data)
+    fetchCustomDomains()
+  } catch {}
 }
 
-// 页面加载时，如果 localStorage 有密码，自动恢复状态
+watch(isAuthenticated, async (val) => {
+  if (val) await refreshAfterAuth()
+})
+
+// 页面加载时，如果本地有凭据，自动恢复状态
 onMounted(() => {
-  const saved = localStorage.getItem(SESSION_KEY)
-  if (!saved) return
-  fetch(`/api/proxy/status?admin_password=${encodeURIComponent(saved)}`)
-    .then(r => r.json())
-    .then(data => {
-      if (data.error) {
-        localStorage.removeItem(SESSION_KEY)
-      } else {
-        isAdmin.value = true
-        applyStatus(data)
-        fetchCustomDomains()
-      }
-    })
-    .catch(() => {})
+  tryStored()
 })
 
 function fetchCustomDomains() {
@@ -717,12 +739,6 @@ async function removeCustomDomain(domain) {
     body: JSON.stringify({ domain })
   })
   fetchCustomDomains()
-}
-
-function logout() {
-  localStorage.removeItem(SESSION_KEY)
-  isAdmin.value = false
-  passwordInput.value = ''
 }
 
 async function loadConfig() {

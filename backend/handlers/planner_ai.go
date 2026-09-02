@@ -488,16 +488,24 @@ func guessEnergyLevel(text string) string {
 
 	score := map[string]int{}
 	for _, w := range deepWords {
-		if strings.Contains(lower, w) { score["deep"]++ }
+		if strings.Contains(lower, w) {
+			score["deep"]++
+		}
 	}
 	for _, w := range shallowWords {
-		if strings.Contains(lower, w) { score["shallow"]++ }
+		if strings.Contains(lower, w) {
+			score["shallow"]++
+		}
 	}
 	for _, w := range errandWords {
-		if strings.Contains(lower, w) { score["errand"]++ }
+		if strings.Contains(lower, w) {
+			score["errand"]++
+		}
 	}
 	for _, w := range creativeWords {
-		if strings.Contains(lower, w) { score["creative"]++ }
+		if strings.Contains(lower, w) {
+			score["creative"]++
+		}
 	}
 
 	best := ""

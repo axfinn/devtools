@@ -1,6 +1,6 @@
 <template>
   <div class="hermes-tool">
-    <div v-if="!authenticated" class="login-card">
+    <div v-if="!isAuthenticated" class="login-card">
       <el-card shadow="hover">
         <template #header>
           <div class="card-header">
@@ -33,7 +33,7 @@
             <span>服务状态</span>
             <div class="header-actions">
               <el-button size="small" @click="refreshAll" :loading="loadingStatus">刷新</el-button>
-              <el-button size="small" @click="logout">退出</el-button>
+              <el-button size="small" @click="fullLogout">退出</el-button>
             </div>
           </div>
         </template>
@@ -137,15 +137,27 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useAdminAuth } from '../../composables/useAdminAuth'
 
 const API_BASE = '/api/hermes'
-const SESSION_KEY = 'hermes_admin_password'
 
-const authenticated = ref(false)
-const passwordInput = ref('')
-const loggingIn = ref(false)
+const {
+  isAuthenticated,
+  passwordInput,
+  loggingIn,
+  login,
+  logout,
+  tryStored,
+  authQuery,
+} = useAdminAuth({
+  storageKey: 'hermes_admin_password',
+  verifyEndpoint: `${API_BASE}/verify`,
+  credentialMode: 'body',
+  credentialField: 'password',
+  trustStored: true,
+})
 
 const loadingStatus = ref(false)
 const loadingModels = ref(false)
@@ -159,7 +171,7 @@ const answer = ref('')
 const usage = ref(null)
 
 function adminPassword() {
-  return localStorage.getItem(SESSION_KEY) || ''
+  return authQuery().admin_password
 }
 
 async function request(path, options = {}) {
@@ -171,42 +183,6 @@ async function request(path, options = {}) {
     throw new Error(data.error || `请求失败 (${response.status})`)
   }
   return data
-}
-
-async function login() {
-  if (!passwordInput.value.trim()) {
-    ElMessage.warning('请输入密码')
-    return
-  }
-  loggingIn.value = true
-  try {
-    const response = await fetch(`${API_BASE}/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: passwordInput.value })
-    })
-    const data = await response.json().catch(() => ({}))
-    if (!response.ok || data.error) {
-      throw new Error(data.error || '密码错误')
-    }
-    localStorage.setItem(SESSION_KEY, passwordInput.value)
-    authenticated.value = true
-    await refreshAll()
-    ElMessage.success('Hermes 模块已接入')
-  } catch (error) {
-    ElMessage.error(error.message || '登录失败')
-  } finally {
-    loggingIn.value = false
-  }
-}
-
-function logout() {
-  localStorage.removeItem(SESSION_KEY)
-  authenticated.value = false
-  passwordInput.value = ''
-  status.value = null
-  models.value = []
-  clearResult()
 }
 
 async function loadStatus() {
@@ -277,6 +253,21 @@ function clearResult() {
   usage.value = null
 }
 
+function fullLogout() {
+  logout()
+  status.value = null
+  models.value = []
+  clearResult()
+}
+
+watch(isAuthenticated, (val) => {
+  if (val) refreshAll()
+})
+
+onMounted(() => {
+  tryStored()
+})
+
 function openLink(url) {
   if (!url) return
   window.open(url, '_blank', 'noopener')
@@ -291,13 +282,6 @@ async function copy(text) {
     ElMessage.error('复制失败')
   }
 }
-
-onMounted(() => {
-  const saved = adminPassword()
-  if (!saved) return
-  authenticated.value = true
-  refreshAll()
-})
 </script>
 
 <style scoped>

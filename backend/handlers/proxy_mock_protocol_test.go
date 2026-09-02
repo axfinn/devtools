@@ -59,15 +59,15 @@ func generateTestCert(t *testing.T) tls.Certificate {
 // =====================================================================
 
 type mockTrojan struct {
-	listener          net.Listener
-	expectedPassword  string
-	body              string // 握手当作目标 HTTP 服务后返回的 body
-	gotPasswordHex    atomic.Value // string
-	gotTargetHost     atomic.Value // string
-	gotTargetPort     atomic.Int32 // int
-	handshakes        atomic.Int32
-	handshakeDone     chan struct{} // 第一次握手完成后 close,测试可等
-	handshakeOnce     sync.Once
+	listener         net.Listener
+	expectedPassword string
+	body             string       // 握手当作目标 HTTP 服务后返回的 body
+	gotPasswordHex   atomic.Value // string
+	gotTargetHost    atomic.Value // string
+	gotTargetPort    atomic.Int32 // int
+	handshakes       atomic.Int32
+	handshakeDone    chan struct{} // 第一次握手完成后 close,测试可等
+	handshakeOnce    sync.Once
 }
 
 func newMockTrojan(t *testing.T, password, body string) *mockTrojan {
@@ -173,12 +173,12 @@ func (m *mockTrojan) handle(c net.Conn) {
 // =====================================================================
 
 type mockSOCKS5 struct {
-	listener       net.Listener
-	body           string
-	gotTargetHost  atomic.Value // string
-	gotTargetPort  atomic.Int32
-	gotAuthMethod  atomic.Int32
-	handshakes     atomic.Int32
+	listener      net.Listener
+	body          string
+	gotTargetHost atomic.Value // string
+	gotTargetPort atomic.Int32
+	gotAuthMethod atomic.Int32
+	handshakes    atomic.Int32
 }
 
 func newMockSOCKS5(t *testing.T, body string) *mockSOCKS5 {

@@ -279,16 +279,16 @@ func buildPlannerReview(profile *models.PlannerProfile, tasks []*models.PlannerT
 
 	summary := fmt.Sprintf("%s里新增 %d 条记录，完成 %d 条，仍有 %d 条未收尾。", label, stats["created"], stats["done"], stats["open"])
 	return plannerReviewResponse{
-		Period:        period,
-		Label:         label,
-		Summary:       fmt.Sprintf("%s「%s」%s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind], profile.Name, summary),
-		Stats:         stats,
-		Wins:          wins,
-		Drifts:        drifts,
-		Suggestions:   suggestions,
-		Highlights:    highlights,
-		Cancellations: cancellations,
-		Postpones:     postpones,
+		Period:             period,
+		Label:              label,
+		Summary:            fmt.Sprintf("%s「%s」%s", map[string]string{plannerKindWork: "工作", plannerKindLife: "生活"}[kind], profile.Name, summary),
+		Stats:              stats,
+		Wins:               wins,
+		Drifts:             drifts,
+		Suggestions:        suggestions,
+		Highlights:         highlights,
+		Cancellations:      cancellations,
+		Postpones:          postpones,
 		CompletionFeelings: completionFeelings,
 	}
 }
@@ -590,16 +590,16 @@ func (h *PlannerHandler) UpdateTask(c *gin.Context) {
 	}
 	if nextTaskID != "" {
 		c.JSON(http.StatusOK, gin.H{
-			"code": 0,
-			"task": task,
-			"next_task_id": nextTaskID,
-			"next_planned_for": plannerNextDateForResponse(task),
+			"code":                    0,
+			"task":                    task,
+			"next_task_id":            nextTaskID,
+			"next_planned_for":        plannerNextDateForResponse(task),
 			"family_completion_count": familyCount,
 		})
 	} else {
 		c.JSON(http.StatusOK, gin.H{
-			"code": 0,
-			"task": task,
+			"code":                    0,
+			"task":                    task,
 			"family_completion_count": familyCount,
 		})
 	}
@@ -642,23 +642,23 @@ func (h *PlannerHandler) createNextRecurringInstance(parent *models.PlannerTask,
 		notes += fmt.Sprintf(" · 第 %d 次", familyCount+1)
 	}
 	req := createPlannerTaskRequest{
-		Title:              parent.Title,
-		Detail:             parent.Detail,
-		Notes:              notes,
-		Kind:               parent.Kind,
-		EntryType:          parent.EntryType,
-		Bucket:             parent.Bucket,
-		Status:             plannerStatusOpen,
-		Priority:           parent.Priority,
-		PlannedFor:         nextDate,
-		Intent:             parent.Intent,
-		EnergyLevel:        parent.EnergyLevel,
-		RemindAt:           plannerFormatDateTimeValuePtr(nextRemindAt),
-		RepeatType:         parent.RepeatType,
-		RepeatInterval:     parent.RepeatInterval,
-		RepeatUntil:        plannerFormatDateTimeValuePtr(parent.RepeatUntil),
-		RawText:            "",
-		CancelReason:       "",
+		Title:          parent.Title,
+		Detail:         parent.Detail,
+		Notes:          notes,
+		Kind:           parent.Kind,
+		EntryType:      parent.EntryType,
+		Bucket:         parent.Bucket,
+		Status:         plannerStatusOpen,
+		Priority:       parent.Priority,
+		PlannedFor:     nextDate,
+		Intent:         parent.Intent,
+		EnergyLevel:    parent.EnergyLevel,
+		RemindAt:       plannerFormatDateTimeValuePtr(nextRemindAt),
+		RepeatType:     parent.RepeatType,
+		RepeatInterval: parent.RepeatInterval,
+		RepeatUntil:    plannerFormatDateTimeValuePtr(parent.RepeatUntil),
+		RawText:        "",
+		CancelReason:   "",
 	}
 	profile, err := h.db.GetPlannerProfile(parent.ProfileID)
 	if err != nil || profile == nil {

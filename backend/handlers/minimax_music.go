@@ -116,12 +116,12 @@ func (h *AIGatewayHandler) MiniMaxLyricsGeneration(c *gin.Context) {
 	h.logAPIRequest(key, "lyrics_generation", "minimax-music", endpoint, "media", http.StatusAccepted, true, "", truncateString(string(bodyBytes), 10000), "", c.ClientIP(), time.Since(start), h.buildMediaUsage("lyrics_generation"))
 
 	c.JSON(http.StatusAccepted, gin.H{
-		"task_id":  taskID,
-		"model":    "lyrics_generation",
-		"status":   "pending",
+		"task_id":    taskID,
+		"model":      "lyrics_generation",
+		"status":     "pending",
 		"created_at": task.CreatedAt.Format(time.RFC3339),
-		"poll_url": "/api/minimax/music/v1/lyrics_tasks/" + taskID,
-		"message":  "歌词生成任务已提交,请通过 GET " + "/api/minimax/music/v1/lyrics_tasks/" + taskID + " 轮询结果",
+		"poll_url":   "/api/minimax/music/v1/lyrics_tasks/" + taskID,
+		"message":    "歌词生成任务已提交,请通过 GET " + "/api/minimax/music/v1/lyrics_tasks/" + taskID + " 轮询结果",
 	})
 
 	// 在 goroutine 里跑:用 musicSubmitClient(5 分钟)给慢场景留 buffer,
@@ -352,11 +352,11 @@ var musicProxyRetryBackoff = func(attempt int) time.Duration {
 // 4xx 是请求本身有问题(鉴权/参数错误),重试也不会过。
 func shouldRetryMusicProxyStatus(statusCode int) bool {
 	switch statusCode {
-	case http.StatusInternalServerError,   // 500
-		http.StatusBadGateway,            // 502
-		http.StatusServiceUnavailable,    // 503
-		http.StatusGatewayTimeout,        // 504
-		524:                              // Cloudflare origin timeout
+	case http.StatusInternalServerError, // 500
+		http.StatusBadGateway,         // 502
+		http.StatusServiceUnavailable, // 503
+		http.StatusGatewayTimeout,     // 504
+		524:                           // Cloudflare origin timeout
 		return true
 	}
 	return false

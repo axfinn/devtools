@@ -222,9 +222,9 @@ func TestHostBlacklisted(t *testing.T) {
 		{"", true},
 	}
 	for _, c := range cases {
-		got := hostBlacklisted(c.host)
+		got := IsHostBlacklisted(c.host)
 		if got != c.blacklist {
-			t.Errorf("hostBlacklisted(%q) = %v, want %v", c.host, got, c.blacklist)
+			t.Errorf("IsHostBlacklisted(%q) = %v, want %v", c.host, got, c.blacklist)
 		}
 	}
 }

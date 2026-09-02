@@ -14,17 +14,17 @@ import (
 )
 
 type Paste struct {
-	ID          string    `json:"id"`
-	Content     string    `json:"content"`
-	Title       string    `json:"title"`
-	Language    string    `json:"language"`
-	Password    string    `json:"-"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	MaxViews    int       `json:"max_views"`
-	Views       int       `json:"views"`
-	CreatedAt   time.Time `json:"created_at"`
-	CreatorIP   string    `json:"-"`
-	Files       string    `json:"files"` // JSON array of file metadata [{filename, type, size, url}]
+	ID        string    `json:"id"`
+	Content   string    `json:"content"`
+	Title     string    `json:"title"`
+	Language  string    `json:"language"`
+	Password  string    `json:"-"`
+	ExpiresAt time.Time `json:"expires_at"`
+	MaxViews  int       `json:"max_views"`
+	Views     int       `json:"views"`
+	CreatedAt time.Time `json:"created_at"`
+	CreatorIP string    `json:"-"`
+	Files     string    `json:"files"` // JSON array of file metadata [{filename, type, size, url}]
 }
 
 type DB struct {

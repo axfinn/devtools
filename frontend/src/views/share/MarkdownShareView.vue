@@ -70,7 +70,7 @@ const router = useRouter()
 
 // Initialize Markdown-it with extensions
 const md = new MarkdownIt({
-  html: true,
+  html: false, // 公开分享页:任何作者都能塞 <script>,原始 HTML 直通 v-html 等于主动送 XSS
   linkify: true,
   typographer: true,
   breaks: true,

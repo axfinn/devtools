@@ -61,9 +61,9 @@ type PlannerTask struct {
 	CompletedAt        *time.Time `json:"completed_at"`
 	// 阶段 6 减法:完成反思 — 让用户主动给"这次做完感觉怎么样"打标
 	// enum: 'smooth'(顺手)/ 'learned'(学到)/ 'rough'(划水)/ '' (没标)
-	CompletionFeeling  string     `json:"completion_feeling"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	CompletionFeeling string    `json:"completion_feeling"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type PlannerTaskComment struct {

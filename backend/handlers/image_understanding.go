@@ -544,7 +544,11 @@ func scheduleDelete(path string, delay time.Duration) {
 		return
 	}
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		<-time.After(delay)
 		_ = os.Remove(path)
 	}()
@@ -617,7 +621,7 @@ func hasAnyKey(args map[string]interface{}, keys ...string) bool {
 var sanitizeImagePathKeys = map[string]bool{
 	"image": true, "images": true, "image_url": true, "imageUrl": true,
 	"image_source": true,
-	"image_path": true, "imagePath": true, "path": true, "file": true,
+	"image_path":   true, "imagePath": true, "path": true, "file": true,
 	"image_file": true, "imageFile": true,
 	"image_paths": true, "imagePaths": true, "paths": true, "files": true,
 	"image_files": true, "input_images": true,
@@ -734,7 +738,11 @@ func (p *mcpProcess) Close() {
 	waitErrCh := make(chan error, 1)
 	done := make(chan struct{})
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		waitErrCh <- p.cmd.Wait()
 		close(done)
 	}()
@@ -889,7 +897,11 @@ func (p *mcpProcess) readMessage(ctx context.Context) ([]byte, error) {
 	}
 	ch := make(chan result, 1)
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		data, err := p.readMessageBlocking()
 		ch <- result{data: data, err: err}
 	}()
@@ -1064,7 +1076,11 @@ func (h *ImageUnderstandingHandler) CreateSseTask(c *gin.Context) {
 
 	// 后台执行
 	go func(task *state.ImageTask) {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.Timeout())
 		defer cancel()
 
@@ -1141,7 +1157,11 @@ func (h *ImageUnderstandingHandler) CreateSseTaskFromFile(c *gin.Context) {
 
 	// 后台执行
 	go func(task *state.ImageTask) {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.Timeout())
 		defer cancel()
 

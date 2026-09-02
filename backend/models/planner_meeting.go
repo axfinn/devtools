@@ -72,21 +72,21 @@ func init() {
 }
 
 type PlannerMeetingMinutes struct {
-	ID              string     `json:"id"`
-	ProfileID       string     `json:"profile_id"`
-	Title           string     `json:"title"`
-	Content         string     `json:"content"`
-	Summary         string     `json:"summary"`
-	ActionItems     string     `json:"action_items"`
-	Participants    string     `json:"participants"`
-	RecordingURL    string     `json:"recording_url"`
-	DurationMinutes int        `json:"duration_minutes"`
-	MeetingDate     string     `json:"meeting_date"`
-	MeetingTime     string     `json:"meeting_time"`
-	Tags            string     `json:"tags"`
-	Status          string     `json:"status"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              string    `json:"id"`
+	ProfileID       string    `json:"profile_id"`
+	Title           string    `json:"title"`
+	Content         string    `json:"content"`
+	Summary         string    `json:"summary"`
+	ActionItems     string    `json:"action_items"`
+	Participants    string    `json:"participants"`
+	RecordingURL    string    `json:"recording_url"`
+	DurationMinutes int       `json:"duration_minutes"`
+	MeetingDate     string    `json:"meeting_date"`
+	MeetingTime     string    `json:"meeting_time"`
+	Tags            string    `json:"tags"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 func (db *DB) InitPlannerMeetings() error {
@@ -153,7 +153,9 @@ func (db *DB) CreatePlannerMeeting(m *PlannerMeetingMinutes) error {
 	return err
 }
 
-func scanPlannerMeeting(scanner interface{ Scan(dest ...interface{}) error }) (*PlannerMeetingMinutes, error) {
+func scanPlannerMeeting(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*PlannerMeetingMinutes, error) {
 	m := &PlannerMeetingMinutes{}
 	if err := scanner.Scan(
 		&m.ID, &m.ProfileID, &m.Title, &m.Content, &m.Summary,

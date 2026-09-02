@@ -393,7 +393,7 @@ func (h *AskitSyncHandler) Pull(c *gin.Context) {
 }
 
 type askitPushReq struct {
-	BaseVersion int64                          `json:"baseVersion"`
+	BaseVersion int64                         `json:"baseVersion"`
 	Collections models.AskitCollectionRecords `json:"collections"`
 }
 
@@ -451,8 +451,8 @@ func (h *AskitSyncHandler) checkAdmin(c *gin.Context) bool {
 }
 
 type askitCreateInviteReq struct {
-	Count       int    `json:"count"`
-	ExpiresDays int    `json:"expiresDays"`
+	Count       int `json:"count"`
+	ExpiresDays int `json:"expiresDays"`
 }
 
 // CreateInvites POST /admin/invites —— 批量生成邀请码。

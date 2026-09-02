@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -23,11 +24,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"devtools/config"
@@ -1923,6 +1926,20 @@ func (h *ProxyHandler) checkAdmin(password string) bool {
 	return h.adminPassword != "" && password == h.adminPassword
 }
 
+// adminPasswordFromRequest 从请求里提取 admin 密码。
+// 优先 header X-Super-Admin-Password(项目惯例,与 Console/Hermes/AutoDev 等统一;已在 CORS 白名单),
+// fallback 到 query 的 admin_password / p(老接口兼容)。
+// header 优先是为了不让密码进 nginx access log / 浏览器历史 / referrer。
+func (h *ProxyHandler) adminPasswordFromRequest(c *gin.Context) string {
+	if pwd := c.GetHeader("X-Super-Admin-Password"); pwd != "" {
+		return pwd
+	}
+	if pwd := c.Query("admin_password"); pwd != "" {
+		return pwd
+	}
+	return c.Query("p")
+}
+
 func (h *ProxyHandler) checkSubscriptionPassword(password string) bool {
 	return h.checkAdmin(strings.TrimSpace(password))
 }
@@ -2120,7 +2137,6 @@ func (h *ProxyHandler) DownloadSubscription(c *gin.Context) {
 }
 
 const probeURL = "https://www.google.com"
-
 
 // ========================================================================
 // proxy/section3: 节点测速 & 选优 (lines ~2021-3500)
@@ -3688,7 +3704,7 @@ func (h *ProxyHandler) AutoStart(c *gin.Context) {
 
 // ListCustomDomains GET /api/proxy/custom-domains
 func (h *ProxyHandler) ListCustomDomains(c *gin.Context) {
-	if !h.checkAdmin(c.Query("admin_password")) {
+	if !h.checkAdmin(h.adminPasswordFromRequest(c)) {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
@@ -3697,7 +3713,7 @@ func (h *ProxyHandler) ListCustomDomains(c *gin.Context) {
 
 // AddCustomDomain POST /api/proxy/custom-domains  body: {"domain":"example.com"}
 func (h *ProxyHandler) AddCustomDomain(c *gin.Context) {
-	if !h.checkAdmin(c.Query("admin_password")) {
+	if !h.checkAdmin(h.adminPasswordFromRequest(c)) {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
@@ -3717,7 +3733,7 @@ func (h *ProxyHandler) AddCustomDomain(c *gin.Context) {
 
 // RemoveCustomDomain DELETE /api/proxy/custom-domains  body: {"domain":"example.com"}
 func (h *ProxyHandler) RemoveCustomDomain(c *gin.Context) {
-	if !h.checkAdmin(c.Query("admin_password")) {
+	if !h.checkAdmin(h.adminPasswordFromRequest(c)) {
 		c.JSON(401, gin.H{"error": "unauthorized"})
 		return
 	}
@@ -3735,9 +3751,19 @@ func (h *ProxyHandler) RemoveCustomDomain(c *gin.Context) {
 	c.JSON(200, gin.H{"ok": true})
 }
 
+// VerifyPassword POST /api/proxy/verify
+// 单独 verify 端点(给前端 useAdminAuth 用),避免与 Status 这种重型业务端点混用。
+func (h *ProxyHandler) VerifyPassword(c *gin.Context) {
+	if !h.checkAdmin(h.adminPasswordFromRequest(c)) {
+		c.JSON(401, gin.H{"error": "密码错误"})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true})
+}
+
 // Status GET /api/proxy/status
 func (h *ProxyHandler) Status(c *gin.Context) {
-	password := c.Query("admin_password")
+	password := h.adminPasswordFromRequest(c)
 	if !h.checkAdmin(password) {
 		c.JSON(403, gin.H{"error": "密码错误"})
 		return
@@ -4019,7 +4045,7 @@ func rewriteCSSURLs(html, baseURL, password string) string {
 // Fetch GET /api/proxy/fetch?url=xxx&admin_password=xxx
 // 抓取目标 HTML，将所有资源改写为代理路径，注入拦截脚本
 func (h *ProxyHandler) Fetch(c *gin.Context) {
-	password := c.Query("admin_password")
+	password := h.adminPasswordFromRequest(c)
 	if !h.checkAdmin(password) {
 		c.JSON(403, gin.H{"error": "密码错误"})
 		return
@@ -4053,7 +4079,7 @@ func (h *ProxyHandler) Fetch(c *gin.Context) {
 // Resource GET /api/proxy/resource?url=xxx&p=PASSWORD
 // 代理任意资源（CSS/JS/图片等），CSS 内容也做 URL 改写
 func (h *ProxyHandler) Resource(c *gin.Context) {
-	password := c.Query("p")
+	password := h.adminPasswordFromRequest(c)
 	if !h.checkAdmin(password) {
 		c.Data(403, "text/plain", []byte("forbidden"))
 		return
@@ -5117,10 +5143,18 @@ func checkProxyAuthHeader(header, adminPassword string) bool {
 	return parts[1] == adminPassword
 }
 
+// 嵌入 Chrome 扩展源文件，编译进二进制，运行时无需额外文件。
+// background.js 用 {{.ProxyHost}} / {{.AdminPass}} 占位，每次请求渲染注入实际值。
+//
+//go:embed extension
+var extensionFS embed.FS
+
+var extensionTmpl = template.Must(template.ParseFS(extensionFS, "extension/*"))
+
 // DownloadExtension GET /api/proxy/extension?admin_password=xxx&host=xxx
 // 生成并下载 Chrome 扩展 zip，导入后自动配置代理
 func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
-	password := c.Query("admin_password")
+	password := h.adminPasswordFromRequest(c)
 	if !h.checkAdmin(password) {
 		c.JSON(403, gin.H{"error": "密码错误"})
 		return
@@ -5141,253 +5175,25 @@ func (h *ProxyHandler) DownloadExtension(c *gin.Context) {
 		tunnelHost = hostname + ":" + h.npcTunnelPort
 	}
 
-	// MV3 manifest — 使用 PAC 脚本代理 + 主动注入认证头
-	manifest := `{
-  "manifest_version": 3,
-  "name": "DevTools Proxy",
-  "version": "3.1",
-  "description": "通过服务器 HTTP 代理科学上网，支持自动认证",
-  "permissions": [
-    "storage",
-    "proxy",
-    "webRequest",
-    "webRequestAuthProvider",
-    "alarms"
-  ],
-  "host_permissions": ["<all_urls>"],
-  "background": {
-    "service_worker": "background.js"
-  },
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "DevTools Proxy"
-  }
-}`
+	// 模板数据：注入 NPS 隧道 host + 管理员密码到 background.js 占位符
+	tmplData := map[string]string{
+		"ProxyHost": tunnelHost,
+		"AdminPass": password,
+	}
 
-	// background.js：PAC 脚本代理 + 主动注入认证头
-	bgJS := fmt.Sprintf(`
-const DEFAULT_SERVER = %q;
-const DEFAULT_PASS   = %q;
-
-function buildPac(server, mode) {
-  // 被墙域名列表（命中则走代理）
-  const blocked = [
-    'google.com','googleapis.com','googleusercontent.com','gstatic.com','gmail.com',
-    'youtube.com','youtu.be','ytimg.com','ggpht.com',
-    'twitter.com','x.com','t.co','twimg.com',
-    'facebook.com','fbcdn.net','instagram.com','whatsapp.com',
-    'telegram.org','t.me',
-    'github.com','githubusercontent.com','githubassets.com','ghcr.io',
-    'openai.com','chatgpt.com','claude.ai','anthropic.com',
-    'notion.so','notionusercontent.com',
-    'medium.com','substack.com',
-    'reddit.com','redd.it','redditmedia.com','redditstatic.com',
-    'wikipedia.org','wikimedia.org',
-    'dropbox.com','box.com','onedrive.live.com',
-    'spotify.com','netflix.com','twitch.tv',
-    'discord.com','discordapp.com','discordapp.net',
-    'slack.com','zoom.us',
-    'apple.com','icloud.com',
-    'amazon.com','amazonaws.com',
-    'microsoft.com','live.com','bing.com','msn.com',
-    'pixiv.net','fanbox.cc',
-    'dl.google.com','storage.googleapis.com',
-    'cloudflare.com','cdn.cloudflare.net',
-    'jsdelivr.net','unpkg.com','npmjs.com',
-    'docker.com','hub.docker.com',
-    'stackoverflow.com','stackexchange.com',
-    'v2ex.com',
-  ];
-
-  // 全部走代理模式
-  if (mode === 'global') {
-    var blockedStr2 = JSON.stringify(blocked);
-    return (
-      'function FindProxyForURL(url,host){' +
-        'if(isPlainHostName(host)||host==="127.0.0.1"||host==="localhost"||' +
-          'isInNet(host,"10.0.0.0","255.0.0.0")||isInNet(host,"172.16.0.0","255.240.0.0")||' +
-          'isInNet(host,"192.168.0.0","255.255.0.0"))return "DIRECT";' +
-        'return "PROXY ' + server + '";' +
-      '}'
-    );
-  }
-
-  // 智能分流模式（默认）：
-  // 被墙域名 → PROXY（代理不通再直连）
-  // 其余 → DIRECT; PROXY（直连不通再走代理）
-  var blockedStr = JSON.stringify(blocked);
-  return (
-    'var BLOCKED=' + blockedStr + ';' +
-    'function FindProxyForURL(url,host){' +
-      'if(isPlainHostName(host)||host==="127.0.0.1"||host==="localhost"||' +
-        'isInNet(host,"10.0.0.0","255.0.0.0")||isInNet(host,"172.16.0.0","255.240.0.0")||' +
-        'isInNet(host,"192.168.0.0","255.255.0.0"))return "DIRECT";' +
-      'for(var i=0;i<BLOCKED.length;i++){var d=BLOCKED[i];if(host===d||host.slice(-(d.length+1))==="."+d)return "PROXY ' + server + '; DIRECT";}' +
-      'return "DIRECT; PROXY ' + server + '";' +
-    '}'
-  );
-}
-
-function applyProxy(server, mode) {
-  const pac = buildPac(server, mode || 'ai_priority');
-  chrome.proxy.settings.set({
-    value: { mode: 'pac_script', pacScript: { data: pac } },
-    scope: 'regular'
-  });
-}
-
-function disableProxy() {
-  chrome.proxy.settings.clear({ scope: 'regular' });
-}
-
-function loadAndApply() {
-  chrome.storage.local.get(['proxyEnabled', 'server', 'mode'], (s) => {
-    if (s.proxyEnabled !== false) {
-      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'ai_priority');
-    } else {
-      disableProxy();
-    }
-  });
-}
-
-// 启动时立即用默认值同步设置代理，避免 storage 异步导致新标签页第一个请求走直连
-applyProxy(DEFAULT_SERVER, 'ai_priority');
-
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({ server: DEFAULT_SERVER, pass: DEFAULT_PASS, proxyEnabled: true, mode: 'ai_priority' });
-  loadAndApply();
-});
-chrome.runtime.onStartup.addListener(loadAndApply);
-loadAndApply();
-
-// MV3 service worker 会被 Chrome 休眠，用 alarm 每25秒唤醒一次保持代理设置
-chrome.alarms.create('keepAlive', { periodInMinutes: 0.4 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'keepAlive') loadAndApply();
-});
-
-// 自动填充代理认证
-chrome.webRequest.onAuthRequired.addListener(
-  (details) => {
-    if (!details.isProxy) return {};
-    return new Promise((resolve) => {
-      chrome.storage.local.get(['pass'], (s) => {
-        resolve({ authCredentials: { username: 'proxy', password: s.pass || DEFAULT_PASS } });
-      });
-    });
-  },
-  { urls: ['<all_urls>'] }
-);
-
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.action === 'update') {
-    chrome.storage.local.set({ server: msg.server, pass: msg.pass, mode: msg.mode, proxyEnabled: true }, () => {
-      applyProxy(msg.server, msg.mode);
-    });
-  } else if (msg.action === 'disable') {
-    chrome.storage.local.set({ proxyEnabled: false });
-    disableProxy();
-  } else if (msg.action === 'enable') {
-    chrome.storage.local.get(['server', 'mode'], (s) => {
-      chrome.storage.local.set({ proxyEnabled: true });
-      applyProxy(s.server || DEFAULT_SERVER, s.mode || 'ai_priority');
-    });
-  }
-  sendResponse({});
-  return true;
-});
-`, tunnelHost, password)
-
-	popupHTML := `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><style>
-*{box-sizing:border-box;}
-body{font-family:sans-serif;padding:14px;width:320px;font-size:13px;margin:0;}
-label{display:block;color:#666;margin-bottom:3px;margin-top:10px;}
-input{width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;}
-.row{display:flex;align-items:center;gap:8px;margin-top:12px;}
-.status{flex:1;font-weight:bold;}
-.on{color:#67c23a;} .off{color:#f56c6c;}
-button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;}
-.btn-save{background:#409eff;color:#fff;}
-.btn-on{background:#67c23a;color:#fff;}
-.btn-off{background:#f56c6c;color:#fff;}
-.hint{font-size:11px;color:#999;margin-top:6px;line-height:1.5;}
-</style></head>
-<body>
-<label>服务器地址（host:port 或 域名）</label>
-<input id="server" placeholder="example.com 或 1.2.3.4:8082">
-<label>密码</label>
-<input id="pass" type="password" placeholder="管理员密码">
-<label>模式</label>
-<select id="mode" style="width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
-  <option value="ai_priority">AI 优先分流（默认，GPT/Claude/Gemini 走专线）</option>
-  <option value="smart">智能分流（国内直连，被墙走代理，不通自动切换）</option>
-  <option value="global">全部走代理</option>
-</select>
-<div class="hint">HTTP 代理，流量经 NPS 隧道转发。安装后可在弹窗中开启/关闭代理。</div>
-<div class="hint" style="margin-top:8px;padding:6px 8px;background:#fff7e6;border-radius:4px;color:#b45309;">⚠️ Chrome 内置翻译、拼写检查等功能不走扩展代理。如需翻译，请在系统设置中配置 HTTP 代理：<span id="sysProxy" style="font-family:monospace;user-select:all;"></span></div>
-<div class="row">
-  <span class="status" id="status">检测中...</span>
-  <button class="btn-save" id="saveBtn">保存并启用</button>
-  <button id="toggleBtn">-</button>
-</div>
-<script src="popup.js"></script>
-</body></html>`
-
-	popupJS := `
-var enabled = true;
-
-chrome.storage.local.get(['server','pass','proxyEnabled','mode'], function(s) {
-  document.getElementById('server').value = s.server || '';
-  document.getElementById('pass').value = s.pass || '';
-  document.getElementById('mode').value = s.mode || 'ai_priority';
-  enabled = s.proxyEnabled !== false;
-  var srv = s.server || '';
-  if (srv) { document.getElementById('sysProxy').textContent = srv; }
-  updateUI();
-});
-
-function updateUI() {
-  document.getElementById('status').textContent = enabled ? '代理已启用' : '代理已关闭';
-  document.getElementById('status').className = 'status ' + (enabled ? 'on' : 'off');
-  document.getElementById('toggleBtn').textContent = enabled ? '关闭' : '开启';
-  document.getElementById('toggleBtn').className = enabled ? 'btn-off' : 'btn-on';
-}
-
-document.getElementById('saveBtn').addEventListener('click', function() {
-  var server = document.getElementById('server').value.trim();
-  var pass = document.getElementById('pass').value.trim();
-  var mode = document.getElementById('mode').value;
-  if (!server || !pass) { alert('请填写服务器地址和密码'); return; }
-  chrome.runtime.sendMessage({ action: 'update', server: server, pass: pass, mode: mode });
-  enabled = true;
-  updateUI();
-});
-
-document.getElementById('toggleBtn').addEventListener('click', function() {
-  enabled = !enabled;
-  chrome.runtime.sendMessage({ action: enabled ? 'enable' : 'disable' });
-  updateUI();
-});
-`
-
-	// 打包成 zip
+	// 打包成 zip（extension/* 模板编译进二进制，运行时无需额外文件）
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	files := map[string]string{
-		"manifest.json": manifest,
-		"background.js": bgJS,
-		"popup.html":    popupHTML,
-		"popup.js":      popupJS,
-	}
-	for name, content := range files {
+	for _, name := range []string{"manifest.json", "background.js", "popup.html", "popup.js"} {
 		w, err := zw.Create(name)
 		if err != nil {
 			c.JSON(500, gin.H{"error": "打包失败"})
 			return
 		}
-		w.Write([]byte(content))
+		if err := extensionTmpl.ExecuteTemplate(w, "extension/"+name, tmplData); err != nil {
+			c.JSON(500, gin.H{"error": "模板渲染失败: " + err.Error()})
+			return
+		}
 	}
 	zw.Close()
 
@@ -5402,40 +5208,58 @@ var wsUpgrader = websocket.Upgrader{
 // WsTunnel GET /api/proxy/ws-tunnel?p=PASSWORD&host=example.com:443
 // 通过 WebSocket 建立 TCP 隧道，绕过 nginx 对 CONNECT 的限制
 // 客户端用 wstunnel: wstunnel client -L 'socks5://127.0.0.1:1080' wss://yourserver.com/api/proxy/ws-tunnel?p=PASS
-// DownloadClient GET /api/proxy/client/download?os=darwin&arch=arm64&admin_password=xxx
-// 下载对应平台的 proxy-client 二进制
+// DownloadClient GET /api/proxy/client/download?os=darwin&arch=arm64
+// 下载对应平台的 proxy-client 二进制。os/arch 走白名单,文件路径走 EvalSymlinks 前缀校验,
+// 防 os=../../etc/passwd 类路径穿越(原来仅 os.Stat,不防 ../)。
 func (h *ProxyHandler) DownloadClient(c *gin.Context) {
-	if !h.checkAdmin(c.Query("admin_password")) {
+	if !h.checkAdmin(h.adminPasswordFromRequest(c)) {
 		c.JSON(403, gin.H{"error": "密码错误"})
 		return
 	}
+	goosWhitelist := map[string]bool{"windows": true, "darwin": true, "linux": true}
+	archWhitelist := map[string]bool{"amd64": true, "arm64": true, "386": true, "arm": true}
 	goos := c.Query("os")
 	arch := c.Query("arch")
-	if goos == "" || arch == "" {
-		c.JSON(400, gin.H{"error": "缺少 os 或 arch 参数"})
+	if !goosWhitelist[goos] || !archWhitelist[arch] {
+		c.JSON(400, gin.H{"error": "无效的 os 或 arch 参数"})
 		return
 	}
 
-	var filename string
+	ext := ""
 	if goos == "windows" {
-		filename = fmt.Sprintf("proxy-client-%s-%s.exe", goos, arch)
-	} else {
-		filename = fmt.Sprintf("proxy-client-%s-%s", goos, arch)
+		ext = ".exe"
 	}
-
-	filePath := "./proxy-client-bins/" + filename
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	filename := fmt.Sprintf("proxy-client-%s-%s%s", goos, arch, ext)
+	binDir := "./proxy-client-bins"
+	filePath := filepath.Join(binDir, filename)
+	absBase, err := filepath.Abs(binDir)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "bin 目录解析失败"})
+		return
+	}
+	abs, err := filepath.Abs(filePath)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "路径解析失败"})
+		return
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		// 不存在 / 不可访问都按 404 处理,不泄露路径信息
 		c.JSON(404, gin.H{"error": "该平台的客户端不存在，请联系管理员重新构建"})
+		return
+	}
+	if !strings.HasPrefix(real, absBase+string(filepath.Separator)) {
+		c.JSON(404, gin.H{"error": "客户端路径越界"})
 		return
 	}
 
 	c.Header("Content-Disposition", "attachment; filename="+filename)
 	c.Header("Content-Type", "application/octet-stream")
-	c.File(filePath)
+	c.File(real)
 }
 
 func (h *ProxyHandler) WsTunnel(c *gin.Context) {
-	if !h.checkAdmin(c.Query("p")) {
+	if !h.checkAdmin(h.adminPasswordFromRequest(c)) {
 		c.JSON(403, gin.H{"error": "forbidden"})
 		return
 	}
@@ -5443,6 +5267,20 @@ func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 	if host == "" {
 		c.JSON(400, gin.H{"error": "missing host"})
 		return
+	}
+	// SSRF 防护:挡内网 / loopback / link-local / 私有网段 / CGNAT。
+	// 双重检查:hostname 命中 + 解析到的所有 IP 命中任一即拒绝(防 DNS rebinding)。
+	if IsHostBlacklisted(host) {
+		c.JSON(403, gin.H{"error": "host 命中 SSRF 黑名单(内网/loopback/link-local/CGNAT)"})
+		return
+	}
+	if ips, err := net.LookupIP(host); err == nil {
+		for _, ip := range ips {
+			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
+				c.JSON(403, gin.H{"error": "host 解析到内网 IP,SSRF 拒绝"})
+				return
+			}
+		}
 	}
 
 	wsConn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
@@ -5457,12 +5295,13 @@ func (h *ProxyHandler) WsTunnel(c *gin.Context) {
 	node := globalSession.active
 	globalSession.mu.RUnlock()
 
-	var upstream net.Conn
-	if node != nil {
-		upstream, err = dialWithGFW(node, host)
-	} else {
-		upstream, err = net.DialTimeout("tcp", host, 10*time.Second)
+	// 强制走代理节点(node 不能为空),不再允许直连 fallback。
+	// 直连路径不经过代理审计/限速,且 SSRF 残余风险无法拦截。
+	if node == nil {
+		wsConn.WriteMessage(websocket.TextMessage, []byte("error: 无可用代理节点,请先配置节点"))
+		return
 	}
+	upstream, err := dialWithGFW(node, host)
 	if err != nil {
 		wsConn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
 		return

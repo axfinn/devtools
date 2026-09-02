@@ -46,7 +46,7 @@ func TestLyricsStressConcurrent(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = apiKey
 	cfg.MiniMaxTokenPlan.BaseURL = "https://api.minimaxi.com"
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil)
+	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 110 * time.Second
 
 	router := gin.New()
@@ -58,14 +58,14 @@ func TestLyricsStressConcurrent(t *testing.T) {
 		perWorker   = 3
 	)
 	var (
-		okCount       atomic.Int32
-		retryAndOK    atomic.Int32
-		fail524       atomic.Int32
-		fail5xx       atomic.Int32
-		fail4xx       atomic.Int32
-		totalRetries  atomic.Int32
-		maxRetry      atomic.Int32
-		taskIDs       sync.Map // task_id (string) → struct{}
+		okCount      atomic.Int32
+		retryAndOK   atomic.Int32
+		fail524      atomic.Int32
+		fail5xx      atomic.Int32
+		fail4xx      atomic.Int32
+		totalRetries atomic.Int32
+		maxRetry     atomic.Int32
+		taskIDs      sync.Map // task_id (string) → struct{}
 	)
 
 	var wg sync.WaitGroup
@@ -76,8 +76,8 @@ func TestLyricsStressConcurrent(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < perWorker; i++ {
 				body, _ := json.Marshal(map[string]interface{}{
-					"mode":   "write_full_song",
-					"prompt": fmt.Sprintf("压测 worker=%d 第 %d 次:写一首关于秋天的歌", workerID, i+1),
+					"mode":           "write_full_song",
+					"prompt":         fmt.Sprintf("压测 worker=%d 第 %d 次:写一首关于秋天的歌", workerID, i+1),
 					"advancedParams": map[string]interface{}{"language": "zh"},
 				})
 				req := httptest.NewRequest(http.MethodPost, "/api/minimax/music/v1/lyrics_generation", bytes.NewReader(body))

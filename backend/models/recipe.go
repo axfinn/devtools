@@ -11,16 +11,16 @@ func init() {
 }
 
 type Recipe struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Password    string     `json:"-"`
-	PasswordIndex string   `json:"-"`
-	CreatorKey  string     `json:"-"`
-	Data        string     `json:"data"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	CreatorIP   string     `json:"-"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Password      string     `json:"-"`
+	PasswordIndex string     `json:"-"`
+	CreatorKey    string     `json:"-"`
+	Data          string     `json:"data"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	CreatorIP     string     `json:"-"`
 }
 
 func (db *DB) InitRecipe() error {

@@ -628,12 +628,12 @@ func (h *VoiceMemoHandler) ServeMemoAudio(c *gin.Context) {
 // ── ASR Integration ──
 
 type asrResponse struct {
-	Text          string   `json:"text"`
-	Language      string   `json:"language"`
-	Status        string   `json:"status"`
-	Error         string   `json:"error"`
+	Text          string       `json:"text"`
+	Language      string       `json:"language"`
+	Status        string       `json:"status"`
+	Error         string       `json:"error"`
 	Segments      []asrSegment `json:"segments"`
-	DiarizeStatus string   `json:"diarize_status"`
+	DiarizeStatus string       `json:"diarize_status"`
 }
 
 type asrSegment struct {
@@ -644,7 +644,11 @@ type asrSegment struct {
 }
 
 func (h *VoiceMemoHandler) transcribeMemo(memoID, filePath, originalName string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in transcribeMemo: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in transcribeMemo: %v", r)
+		}
+	}()
 	if h.asrServiceURL == "" {
 		h.db.UpdateVoiceMemoTranscript(memoID, "", "", "failed", "未配置 ASR 服务")
 		return

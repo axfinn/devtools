@@ -81,6 +81,8 @@ backend/
 | `DIARIZE_SERVICE_URL` | — | 说话人识别（可选） |
 | `MINIMAX_API_KEY` | — | AI 机器人 |
 | `DEEPSEEK_API_KEY` | — | 记账 AI |
+| `TERMINAL_ENCRYPTION_KEY` | 随机(warning) | SSH 终端密码加密 |
+| `DEPLOY_MASTER_KEY` | **必填,fatal** | AI Gateway API Key AES-GCM 加密 |
 | `GOPROXY` | `https://goproxy.cn,direct` | Go 代理（国内） |
 
 ---

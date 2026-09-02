@@ -1,6 +1,6 @@
 <template>
   <!-- ===== Password Gate ===== -->
-  <div v-if="!authenticated" class="min-h-screen flex items-center justify-center p-4"
+  <div v-if="!isAuthenticated" class="min-h-screen flex items-center justify-center p-4"
     :class="isDark ? 'bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900' : 'bg-gradient-to-br from-slate-100 via-purple-50 to-slate-100'">
     <div class="w-full max-w-sm">
       <div class="text-center mb-8">
@@ -1254,6 +1254,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useTheme } from '../../composables/useTheme'
+import { useAdminAuth } from '../../composables/useAdminAuth'
 import MarkdownIt from 'markdown-it'
 import hljs from '../../utils/highlight'
 import {
@@ -1292,6 +1293,29 @@ function renderMd(content) {
 
 const SESSION_KEY = 'autodev_password'
 const API_BASE = '/api/autodev'
+
+// ---- auth (refactored to use useAdminAuth composable) ----
+const {
+  isAuthenticated,
+  passwordInput,
+  loggingIn,
+  login,
+  logout: authLogout,
+  tryStored,
+  authBody,
+} = useAdminAuth({
+  storageKey: SESSION_KEY,
+  verifyEndpoint: `${API_BASE}/verify`,
+  credentialMode: 'body',
+  credentialField: 'password',
+  trustStored: true,
+})
+
+// Wrapper kept so the existing ~30 call sites can keep referencing `savedPassword`
+// without rewriting every fetch URL/body. Returns the raw password value.
+function savedPassword() {
+  return authBody().password
+}
 const DEFAULT_MODULE = 'cc'
 const RESULT_PREVIEW_BYTES = 512 * 1024
 const FILE_PREVIEW_BYTES = 256 * 1024
@@ -1406,42 +1430,12 @@ const PHASE_NAMES = [
 
 function phaseLabel(n) { return PHASE_NAMES[n - 1]?.label || `阶段 ${n}` }
 
-// ---- auth ----
-const authenticated = ref(false)
+// ---- auth (state provided by useAdminAuth above) ----
 // 移动端视图切换：'sidebar' | 'detail'
 const mobileView = ref('sidebar')
-const passwordInput = ref('')
-const loggingIn = ref(false)
-let savedPassword = ''
-
-function getPassword() { return localStorage.getItem(SESSION_KEY) || '' }
-
-async function login() {
-  if (!passwordInput.value.trim()) return
-  loggingIn.value = true
-  try {
-    const res = await fetch(`${API_BASE}/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: passwordInput.value })
-    })
-    if (res.ok) {
-      localStorage.setItem(SESSION_KEY, passwordInput.value)
-      savedPassword = passwordInput.value
-      authenticated.value = true
-      loadTasks()
-    } else {
-      ElMessage.error('密码错误')
-    }
-  } catch { ElMessage.error('连接失败') }
-  finally { loggingIn.value = false }
-}
 
 function logout() {
-  localStorage.removeItem(SESSION_KEY)
-  authenticated.value = false
-  passwordInput.value = ''
-  savedPassword = ''
+  authLogout()
   tasks.value = []
   selectedTask.value = null
 }
@@ -1479,7 +1473,7 @@ const projects = ref([])
 
 async function loadProjects() {
   try {
-    const res = await fetch(`${API_BASE}/projects?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/projects?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) {
       const data = await res.json()
       projects.value = data.projects || []
@@ -1516,7 +1510,7 @@ async function loadTasks(reset = false) {
   try {
     const { status, type } = listFilter.value
     const params = new URLSearchParams({
-      password: savedPassword,
+      password: savedPassword(),
       limit: LIST_PAGE_SIZE,
       offset: 0,
     })
@@ -1547,7 +1541,7 @@ async function loadMore() {
   try {
     const { status, type } = listFilter.value
     const params = new URLSearchParams({
-      password: savedPassword,
+      password: savedPassword(),
       limit: LIST_PAGE_SIZE,
       offset: tasks.value.length,
     })
@@ -1582,7 +1576,7 @@ async function submitTask() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          password: savedPassword,
+          password: savedPassword(),
           description: newTask.value.description.trim(),
           work_dir: newTask.value.workDir.trim(),
           module: newTask.value.module
@@ -1595,7 +1589,7 @@ async function submitTask() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          password: savedPassword,
+          password: savedPassword(),
           description: newTask.value.description.trim(),
           work_dir: newTask.value.workDir.trim(),
           module: newTask.value.module
@@ -1605,7 +1599,7 @@ async function submitTask() {
     } else {
       // Build request body based on mode
       const body = {
-        password: savedPassword,
+        password: savedPassword(),
       }
 
       if (resumeTaskId.value) {
@@ -1664,7 +1658,7 @@ async function stopTask(task) {
     const res = await fetch(`${API_BASE}/tasks/${task.id}/stop`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: savedPassword })
+      body: JSON.stringify({ password: savedPassword() })
     })
     const data = await res.json()
     if (res.ok) {
@@ -1681,7 +1675,7 @@ async function terminateTask(task) {
     const res = await fetch(`${API_BASE}/tasks/${task.id}/terminate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: savedPassword })
+      body: JSON.stringify({ password: savedPassword() })
     })
     const data = await res.json()
     if (res.ok) {
@@ -1725,7 +1719,7 @@ async function deleteTask(task) {
     )
   } catch { return }
   try {
-    await fetch(`${API_BASE}/tasks/${task.id}?password=${encodeURIComponent(savedPassword)}`, { method: 'DELETE' })
+    await fetch(`${API_BASE}/tasks/${task.id}?password=${encodeURIComponent(savedPassword())}`, { method: 'DELETE' })
     ElMessage.success('已删除')
     if (selectedTask.value?.id === task.id) selectedTask.value = null
     await loadTasks()
@@ -1815,7 +1809,7 @@ const activeFileKindLabel = computed(() => FILE_KIND_LABELS[activeFileKind.value
 const activeFileSize = computed(() => activeFileMeta.value?.size ?? activeFile.value?.size ?? 0)
 const activeFileRawUrl = computed(() => {
   if (!selectedTask.value || !activeFilePath.value) return ''
-  return `${API_BASE}/tasks/${selectedTask.value.id}/raw?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(activeFilePath.value)}`
+  return `${API_BASE}/tasks/${selectedTask.value.id}/raw?password=${encodeURIComponent(savedPassword())}&path=${encodeURIComponent(activeFilePath.value)}`
 })
 const resultPreviewNotice = computed(() => buildTextPreviewNotice(resultPreviewMeta.value, '结果文件'))
 const activeFileNotice = computed(() => {
@@ -1901,7 +1895,7 @@ async function refreshDetail() {
   if (!selectedTask.value) return
   loadingDetail.value = true
   try {
-    const res = await fetch(`${API_BASE}/tasks/${selectedTask.value.id}?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/tasks/${selectedTask.value.id}?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) {
       const data = await res.json()
       selectedTask.value = data
@@ -1918,7 +1912,7 @@ async function refreshDetail() {
 async function loadResultForTask() {
   if (!selectedTask.value) return
   // Need file list to find the right file path
-  const res = await fetch(`${API_BASE}/tasks/${selectedTask.value.id}/files?password=${encodeURIComponent(savedPassword)}`)
+  const res = await fetch(`${API_BASE}/tasks/${selectedTask.value.id}/files?password=${encodeURIComponent(savedPassword())}`)
   if (!res.ok) return
   const data = await res.json()
   taskFiles.value = data.files || []
@@ -1945,7 +1939,7 @@ async function loadResultForTask() {
 
 async function loadFiles() {
   if (!selectedTask.value) return
-  const res = await fetch(`${API_BASE}/tasks/${selectedTask.value.id}/files?password=${encodeURIComponent(savedPassword)}`)
+  const res = await fetch(`${API_BASE}/tasks/${selectedTask.value.id}/files?password=${encodeURIComponent(savedPassword())}`)
   if (res.ok) {
     const data = await res.json()
     taskFiles.value = data.files || []
@@ -1995,7 +1989,7 @@ function initProject(task) {
   initResult.value = null
   initingProject.value = true
 
-  const params = new URLSearchParams({ password: savedPassword, work_dir: task.work_dir })
+  const params = new URLSearchParams({ password: savedPassword(), work_dir: task.work_dir })
   const es = new EventSource(`${API_BASE}/init/stream?${params}`)
 
   es.addEventListener('log', (e) => {
@@ -2032,7 +2026,7 @@ async function loadResultFile(path) {
   resultPreviewMeta.value = null
   try {
     const res = await fetch(
-      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(path)}&mode=full&max_bytes=${RESULT_PREVIEW_BYTES}&max_lines=1200`
+      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword())}&path=${encodeURIComponent(path)}&mode=full&max_bytes=${RESULT_PREVIEW_BYTES}&max_lines=1200`
     )
     if (res.ok) {
       const data = await res.json()
@@ -2060,7 +2054,7 @@ async function reloadActiveFile() {
   loadingFile.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword)}&path=${encodeURIComponent(activeFilePath.value)}&mode=${encodeURIComponent(filePreviewMode.value)}&max_bytes=${FILE_PREVIEW_BYTES}&max_lines=${FILE_PREVIEW_LINES}`
+      `${API_BASE}/tasks/${selectedTask.value.id}/file?password=${encodeURIComponent(savedPassword())}&path=${encodeURIComponent(activeFilePath.value)}&mode=${encodeURIComponent(filePreviewMode.value)}&max_bytes=${FILE_PREVIEW_BYTES}&max_lines=${FILE_PREVIEW_LINES}`
     )
     if (res.ok) {
       const data = await res.json()
@@ -2080,7 +2074,7 @@ async function loadLogs() {
   loadingLogs.value = true
   try {
     const res = await fetch(
-      `${API_BASE}/tasks/${selectedTask.value.id}/logs?password=${encodeURIComponent(savedPassword)}&phase=${encodeURIComponent(activeLogPhase.value)}&max_lines=${logTailLines.value}&max_bytes=${LOG_PREVIEW_BYTES}`
+      `${API_BASE}/tasks/${selectedTask.value.id}/logs?password=${encodeURIComponent(savedPassword())}&phase=${encodeURIComponent(activeLogPhase.value)}&max_lines=${logTailLines.value}&max_bytes=${LOG_PREVIEW_BYTES}`
     )
     if (res.ok) {
       const data = await res.json()
@@ -2161,7 +2155,7 @@ async function downloadTask() {
   if (!selectedTask.value) return
   downloading.value = true
   try {
-    const url = `${API_BASE}/tasks/${selectedTask.value.id}/download?password=${encodeURIComponent(savedPassword)}`
+    const url = `${API_BASE}/tasks/${selectedTask.value.id}/download?password=${encodeURIComponent(savedPassword())}`
     const a = document.createElement('a')
     a.href = url; a.download = ''
     document.body.appendChild(a); a.click(); document.body.removeChild(a)
@@ -2174,7 +2168,7 @@ const hasSite = computed(() => taskHasSite.value)
 
 function previewSite() {
   if (!selectedTask.value) return
-  window.open(`${API_BASE}/tasks/${selectedTask.value.id}/site/index.html?password=${encodeURIComponent(savedPassword)}`, '_blank')
+  window.open(`${API_BASE}/tasks/${selectedTask.value.id}/site/index.html?password=${encodeURIComponent(savedPassword())}`, '_blank')
 }
 
 function formatBytes(bytes) {
@@ -2394,7 +2388,7 @@ const regeneratingSSHKey = ref(false)
 async function loadSSHKey() {
   loadingSSHKey.value = true
   try {
-    const res = await fetch(`${API_BASE}/sshkey?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/sshkey?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) sshKeyInfo.value = await res.json()
     else ElMessage.error('获取 SSH 密钥失败')
   } catch { ElMessage.error('网络错误') } finally { loadingSSHKey.value = false }
@@ -2406,7 +2400,7 @@ async function regenerateSSHKey() {
     const res = await fetch(`${API_BASE}/sshkey/regenerate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: savedPassword })
+      body: JSON.stringify({ password: savedPassword() })
     })
     if (res.ok) {
       sshKeyInfo.value = await res.json()
@@ -2434,7 +2428,7 @@ const clawtestUpdateLogEl = ref(null)
 async function loadClawtestVersion() {
   loadingClawtestInfo.value = true
   try {
-    const res = await fetch(`${API_BASE}/clawtest/version?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/clawtest/version?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) clawtestInfo.value = await res.json()
   } catch { ElMessage.error('获取 clawtest 版本失败') }
   finally { loadingClawtestInfo.value = false }
@@ -2445,7 +2439,7 @@ function startClawtestUpdate() {
   updatingClawtest.value = true
   clawtestUpdateLogs.value = []
   clawtestUpdateResult.value = null
-  const url = `${API_BASE}/clawtest/update/stream?password=${encodeURIComponent(savedPassword)}`
+  const url = `${API_BASE}/clawtest/update/stream?password=${encodeURIComponent(savedPassword())}`
   const es = new EventSource(url)
   es.addEventListener('log', (e) => {
     try {
@@ -2483,7 +2477,7 @@ function onClaudeDrawerOpen() {
 async function loadClaudeVersion() {
   loadingClaudeInfo.value = true
   try {
-    const res = await fetch(`${API_BASE}/claude/version?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/claude/version?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) claudeInfo.value = await res.json()
   } catch { ElMessage.error('获取版本信息失败') }
   finally { loadingClaudeInfo.value = false }
@@ -2492,7 +2486,7 @@ async function loadClaudeVersion() {
 async function loadCodexVersion() {
   loadingCodexInfo.value = true
   try {
-    const res = await fetch(`${API_BASE}/codex/version?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/codex/version?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) codexInfo.value = await res.json()
   } catch { ElMessage.error('获取 Codex 版本信息失败') }
   finally { loadingCodexInfo.value = false }
@@ -2502,7 +2496,7 @@ async function testClaudeCLI() {
   testingClaudeCLI.value = true
   claudeCliHealth.value = null
   try {
-    const res = await fetch(`${API_BASE}/claude/cli/test?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/claude/cli/test?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) claudeCliHealth.value = await res.json()
     else ElMessage.error('cc 自检失败')
   } catch { ElMessage.error('cc 自检失败') }
@@ -2513,7 +2507,7 @@ async function testCodexCLI() {
   testingCodexCLI.value = true
   codexCliHealth.value = null
   try {
-    const res = await fetch(`${API_BASE}/codex/cli/test?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/codex/cli/test?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) codexCliHealth.value = await res.json()
     else ElMessage.error('codex 自检失败')
   } catch { ElMessage.error('codex 自检失败') }
@@ -2524,7 +2518,7 @@ async function testModel() {
   testingModel.value = true
   modelHealth.value = null
   try {
-    const res = await fetch(`${API_BASE}/claude/test?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/claude/test?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) modelHealth.value = await res.json()
     else ElMessage.error('测试请求失败')
   } catch { ElMessage.error('测试请求失败') }
@@ -2536,7 +2530,7 @@ function startUpdate() {
   updating.value = true
   updateLogs.value = []
   updateResult.value = null
-  const url = `${API_BASE}/claude/update/stream?password=${encodeURIComponent(savedPassword)}`
+  const url = `${API_BASE}/claude/update/stream?password=${encodeURIComponent(savedPassword())}`
   const es = new EventSource(url)
   es.addEventListener('log', (e) => {
     try {
@@ -2570,7 +2564,7 @@ function startCodexUpdate() {
   updatingCodex.value = true
   codexUpdateLogs.value = []
   codexUpdateResult.value = null
-  const url = `${API_BASE}/codex/update/stream?password=${encodeURIComponent(savedPassword)}`
+  const url = `${API_BASE}/codex/update/stream?password=${encodeURIComponent(savedPassword())}`
   const es = new EventSource(url)
   es.addEventListener('log', (e) => {
     try {
@@ -2611,7 +2605,7 @@ async function refreshSelectedTaskState() {
   const task = selectedTask.value
   if (!task || task.status !== 'running') return
   try {
-    const res = await fetch(`${API_BASE}/tasks/${task.id}/state?password=${encodeURIComponent(savedPassword)}`)
+    const res = await fetch(`${API_BASE}/tasks/${task.id}/state?password=${encodeURIComponent(savedPassword())}`)
     if (res.ok) {
       const state = await res.json()
       taskState.value = state
@@ -2646,8 +2640,7 @@ function startAutoRefresh() {
 
 onMounted(() => {
   initMermaid()
-  const pw = getPassword()
-  if (pw) { savedPassword = pw; authenticated.value = true; loadTasks(); loadProjects() }
+  tryStored().then(ok => { if (ok) { loadTasks(); loadProjects() } })
   startAutoRefresh()
 })
 onUnmounted(() => {

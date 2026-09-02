@@ -170,11 +170,11 @@ func TestScreen_InfoRequiresActive(t *testing.T) {
 	}
 	var resp struct {
 		Session struct {
-			ID            string `json:"id"`
-			HostUserID    string `json:"host_user_id"`
-			Title         string `json:"title"`
-			Status        string `json:"status"`
-			AllowRemote   bool   `json:"allow_remote_control"`
+			ID          string `json:"id"`
+			HostUserID  string `json:"host_user_id"`
+			Title       string `json:"title"`
+			Status      string `json:"status"`
+			AllowRemote bool   `json:"allow_remote_control"`
 		} `json:"session"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -212,7 +212,7 @@ func TestScreen_InfoHasPasswordVisibility(t *testing.T) {
 	r.ServeHTTP(w, req)
 	var resp struct {
 		Session struct {
-			HasPassword bool `json:"has_password"`
+			HasPassword bool   `json:"has_password"`
 			Password    string `json:"password"` // 公开视图必须为空
 		} `json:"session"`
 	}

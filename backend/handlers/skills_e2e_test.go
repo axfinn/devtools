@@ -156,7 +156,9 @@ func TestSkills_E2E_PasteExhaustsWriteBucket(t *testing.T) {
 
 func TestSkills_E2E_Disabled_404s(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db, _ := models.NewDB(":memory:"); db.SetMaxOpenConns(1); db.InitAll()
+	db, _ := models.NewDB(":memory:")
+	db.SetMaxOpenConns(1)
+	db.InitAll()
 
 	store := state.NewMemoryStore()
 	skillsHandler := NewSkillsHandler(db)

@@ -273,7 +273,11 @@ func (m *SSHSessionManager) ResumeSession(sessionID, userToken string) (*ActiveS
 
 // CloseSession 关闭会话
 func (m *SSHSessionManager) CloseSession(sessionID string) error {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in CloseSession: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in CloseSession: %v", r)
+		}
+	}()
 	m.mu.RLock()
 	session, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -311,7 +315,11 @@ func (m *SSHSessionManager) CloseSession(sessionID string) error {
 
 // handleInput 处理输入（InputChan → SSH Stdin）
 func (m *SSHSessionManager) handleInput(session *ActiveSSHSession) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in handleInput: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in handleInput: %v", r)
+		}
+	}()
 	for {
 		select {
 		case <-session.ctx.Done():
@@ -342,7 +350,11 @@ func (m *SSHSessionManager) handleInput(session *ActiveSSHSession) {
 
 // handleOutput 处理输出（SSH Stdout → OutputChan）
 func (m *SSHSessionManager) handleOutput(session *ActiveSSHSession) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in handleOutput: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in handleOutput: %v", r)
+		}
+	}()
 	buffer := make([]byte, 8192)
 	defer func() {
 		if err := m.CloseSession(session.ID); err != nil && !strings.Contains(err.Error(), "会话不存在") {
@@ -392,7 +404,11 @@ func (m *SSHSessionManager) handleOutput(session *ActiveSSHSession) {
 
 // handleControl 处理控制消息
 func (m *SSHSessionManager) handleControl(session *ActiveSSHSession) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in handleControl: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in handleControl: %v", r)
+		}
+	}()
 	for {
 		select {
 		case <-session.ctx.Done():
@@ -1187,7 +1203,11 @@ func (h *SSHHandler) HandleWebSocket(c *gin.Context) {
 	defer cancel()
 
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		select {
 		case <-ctx.Done():
 		case <-activeSession.ctx.Done():
@@ -1207,7 +1227,11 @@ func (h *SSHHandler) HandleWebSocket(c *gin.Context) {
 
 	// 启动输出协程（OutputChan → WebSocket）
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():
@@ -1232,7 +1256,11 @@ func (h *SSHHandler) HandleWebSocket(c *gin.Context) {
 
 	// 启动心跳协程
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
@@ -1303,7 +1331,11 @@ func (h *SSHHandler) HandleWebSocket(c *gin.Context) {
 // StartCleanupRoutine 启动定期清理协程
 func (h *SSHHandler) StartCleanupRoutine() {
 	go func() {
-		defer func() { if r := recover(); r != nil { log.Printf("PANIC in background goroutine: %v", r) } }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in background goroutine: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(h.config.SessionIdleTimeout)
 		defer ticker.Stop()
 

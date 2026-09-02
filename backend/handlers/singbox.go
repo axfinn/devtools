@@ -555,10 +555,11 @@ func applyTLSOptions(out *option.Outbound, n ProxyNode) {
 // requiresTLSByType 报告指定协议是否强制要求 TLS(sing-box outbound 必须配 TLS block,
 // 否则启动期就报 "TLS required" — 整个节点被拒)。
 // 参照 sing-box v1.14+ protocol 实现:
-//   anytls / trojan / hy2 / tuic — 协议层就是 TLS(没 plain 模式);
-//   vless — 通常配 reality,但 plain tcp 也支持,这里保守不强制;
-//   shadowsocks / socks5 / http — 可选 TLS,不强制;
-//   hysteria — legacy,实际未出现在订阅里。
+//
+//	anytls / trojan / hy2 / tuic — 协议层就是 TLS(没 plain 模式);
+//	vless — 通常配 reality,但 plain tcp 也支持,这里保守不强制;
+//	shadowsocks / socks5 / http — 可选 TLS,不强制;
+//	hysteria — legacy,实际未出现在订阅里。
 func requiresTLSByType(t string) bool {
 	switch t {
 	case "anytls", "trojan", "hysteria2", "hy2", "tuic":

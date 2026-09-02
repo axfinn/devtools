@@ -74,32 +74,34 @@ func resolveHome() string {
 
 // AutoDevHandler handles autodev task operations
 type AutoDevHandler struct {
-	db             *models.DB
-	adminPassword  string
-	autodevPath    string
-	stopScriptPath string
-	dataDir        string
-	mu             sync.RWMutex
-	processes      map[string]*exec.Cmd
+	db              *models.DB
+	adminPassword   string
+	autodevPath     string
+	stopScriptPath  string
+	dataDir         string
+	allowedWorkDirs []string // workDir 白名单(从 cfg.AutoDev.AllowedWorkDirs 注入),空则放行
+	mu              sync.RWMutex
+	processes       map[string]*exec.Cmd
 	// 复用的 HTTP 客户端：避免每次 AI 调用都新建 Client/Transport
 	aiClient *http.Client
 }
 
 // NewAutoDevHandler creates a new AutoDevHandler
-func NewAutoDevHandler(db *models.DB, adminPassword, autodevPath, dataDir string) *AutoDevHandler {
+func NewAutoDevHandler(db *models.DB, adminPassword, autodevPath, dataDir string, allowedWorkDirs []string) *AutoDevHandler {
 	stopScript := filepath.Join(filepath.Dir(autodevPath), "autodev-stop")
 	if _, err := os.Stat(stopScript); err != nil {
 		// try /opt/clawtest/autodev/autodev-stop
 		stopScript = "/opt/clawtest/autodev/autodev-stop"
 	}
 	h := &AutoDevHandler{
-		db:             db,
-		adminPassword:  adminPassword,
-		autodevPath:    autodevPath,
-		stopScriptPath: stopScript,
-		dataDir:        dataDir,
-		processes:      make(map[string]*exec.Cmd),
-		aiClient:       &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},
+		db:              db,
+		adminPassword:   adminPassword,
+		autodevPath:     autodevPath,
+		stopScriptPath:  stopScript,
+		dataDir:         dataDir,
+		allowedWorkDirs: allowedWorkDirs,
+		processes:       make(map[string]*exec.Cmd),
+		aiClient:        &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}},
 	}
 	os.MkdirAll(dataDir, 0755)
 	return h
@@ -134,11 +136,14 @@ func (h *AutoDevHandler) Ask(c *gin.Context) {
 		return
 	}
 
-	// Verify work_dir exists
-	if _, err := os.Stat(req.WorkDir); os.IsNotExist(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + req.WorkDir})
+	// Verify work_dir exists + 在白名单内(防 workdir 路径穿越到 /etc、/root 等敏感目录)。
+	// SafeResolveWorkDir 同时做 filepath.Abs + EvalSymlinks + 前缀匹配,失败即 400 拒绝。
+	resolved, err := SafeResolveWorkDir(req.WorkDir, h.allowedWorkDirs)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "work_dir 校验失败: " + err.Error()})
 		return
 	}
+	req.WorkDir = resolved
 
 	module := models.NormalizeAutoDevModule(req.Module)
 
@@ -211,11 +216,14 @@ func (h *AutoDevHandler) Extend(c *gin.Context) {
 		return
 	}
 
-	// Verify work_dir exists
-	if _, err := os.Stat(req.WorkDir); os.IsNotExist(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + req.WorkDir})
+	// Verify work_dir exists + 在白名单内(防 workdir 路径穿越到 /etc、/root 等敏感目录)。
+	// SafeResolveWorkDir 同时做 filepath.Abs + EvalSymlinks + 前缀匹配,失败即 400 拒绝。
+	resolved, err := SafeResolveWorkDir(req.WorkDir, h.allowedWorkDirs)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "work_dir 校验失败: " + err.Error()})
 		return
 	}
+	req.WorkDir = resolved
 
 	// Verify autodev CLI is available
 	if _, err := os.Stat(h.autodevPath); err != nil {
@@ -260,10 +268,13 @@ func (h *AutoDevHandler) InitProject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "work_dir 不能为空"})
 		return
 	}
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "工作目录不存在: " + workDir})
+	// 白名单 + 路径规范化,防 workdir 路径穿越。
+	resolved, err := SafeResolveWorkDir(workDir, h.allowedWorkDirs)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "work_dir 校验失败: " + err.Error()})
 		return
 	}
+	workDir = resolved
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -300,7 +311,7 @@ func (h *AutoDevHandler) InitProject(c *gin.Context) {
 	go scanLines(stderr)
 	scanLines(stdout)
 
-	err := cmd.Wait()
+	err = cmd.Wait()
 	claudeMdPath := filepath.Join(workDir, "CLAUDE.md")
 	_, statErr := os.Stat(claudeMdPath)
 	claudeMdExists := statErr == nil
@@ -356,7 +367,7 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 		Publish     bool   `json:"publish"`
 		Build       bool   `json:"build"`
 		Push        bool   `json:"push"`
-		Loop        int    `json:"loop"`     // 0=不循环, -1=无限, N=最多N次迭代
+		Loop        int    `json:"loop"` // 0=不循环, -1=无限, N=最多N次迭代
 		// Resume support: if set, --from <phase> is passed and WorkDir is used
 		ResumeFrom int    `json:"resume_from"` // phase number to resume from (1-based, 0 = new task)
 		WorkDir    string `json:"work_dir"`    // existing work dir to resume
@@ -391,8 +402,13 @@ func (h *AutoDevHandler) Submit(c *gin.Context) {
 	var isResume bool
 
 	if req.ResumeFrom > 0 && req.WorkDir != "" {
-		// Resume mode: reuse existing work dir
-		taskDir = req.WorkDir
+		// Resume mode: reuse existing work dir(经白名单校验,防 workdir 路径穿越)
+		resolved, err := SafeResolveWorkDir(req.WorkDir, h.allowedWorkDirs)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "work_dir 校验失败: " + err.Error()})
+			return
+		}
+		taskDir = resolved
 		isResume = true
 		// clear STOP file if present so task can resume
 		stopFile := filepath.Join(taskDir, ".autodev", "STOP")
@@ -903,7 +919,11 @@ func (h *AutoDevHandler) DeleteTask(c *gin.Context) {
 
 // runTask executes autodev in a background goroutine
 func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build, push bool, resumeFrom int, module string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runTask: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runTask: %v", r)
+		}
+	}()
 	module = models.NormalizeAutoDevModule(module)
 	args := []string{description, "--path", workDir, "--module", module}
 	if publish {
@@ -971,7 +991,11 @@ func (h *AutoDevHandler) runTask(id, description, workDir string, publish, build
 // runAskTask executes `autodev ask "description" --path workDir` in a background goroutine.
 // The new clawtest supports the `ask` subcommand which appends Q&A to process/qa.md.
 func (h *AutoDevHandler) runAskTask(id, description, workDir, module string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runAskTask: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runAskTask: %v", r)
+		}
+	}()
 	// Ensure directories exist with correct ownership for non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
 	os.MkdirAll(logDir, 0755)
@@ -1063,7 +1087,11 @@ func (h *AutoDevHandler) runAskTask(id, description, workDir, module string) {
 // The new clawtest supports the `extend` subcommand which adds new requirements to existing projects.
 // Each iteration writes to process/iter-N/ and updates RESULT.md.
 func (h *AutoDevHandler) runExtendTask(id, description, workDir, module string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runExtendTask: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runExtendTask: %v", r)
+		}
+	}()
 	// Ensure directories exist with correct ownership for non-root autodev user (uid 1001)
 	logDir := filepath.Join(workDir, ".autodev", "logs")
 	os.MkdirAll(logDir, 0755)
@@ -1145,7 +1173,11 @@ func (h *AutoDevHandler) runExtendTask(id, description, workDir, module string) 
 // runLoopTask executes `autodev --loop [N] "description" --path workDir` in a background goroutine.
 // loop=0 means no loop (same as develop), loop=-1 means infinite, loop=N means at most N iterations.
 func (h *AutoDevHandler) runLoopTask(id, description, workDir string, publish, build, push bool, loop int, module string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runLoopTask: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runLoopTask: %v", r)
+		}
+	}()
 	module = models.NormalizeAutoDevModule(module)
 
 	logDir := filepath.Join(workDir, ".autodev", "logs")
@@ -1242,7 +1274,11 @@ func (h *AutoDevHandler) buildEnv() []string {
 
 // runExportTask executes autodev export in a background goroutine
 func (h *AutoDevHandler) runExportTask(id, description, workDir, exportFormat string) {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in runExportTask: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runExportTask: %v", r)
+		}
+	}()
 	// Default format is zip
 	if exportFormat == "" {
 		exportFormat = "zip"
@@ -1962,7 +1998,9 @@ func (h *AutoDevHandler) TestClaudeCLI(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, claudePath, "--print", "--dangerously-skip-permissions", "-p", "Reply with exactly pong and nothing else.")
+	// 去 --dangerously-skip-permissions:Claude Code 默认沙箱要求工具调用需用户确认。
+	// 诊断 ping 不需要任何 tool,直接让模型回答就行。生产任务的工具白名单在 autodev Python 包装器侧配置。
+	cmd := exec.CommandContext(ctx, claudePath, "--print", "-p", "Reply with exactly pong and nothing else.")
 	cmd.Dir = h.dataDir
 	setSysProcCredential(cmd)
 	cmd.Env = stripEnvVar(h.buildEnv(), "CLAUDECODE")
@@ -2025,7 +2063,9 @@ func (h *AutoDevHandler) TestCodexCLI(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 45*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, codexPath, "exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-C", h.dataDir, "Reply with exactly pong and nothing else.")
+	// 去 --dangerously-bypass-approvals-and-sandbox:Codex CLI 默认 approval_policy=suggest + sandbox=workspace-write。
+	// 诊断 ping 无需任何工具调用,保留 sandbox 是更安全的默认。
+	cmd := exec.CommandContext(ctx, codexPath, "exec", "--json", "--skip-git-repo-check", "-C", h.dataDir, "Reply with exactly pong and nothing else.")
 	cmd.Dir = h.dataDir
 	setSysProcCredential(cmd)
 	cmd.Env = h.buildEnv()

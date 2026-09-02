@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+*{box-sizing:border-box;}
+body{font-family:sans-serif;padding:14px;width:320px;font-size:13px;margin:0;}
+label{display:block;color:#666;margin-bottom:3px;margin-top:10px;}
+input{width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;}
+.row{display:flex;align-items:center;gap:8px;margin-top:12px;}
+.status{flex:1;font-weight:bold;}
+.on{color:#67c23a;} .off{color:#f56c6c;}
+button{padding:6px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;}
+.btn-save{background:#409eff;color:#fff;}
+.btn-on{background:#67c23a;color:#fff;}
+.btn-off{background:#f56c6c;color:#fff;}
+.hint{font-size:11px;color:#999;margin-top:6px;line-height:1.5;}
+</style></head>
+<body>
+<label>服务器地址（host:port 或 域名）</label>
+<input id="server" placeholder="example.com 或 1.2.3.4:8082">
+<label>密码</label>
+<input id="pass" type="password" placeholder="管理员密码">
+<label>模式</label>
+<select id="mode" style="width:100%;padding:5px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">
+  <option value="ai_priority">AI 优先分流（默认，GPT/Claude/Gemini 走专线）</option>
+  <option value="smart">智能分流（国内直连，被墙走代理，不通自动切换）</option>
+  <option value="global">全部走代理</option>
+</select>
+<div class="hint">HTTP 代理，流量经 NPS 隧道转发。安装后可在弹窗中开启/关闭代理。</div>
+<div class="hint" style="margin-top:8px;padding:6px 8px;background:#fff7e6;border-radius:4px;color:#b45309;">⚠️ Chrome 内置翻译、拼写检查等功能不走扩展代理。如需翻译，请在系统设置中配置 HTTP 代理：<span id="sysProxy" style="font-family:monospace;user-select:all;"></span></div>
+<div class="row">
+  <span class="status" id="status">检测中...</span>
+  <button class="btn-save" id="saveBtn">保存并启用</button>
+  <button id="toggleBtn">-</button>
+</div>
+<script src="popup.js"></script>
+</body></html>

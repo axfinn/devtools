@@ -55,11 +55,11 @@ type CreateRecipeResponse struct {
 }
 
 type UpdateRecipeRequest struct {
-	Action    string          `json:"action"` // "update_data", "update_name", "extend"
-	CreatorKey string        `json:"creator_key"`
-	Data     json.RawMessage `json:"data"`
-	Name     string          `json:"name"`
-	ExpiresIn int            `json:"expires_in"` // days
+	Action     string          `json:"action"` // "update_data", "update_name", "extend"
+	CreatorKey string          `json:"creator_key"`
+	Data       json.RawMessage `json:"data"`
+	Name       string          `json:"name"`
+	ExpiresIn  int             `json:"expires_in"` // days
 }
 
 func (h *RecipeHandler) Create(c *gin.Context) {
@@ -125,13 +125,13 @@ func (h *RecipeHandler) Create(c *gin.Context) {
 	exp := time.Now().Add(time.Duration(expDays) * 24 * time.Hour)
 
 	recipe := &models.Recipe{
-		Name:         req.Name,
-		Password:     hashedPassword,
+		Name:          req.Name,
+		Password:      hashedPassword,
 		PasswordIndex: pwIndex,
-		CreatorKey:  hashedCreatorKey,
-		Data:         string(dataBytes),
-		ExpiresAt:    &exp,
-		CreatorIP:    ip,
+		CreatorKey:    hashedCreatorKey,
+		Data:          string(dataBytes),
+		ExpiresAt:     &exp,
+		CreatorIP:     ip,
 	}
 
 	if err := h.db.CreateRecipe(recipe); err != nil {

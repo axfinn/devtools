@@ -7,29 +7,29 @@ import (
 
 // HouseholdItem 家庭物品
 type HouseholdItem struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Category     string    `json:"category"`
-	Quantity     int       `json:"quantity"`
-	Unit         string    `json:"unit"`
-	MinQuantity  int       `json:"min_quantity"`
-	ExpiryDate   string    `json:"expiry_date"`
-	ExpiryDays   int       `json:"expiry_days"`
-	Location     string    `json:"location"`
-	Notes        string    `json:"notes"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Category    string    `json:"category"`
+	Quantity    int       `json:"quantity"`
+	Unit        string    `json:"unit"`
+	MinQuantity int       `json:"min_quantity"`
+	ExpiryDate  string    `json:"expiry_date"`
+	ExpiryDays  int       `json:"expiry_days"`
+	Location    string    `json:"location"`
+	Notes       string    `json:"notes"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // ItemTemplate 物品模板
 type ItemTemplate struct {
-	ID                   string `json:"id"`
-	Name                 string `json:"name"`
-	Category             string `json:"category"`
-	Unit                 string `json:"unit"`
-	DefaultMinQuantity   int    `json:"default_min_quantity"`
-	DefaultExpiryDays    int    `json:"default_expiry_days"`
-	IsDefault            bool   `json:"is_default"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Category           string `json:"category"`
+	Unit               string `json:"unit"`
+	DefaultMinQuantity int    `json:"default_min_quantity"`
+	DefaultExpiryDays  int    `json:"default_expiry_days"`
+	IsDefault          bool   `json:"is_default"`
 }
 
 // Notification 提醒通知
@@ -82,12 +82,12 @@ type HouseholdSpaceShare struct {
 
 // HouseholdProfile 家庭物品档案
 type HouseholdProfile struct {
-	ID              string     `json:"id"`
-	PasswordIndex   string     `json:"-"`
-	CreatorKey      string     `json:"creator_key"`
-	Name            string     `json:"name"`
-	ExpiresAt       *time.Time `json:"expires_at"`
-	CreatedAt       time.Time  `json:"created_at"`
+	ID            string     `json:"id"`
+	PasswordIndex string     `json:"-"`
+	CreatorKey    string     `json:"creator_key"`
+	Name          string     `json:"name"`
+	ExpiresAt     *time.Time `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // InitHousehold 初始化家庭物品数据库表
@@ -1171,10 +1171,10 @@ func (db *DB) GetProfileStats(profileID string) (map[string]interface{}, error) 
 	}
 
 	return map[string]interface{}{
-		"total":      total,
-		"low_stock":  lowStock,
-		"expiring":   expiring,
-		"expired":    expired,
+		"total":     total,
+		"low_stock": lowStock,
+		"expiring":  expiring,
+		"expired":   expired,
 	}, nil
 }
 
@@ -1182,12 +1182,12 @@ func (db *DB) GetProfileStats(profileID string) (map[string]interface{}, error) 
 
 // HouseholdConversation 对话记录
 type HouseholdConversation struct {
-	ID          string    `json:"id"`
-	ProfileID   string    `json:"profile_id"`
-	UserID     string    `json:"user_id"`
-	Role       string    `json:"role"` // user, assistant
-	Content    string    `json:"content"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	ProfileID string    `json:"profile_id"`
+	UserID    string    `json:"user_id"`
+	Role      string    `json:"role"` // user, assistant
+	Content   string    `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // InitHouseholdConversations 初始化对话表

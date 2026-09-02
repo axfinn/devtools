@@ -92,11 +92,11 @@ func testTLSOptions() *option.InboundTLSOptions {
 	// sing-box 读 in-memory PEM 用 badoption.Listable[string] (json "certificate"/"key" 数组),
 	// 但实测发现 Listable 在某些路径上有解析问题。用 CertificatePath/KeyPath 最稳。
 	return &option.InboundTLSOptions{
-		Enabled:        true,
-		ServerName:     "test",
+		Enabled:         true,
+		ServerName:      "test",
 		CertificatePath: testCertFile,
 		KeyPath:         testKeyFile,
-		MinVersion:     "1.2",
+		MinVersion:      "1.2",
 	}
 }
 
@@ -449,8 +449,8 @@ func TestShydx_DevtoolsCheckEndToEnd_FullChain(t *testing.T) {
 
 	// 2. 按协议分组,每个协议启一个 server sing-box(避免反复启)
 	type serverInfo struct {
-		addr    string
-		scheme  string
+		addr   string
+		scheme string
 	}
 	servers := map[string]*serverInfo{}
 

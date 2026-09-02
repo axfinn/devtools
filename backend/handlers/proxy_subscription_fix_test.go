@@ -32,8 +32,8 @@ func TestDialUpstream_UnsupportedTypeFallsBackToDirectDial(t *testing.T) {
 			node := &ProxyNode{
 				Type:   typ,
 				Server: "10.255.255.1", // 不通的节点 server,确保走 fallback 而不是走节点
-				Port:    443,
-				Extra:   map[string]interface{}{},
+				Port:   443,
+				Extra:  map[string]interface{}{},
 			}
 			// 用一个"几乎肯定 TCP 可达"的目标测:127.0.0.1:9(Discard 服务,极少开放)
 			// 退而求其次:用 127.0.0.1:1(几乎永远 refused,能被 dial 看到 ECONNREFUSED)。
@@ -96,13 +96,13 @@ func TestNodesToClashYAML_PassesThroughExtraFields(t *testing.T) {
 			Server: "hk1.example.com",
 			Port:   443,
 			Extra: map[string]interface{}{
-				"password":            "secret-pw",
-				"sni":                 "cdn.example.com",
-				"skip-cert-verify":    true,
-				"udp":                 true,
-				"client-fingerprint":  "chrome",
-				"alpn":                []interface{}{"h2", "http/1.1"},
-				"network":             "tcp",
+				"password":           "secret-pw",
+				"sni":                "cdn.example.com",
+				"skip-cert-verify":   true,
+				"udp":                true,
+				"client-fingerprint": "chrome",
+				"alpn":               []interface{}{"h2", "http/1.1"},
+				"network":            "tcp",
 			},
 		},
 		{
@@ -217,7 +217,7 @@ func TestParseTrojanURL_AcceptsValidURI(t *testing.T) {
 
 func TestParseShadowrocketSubscription_RecognizesAnyTLSHy2Tuic(t *testing.T) {
 	cases := []struct {
-		uri   string
+		uri    string
 		scheme string
 	}{
 		{"anytls://4b0ccf8b-ee1c-3521-88d3-d3980635d88a@a.example.com:443?security=tls&sni=b.com#AnyTLS-TEST", "anytls"},

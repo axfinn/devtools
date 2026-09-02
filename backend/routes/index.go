@@ -27,24 +27,24 @@ type RouteHandlers struct {
 	ConsoleHandler            *handlers.ConsoleHandler
 	MonitoringHandler         *handlers.MonitoringHandler
 	TerminalHandler           *handlers.SSHHandler
-	NfsShareHandler          *handlers.NFSShareHandler
-	OcrHandler               *handlers.OCRHandler
-	BailianHandler           *handlers.BailianHandler
-	AiGatewayHandler         *handlers.AIGatewayHandler
+	NfsShareHandler           *handlers.NFSShareHandler
+	OcrHandler                *handlers.OCRHandler
+	BailianHandler            *handlers.BailianHandler
+	AiGatewayHandler          *handlers.AIGatewayHandler
 	ImageUnderstandingHandler *handlers.ImageUnderstandingHandler
-	CpaProxyHandler          *handlers.CPAProxyHandler
-	AutoDevHandler           *handlers.AutoDevHandler
-	MermaidHandler           *handlers.MermaidHandler
-	NpsHandler               *handlers.NPSHandler
-	ProxyHandler             *handlers.ProxyHandler
-	HermesHandler            *handlers.HermesHandler
-	EdgeTTSHandler           *handlers.EdgeTTSHandler
-	VoiceMemoHandler         *handlers.VoiceMemoHandler
-	GameHandler              *handlers.GameHandler
-	AskitSyncHandler         *handlers.AskitSyncHandler
-	ScreenHandler            *handlers.ScreenHandler
-	SkillsHandler            *handlers.SkillsHandler
-	SkillsGuard              *middleware.SkillsGuard
+	CpaProxyHandler           *handlers.CPAProxyHandler
+	AutoDevHandler            *handlers.AutoDevHandler
+	MermaidHandler            *handlers.MermaidHandler
+	NpsHandler                *handlers.NPSHandler
+	ProxyHandler              *handlers.ProxyHandler
+	HermesHandler             *handlers.HermesHandler
+	EdgeTTSHandler            *handlers.EdgeTTSHandler
+	VoiceMemoHandler          *handlers.VoiceMemoHandler
+	GameHandler               *handlers.GameHandler
+	AskitSyncHandler          *handlers.AskitSyncHandler
+	ScreenHandler             *handlers.ScreenHandler
+	SkillsHandler             *handlers.SkillsHandler
+	SkillsGuard               *middleware.SkillsGuard
 }
 
 // RegisterAllRoutes wires up all domain route groups.
@@ -75,7 +75,7 @@ func RegisterAllRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateLimiter
 	RegisterAskitRoutes(api, h, createRateLimiter)
 	RegisterScreenRoutes(api, h)
 	RegisterAPIGatewayRoutes(api, h)
-	RegisterAutoDevRoutes(api, h)
+	RegisterAutoDevRoutes(api, h, createRateLimiter)
 	RegisterMermaidRoutes(api, h)
 	RegisterProxyRoutes(api, h)
 	RegisterNPSRoutes(api, h)

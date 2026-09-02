@@ -5,7 +5,7 @@
         <p class="eyebrow">MINIMAX STUDIO</p>
         <h2>把文本、语音、视频、音乐和结果归档放到一个工作台里。</h2>
         <p class="hero-desc">
-          页面直接复用项目现有的 MiniMax 配置与网关能力。文本生成、Speech、Hailuo、music-3.0 / 3.0-free / 2.6 / 2.6-free / cover / cover-free、lyrics_generation、image-01 都能从这里发起和归档。
+          页面直接复用项目现有的 MiniMax 配置与网关能力。文本生成、Speech、Hailuo、MiniMax-H3 / H3-Max（异步文/图/多模态生视频）、music-3.0 / 3.0-free / 2.6 / 2.6-free / cover / cover-free、lyrics_generation、image-01 都能从这里发起和归档。
         </p>
         <div class="hero-tips">
           <span>支持 `AI Gateway API Key`</span>
@@ -177,7 +177,7 @@
                 <el-input v-model="mediaForm.lyrics" type="textarea" :rows="4" placeholder="可以从下方 lyrics_generation 一键带入。" />
               </el-form-item>
 
-              <div v-if="isVideoModel" class="inline-fields">
+              <div v-if="isVideoModel && !isH3Model" class="inline-fields">
                 <el-form-item label="时长（秒）">
                   <el-input-number v-model="mediaForm.duration" :min="6" :max="10" class="w-full" />
                 </el-form-item>
@@ -186,6 +186,48 @@
                     <el-option label="768P" value="768P" />
                     <el-option label="1080P" value="1080P" />
                   </el-select>
+                </el-form-item>
+              </div>
+
+              <div v-if="isH3Model" class="inline-fields">
+                <el-form-item label="时长（秒）">
+                  <el-input-number v-model="mediaForm.duration" :min="h3DurationMin" :max="h3DurationMax" class="w-full" />
+                </el-form-item>
+                <el-form-item label="分辨率">
+                  <el-select v-model="mediaForm.resolution" class="w-full">
+                    <el-option v-for="opt in h3ResolutionOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+                  </el-select>
+                </el-form-item>
+              </div>
+
+              <div v-if="isH3Model" class="inline-fields">
+                <el-form-item label="宽高比">
+                  <el-select v-model="mediaForm.ratio" class="w-full">
+                    <el-option v-for="r in h3RatioOptions" :key="r" :label="r" :value="r" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="&nbsp;">
+                  <span class="field-hint">
+                    t2v 文生视频不能选 adaptive；i2v/r2va 图生/参考生默认 adaptive。
+                  </span>
+                </el-form-item>
+              </div>
+
+              <div v-if="isH3Model" class="h3-refs">
+                <el-form-item label="首帧图片 URL（first_frame）">
+                  <el-input v-model="mediaForm.h3FirstFrameUrl" placeholder="可选。图生视频-首帧。https://..." />
+                </el-form-item>
+                <el-form-item label="尾帧图片 URL（last_frame）">
+                  <el-input v-model="mediaForm.h3LastFrameUrl" placeholder="可选。首尾帧模式必须成对出现。https://..." />
+                </el-form-item>
+                <el-form-item label="参考图片 URL（reference_image）">
+                  <el-input v-model="mediaForm.h3ReferenceImageUrl" placeholder="可选。多模态参考生视频。https://..." />
+                </el-form-item>
+                <el-form-item label="参考视频 URL（reference_video）">
+                  <el-input v-model="mediaForm.h3ReferenceVideoUrl" placeholder="可选。MP4/MOV，≤15s。https://..." />
+                </el-form-item>
+                <el-form-item label="参考音频 URL（reference_audio）">
+                  <el-input v-model="mediaForm.h3ReferenceAudioUrl" placeholder="可选。WAV/MP3，≤15s。https://..." />
                 </el-form-item>
               </div>
 
@@ -339,6 +381,7 @@
                   <el-button size="small" type="primary" @click.stop="openMediaTask(row.task_id)">查看</el-button>
                   <el-button size="small" @click.stop="saveTaskFromList(row)">保存分享</el-button>
                   <el-button size="small" @click.stop="downloadTask(row)">下载</el-button>
+                  <el-button size="small" type="danger" plain :disabled="!canCancelMediaTask(row)" @click.stop="cancelMediaTask(row)">{{ cancelButtonLabel(row) }}</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -832,7 +875,7 @@
 <script setup>
 import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
 
 const OFFICIAL_DOCS_URL = 'https://platform.minimaxi.com/docs/api-reference/api-overview'
@@ -876,7 +919,13 @@ const mediaForm = ref({
   referenceType: 'character',
   coverFeatureId: '',
   lyrics: '',
-  autoPoll: true
+  autoPoll: true,
+  ratio: '16:9',
+  h3FirstFrameUrl: '',
+  h3LastFrameUrl: '',
+  h3ReferenceImageUrl: '',
+  h3ReferenceVideoUrl: '',
+  h3ReferenceAudioUrl: ''
 })
 
 const lyricsLoading = ref(false)
@@ -965,6 +1014,8 @@ const filteredTextModels = computed(() => {
 const mediaModels = [
   { value: 'MiniMax-Hailuo-2.3-Fast', label: 'Hailuo Fast', hint: '图生视频模型，需提供首帧图片 URL。', tone: 'video' },
   { value: 'MiniMax-Hailuo-2.3', label: 'Hailuo 2.3', hint: '标准 Hailuo 视频生成。', tone: 'video' },
+  { value: 'MiniMax-H3', label: 'H3', hint: 'MiniMax-H3 文/图/多模态生视频，768P/2K，4-15s，异步 task_id 轮询。', tone: 'video' },
+  { value: 'MiniMax-H3-Max', label: 'H3 Max', hint: '极速文/图生视频，480P/768P，5-15s，不支持 2K。', tone: 'video' },
   { value: 'music-3.0', label: 'Music 3.0', hint: '官方推荐文本生成音乐，RPM 120。', tone: 'music' },
   { value: 'music-3.0-free', label: 'Music 3.0 Free', hint: '3.0 限免版，所有 API Key 可用，RPM 3。', tone: 'music' },
   { value: 'music-2.6', label: 'Music 2.6', hint: '2.6 标准版（Token Plan / 付费）。', tone: 'music' },
@@ -979,6 +1030,8 @@ const capabilityCards = [
   { name: 'Text to Speech HD', badge: 'Direct', model: 'speech-2.8-hd', desc: '官方 Speech / TTS 调试入口。', tab: 'speech', tone: 'speech' },
   { name: 'Hailuo-2.3-Fast-768P 6s', badge: 'Image To Video', model: 'MiniMax-Hailuo-2.3-Fast', desc: '图生视频，需提供参考图片。', tab: 'media', tone: 'video' },
   { name: 'Hailuo-2.3-768P 6s', badge: 'Direct', model: 'MiniMax-Hailuo-2.3', desc: '标准视频链路。', tab: 'media', tone: 'video' },
+  { name: 'MiniMax-H3 2K 5s', badge: 'Async', model: 'MiniMax-H3', desc: 'H3 文/图/多模态生视频，2K 最高 15 秒。', tab: 'media', tone: 'video' },
+  { name: 'MiniMax-H3-Max 768P 5s', badge: 'Async · Fast', model: 'MiniMax-H3-Max', desc: '极速版，仅文/图，480P/768P。', tab: 'media', tone: 'video' },
   { name: 'music-3.0', badge: 'Direct', model: 'music-3.0', desc: '官方推荐文本生成音乐。', tab: 'media', tone: 'music' },
   { name: 'music-3.0-free', badge: 'Direct', model: 'music-3.0-free', desc: '3.0 限免版，所有 API Key 可用。', tab: 'media', tone: 'music' },
   { name: 'music-2.6', badge: 'Direct', model: 'music-2.6', desc: '2.6 标准版（Token Plan / 付费）。', tab: 'media', tone: 'music' },
@@ -1007,9 +1060,18 @@ const hasCredential = computed(() => Boolean(apiKey.value.trim() || superAdminPa
 const credentialHint = computed(() => apiKey.value.trim() ? '当前优先使用 API Key 调试。' : '当前使用超级管理员密码调试。')
 const selectedMediaModel = computed(() => mediaModels.find(item => item.value === mediaForm.value.model) || null)
 const isMusicModel = computed(() => mediaForm.value.model.startsWith('music-'))
-const isVideoModel = computed(() => mediaForm.value.model.startsWith('MiniMax-Hailuo-') || mediaForm.value.model.startsWith('T2V-'))
+const isVideoModel = computed(() => mediaForm.value.model.startsWith('MiniMax-Hailuo-') || mediaForm.value.model.startsWith('T2V-') || mediaForm.value.model.startsWith('MiniMax-H3'))
 const isImageModel = computed(() => mediaForm.value.model.startsWith('image-'))
+const isH3Model = computed(() => mediaForm.value.model.startsWith('MiniMax-H3'))
+const isH3MaxModel = computed(() => mediaForm.value.model === 'MiniMax-H3-Max')
 const requiresVideoImage = computed(() => mediaForm.value.model === 'MiniMax-Hailuo-2.3-Fast')
+const h3ResolutionOptions = computed(() => {
+  if (isH3MaxModel.value) return [{ value: '480P', label: '480P' }, { value: '768P', label: '768P(默认)' }]
+  return [{ value: '768P', label: '768P' }, { value: '2K', label: '2K(最高)' }]
+})
+const h3DurationMin = computed(() => isH3MaxModel.value ? 5 : 4)
+const h3DurationMax = 15
+const h3RatioOptions = ['adaptive', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16']
 const textRawPretty = computed(() => pretty(textRaw.value))
 const mediaTaskPretty = computed(() => pretty(currentMediaTask.value))
 const lyricsRawPretty = computed(() => pretty(lyricsRaw.value))
@@ -1248,6 +1310,48 @@ async function submitMedia() {
       model: mediaForm.value.model,
       prompt: mediaForm.value.prompt.trim()
     }
+    if (isH3Model.value) {
+      const content = [{ type: 'text', text: mediaForm.value.prompt.trim() }]
+      const firstFrame = mediaForm.value.h3FirstFrameUrl.trim()
+      const lastFrame = mediaForm.value.h3LastFrameUrl.trim()
+      const refImage = mediaForm.value.h3ReferenceImageUrl.trim()
+      const refVideo = mediaForm.value.h3ReferenceVideoUrl.trim()
+      const refAudio = mediaForm.value.h3ReferenceAudioUrl.trim()
+      const hasI2V = firstFrame || lastFrame
+      const hasR2VA = refImage || refVideo || refAudio
+      if (hasI2V && hasR2VA) {
+        throw new Error('MiniMax-H3 图生视频(i2va)与多模态参考(r2va)互斥,请只填一组 URL')
+      }
+      if (firstFrame) content.push({ type: 'image_url', image_url: { url: firstFrame }, role: 'first_frame' })
+      if (lastFrame) content.push({ type: 'image_url', image_url: { url: lastFrame }, role: 'last_frame' })
+      if (refImage) content.push({ type: 'image_url', image_url: { url: refImage }, role: 'reference_image' })
+      if (refVideo) content.push({ type: 'video_url', video_url: { url: refVideo }, role: 'reference_video' })
+      if (refAudio) content.push({ type: 'audio_url', audio_url: { url: refAudio }, role: 'reference_audio' })
+      const h3Payload = {
+        model: mediaForm.value.model,
+        content,
+        resolution: mediaForm.value.resolution,
+        duration: mediaForm.value.duration
+      }
+      if (!hasI2V && mediaForm.value.ratio) {
+        h3Payload.ratio = mediaForm.value.ratio
+      }
+      Object.assign(h3Payload, extraParams)
+      const res = await fetch('/api/minimax/h3/v2/video_generation', {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify(h3Payload)
+      })
+      const data = await safeJson(res)
+      if (!res.ok) throw new Error(data.error || 'H3 任务提交失败')
+      currentMediaTask.value = data
+      if (data.task_id) {
+        ElMessage.success(`H3 任务已提交: ${data.task_id}`)
+        await openMediaTask(data.task_id)
+        await loadMediaTasks()
+      }
+      return
+    }
     if (isVideoModel.value) {
       payload.duration = mediaForm.value.duration
       payload.resolution = mediaForm.value.resolution
@@ -1330,16 +1434,99 @@ async function loadMediaTasks() {
   if (!requireCredential()) return
   mediaTasksLoading.value = true
   try {
-    const res = await fetch('/api/minimax/token-plan/tasks?limit=30', {
-      headers: authHeaders()
-    })
-    const data = await safeJson(res)
-    if (!res.ok) throw new Error(data.error || '加载任务失败')
-    mediaTasks.value = data.tasks || []
+    const [tokenPlanRes, h3Res] = await Promise.all([
+      fetch('/api/minimax/token-plan/tasks?limit=30', { headers: authHeaders() }).then(r => safeJson(r)).catch(err => ({ error: err.message, tasks: [] })),
+      fetch('/api/minimax/h3/v2/query/video_generation?page_size=30', { headers: authHeaders() }).then(r => safeJson(r)).catch(err => null)
+    ])
+    const tokenPlanTasks = Array.isArray(tokenPlanRes?.tasks) ? tokenPlanRes.tasks : []
+    const h3Items = Array.isArray(h3Res?.items) ? h3Res.items : []
+    // 上游 H3 任务转成本地 mediaTasks 形状,带 provider=minimax-h3-video 便于判断删除按钮走哪个端点。
+    const h3Tasks = h3Items.map(item => ({
+      task_id: String(item.id || ''),
+      model: item.model || 'MiniMax-H3',
+      status: mapH3UpstreamStatus(item.status),
+      created_at: item.created_at ? new Date(item.created_at * 1000).toISOString() : new Date().toISOString(),
+      updated_at: item.updated_at ? new Date(item.updated_at * 1000).toISOString() : null,
+      completed_at: (item.status === 'succeeded' || item.status === 'failed' || item.status === 'cancelled') && item.updated_at ? new Date(item.updated_at * 1000).toISOString() : null,
+      prompt: extractH3Prompt(item),
+      error: item.error?.message || '',
+      result_urls: extractH3AssetUrls(item),
+      external_task_id: String(item.id || ''),
+      task_type: item.task_type || '',
+      provider: 'minimax-h3-video',
+      _h3Raw: item
+    }))
+    mediaTasks.value = [...h3Tasks, ...tokenPlanTasks]
   } catch (err) {
     ElMessage.error(err.message || '加载任务失败')
   } finally {
     mediaTasksLoading.value = false
+  }
+}
+
+function mapH3UpstreamStatus(status) {
+  if (status === 'queued') return 'pending'
+  return status || 'pending'
+}
+
+function extractH3Prompt(item) {
+  // H3-Context-IR 任务的 content.prompt 是增强后的 prompt;视频任务没有 prompt,返回外部任务 ID 提示。
+  if (item?.task_type === 'h3_context_ir' && item?.content?.prompt) {
+    return String(item.content.prompt).slice(0, 200)
+  }
+  return ''
+}
+
+function extractH3AssetUrls(item) {
+  const urls = []
+  if (item?.content?.url) urls.push(item.content.url)
+  return urls
+}
+
+// canCancelMediaTask 上游规则:queued 可取消,succeeded/failed 可删除,running/cancelled 不可操作。
+// token-plan 任务没有删除端点,前端禁用按钮。
+function canCancelMediaTask(row) {
+  if (row?.provider !== 'minimax-h3-video') return false
+  const status = String(row?.status || '')
+  return status === 'pending' || status === 'queued' || status === 'succeeded' || status === 'failed'
+}
+
+function cancelButtonLabel(row) {
+  if (row?.provider !== 'minimax-h3-video') return '删除'
+  const status = String(row?.status || '')
+  if (status === 'pending' || status === 'queued') return '取消'
+  return '删除'
+}
+
+async function cancelMediaTask(row) {
+  if (!row?.task_id) return
+  if (row.provider !== 'minimax-h3-video') {
+    ElMessage.warning('该任务不支持前端取消,请到上游 MiniMax 控制台处理')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认 ${cancelButtonLabel(row)} H3 任务 ${row.task_id}?`,
+      'H3 任务操作',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await fetch(`/api/minimax/h3/v2/video_generation/${encodeURIComponent(row.task_id)}`, {
+      method: 'DELETE',
+      headers: authHeaders()
+    })
+    const data = await safeJson(res)
+    if (!res.ok) throw new Error(data.error || data.message || `操作失败 HTTP ${res.status}`)
+    ElMessage.success(`${cancelButtonLabel(row)}成功: ${data.action || data.status || ''}`)
+    if (String(currentMediaTask.value?.task_id) === String(row.task_id)) {
+      currentMediaTask.value = null
+    }
+    await loadMediaTasks()
+  } catch (err) {
+    ElMessage.error(err.message || '操作失败')
   }
 }
 
@@ -1355,17 +1542,58 @@ async function refreshArchive() {
 async function openMediaTask(taskId) {
   if (!requireCredential()) return
   try {
-    const res = await fetch(`/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}`, {
-      headers: authHeaders()
-    })
+    // H3 任务:本地 mmh3_<hex> 或 上游纯数字 ID 都走 H3 端点。
+    const isH3Task = typeof taskId === 'string' && (/^mmh3_/.test(taskId) || /^\d+$/.test(taskId))
+    const url = isH3Task
+      ? `/api/minimax/h3/v2/query/video_generation/${encodeURIComponent(taskId)}`
+      : `/api/minimax/token-plan/tasks/${encodeURIComponent(taskId)}`
+    const res = await fetch(url, { headers: authHeaders() })
     const data = await safeJson(res)
     if (!res.ok) throw new Error(data.error || '读取任务详情失败')
+    if (isH3Task) {
+      // 后端 local 形态: {task_id, external_task_id, result:{task:…upstream…}, created_at(RFC3339)}
+      // 后端 external 形态: 直接透传 upstream {task:{…}, base_resp:…}
+      const inner = data?.result?.task || data?.task || data
+      currentMediaTask.value = {
+        ...inner,
+        task_id: data.task_id || inner.id || taskId,
+        external_task_id: data.external_task_id || inner.id || taskId,
+        provider: 'minimax-h3-video',
+        result_urls: extractH3AssetUrls(inner),
+        prompt: extractH3Prompt(inner) || parseH3RequestPrompt(data.request_body),
+        status: mapH3UpstreamStatus(inner.status || data.status),
+        created_at: parseH3Timestamp(data.created_at) || parseH3Timestamp(inner.created_at) || null,
+        completed_at: parseH3Timestamp(data.completed_at) || parseH3Timestamp(inner.updated_at) || null
+      }
+      return currentMediaTask.value
+    }
     currentMediaTask.value = data
     return data
   } catch (err) {
     ElMessage.error(err.message || '读取任务详情失败')
     return null
   }
+}
+
+// parseH3Timestamp 兼容 RFC3339 字符串和 epoch 秒(数字)。
+function parseH3Timestamp(value) {
+  if (!value) return null
+  if (typeof value === 'number') return new Date(value * 1000).toISOString()
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+// parseH3RequestPrompt 从后端持久化的 request_body JSON 里抠 prompt 文本(给列表行展示用)。
+function parseH3RequestPrompt(requestBody) {
+  if (!requestBody) return ''
+  try {
+    const obj = typeof requestBody === 'string' ? JSON.parse(requestBody) : requestBody
+    const content = Array.isArray(obj?.content) ? obj.content : []
+    for (const item of content) {
+      if (item?.type === 'text' && item?.text) return String(item.text).slice(0, 200)
+    }
+  } catch {}
+  return ''
 }
 
 function openUnsharedTask(task) {
@@ -1421,9 +1649,36 @@ function clearMediaPoll() {
 
 async function downloadCurrentMedia() {
   if (!requireCredential()) return
-  const taskId = currentMediaTask.value?.task_id
+  const task = currentMediaTask.value
+  const taskId = task?.task_id
   if (!taskId) {
     ElMessage.error('当前没有可下载任务')
+    return
+  }
+  // H3 任务(本地 mmh3_ 或 纯数字 external) 没有 token-plan 的 /download 代理,直接走 content.url 拉链。
+  if (task?.provider === 'minimax-h3-video' || /^mmh3_/.test(String(taskId)) || /^\d+$/.test(String(taskId))) {
+    const assets = extractTaskAssets(task)
+    const url = assets[0]?.url
+    if (!url) {
+      ElMessage.error('H3 任务没有可下载的视频 URL')
+      return
+    }
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`下载失败: HTTP ${res.status}`)
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `${taskId}.${guessExtension(blob.type || 'video/mp4')}`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(objectUrl)
+      ElMessage.success('已开始下载')
+    } catch (err) {
+      ElMessage.error(err.message || 'H3 视频下载失败')
+    }
     return
   }
   try {
@@ -1472,6 +1727,12 @@ function resetMediaForm() {
   mediaForm.value.lyrics = ''
   mediaForm.value.coverFeatureId = ''
   mediaForm.value.aspectRatio = '1:1'
+  mediaForm.value.h3FirstFrameUrl = ''
+  mediaForm.value.h3LastFrameUrl = ''
+  mediaForm.value.h3ReferenceImageUrl = ''
+  mediaForm.value.h3ReferenceVideoUrl = ''
+  mediaForm.value.h3ReferenceAudioUrl = ''
+  mediaForm.value.ratio = '16:9'
   mediaParametersText.value = '{}'
 }
 
@@ -2237,6 +2498,9 @@ function defaultMediaParametersText(model) {
   }
   if (String(model || '').startsWith('MiniMax-Hailuo-') || String(model || '').startsWith('T2V-')) {
     return '{\n  "camera_movement": "push_in"\n}'
+  }
+  if (String(model || '').startsWith('MiniMax-H3')) {
+    return '{\n  "aigc_watermark": false,\n  "callback_url": ""\n}'
   }
   if (String(model || '').startsWith('image-')) {
     return '{\n  "response_format": "url"\n}'

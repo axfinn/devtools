@@ -21,7 +21,7 @@ func setupMiniMaxResultShareHandler(t *testing.T) (*AIGatewayHandler, *models.DB
 	if err := db.InitMiniMaxResultShares(); err != nil {
 		t.Fatalf("init result shares: %v", err)
 	}
-	h := NewAIGatewayHandler(db, config.DefaultConfig(), nil, nil)
+	h := NewAIGatewayHandler(db, config.DefaultConfig(), nil, nil, testEncEncryptionService)
 	return h, db
 }
 

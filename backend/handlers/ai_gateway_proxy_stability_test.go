@@ -19,10 +19,10 @@ import (
 // flakyRoundTripper 前 failFirstAttempts 次返回瞬时连接错误（ECONNREFUSED），之后正常响应。
 // 用于验证代理层对瞬时网络错误的有限重试。
 type flakyRoundTripper struct {
-	mu               sync.Mutex
-	attempts         int
+	mu                sync.Mutex
+	attempts          int
 	failFirstAttempts int
-	responder        func(*http.Request) (*http.Response, error)
+	responder         func(*http.Request) (*http.Response, error)
 }
 
 func (f *flakyRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

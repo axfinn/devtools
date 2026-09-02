@@ -20,6 +20,7 @@ import (
 
 	"devtools/config"
 	"devtools/models"
+	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -98,9 +99,9 @@ func (h *HouseholdHandler) requireProfileItemAccess(c *gin.Context) (*models.Hou
 
 // CreateProfileRequest 创建档案请求
 type CreateProfileRequest struct {
-	Password    string `json:"password" binding:"required,min=4"`
-	Name        string `json:"name"`
-	ExpiresIn   int    `json:"expires_in"`
+	Password  string `json:"password" binding:"required,min=4"`
+	Name      string `json:"name"`
+	ExpiresIn int    `json:"expires_in"`
 }
 
 // LoginProfileRequest 登录档案请求
@@ -607,8 +608,8 @@ func (h *HouseholdHandler) CreateSpaceShare(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"code":     0,
-		"share_id": share.ID,
+		"code":      0,
+		"share_id":  share.ID,
 		"share_url": fmt.Sprintf("/household/space?share=%s", share.ID),
 	})
 }
@@ -709,8 +710,8 @@ func (h *HouseholdHandler) DeleteProfileItem(c *gin.Context) {
 
 	stats, _ := h.db.GetProfileStats(profileID)
 	c.JSON(http.StatusOK, gin.H{
-		"code":  0,
-		"stats": stats,
+		"code":    0,
+		"stats":   stats,
 		"message": "删除成功",
 	})
 }
@@ -1467,9 +1468,9 @@ type AIAnalyzeRequest struct {
 
 // AIAnalyzeResponse AI 分析响应
 type AIAnalyzeResponse struct {
-	Suggestions   []AISuggestion `json:"suggestions"`
-	Analysis      string         `json:"analysis"`
-	ShoppingList  []string       `json:"shopping_list"`
+	Suggestions  []AISuggestion `json:"suggestions"`
+	Analysis     string         `json:"analysis"`
+	ShoppingList []string       `json:"shopping_list"`
 }
 
 // AISuggestion AI 建议
@@ -1483,33 +1484,33 @@ type AISuggestion struct {
 
 // ChatRequest 对话请求
 type ChatRequest struct {
-	Message    string `json:"message" binding:"required"`
-	ProfileID  string `json:"profile_id"`
-	CreatorKey string `json:"creator_key"`
-	ClearHistory bool `json:"clear_history"`
+	Message      string `json:"message" binding:"required"`
+	ProfileID    string `json:"profile_id"`
+	CreatorKey   string `json:"creator_key"`
+	ClearHistory bool   `json:"clear_history"`
 }
 
 // ChatResponse 对话响应
 type ChatResponse struct {
-	Reply      string      `json:"reply"`
+	Reply      string       `json:"reply"`
 	Actions    []ChatAction `json:"actions,omitempty"`
-	ItemsAdded []string    `json:"items_added,omitempty"`
+	ItemsAdded []string     `json:"items_added,omitempty"`
 }
 
 // ChatAction 对话动作
 type ChatAction struct {
-	Type   string `json:"type"` // add, restock, delete, query
-	ItemID string `json:"item_id,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Target string `json:"target,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	Candidates []string `json:"candidates,omitempty"`
-	Quantity    int    `json:"quantity,omitempty"`
-	Category    string `json:"category,omitempty"`
-	Unit        string `json:"unit,omitempty"`
-	MinQuantity int    `json:"min_quantity,omitempty"`
-	ExpiryDays  int    `json:"expiry_days,omitempty"`
-	Location    string `json:"location,omitempty"`
+	Type        string   `json:"type"` // add, restock, delete, query
+	ItemID      string   `json:"item_id,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	Target      string   `json:"target,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+	Candidates  []string `json:"candidates,omitempty"`
+	Quantity    int      `json:"quantity,omitempty"`
+	Category    string   `json:"category,omitempty"`
+	Unit        string   `json:"unit,omitempty"`
+	MinQuantity int      `json:"min_quantity,omitempty"`
+	ExpiryDays  int      `json:"expiry_days,omitempty"`
+	Location    string   `json:"location,omitempty"`
 }
 
 // BarcodeLookupRequest 条码查询请求
@@ -1586,8 +1587,8 @@ func (h *HouseholdHandler) BarcodeLookup(c *gin.Context) {
 
 	// 未找到
 	c.JSON(http.StatusOK, gin.H{
-		"code":  0,
-		"name":  "",
+		"code": 0,
+		"name": "",
 	})
 }
 
@@ -2061,9 +2062,9 @@ func (h *HouseholdHandler) AIAnalyze(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"code":         0,
-		"suggestions":  resp.Suggestions,
-		"analysis":     resp.Analysis,
+		"code":          0,
+		"suggestions":   resp.Suggestions,
+		"analysis":      resp.Analysis,
 		"shopping_list": resp.ShoppingList,
 	})
 }
@@ -2146,13 +2147,13 @@ func (h *HouseholdHandler) AIAddItem(c *gin.Context) {
 		}
 
 		item := &models.HouseholdItem{
-			Name:         getString(itemData, "name"),
-			Category:     category,
-			Quantity:     getInt(itemData, "quantity", 1),
-			Unit:         unit,
-			MinQuantity:  getInt(itemData, "min_quantity", 1),
-			ExpiryDays:   getInt(itemData, "expiry_days", 0),
-			Location:     getString(itemData, "location"),
+			Name:        getString(itemData, "name"),
+			Category:    category,
+			Quantity:    getInt(itemData, "quantity", 1),
+			Unit:        unit,
+			MinQuantity: getInt(itemData, "min_quantity", 1),
+			ExpiryDays:  getInt(itemData, "expiry_days", 0),
+			Location:    getString(itemData, "location"),
 		}
 
 		if item.Name != "" {
@@ -2171,10 +2172,10 @@ func (h *HouseholdHandler) AIAddItem(c *gin.Context) {
 	_ = h.db.GenerateHouseholdNotifications()
 
 	c.JSON(http.StatusOK, gin.H{
-		"code":      0,
-		"data":      created,
-		"count":     len(created),
-		"raw_ai":    result,
+		"code":   0,
+		"data":   created,
+		"count":  len(created),
+		"raw_ai": result,
 	})
 }
 
@@ -2610,9 +2611,9 @@ func (h *HouseholdHandler) Chat(c *gin.Context) {
 	// 保存用户消息
 	userMsg := &models.HouseholdConversation{
 		ProfileID: profileID,
-		UserID:   userID,
-		Role:     "user",
-		Content:  req.Message,
+		UserID:    userID,
+		Role:      "user",
+		Content:   req.Message,
 	}
 	_ = h.db.SaveConversation(userMsg)
 
@@ -2675,11 +2676,13 @@ func (h *HouseholdHandler) Chat(c *gin.Context) {
 	}
 
 	// 保存助手回复
+	// 源头清洗:LLM 输出经 utils.SanitizeHTML(bluemonday StrictPolicy + 白名单标签),
+	// 杀 <script>/onerror/javascript: 等,避免 prompt injection 后 stored XSS 链到前端 v-html。
 	assistantMsg := &models.HouseholdConversation{
 		ProfileID: profileID,
-		UserID:   userID,
-		Role:     "assistant",
-		Content:  resp.Reply,
+		UserID:    userID,
+		Role:      "assistant",
+		Content:   utils.SanitizeHTML(resp.Reply),
 	}
 	_ = h.db.SaveConversation(assistantMsg)
 
@@ -2687,9 +2690,9 @@ func (h *HouseholdHandler) Chat(c *gin.Context) {
 	itemsAdded := h.executeChatActions(resp.Actions, profileID)
 
 	c.JSON(http.StatusOK, gin.H{
-		"code":       0,
-		"reply":      resp.Reply,
-		"actions":    resp.Actions,
+		"code":        0,
+		"reply":       resp.Reply,
+		"actions":     resp.Actions,
 		"items_added": itemsAdded,
 	})
 }
@@ -2825,14 +2828,14 @@ func (h *HouseholdHandler) executeChatActions(actions []ChatAction, profileID st
 
 			if profileID != "" {
 				profileItem := &models.ProfileItem{
-					ProfileID: profileID,
-					Name:      action.Name,
-					Category:  category,
-					Quantity:  quantity,
-					Unit:      unit,
+					ProfileID:   profileID,
+					Name:        action.Name,
+					Category:    category,
+					Quantity:    quantity,
+					Unit:        unit,
 					MinQuantity: minQuantity,
-					ExpiryDays: action.ExpiryDays,
-					Location: action.Location,
+					ExpiryDays:  action.ExpiryDays,
+					Location:    action.Location,
 				}
 				_ = h.db.CreateProfileItem(profileItem)
 			} else {

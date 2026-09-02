@@ -15,11 +15,11 @@ import (
 )
 
 var (
-	askitCache     []byte
-	askitCacheTime time.Time
+	askitCache       []byte
+	askitCacheTime   time.Time
 	askitCacheCommit string // short SHA + subject of the cloned HEAD
-	askitCacheMu   sync.Mutex
-	askitCacheTTL  = 10 * time.Minute
+	askitCacheMu     sync.Mutex
+	askitCacheTTL    = 10 * time.Minute
 )
 
 const (

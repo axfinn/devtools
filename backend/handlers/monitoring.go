@@ -257,6 +257,15 @@ func (h *MonitoringHandler) requireAdmin(c *gin.Context) bool {
 	return true
 }
 
+// VerifyPassword POST /api/monitor/verify
+// 单独 verify 端点(给前端 useAdminAuth 用),与既有 GET /verify 行为一致,补 POST 版本。
+func (h *MonitoringHandler) VerifyPassword(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 func monitoringRange(value string) (string, time.Time) {
 	now := time.Now().UTC()
 	switch value {
