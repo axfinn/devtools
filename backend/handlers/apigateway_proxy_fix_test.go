@@ -182,23 +182,32 @@ func TestDoRequestWithClient_NonAnthropicModeOmitsHeaders(t *testing.T) {
 	}
 }
 
-// 修复：isDeepSeekProvider 应该按 Name 和 URL 两种方式都识别。
+// providerEmitsThinkingBlocks 应该按 Name(DeepSeek/Ollama)和 URL(deepseek.com / :11434)
+// 两种方式都识别。任一命中即需要网关层剥离 thinking 块。
 
-func TestIsDeepSeekProvider(t *testing.T) {
+func TestProviderEmitsThinkingBlocks(t *testing.T) {
 	cases := []struct {
 		name string
 		p    *config.AnthropicProviderConfig
 		want bool
 	}{
 		{"nil provider", nil, false},
+		// DeepSeek
 		{"name DeepSeek", &config.AnthropicProviderConfig{Name: "DeepSeek", APIURL: "https://other.example.com/v1"}, true},
 		{"name lowercase", &config.AnthropicProviderConfig{Name: "deepseek", APIURL: "https://other.example.com/v1"}, true},
 		{"url deepseek.com", &config.AnthropicProviderConfig{Name: "MiniMax", APIURL: "https://api.deepseek.com/anthropic"}, true},
-		{"unrelated", &config.AnthropicProviderConfig{Name: "MiniMax", APIURL: "https://api.minimaxi.com/anthropic"}, false},
+		// Ollama (qwen3 系列默认 thinking)
+		{"name Ollama", &config.AnthropicProviderConfig{Name: "Ollama", APIURL: "http://192.168.31.147:11434"}, true},
+		{"name lowercase", &config.AnthropicProviderConfig{Name: "ollama", APIURL: "http://127.0.0.1:11434"}, true},
+		{"url :11434 suffix", &config.AnthropicProviderConfig{Name: "LocalLLM", APIURL: "http://10.0.0.5:11434"}, true},
+		{"url :11434/ path", &config.AnthropicProviderConfig{Name: "LocalLLM", APIURL: "http://10.0.0.5:11434/"}, true},
+		// 无关 provider
+		{"unrelated MiniMax", &config.AnthropicProviderConfig{Name: "MiniMax", APIURL: "https://api.minimaxi.com/anthropic"}, false},
+		{"unrelated OpenClaudeCode", &config.AnthropicProviderConfig{Name: "OpenClaudeCode", APIURL: "https://www.openclaudecode.cn"}, false},
 	}
 	for _, tc := range cases {
-		if got := isDeepSeekProvider(tc.p); got != tc.want {
-			t.Errorf("%s: isDeepSeekProvider = %v, want %v", tc.name, got, tc.want)
+		if got := providerEmitsThinkingBlocks(tc.p); got != tc.want {
+			t.Errorf("%s: providerEmitsThinkingBlocks = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

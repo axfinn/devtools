@@ -857,6 +857,13 @@ func (db *DB) InitAnthropicProviders() error {
 	// Backfill: register MiniMax-M3 (multimodal, 1M context) on existing rows seeded before M3 launch.
 	// JSON arrays here are flat, so the only `["` occurs at the front — inserting M3 as the first entry.
 	db.conn.Exec(`UPDATE anthropic_providers SET models = REPLACE(models, '["', '["MiniMax-M3",') WHERE name IN ('MiniMax', 'DashScope') AND models NOT LIKE '%MiniMax-M3%'`)
+	// Backfill: seed Ollama provider on existing installs.
+	// 两步保证幂等: (1) INSERT OR IGNORE 新行; (2) UPDATE 已存在的空行(防御用户之前手动加过空 Ollama 行的情况)。
+	// 之前 INSERT OR IGNORE 命中 name 唯一约束会静默跳过,导致用户看到 "Provider 存在但全是空"。
+	// Ollama 0.5+ 原生支持 Anthropic 协议(/v1/messages),网关可直连当 Anthropic 下游,
+	// 走通后 Claude Code 配 base_url=http://<gateway>/api/anthropic 即可使用本地 ollama 模型。
+	db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, enabled, is_default, default_model) VALUES ('Ollama', 'http://192.168.31.147:11434', 'ollama', '["qwen3.8:27b-mlx"]', '[]', 1, 0, 'qwen3.8:27b-mlx')`)
+	db.conn.Exec(`UPDATE anthropic_providers SET api_url = 'http://192.168.31.147:11434', api_key = 'ollama', models = '["qwen3.8:27b-mlx"]', aliases = '[]', enabled = 1, default_model = 'qwen3.8:27b-mlx' WHERE name = 'Ollama' AND (api_url = '' OR api_url IS NULL)`)
 	// Seed builtin providers if table is empty
 	var count int
 	db.conn.QueryRow(`SELECT COUNT(*) FROM anthropic_providers`).Scan(&count)
@@ -875,6 +882,9 @@ func (db *DB) InitAnthropicProviders() error {
 			{"DeepSeek", "https://api.deepseek.com/anthropic", "", `["deepseek-chat","deepseek-reasoner","deepseek-v4-flash","deepseek-v4-pro"]`, "[]", true, "deepseek-v4-pro"},
 			{"PackyAPI", "https://www.packyapi.com", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},
 			{"OpenClaudeCode", "https://www.openclaudecode.cn", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},
+			// Ollama 本地大模型代理(Ollama 0.5+ 原生支持 Anthropic 协议,/v1/messages 端点直连)
+			// api_key 字段占位用 "ollama",实际 Ollama 不校验;url 在后台 admin 可改
+			{"Ollama", "http://192.168.31.147:11434", "ollama", `["qwen3.8:27b-mlx"]`, "[]", false, "qwen3.8:27b-mlx"},
 		}
 		for _, b := range builtins {
 			db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, is_default, default_model) VALUES (?, ?, ?, ?, ?, ?, ?)`,

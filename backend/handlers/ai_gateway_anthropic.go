@@ -456,6 +456,15 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置上游 API Key"})
 		return
 	}
+	// 防御: URL 为空时直接给清晰错误,避免拼出 "/v1/messages"(无 host)导致请求"裸奔"。
+	// 触发场景: admin 把一个空 provider 设为默认(default_provider),或新建 provider 没填 URL 就保存。
+	if provider.APIURL == "" {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":    fmt.Sprintf("Provider %s 未配置 API URL,请在 AI Gateway 管理后台 → Anthropic 下游管理 → 编辑补全 URL", provider.Name),
+			"provider": provider.Name,
+		})
+		return
+	}
 
 	// 模型名重写：用户侧别名 → 上游真实模型名
 	rewriteModel := upstreamModel
@@ -491,9 +500,9 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 		return
 	}
 
-	// DeepSeek Anthropic 端点会返回 type="thinking" 内容块，
+	// DeepSeek / Ollama(qwen3 系列)等上游会返回 type="thinking" 内容块,
 	// 标准 Anthropic 客户端下一轮请求把 thinking 原样回传时会 400；网关层统一剥离。
-	if isDeepSeekProvider(provider) {
+	if providerEmitsThinkingBlocks(provider) {
 		raw = stripThinkingBlocks(raw)
 	}
 
@@ -503,13 +512,59 @@ func (h *AIGatewayHandler) proxyAnthropicWithBody(c *gin.Context, provider *conf
 }
 
 // proxyAnthropicStream 流式代理 Anthropic 请求（SSE 透传）
-// 对于 DeepSeek，过滤掉 type="thinking" 的内容块事件
+// 对于 DeepSeek/Ollama，过滤掉 type="thinking" 的内容块事件
 func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config.AnthropicProviderConfig, upstreamURL string, bodyBytes []byte) (int, error) {
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 
+	// 先校验 Flusher（响应头一旦写入就不能改状态码了，必须在 WriteHeader 前检查）
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
+	}
+
+	// 关键修复: 立即发送 SSE 响应头 + 第一个 heartbeat,**然后再拨号上游**。
+	// Ollama 本地大模型(27B+)处理 Claude Code 的超长 system prompt(15K+ tokens)
+	// 需要 30+ 秒才能返回第一个字节;如果等上游响应头到了再写 header+heartbeat,
+	// Claude Code 等不到任何字节会在 14.9s 断开(context canceled),表现为 "API error"。
+	// 提前发送 header + 心跳,客户端立刻知道连接已建立,read timeout 持续 reset。
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	if _, err := io.WriteString(c.Writer, ": heartbeat\n\n"); err != nil {
+		return http.StatusOK, context.Canceled
+	}
+	flusher.Flush()
+
+	// 上游拨号期间的高频心跳(每 3s):防御上游 prefill 阶段慢导致 client 提前 cancel
+	preUpstreamHeartbeatDone := make(chan struct{})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in pre-upstream heartbeat goroutine: %v", r)
+			}
+		}()
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := io.WriteString(c.Writer, ": heartbeat\n\n"); err != nil {
+					return
+				}
+				flusher.Flush()
+			case <-preUpstreamHeartbeatDone:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
+		close(preUpstreamHeartbeatDone)
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err
 	}
@@ -543,6 +598,8 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 使用 streamClient（body 无超时），避免 http.Client.Timeout 在长流时强制断开；
 	// 连接/握手/响应头超时由 streamTransport 兜底，瞬时连接错误在拿响应前做一次重试。
 	resp, err := doStreamRequest(h.streamClient, req)
+	// 上游开始响应后停掉拨号期高频心跳,改用主循环的 20s 心跳(防止 thinking 阶段断流)
+	close(preUpstreamHeartbeatDone)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err
@@ -555,30 +612,8 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		return resp.StatusCode, fmt.Errorf("upstream error %d", resp.StatusCode)
 	}
 
-	// 先校验 Flusher 再 WriteHeader，避免非流式场景留下半截响应。
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
-	}
-
-	// 透传上游响应头
-	for key, values := range resp.Header {
-		for _, v := range values {
-			c.Writer.Header().Add(key, v)
-		}
-	}
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.WriteHeader(http.StatusOK)
-
 	// 心跳与主循环并发写 c.Writer，用 sseWriter 串行化 Write+Flush 避免数据竞争。
 	writer := newSSEWriter(c.Writer, flusher)
-
-	// 先发一个 SSE 心跳，让客户端立即知道连接已建立
-	if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
-		return http.StatusOK, context.Canceled
-	}
 
 	// 持续心跳 goroutine：每 20s 发一次 SSE 注释，防止 thinking 阶段无数据时
 	// 中间代理（nginx/CDN）或客户端因空闲超时断开连接
@@ -607,10 +642,10 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	defer close(heartbeatDone)
 
 	buf := make([]byte, 1024)
-	// DeepSeek Anthropic 端点会返回 type="thinking" 的内容块，标准 Anthropic 客户端
+	// DeepSeek / Ollama(qwen3 系列)等上游会返回 type="thinking" 的内容块，标准 Anthropic 客户端
 	// 无法识别，多轮对话会 400；这里在网关层过滤掉 thinking 事件再透传。
 	var bodyReader io.Reader = resp.Body
-	if isDeepSeekProvider(provider) {
+	if providerEmitsThinkingBlocks(provider) {
 		bodyReader = newSSEThinkingFilter(resp.Body)
 	}
 	for {
@@ -883,16 +918,27 @@ func stripThinkingBlocks(raw []byte) []byte {
 	return out
 }
 
-// isDeepSeekProvider 判断是否为 DeepSeek 上游（按 provider.Name 或 URL 启发式匹配）。
-// DeepSeek 的 Anthropic 端点会返回 thinking 内容块，需要在网关层过滤。
-func isDeepSeekProvider(provider *config.AnthropicProviderConfig) bool {
+// providerEmitsThinkingBlocks 判断上游是否会在 Anthropic 响应中夹带 type="thinking" 内容块。
+// DeepSeek(Official) 与 Ollama(qwen3 系列默认开启 extended thinking)都属于这一类,
+// 标准 Anthropic SDK 不识别 thinking 块,多轮对话回传会 400,需在网关层剥离。
+func providerEmitsThinkingBlocks(provider *config.AnthropicProviderConfig) bool {
 	if provider == nil {
 		return false
 	}
-	if strings.EqualFold(provider.Name, "DeepSeek") || strings.EqualFold(provider.Name, "deepseek") {
+	name := strings.ToLower(provider.Name)
+	url := strings.ToLower(provider.APIURL)
+	// 名称匹配
+	if name == "deepseek" || name == "ollama" {
 		return true
 	}
-	return strings.Contains(strings.ToLower(provider.APIURL), "deepseek.com")
+	// URL 启发式:DeepSeek 官方域 / Ollama 默认 11434 端口
+	if strings.Contains(url, "deepseek.com") {
+		return true
+	}
+	if strings.HasSuffix(url, ":11434") || strings.Contains(url, ":11434/") {
+		return true
+	}
+	return false
 }
 
 // isModelAllowed 判断 model 是否在白名单中
