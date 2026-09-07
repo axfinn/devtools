@@ -522,7 +522,51 @@ const contentPanelTitle = computed(() => {
 
 const htmlPreviewDocument = computed(() => {
   if (!paste.value) return ''
-  return normalizeHtmlPreviewContent(paste.value.content || '')
+  // 优先使用 paste.content；空时回退到已加载的 HTML 文件内容（支持「上传 HTML 文件作为 paste 附件」场景）
+  const content = paste.value.content || htmlFileContent.value || ''
+  return normalizeHtmlPreviewContent(content)
+})
+
+// 自动加载：paste 语言为 html 且 content 为空时，自动 fetch 第一个 HTML 文件附件
+// 让 paste 查看页能直接预览 HTML 演示（Neon Cosmos 等），不需要用户点击附件弹窗
+const autoLoadHtmlFileIfNeeded = () => {
+  if (!paste.value || !isHtmlPaste.value) return
+  if (paste.value.content) return  // 有内容不需要自动加载
+  if (htmlFileContent.value) return  // 已加载过
+  const files = filesList.value || []
+  const htmlFile = files.find(f =>
+    f && f.url && (
+      (f.original_name && /\.html?$/i.test(f.original_name)) ||
+      (f.filename && /\.html?$/i.test(f.filename))
+    )
+  )
+  if (htmlFile) {
+    // 复用 openHtmlFilePreview 内部的数据流：fetch 文件 + 设到 htmlFileContent
+    fetchHtmlFileForPreview(htmlFile)
+  }
+}
+
+const fetchHtmlFileForPreview = async (file) => {
+  currentHtmlFile.value = file
+  try {
+    const url = API_BASE + file.url
+    const res = await fetch(url)
+    if (!res.ok) throw new Error('fetch failed: ' + res.status)
+    const text = await res.text()
+    htmlFileContent.value = text.length > 100 * 1024 ? text.substring(0, 100 * 1024) : text
+  } catch (e) {
+    console.error('[PasteView] auto-load HTML file failed:', e)
+    htmlFileContent.value = ''
+    currentHtmlFile.value = null
+  }
+}
+
+// 监听 paste 变化，自动加载 HTML 文件
+watch(() => paste.value?.id, () => {
+  // 重置文件状态（避免旧 paste 的文件残留）
+  htmlFileContent.value = ''
+  currentHtmlFile.value = null
+  autoLoadHtmlFileIfNeeded()
 })
 
 const pasteDisplayContent = computed(() => {
