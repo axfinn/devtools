@@ -404,13 +404,14 @@ type AIGatewayConfig struct {
 
 // AnthropicProviderConfig 定义 Anthropic 协议代理的下游提供商
 type AnthropicProviderConfig struct {
-	Name         string                `yaml:"name"`          // 提供商名称，用于日志
-	APIURL       string                `yaml:"api_url"`       // 上游 Anthropic 兼容 base URL
-	APIKey       string                `yaml:"api_key"`       // 上游 API Key
-	Models       []string              `yaml:"models"`        // 该提供商支持的模型列表（直通）
-	Aliases      []AnthropicModelAlias `yaml:"aliases"`       // 模型别名：用户写 alias 名，云端映射到真实模型
-	DefaultModel string                `yaml:"default_model"` // 默认模型：未匹配时使用
-	IsDefault    bool                  `yaml:"is_default"`    // 是否为默认线路
+	Name             string                `yaml:"name"`               // 提供商名称，用于日志
+	APIURL           string                `yaml:"api_url"`            // 上游 Anthropic 兼容 base URL
+	APIKey           string                `yaml:"api_key"`            // 上游 API Key
+	Models           []string              `yaml:"models"`             // 该提供商支持的模型列表（直通）
+	Aliases          []AnthropicModelAlias `yaml:"aliases"`            // 模型别名：用户写 alias 名，云端映射到真实模型
+	DefaultModel     string                `yaml:"default_model"`      // 默认模型：未匹配时使用
+	IsDefault        bool                  `yaml:"is_default"`         // 是否为默认线路
+	HeaderTimeoutSec int                   `yaml:"header_timeout_sec"` // 流式上游响应头超时(秒);0=默认 60s;本地大模型(Ollama 27B)可放宽到 600s
 }
 
 // AnthropicModelAlias 模型别名 — 用户侧用 model 名，网关转发时替换为 upstream_model

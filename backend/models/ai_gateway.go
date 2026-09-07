@@ -876,18 +876,19 @@ func (db *DB) UpdateVoiceCloneStatus(id uint, status string) error {
 // APIKey 为旧明文字段(legacy,首读后会被迁移到 APIKeyEncrypted)。
 // APIKeyEncrypted 为 AES-256-GCM 密文(base64),不对前端序列化。
 type AnthropicProvider struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	APIURL          string `json:"api_url"`
-	APIKey          string `json:"-"`       // legacy 明文,首读迁移后清空
-	APIKeyEncrypted string `json:"-"`       // AES-256-GCM 密文(base64)
-	Models          string `json:"models"`  // JSON array
-	Aliases         string `json:"aliases"` // JSON array of {model, upstream_model}
-	Enabled         bool   `json:"enabled"`
-	IsDefault       bool   `json:"is_default"`
-	DefaultModel    string `json:"default_model"`
-	CreatedAt       string `json:"created_at"`
-	UpdatedAt       string `json:"updated_at"`
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	APIURL           string `json:"api_url"`
+	APIKey           string `json:"-"`       // legacy 明文,首读迁移后清空
+	APIKeyEncrypted  string `json:"-"`       // AES-256-GCM 密文(base64)
+	Models           string `json:"models"`  // JSON array
+	Aliases          string `json:"aliases"` // JSON array of {model, upstream_model}
+	Enabled          bool   `json:"enabled"`
+	IsDefault        bool   `json:"is_default"`
+	DefaultModel     string `json:"default_model"`
+	HeaderTimeoutSec int    `json:"header_timeout_sec"` // 流式上游响应头超时(秒);0=默认 60s;Ollama 27B seed=600
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
 }
 
 func (db *DB) InitAnthropicProviders() error {
@@ -903,6 +904,7 @@ func (db *DB) InitAnthropicProviders() error {
 			enabled INTEGER NOT NULL DEFAULT 1,
 			is_default INTEGER NOT NULL DEFAULT 0,
 			default_model TEXT NOT NULL DEFAULT '',
+			header_timeout_sec INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT (datetime('now')),
 			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
@@ -911,13 +913,18 @@ func (db *DB) InitAnthropicProviders() error {
 	if err != nil {
 		return err
 	}
-	// 幂等迁移:旧表加 default_model + api_key_encrypted 列(SQLite ALTER TABLE 不支持 IF NOT EXISTS)
+	// 幂等迁移:旧表加 default_model + api_key_encrypted + header_timeout_sec 列(SQLite ALTER TABLE 不支持 IF NOT EXISTS)
 	if _, err := db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN default_model TEXT NOT NULL DEFAULT ''`); err != nil {
 		if !strings.Contains(err.Error(), "duplicate column") {
 			return err
 		}
 	}
 	if _, err := db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN api_key_encrypted TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
+	}
+	if _, err := db.conn.Exec(`ALTER TABLE anthropic_providers ADD COLUMN header_timeout_sec INTEGER NOT NULL DEFAULT 0`); err != nil {
 		if !strings.Contains(err.Error(), "duplicate column") {
 			return err
 		}
@@ -936,33 +943,40 @@ func (db *DB) InitAnthropicProviders() error {
 	// 之前 INSERT OR IGNORE 命中 name 唯一约束会静默跳过,导致用户看到 "Provider 存在但全是空"。
 	// Ollama 0.5+ 原生支持 Anthropic 协议(/v1/messages),网关可直连当 Anthropic 下游,
 	// 走通后 Claude Code 配 base_url=http://<gateway>/api/anthropic 即可使用本地 ollama 模型。
-	db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, enabled, is_default, default_model) VALUES ('Ollama', 'http://192.168.31.147:11434', 'ollama', '["qwen3.8:27b-mlx"]', '[]', 1, 0, 'qwen3.8:27b-mlx')`)
-	db.conn.Exec(`UPDATE anthropic_providers SET api_url = 'http://192.168.31.147:11434', api_key = 'ollama', models = '["qwen3.8:27b-mlx"]', aliases = '[]', enabled = 1, default_model = 'qwen3.8:27b-mlx' WHERE name = 'Ollama' AND (api_url = '' OR api_url IS NULL)`)
+	// header_timeout_sec=600:本地 27B 在 15K+ tokens system prompt 下首字节常 >60s,默认 60s
+	// 的 streamTransport.ResponseHeaderTimeout 会把它掐死,放宽到 10 分钟兜底。
+	db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, enabled, is_default, default_model, header_timeout_sec) VALUES ('Ollama', 'http://192.168.31.147:11434', 'ollama', '["qwen3.8:27b-mlx"]', '[]', 1, 0, 'qwen3.8:27b-mlx', 600)`)
+	db.conn.Exec(`UPDATE anthropic_providers SET api_url = 'http://192.168.31.147:11434', api_key = 'ollama', models = '["qwen3.8:27b-mlx"]', aliases = '[]', enabled = 1, default_model = 'qwen3.8:27b-mlx', header_timeout_sec = 600 WHERE name = 'Ollama' AND (api_url = '' OR api_url IS NULL)`)
+	// 二次回填:已经存在的 Ollama 行 header_timeout_sec 仍是 0(老版本 seed 没这字段),统一升到 600。
+	// 该列加在 ALTER 之后,新装=600;老装本条一次性补齐。条件加 header_timeout_sec=0 防覆盖管理员手动改过的值。
+	db.conn.Exec(`UPDATE anthropic_providers SET header_timeout_sec = 600 WHERE name = 'Ollama' AND header_timeout_sec = 0`)
 	// Seed builtin providers if table is empty
 	var count int
 	db.conn.QueryRow(`SELECT COUNT(*) FROM anthropic_providers`).Scan(&count)
 	if count == 0 {
 		builtins := []struct {
-			Name         string
-			APIURL       string
-			APIKey       string
-			Models       string
-			Aliases      string
-			IsDefault    bool
-			DefaultModel string
+			Name             string
+			APIURL           string
+			APIKey           string
+			Models           string
+			Aliases          string
+			IsDefault        bool
+			DefaultModel     string
+			HeaderTimeoutSec int
 		}{
-			{"MiniMax", "https://api.minimaxi.com/anthropic", "", `["MiniMax-M3","MiniMax-M3-highspeed","MiniMax-M2.5","MiniMax-M2.5-highspeed","MiniMax-M2.1","MiniMax-M2.1-highspeed","MiniMax-M2","MiniMax-M2.7"]`, "[]", false, "MiniMax-M3"},
-			{"DashScope", "https://coding.dashscope.aliyuncs.com/apps/anthropic", "", `["qwen3.5-plus","qwen3-max-2026-01-23","qwen3-coder-next","qwen3-coder-plus","glm-5","glm-4.7","kimi-k2.5","MiniMax-M3","MiniMax-M2.5"]`, "[]", false, "qwen3.5-plus"},
-			{"DeepSeek", "https://api.deepseek.com/anthropic", "", `["deepseek-chat","deepseek-reasoner","deepseek-v4-flash","deepseek-v4-pro"]`, "[]", true, "deepseek-v4-pro"},
-			{"PackyAPI", "https://www.packyapi.com", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},
-			{"OpenClaudeCode", "https://www.openclaudecode.cn", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6"},
+			{"MiniMax", "https://api.minimaxi.com/anthropic", "", `["MiniMax-M3","MiniMax-M3-highspeed","MiniMax-M2.5","MiniMax-M2.5-highspeed","MiniMax-M2.1","MiniMax-M2.1-highspeed","MiniMax-M2","MiniMax-M2.7"]`, "[]", false, "MiniMax-M3", 0},
+			{"DashScope", "https://coding.dashscope.aliyuncs.com/apps/anthropic", "", `["qwen3.5-plus","qwen3-max-2026-01-23","qwen3-coder-next","qwen3-coder-plus","glm-5","glm-4.7","kimi-k2.5","MiniMax-M3","MiniMax-M2.5"]`, "[]", false, "qwen3.5-plus", 0},
+			{"DeepSeek", "https://api.deepseek.com/anthropic", "", `["deepseek-chat","deepseek-reasoner","deepseek-v4-flash","deepseek-v4-pro"]`, "[]", true, "deepseek-v4-pro", 0},
+			{"PackyAPI", "https://www.packyapi.com", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6", 0},
+			{"OpenClaudeCode", "https://www.openclaudecode.cn", "", `["claude-opus-4-7","claude-sonnet-4-6","claude-haiku-4-5-20251001","claude-sonnet-4-5"]`, "[]", false, "claude-sonnet-4-6", 0},
 			// Ollama 本地大模型代理(Ollama 0.5+ 原生支持 Anthropic 协议,/v1/messages 端点直连)
 			// api_key 字段占位用 "ollama",实际 Ollama 不校验;url 在后台 admin 可改
-			{"Ollama", "http://192.168.31.147:11434", "ollama", `["qwen3.8:27b-mlx"]`, "[]", false, "qwen3.8:27b-mlx"},
+			// header_timeout_sec=600:本地 27B 首字节常 >60s,放宽 streamTransport.ResponseHeaderTimeout
+			{"Ollama", "http://192.168.31.147:11434", "ollama", `["qwen3.8:27b-mlx"]`, "[]", false, "qwen3.8:27b-mlx", 600},
 		}
 		for _, b := range builtins {
-			db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, is_default, default_model) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				b.Name, b.APIURL, b.APIKey, b.Models, b.Aliases, b.IsDefault, b.DefaultModel)
+			db.conn.Exec(`INSERT OR IGNORE INTO anthropic_providers (name, api_url, api_key, models, aliases, is_default, default_model, header_timeout_sec) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				b.Name, b.APIURL, b.APIKey, b.Models, b.Aliases, b.IsDefault, b.DefaultModel, b.HeaderTimeoutSec)
 		}
 	}
 	return nil
@@ -984,7 +998,7 @@ func (db *DB) GetDefaultAnthropicProvider() (*AnthropicProvider, error) {
 }
 
 func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error) {
-	query := `SELECT id, name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model, created_at, updated_at FROM anthropic_providers `
+	query := `SELECT id, name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model, header_timeout_sec, created_at, updated_at FROM anthropic_providers `
 	if where != "" {
 		query += where
 	}
@@ -998,7 +1012,7 @@ func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error)
 	providers := make([]*AnthropicProvider, 0)
 	for rows.Next() {
 		p := &AnthropicProvider{}
-		if err := rows.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.APIKeyEncrypted, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.APIKeyEncrypted, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.HeaderTimeoutSec, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		providers = append(providers, p)
@@ -1006,13 +1020,13 @@ func (db *DB) listAnthropicProviders(where string) ([]*AnthropicProvider, error)
 	return providers, nil
 }
 
-var anthropicProviderColumns = `id, name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model, created_at, updated_at`
+var anthropicProviderColumns = `id, name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model, header_timeout_sec, created_at, updated_at`
 
 func scanAnthropicProvider(scanner interface {
 	Scan(dest ...interface{}) error
 }) (*AnthropicProvider, error) {
 	p := &AnthropicProvider{}
-	err := scanner.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.APIKeyEncrypted, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.CreatedAt, &p.UpdatedAt)
+	err := scanner.Scan(&p.ID, &p.Name, &p.APIURL, &p.APIKey, &p.APIKeyEncrypted, &p.Models, &p.Aliases, &p.Enabled, &p.IsDefault, &p.DefaultModel, &p.HeaderTimeoutSec, &p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
@@ -1028,8 +1042,8 @@ func (db *DB) GetAnthropicProviderByName(name string) (*AnthropicProvider, error
 
 // CreateAnthropicProvider 新增
 func (db *DB) CreateAnthropicProvider(p *AnthropicProvider) error {
-	res, err := db.conn.Exec(`INSERT INTO anthropic_providers (name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.APIURL, p.APIKey, p.APIKeyEncrypted, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel)
+	res, err := db.conn.Exec(`INSERT INTO anthropic_providers (name, api_url, api_key, api_key_encrypted, models, aliases, enabled, is_default, default_model, header_timeout_sec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.APIURL, p.APIKey, p.APIKeyEncrypted, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel, p.HeaderTimeoutSec)
 	if err != nil {
 		return err
 	}
@@ -1039,9 +1053,11 @@ func (db *DB) CreateAnthropicProvider(p *AnthropicProvider) error {
 }
 
 // UpdateAnthropicProvider 更新
+// 注意:调用方必须传完整行(先整行读出再改字段后回写),否则部分字段更新会把
+// header_timeout_sec / default_model 等其它列一并清零(全列 UPDATE)。
 func (db *DB) UpdateAnthropicProvider(p *AnthropicProvider) error {
-	_, err := db.conn.Exec(`UPDATE anthropic_providers SET name=?, api_url=?, api_key=?, api_key_encrypted=?, models=?, aliases=?, enabled=?, is_default=?, default_model=?, updated_at=datetime('now') WHERE id=?`,
-		p.Name, p.APIURL, p.APIKey, p.APIKeyEncrypted, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel, p.ID)
+	_, err := db.conn.Exec(`UPDATE anthropic_providers SET name=?, api_url=?, api_key=?, api_key_encrypted=?, models=?, aliases=?, enabled=?, is_default=?, default_model=?, header_timeout_sec=?, updated_at=datetime('now') WHERE id=?`,
+		p.Name, p.APIURL, p.APIKey, p.APIKeyEncrypted, p.Models, p.Aliases, p.Enabled, p.IsDefault, p.DefaultModel, p.HeaderTimeoutSec, p.ID)
 	return err
 }
 
