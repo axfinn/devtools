@@ -371,75 +371,15 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 	// 6. 转发（传 preAuthKey 跳过内部认证）
 	// userModel 用原始模型名，这样 key 的 allowed_models 可以用 "gateway" 等占位名
 	//
-	// 流式 / 非流式 分流:
-	//   - 流式(stream:true)→ 现有路径,ssePingFrame 持续 reset read timeout(P0 修复)
-	//   - 非流式 → 改走异步 task 模式,POST 立即 202 + Location 头,避免 CF origin
-	//     read timeout 15s 把 Claude Code 混合调用里的非流式子任务(haiku 后台探测、
-	//     compact summarization 等)cut 成 524。
-	isStream, _ := bodyMap["stream"].(bool)
-	if isStream {
-		h.proxyAnthropicWithBody(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel, bodyBytes, bodyMap, authKey)
-		return
-	}
-
-	// 非流式路径:转异步前先校验 key 的 allowed_models(同 proxyAnthropicWithBody 行 451 行为)。
-	// 避免 model 不在白名单时还创建 task。
-	if authKey != nil && !h.ensureModelAllowed(c, authKey, model) {
-		return
-	}
-
-	// 非流式路径:转异步。
-	// 客户端 SDK 看到 202 + Location 头通常会按 HTTP 语义去 poll /v1/messages/tasks/:id;
-	// 即使 SDK 不识别 202 + task polling(标准 Anthropic SDK 不支持),
-	// 至少不再触发"524 → 重试 10 次 → 全 524"的风暴。
-	start := time.Now()
-	endpoint := "/api/anthropic/v1/messages/tasks"
-	taskID := "oant_" + utils.GenerateHexKey(12)
-
-	// 防御: 上游 URL/Key 缺失,提前返清晰错误(同 proxyAnthropicWithBody 行 461-467)
-	if provider.APIURL == "" {
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error":    fmt.Sprintf("Provider %s 未配置 API URL", provider.Name),
-			"provider": provider.Name,
-			"code":     502,
-		})
-		return
-	}
-	if provider.APIKey == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置上游 API Key", "code": 502})
-		return
-	}
-
-	task := &models.AnthropicTask{
-		ID:          taskID,
-		APIKeyID:    firstAPIKeyID(authKey),
-		Model:       model,
-		Provider:    provider.Name,
-		Status:      "pending",
-		RequestBody: truncateString(string(bodyBytes), 50000),
-		ClientIP:    c.ClientIP(),
-	}
-	if err := h.db.CreateAnthropicTask(task); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "任务创建失败", "code": 500})
-		return
-	}
-
-	h.logAPIRequest(authKey, model, "anthropic", "/api/anthropic/v1/messages", "chat", http.StatusAccepted, true, "", string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
-
-	c.Header("Location", endpoint+"/"+taskID)
-	c.JSON(http.StatusAccepted, gin.H{
-		"task_id":    taskID,
-		"model":      model,
-		"provider":   provider.Name,
-		"status":     "pending",
-		"created_at": task.CreatedAt.Format(time.RFC3339),
-		"poll_url":   endpoint + "/" + taskID,
-		"message":    "Anthropic 异步任务已提交(由 /v1/messages 非流式自动转异步),请通过 GET " + endpoint + "/" + taskID + " 轮询结果",
-	})
-
-	// 后台跑上游调用。复用 runAsyncAnthropicTask 已有逻辑:doRawRequestLong 5min timeout + stripThinkingBlocks + 失败回写。
-	upstreamURL := strings.TrimRight(provider.APIURL, "/") + "/v1/messages"
-	go h.runAsyncAnthropicTask(taskID, provider, upstreamURL, bodyBytes, firstAPIKeyID(authKey))
+	// 流式 / 非流式 都在 proxyAnthropicWithBody 内部按 stream 分流(P0 修复):
+	//   - 流式(stream:true)→ ssePingFrame 持续 reset read timeout,撑过 Ollama 长推理
+	//   - 非流式 → 同步返回 200 + 标准 Anthropic messages 协议 JSON(SDK 协议要求)
+	//
+	// 历史:曾尝试非流式自动转异步(返 202 + Location 头),但 Anthropic SDK 严格校验
+	// 200 + 标准 messages 字段(id/type:"message"/content),看到 202 直接判 protocol error
+	// ("body is JSON but not a Message"),比 524 更糟。撤销该改动,统一走 proxyAnthropicWithBody。
+	// 真要异步请用独立端点 POST /api/anthropic/v1/messages/tasks(非 SDK 调用方用)。
+	h.proxyAnthropicWithBody(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel, bodyBytes, bodyMap, authKey)
 }
 
 // resolveProviderByNameOrModel 根据名称或模型查找提供商，优先匹配配置，否则回退内置
