@@ -1833,7 +1833,7 @@ const loadVoiceClones = async () => {
 }
 
 const handleAudioFileChange = (event) => {
-  const file = event.target.files[0]
+  const file = event.target.files?.[0]
   if (file) {
     if (file.size > 10 * 1024 * 1024) {
       ElMessage.error('音频文件大小不能超过 10MB')

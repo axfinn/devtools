@@ -1256,12 +1256,12 @@ function createPC(peerID) {
   // 收到对端音频
   pc.ontrack = (e) => {
     const audio = new Audio()
-    audio.srcObject = e.streams[0]
+    audio.srcObject = e.streams?.[0]
     audio.autoplay = true
     // 用 AudioContext 检测说话（音量）
     try {
       const ctx = new AudioContext()
-      const src = ctx.createMediaStreamSource(e.streams[0])
+      const src = ctx.createMediaStreamSource(e.streams?.[0])
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
       src.connect(analyser)

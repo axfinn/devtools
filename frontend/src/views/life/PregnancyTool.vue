@@ -1753,6 +1753,7 @@ const knowledgeData = [
 ]
 
 function isInWeekRange(weeks) {
+  if (!weeks) return false
   const w = currentWeek.value
   return w >= weeks[0] && w <= weeks[1]
 }
@@ -2026,7 +2027,7 @@ onMounted(() => {
   }
 
   // Auto-expand current week knowledge
-  const currentIdx = knowledgeData.findIndex(info => isInWeekRange(info.weeks))
+  const currentIdx = knowledgeData.findIndex(info => info.weeks && isInWeekRange(info.weeks))
   if (currentIdx >= 0) knowledgeCollapse.value = [currentIdx]
 })
 

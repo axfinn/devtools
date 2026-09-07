@@ -730,7 +730,7 @@ function triggerImport() {
 }
 
 function importJSON(e) {
-  const file = e.target.files[0]
+  const file = e.target.files?.[0]
   if (!file) return
   const reader = new FileReader()
   reader.onload = (ev) => {
