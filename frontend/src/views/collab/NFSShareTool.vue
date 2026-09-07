@@ -1589,12 +1589,12 @@ function playRecord(url) {
 const CHUNK_SIZE = 5 * 1024 * 1024 // 5MB
 
 function onUploadFileChange(e) {
-  const f = e.target.files[0]
+  const f = e.target.files?.[0]
   if (f) setUploadFile(f)
 }
 function onUploadDrop(e) {
   uploadDragover.value = false
-  const f = e.dataTransfer.files[0]
+  const f = e.dataTransfer.files?.[0]
   if (f) setUploadFile(f)
 }
 function onUploadPaste(e) {
