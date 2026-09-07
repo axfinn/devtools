@@ -213,3 +213,71 @@ func TestSSEThinkingFilter_MultipleThinkingBlocks(t *testing.T) {
 		t.Errorf("all text events should be preserved")
 	}
 }
+
+// TestSSEThinkingFilter_LargeSingleLine 验证 filter 能处理超过 bufio.Scanner
+// 默认 64KB MaxScanTokenSize 的单个 SSE event 行。
+//
+// 背景: Claude Code 的 message_start event(JSON 包含超长 system prompt + tools
+// 定义)经常超过 64KB,旧的 bufio.Scanner 实现会抛 bufio.ErrTooLong,流被截断。
+// 改用 bufio.Reader 后应能正常处理任意长单行。
+func TestSSEThinkingFilter_LargeSingleLine(t *testing.T) {
+	// 构造一个 data 行超过 100KB 的 message_start event
+	largeText := strings.Repeat("x", 100*1024)
+	dataPayload := `{"type":"message_start","message":{"id":"msg_big","content":[{"type":"text","text":"` + largeText + `"}]}}`
+
+	input := makeSSEEvent("message_start", dataPayload) +
+		makeSSEEvent("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`) +
+		makeSSEEvent("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`) +
+		makeSSEEvent("content_block_stop", `{"type":"content_block_stop","index":0}`) +
+		makeSSEEvent("message_stop", `{"type":"message_stop"}`)
+
+	filter := newSSEThinkingFilter(strings.NewReader(input))
+	output := readAllSSE(filter)
+
+	// 大 event 应被完整保留(不被 Scanner 截断)
+	if !strings.Contains(output, largeText) {
+		t.Errorf("large event data should be preserved in full, output length: %d", len(output))
+	}
+	// 后续 event 也应保留
+	if !strings.Contains(output, "hi") {
+		t.Errorf("subsequent events should be preserved after large event")
+	}
+	if !strings.Contains(output, "message_stop") {
+		t.Errorf("message_stop should be preserved after large event")
+	}
+}
+
+// TestSSEPingFrame 验证 ping frame 是合法的 SSE 格式,能被 Anthropic SDK 识别为 ping 事件。
+//
+// 为什么必须是 ping event 而非 SSE 注释 ": heartbeat" ?
+// 注释行不触发 message 事件,SDK 不会 reset read timeout。Anthropic 官方
+// /v1/messages SSE 协议的 ping 事件格式: "event: ping\ndata: {"type":"ping"}\n\n"。
+func TestSSEPingFrame(t *testing.T) {
+	if !strings.HasPrefix(ssePingFrame, "event: ping\n") {
+		t.Errorf("ssePingFrame must start with 'event: ping\\n', got: %q", ssePingFrame)
+	}
+	if !strings.Contains(ssePingFrame, `"type":"ping"`) {
+		t.Errorf("ssePingFrame must contain ping type marker, got: %q", ssePingFrame)
+	}
+	if !strings.HasSuffix(ssePingFrame, "\n\n") {
+		t.Errorf("ssePingFrame must end with double newline (SSE event terminator), got: %q", ssePingFrame)
+	}
+
+	// 解析 data 行的 JSON,确保是合法 JSON
+	dataLine := ""
+	for _, line := range strings.Split(ssePingFrame, "\n") {
+		if strings.HasPrefix(line, "data:") {
+			dataLine = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+	}
+	if dataLine == "" {
+		t.Fatal("ssePingFrame missing data line")
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(dataLine), &parsed); err != nil {
+		t.Errorf("ping data must be valid JSON: %v", err)
+	}
+	if parsed["type"] != "ping" {
+		t.Errorf("ping data type must be 'ping', got: %v", parsed["type"])
+	}
+}

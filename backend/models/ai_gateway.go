@@ -9,6 +9,7 @@ import (
 
 func init() {
 	RegisterInit("AI Gateway(llm_tasks)", (*DB).InitLLMTasks)
+	RegisterInit("AI Gateway(anthropic_tasks)", (*DB).InitAnthropicTasks)
 	RegisterInit("AI Gateway(ai_api_keys)", (*DB).InitAIGateway)
 	RegisterInit("AI Gateway(anthropic_providers)", (*DB).InitAnthropicProviders)
 	RegisterInit("MiniMax Media(media_tasks)", (*DB).InitMiniMaxMediaTasks)
@@ -135,6 +136,79 @@ func (db *DB) GetLLMTask(id string) (*LLMTask, error) {
 func (db *DB) UpdateLLMTask(task *LLMTask) error {
 	_, err := db.conn.Exec(`
 		UPDATE llm_tasks SET status=?, result_json=?, error_message=?, completed_at=? WHERE id=?
+	`, task.Status, task.ResultJSON, task.ErrorMessage, task.CompletedAt, task.ID)
+	return err
+}
+
+// AnthropicTask 异步 Anthropic /v1/messages 任务(防止 Cloudflare 524 origin read timeout)。
+// 与 LLMTask 的区别:
+//   - ID 前缀 oant_(Ollama Anthropic),便于日志/admin 视图按前缀区分来源
+//   - RequestBody 保留**原始 JSON bytes**(LLMTask 是 marshal 后的 ChatCompletionRequest),
+//     Anthropic 协议需要原始格式(OpenClaudeCode/PackyAPI 等上游会校验 body 完整性,
+//     一旦 Marshal 改字段序/数字精度就被判为篡改而拒请求)
+//   - ResultJSON 直接存上游完整响应 bytes(Anthropic messages 协议 JSON),
+//     GET 轮询时按 JSON 对象原样返回给客户端
+type AnthropicTask struct {
+	ID           string     `json:"id"`
+	APIKeyID     string     `json:"api_key_id"`
+	Model        string     `json:"model"`
+	Provider     string     `json:"provider"`
+	Status       string     `json:"status"` // pending/running/succeeded/failed
+	RequestBody  string     `json:"request_body"`
+	ResultJSON   string     `json:"result_json,omitempty"`
+	ErrorMessage string     `json:"error_message,omitempty"`
+	ClientIP     string     `json:"client_ip"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+func (db *DB) InitAnthropicTasks() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS anthropic_tasks (
+			id TEXT PRIMARY KEY,
+			api_key_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			status TEXT DEFAULT 'pending',
+			request_body TEXT DEFAULT '',
+			result_json TEXT DEFAULT '',
+			error_message TEXT DEFAULT '',
+			client_ip TEXT DEFAULT '',
+			completed_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_anthropic_tasks_status ON anthropic_tasks(status, created_at DESC);
+	`)
+	return err
+}
+
+func (db *DB) CreateAnthropicTask(task *AnthropicTask) error {
+	task.CreatedAt = time.Now()
+	_, err := db.conn.Exec(`
+		INSERT INTO anthropic_tasks (id, api_key_id, model, provider, status, request_body, result_json, error_message, client_ip, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, task.ID, task.APIKeyID, task.Model, task.Provider, task.Status, task.RequestBody, task.ResultJSON, task.ErrorMessage, task.ClientIP, task.CreatedAt)
+	return err
+}
+
+func (db *DB) GetAnthropicTask(id string) (*AnthropicTask, error) {
+	task := &AnthropicTask{}
+	err := db.conn.QueryRow(`
+		SELECT id, api_key_id, model, provider, status, request_body, result_json, error_message, client_ip, completed_at, created_at
+		FROM anthropic_tasks WHERE id = ?
+	`, id).Scan(&task.ID, &task.APIKeyID, &task.Model, &task.Provider, &task.Status, &task.RequestBody, &task.ResultJSON, &task.ErrorMessage, &task.ClientIP, &task.CompletedAt, &task.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, errors.New("anthropic task not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func (db *DB) UpdateAnthropicTask(task *AnthropicTask) error {
+	_, err := db.conn.Exec(`
+		UPDATE anthropic_tasks SET status=?, result_json=?, error_message=?, completed_at=? WHERE id=?
 	`, task.Status, task.ResultJSON, task.ErrorMessage, task.CompletedAt, task.ID)
 	return err
 }

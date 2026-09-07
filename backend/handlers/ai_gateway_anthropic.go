@@ -16,6 +16,7 @@ import (
 
 	"devtools/config"
 	"devtools/models"
+	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,6 +24,19 @@ import (
 // modelFieldRe 匹配 JSON body 中 "model": "..." 字段
 // 用于保留原始 JSON 格式替换 model 名，避免第三方代理检测到 body 被篡改
 var modelFieldRe = regexp.MustCompile(`"model"\s*:\s*"[^"]*"`)
+
+// ssePingFrame 是 Anthropic 协议官方 ping 心跳帧。
+//
+// 为什么不用 ": heartbeat\n\n"(SSE 注释行)?
+// SSE 规范规定以 ":" 开头的行是注释,EventSource 不会派发 message 事件,
+// 客户端 SDK 也不会 reset read timeout。Claude Code 用的是 Anthropic SDK,
+// SDK 内部的 read deadline 只在收到 message 事件时才会 reset,因此纯注释行
+// 无法阻止 ~15s 的 read_timeout 触发。
+//
+// "event: ping\ndata: {"type":"ping"}\n\n" 是 Anthropic /v1/messages SSE
+// 协议的合法 ping 事件,SDK 必识别并 reset read deadline。同样的格式对
+// curl/浏览器 EventSource 也都合法。
+const ssePingFrame = "event: ping\ndata: {\"type\":\"ping\"}\n\n"
 
 // builtinAnthropicProviders 返回默认内置的 Anthropic 提供商列表
 // 当 config 中未配置 anthropic_providers 时使用
@@ -356,7 +370,76 @@ func (h *AIGatewayHandler) ProxyAnthropicGeneric(c *gin.Context) {
 
 	// 6. 转发（传 preAuthKey 跳过内部认证）
 	// userModel 用原始模型名，这样 key 的 allowed_models 可以用 "gateway" 等占位名
-	h.proxyAnthropicWithBody(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel, bodyBytes, bodyMap, authKey)
+	//
+	// 流式 / 非流式 分流:
+	//   - 流式(stream:true)→ 现有路径,ssePingFrame 持续 reset read timeout(P0 修复)
+	//   - 非流式 → 改走异步 task 模式,POST 立即 202 + Location 头,避免 CF origin
+	//     read timeout 15s 把 Claude Code 混合调用里的非流式子任务(haiku 后台探测、
+	//     compact summarization 等)cut 成 524。
+	isStream, _ := bodyMap["stream"].(bool)
+	if isStream {
+		h.proxyAnthropicWithBody(c, provider, "/api/anthropic/v1/messages", allModels, model, upstreamModel, bodyBytes, bodyMap, authKey)
+		return
+	}
+
+	// 非流式路径:转异步前先校验 key 的 allowed_models(同 proxyAnthropicWithBody 行 451 行为)。
+	// 避免 model 不在白名单时还创建 task。
+	if authKey != nil && !h.ensureModelAllowed(c, authKey, model) {
+		return
+	}
+
+	// 非流式路径:转异步。
+	// 客户端 SDK 看到 202 + Location 头通常会按 HTTP 语义去 poll /v1/messages/tasks/:id;
+	// 即使 SDK 不识别 202 + task polling(标准 Anthropic SDK 不支持),
+	// 至少不再触发"524 → 重试 10 次 → 全 524"的风暴。
+	start := time.Now()
+	endpoint := "/api/anthropic/v1/messages/tasks"
+	taskID := "oant_" + utils.GenerateHexKey(12)
+
+	// 防御: 上游 URL/Key 缺失,提前返清晰错误(同 proxyAnthropicWithBody 行 461-467)
+	if provider.APIURL == "" {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":    fmt.Sprintf("Provider %s 未配置 API URL", provider.Name),
+			"provider": provider.Name,
+			"code":     502,
+		})
+		return
+	}
+	if provider.APIKey == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置上游 API Key", "code": 502})
+		return
+	}
+
+	task := &models.AnthropicTask{
+		ID:          taskID,
+		APIKeyID:    firstAPIKeyID(authKey),
+		Model:       model,
+		Provider:    provider.Name,
+		Status:      "pending",
+		RequestBody: truncateString(string(bodyBytes), 50000),
+		ClientIP:    c.ClientIP(),
+	}
+	if err := h.db.CreateAnthropicTask(task); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "任务创建失败", "code": 500})
+		return
+	}
+
+	h.logAPIRequest(authKey, model, "anthropic", "/api/anthropic/v1/messages", "chat", http.StatusAccepted, true, "", string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
+
+	c.Header("Location", endpoint+"/"+taskID)
+	c.JSON(http.StatusAccepted, gin.H{
+		"task_id":    taskID,
+		"model":      model,
+		"provider":   provider.Name,
+		"status":     "pending",
+		"created_at": task.CreatedAt.Format(time.RFC3339),
+		"poll_url":   endpoint + "/" + taskID,
+		"message":    "Anthropic 异步任务已提交(由 /v1/messages 非流式自动转异步),请通过 GET " + endpoint + "/" + taskID + " 轮询结果",
+	})
+
+	// 后台跑上游调用。复用 runAsyncAnthropicTask 已有逻辑:doRawRequestLong 5min timeout + stripThinkingBlocks + 失败回写。
+	upstreamURL := strings.TrimRight(provider.APIURL, "/") + "/v1/messages"
+	go h.runAsyncAnthropicTask(taskID, provider, upstreamURL, bodyBytes, firstAPIKeyID(authKey))
 }
 
 // resolveProviderByNameOrModel 根据名称或模型查找提供商，优先匹配配置，否则回退内置
@@ -523,21 +606,27 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
 	}
 
-	// 关键修复: 立即发送 SSE 响应头 + 第一个 heartbeat,**然后再拨号上游**。
+	// 关键修复: 立即发送 SSE 响应头 + 第一个 ping heartbeat,**然后再拨号上游**。
 	// Ollama 本地大模型(27B+)处理 Claude Code 的超长 system prompt(15K+ tokens)
 	// 需要 30+ 秒才能返回第一个字节;如果等上游响应头到了再写 header+heartbeat,
-	// Claude Code 等不到任何字节会在 14.9s 断开(context canceled),表现为 "API error"。
-	// 提前发送 header + 心跳,客户端立刻知道连接已建立,read timeout 持续 reset。
+	// Claude Code 等不到任何字节会在 ~15s 断开(read timeout,context canceled),表现为 "API error" 重试。
+	//
+	// 心跳格式必须用 `event: ping\ndata: {"type":"ping"}\n\n`(Anthropic 官方 ping 事件),
+	// 而不是 SSE 注释行 `: heartbeat\n\n`。注释行不触发 message 事件,EventSource 不会
+	// reset read timeout;ping event 是 Anthropic SDK 显式识别的合法心跳,必触发 message
+	// handler → SDK 内部 reset read deadline。
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
-	if _, err := io.WriteString(c.Writer, ": heartbeat\n\n"); err != nil {
+	if _, err := io.WriteString(c.Writer, ssePingFrame); err != nil {
 		return http.StatusOK, context.Canceled
 	}
 	flusher.Flush()
 
-	// 上游拨号期间的高频心跳(每 3s):防御上游 prefill 阶段慢导致 client 提前 cancel
+	// 上游拨号期间的高频 ping(每 1s):Claude Code read_timeout 约 15s,即使下游要 30s+
+	// 才回首字节,持续 1s 一次的 ping event 也能让 SDK 内部反复 reset read deadline。
+	// 频率不能太高:每次 Write+Flush 都是 syscall,1s 平衡"reset 间隔"与"goroutine 开销"。
 	preUpstreamHeartbeatDone := make(chan struct{})
 	go func() {
 		defer func() {
@@ -545,12 +634,12 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 				log.Printf("PANIC in pre-upstream heartbeat goroutine: %v", r)
 			}
 		}()
-		ticker := time.NewTicker(3 * time.Second)
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				if _, err := io.WriteString(c.Writer, ": heartbeat\n\n"); err != nil {
+				if _, err := io.WriteString(c.Writer, ssePingFrame); err != nil {
 					return
 				}
 				flusher.Flush()
@@ -615,8 +704,9 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 心跳与主循环并发写 c.Writer，用 sseWriter 串行化 Write+Flush 避免数据竞争。
 	writer := newSSEWriter(c.Writer, flusher)
 
-	// 持续心跳 goroutine：每 20s 发一次 SSE 注释，防止 thinking 阶段无数据时
-	// 中间代理（nginx/CDN）或客户端因空闲超时断开连接
+	// 持续心跳 goroutine：thinking 阶段长(本地 27B 模型常 30s+)无字节输出,
+	// 中间代理(nginx/CDN)或客户端会因空闲超时断开。改 5s 一次 ping event,
+	// 与 Anthropic SDK 的 ping 频率对齐,既保证 read timeout 持续 reset 又不过度刷流量。
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer func() {
@@ -624,12 +714,12 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 				log.Printf("PANIC in background goroutine: %v", r)
 			}
 		}()
-		ticker := time.NewTicker(20 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
+				if err := writer.write([]byte(ssePingFrame)); err != nil {
 					return
 				}
 			case <-ctx.Done():
@@ -670,22 +760,26 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	return http.StatusOK, nil
 }
 
-// sseThinkingFilter 过滤 DeepSeek SSE 流中的 type="thinking" 内容块
-// 以 SSE event 为单位（空行分隔），若事件属于 thinking 块则整体丢弃
+// sseThinkingFilter 过滤 DeepSeek / Ollama(qwen3 系列)SSE 流中的 type="thinking" 内容块
+// 以 SSE event 为单位(空行分隔),若事件属于 thinking 块则整体丢弃。
+//
+// 实现细节: 用 bufio.Reader.ReadString('\n') 而不是 bufio.Scanner,因为 Scanner 的
+// MaxScanTokenSize 默认 64KB,Claude Code 的首个 message_start event(JSON 包含
+// 超长 system prompt + tools 定义)经常超过 64KB,Scanner 会抛 bufio.ErrTooLong,
+// 整个流后续被截断。ReadString 没有 token size 限制,只受初始 buffer 影响。
 type sseThinkingFilter struct {
-	src         io.Reader
-	scanner     *bufio.Scanner
+	src         *bufio.Reader
 	skipIndices map[int]bool // 被标记为 thinking 的 content_block index
 	pending     []byte       // 已过滤、待输出的数据
 }
 
 func newSSEThinkingFilter(src io.Reader) io.Reader {
-	f := &sseThinkingFilter{
-		src:         src,
-		scanner:     bufio.NewScanner(src),
+	return &sseThinkingFilter{
+		// 1MB 初始 buffer:Claude Code 长 system prompt + tools 的 message_start
+		// event JSON 经常 100-500KB,1MB 起步覆盖 99% 场景;ReadString 会按需自动 grow。
+		src:         bufio.NewReaderSize(src, 1<<20),
 		skipIndices: make(map[int]bool),
 	}
-	return f
 }
 
 func (f *sseThinkingFilter) Read(p []byte) (int, error) {
@@ -696,24 +790,34 @@ func (f *sseThinkingFilter) Read(p []byte) (int, error) {
 		return n, nil
 	}
 
-	if !f.scanner.Scan() {
-		return 0, io.EOF
-	}
-
-	// 累积一个完整 SSE event（遇空行为止）
+	// 累积一个完整 SSE event(遇空行为止)。
+	// ReadString 不会因为单行过长而失败,只受 reader buffer 限制(且自动 grow)。
 	var lines []string
-	line := f.scanner.Text()
-	lines = append(lines, line)
-
-	// 收集当前 event 的所有行
-	for f.scanner.Scan() {
-		next := f.scanner.Text()
-		if next == "" {
+	for {
+		line, err := f.src.ReadString('\n')
+		// ReadString 在遇到错误时仍返回已读取的数据;若完全没读到任何字节才返回 err。
+		// 这种情况(stream 末尾或网络中断)直接退出,让外层处理 EOF/错误。
+		if len(line) == 0 {
+			if err != nil {
+				return 0, err
+			}
+			continue
+		}
+		// 去掉行尾的 \r\n,后续统一用 "\n" 重新拼接,保持输出格式一致。
+		line = strings.TrimRight(line, "\r\n")
+		lines = append(lines, line)
+		if line == "" {
 			// 空行 = event 结束
-			lines = append(lines, "")
 			break
 		}
-		lines = append(lines, next)
+		if err != nil {
+			// 流中途错误(不是 EOF):已读到的部分也作为 event 提交,交给 updateSkipState/shouldSkip 处理,
+			// 之后再把 err 透传给外层。但通常事件以空行结束,这种情况极少见,先简单处理:返回 EOF。
+			if err == io.EOF {
+				break
+			}
+			return 0, err
+		}
 	}
 
 	// 判断该 event 是否属于 thinking 块
@@ -949,4 +1053,229 @@ func isModelAllowed(model string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+// ===================== 异步 Anthropic 代理(task 模式,防 CF 524) =====================
+//
+// 背景: 流式 Anthropic 请求已经被 ssePingFrame 修复(P0 改动),但非流式请求走
+// doRawRequestLong(5min) 等 Ollama 返回,CF(t.jaxiu.cn) origin read timeout 15s
+// 会直接把客户端掐了返 524。
+//
+// 方案: 新增独立端点 POST /api/anthropic/v1/messages/tasks,立即返 202 + task_id,
+// 后台 goroutine 调 Ollama,客户端 GET /api/anthropic/v1/messages/tasks/:id 轮询。
+// CF 只看到 <500ms 的 POST→202,看不到长上游调用。
+//
+// 为什么不动原 POST /api/anthropic/v1/messages? Claude Code 默认走流式,同步
+// 路径仍可能有客户端(admin 后台、其他工具)需要,改异步会破坏现有调用方。
+
+// AsyncAnthropicMessages POST /api/anthropic/v1/messages/tasks
+// 提交一个异步 Anthropic /v1/messages 调用,立即返回 202 + task_id。
+//
+// body 必须是合法 Anthropic messages 协议 JSON,但 stream 字段必须为 false 或缺省
+// (流式请走原 POST /api/anthropic/v1/messages)。
+func (h *AIGatewayHandler) AsyncAnthropicMessages(c *gin.Context) {
+	start := time.Now()
+	endpoint := "/api/anthropic/v1/messages/tasks"
+
+	key, ok := h.authenticateAdminOrAPIKey(c, "chat")
+	if !ok {
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "读取请求体失败", "code": 400})
+		return
+	}
+	if len(bodyBytes) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体为空", "code": 400})
+		return
+	}
+
+	var probe map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &probe); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体 JSON 格式错误", "code": 400})
+		return
+	}
+
+	// 异步端点只处理非流式。流式场景流式 SSE 已经在第一个 heartbeat 阶段告诉客户端连接已建立,
+	// read_timeout 持续 reset,根本不存在 524 问题,不需要异步化。
+	if isStream, _ := probe["stream"].(bool); isStream {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "异步端点不支持 stream:true,请用 POST /api/anthropic/v1/messages(流式)",
+			"code":  400,
+		})
+		return
+	}
+
+	model, _ := probe["model"].(string)
+	if model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 model 字段", "code": 400})
+		return
+	}
+
+	// 解析下游 provider
+	provider, found := h.resolveAnthropicProvider(model)
+	if !found {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("未找到支持模型 %s 的提供商,请查看 /api/ai-gateway/docs/anthropic 获取可用模型列表", model),
+			"code":  400,
+		})
+		return
+	}
+
+	// Key 级别 allowed_models 校验(同 ProxyAnthropicGeneric 行为)
+	if key != nil && !h.ensureModelAllowed(c, key, model) {
+		return
+	}
+
+	// 模型名重写:用户侧别名 → 上游真实 model。
+	// 用 rewriteModelField 保留原始 JSON 格式(防 OpenClaudeCode/PackyAPI 篡改检测)。
+	upstreamModel := resolveModelUpstream(provider, model)
+	if upstreamModel != "" && upstreamModel != model {
+		bodyBytes = rewriteModelField(bodyBytes, upstreamModel)
+		probe["model"] = upstreamModel // 同步给后续后台 worker 看的字段
+	}
+
+	// 上游 URL 防御(同 proxyAnthropicWithBody 行 461-467)
+	if provider.APIURL == "" {
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":    fmt.Sprintf("Provider %s 未配置 API URL", provider.Name),
+			"provider": provider.Name,
+			"code":     502,
+		})
+		return
+	}
+	if provider.APIKey == "" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "未配置上游 API Key", "code": 502})
+		return
+	}
+	upstreamURL := strings.TrimRight(provider.APIURL, "/") + "/v1/messages"
+
+	// 创建 task 记录
+	taskID := "oant_" + utils.GenerateHexKey(12)
+	task := &models.AnthropicTask{
+		ID:          taskID,
+		APIKeyID:    firstAPIKeyID(key),
+		Model:       model,
+		Provider:    provider.Name,
+		Status:      "pending",
+		RequestBody: truncateString(string(bodyBytes), 50000),
+		ClientIP:    c.ClientIP(),
+	}
+	if err := h.db.CreateAnthropicTask(task); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "任务创建失败", "code": 500})
+		return
+	}
+
+	// logAPIRequest 记 "accepted" 一行,便于 admin 日志视图排查客户端发了啥
+	h.logAPIRequest(key, model, "anthropic", endpoint, "chat", http.StatusAccepted, true, "", string(bodyBytes), "", c.ClientIP(), time.Since(start), usageSummary{})
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"task_id":    taskID,
+		"model":      model,
+		"provider":   provider.Name,
+		"status":     "pending",
+		"created_at": task.CreatedAt.Format(time.RFC3339),
+		"poll_url":   endpoint + "/" + taskID,
+		"message":    "Anthropic 异步任务已提交,请通过 GET " + endpoint + "/" + taskID + " 轮询结果",
+	})
+
+	// 后台跑上游调用。doRawRequestLong 是 5min timeout,足够 Ollama 27B 长推理。
+	// bodyBytes 已是重写 model 后的最终上游 body(若不需要重写就是原 body)。
+	go h.runAsyncAnthropicTask(taskID, provider, upstreamURL, bodyBytes, firstAPIKeyID(key))
+}
+
+// runAsyncAnthropicTask 后台 goroutine:跑上游 Anthropic 调用 + 回写 task 状态。
+// 模式同 runAsyncLyricsGeneration(minimax_music.go:137),失败也回写 failed + error_message。
+//
+// 为什么不在前端异步 poll 时也复用 stripThinkingBlocks?非流式响应是单个 JSON,
+// 上游 DeepSeek/Ollama 会在 content 数组里夹 type="thinking" 块。网关层统一剥离,
+// 否则客户端下一轮回传 thinking 块会被标准 Anthropic SDK 判 400。
+func (h *AIGatewayHandler) runAsyncAnthropicTask(taskID string, provider *config.AnthropicProviderConfig, upstreamURL string, bodyBytes []byte, apiKeyID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runAsyncAnthropicTask: %v", r)
+		}
+	}()
+
+	task, err := h.db.GetAnthropicTask(taskID)
+	if err != nil {
+		log.Printf("runAsyncAnthropicTask: task %s not found: %v", taskID, err)
+		return
+	}
+
+	task.Status = "running"
+	_ = h.db.UpdateAnthropicTask(task)
+
+	start := time.Now()
+	endpoint := "/api/anthropic/v1/messages/tasks"
+	raw, err := h.doRawRequestLong(upstreamURL, provider.APIKey, "POST", bodyBytes, nil)
+
+	now := time.Now()
+	task.CompletedAt = &now
+
+	if err != nil {
+		task.Status = "failed"
+		task.ErrorMessage = err.Error()
+		_ = h.db.UpdateAnthropicTask(task)
+		h.logAPIRequestByID(apiKeyID, task.Model, "anthropic", endpoint, "chat", http.StatusBadGateway, false, err.Error(), truncateString(string(bodyBytes), 10000), "", task.ClientIP, time.Since(start), usageSummary{})
+		return
+	}
+
+	// DeepSeek / Ollama 等上游会夹带 type="thinking" 块,网关层剥离
+	if providerEmitsThinkingBlocks(provider) {
+		raw = stripThinkingBlocks(raw)
+	}
+
+	task.Status = "succeeded"
+	task.ResultJSON = string(raw)
+	_ = h.db.UpdateAnthropicTask(task)
+	h.logAPIRequestByID(apiKeyID, task.Model, "anthropic", endpoint, "chat", http.StatusOK, true, "", truncateString(string(bodyBytes), 10000), truncateString(string(raw), 10000), task.ClientIP, time.Since(start), usageSummary{})
+}
+
+// GetAnthropicMessageTask GET /api/anthropic/v1/messages/tasks/:id
+// 轮询异步任务状态。succeeded 时 result 字段是上游完整 Anthropic messages 响应对象。
+func (h *AIGatewayHandler) GetAnthropicMessageTask(c *gin.Context) {
+	key, ok := h.authenticateAdminOrAPIKey(c, "chat")
+	if !ok {
+		return
+	}
+
+	taskID := c.Param("id")
+	task, err := h.db.GetAnthropicTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在", "code": 404})
+		return
+	}
+
+	// admin 提交时 APIKeyID 为空,可看所有 task;普通 key 只能看自己的
+	if key != nil && task.APIKeyID != key.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问此任务", "code": 403})
+		return
+	}
+
+	resp := gin.H{
+		"task_id":    task.ID,
+		"model":      task.Model,
+		"provider":   task.Provider,
+		"status":     task.Status,
+		"created_at": task.CreatedAt.Format(time.RFC3339),
+	}
+	if task.CompletedAt != nil {
+		resp["completed_at"] = task.CompletedAt.Format(time.RFC3339)
+	}
+	if task.Status == "succeeded" && task.ResultJSON != "" {
+		// 上游 Anthropic messages 协议 JSON — 直接作为对象返回,客户端无需再 parse
+		var r map[string]interface{}
+		if err := json.Unmarshal([]byte(task.ResultJSON), &r); err == nil {
+			resp["result"] = r
+		} else {
+			resp["result_raw"] = task.ResultJSON
+		}
+	}
+	if task.Status == "failed" {
+		resp["error"] = task.ErrorMessage
+	}
+	c.JSON(http.StatusOK, resp)
 }

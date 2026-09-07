@@ -47,6 +47,8 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 	api.POST("/english-tutor", h.AiGatewayHandler.EnglishTutor)
 
 	api.POST("/anthropic/v1/messages", h.AiGatewayHandler.ProxyAnthropicGeneric)
+	api.POST("/anthropic/v1/messages/tasks", h.AiGatewayHandler.AsyncAnthropicMessages)
+	api.GET("/anthropic/v1/messages/tasks/:id", h.AiGatewayHandler.GetAnthropicMessageTask)
 	api.GET("/anthropic/v1/models", h.AiGatewayHandler.ProxyAnthropicModels)
 	api.POST("/minimax/anthropic/v1/messages", h.AiGatewayHandler.ProxyMinimaxAnthropic)
 	api.POST("/minimax/tts/v1/generations", h.AiGatewayHandler.ProxyMinimaxTTS)
