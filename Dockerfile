@@ -22,7 +22,7 @@ RUN npm install
 RUN npm run build
 RUN cd dist && zip -r /app/askit-extension.zip .
 
-FROM golang:1.25.5-alpine AS backend-builder
+FROM golang:1.27.1-alpine AS backend-builder
 
 WORKDIR /app/backend
 
@@ -39,7 +39,7 @@ COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -tags with_utls -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
 # 编译 proxy-client 跨平台二进制
-FROM golang:1.25.5-alpine AS proxy-client-builder
+FROM golang:1.27.1-alpine AS proxy-client-builder
 
 WORKDIR /app/proxy-client
 
