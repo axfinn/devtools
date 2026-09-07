@@ -115,16 +115,17 @@ func (h *AIGatewayHandler) GetAnthropicDocs(c *gin.Context) {
 		}
 
 		providerDocs = append(providerDocs, gin.H{
-			"name":          p.Name,
-			"base_url":      baseURL,
-			"generic_url":   "/api/anthropic",
-			"upstream":      p.APIURL,
-			"models":        p.Models,
-			"aliases":       aliasDocs,
-			"user_models":   userModels,
-			"description":   desc,
-			"default_model": p.DefaultModel,
-			"is_default":    p.Name == defaultProviderName,
+			"name":               p.Name,
+			"base_url":           baseURL,
+			"generic_url":        "/api/anthropic",
+			"upstream":           p.APIURL,
+			"models":             p.Models,
+			"aliases":            aliasDocs,
+			"user_models":        userModels,
+			"description":        desc,
+			"default_model":      p.DefaultModel,
+			"header_timeout_sec": p.HeaderTimeoutSec,
+			"is_default":         p.Name == defaultProviderName,
 		})
 	}
 
@@ -697,6 +698,7 @@ func (h *AIGatewayHandler) AdminCreateAnthropicProvider(c *gin.Context) {
 		Aliases            string `json:"aliases"`
 		IsDefault          bool   `json:"is_default"`
 		DefaultModel       string `json:"default_model"`
+		HeaderTimeoutSec   int    `json:"header_timeout_sec"` // 0=默认 60s;Ollama 27B 建议 600
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少必填字段 name / api_url"})
@@ -713,13 +715,14 @@ func (h *AIGatewayHandler) AdminCreateAnthropicProvider(c *gin.Context) {
 	}
 	// API Key 加密落库(不写明文,前端列表/详情接口靠 json:"-" 也不暴露)
 	p := &models.AnthropicProvider{
-		Name:         req.Name,
-		APIURL:       req.APIURL,
-		Models:       req.Models,
-		Aliases:      req.Aliases,
-		Enabled:      true,
-		IsDefault:    req.IsDefault,
-		DefaultModel: req.DefaultModel,
+		Name:             req.Name,
+		APIURL:           req.APIURL,
+		Models:           req.Models,
+		Aliases:          req.Aliases,
+		Enabled:          true,
+		IsDefault:        req.IsDefault,
+		DefaultModel:     req.DefaultModel,
+		HeaderTimeoutSec: req.HeaderTimeoutSec,
 	}
 	if req.APIKey != "" {
 		enc, err := h.enc.Encrypt(req.APIKey)
@@ -754,6 +757,7 @@ func (h *AIGatewayHandler) AdminUpdateAnthropicProvider(c *gin.Context) {
 		Enabled            *bool  `json:"enabled"`
 		IsDefault          *bool  `json:"is_default"`
 		DefaultModel       string `json:"default_model"`
+		HeaderTimeoutSec   *int   `json:"header_timeout_sec"` // 用指针区分"未传=不修改"和"传 0=显式设 0"
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
@@ -801,6 +805,9 @@ func (h *AIGatewayHandler) AdminUpdateAnthropicProvider(c *gin.Context) {
 	}
 	if req.DefaultModel != "" {
 		existing.DefaultModel = req.DefaultModel
+	}
+	if req.HeaderTimeoutSec != nil {
+		existing.HeaderTimeoutSec = *req.HeaderTimeoutSec
 	}
 	if err := h.db.UpdateAnthropicProvider(existing); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "更新失败: " + err.Error()})

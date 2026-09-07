@@ -185,10 +185,11 @@ func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.An
 	result := make([]config.AnthropicProviderConfig, 0, len(dbProviders))
 	for _, p := range dbProviders {
 		cfg := config.AnthropicProviderConfig{
-			Name:         p.Name,
-			APIURL:       p.APIURL,
-			DefaultModel: p.DefaultModel,
-			IsDefault:    p.IsDefault,
+			Name:             p.Name,
+			APIURL:           p.APIURL,
+			DefaultModel:     p.DefaultModel,
+			IsDefault:        p.IsDefault,
+			HeaderTimeoutSec: p.HeaderTimeoutSec,
 		}
 		// 优先解密密文;失败/为空时回退 legacy 明文(并触发懒迁移)
 		if p.APIKeyEncrypted != "" {
@@ -207,19 +208,19 @@ func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.An
 				p.APIKeyEncrypted = enc
 				p.APIKey = ""
 				// 异步写回,不阻塞当前请求(失败下次重启再迁移)
-				go func(pid int64, cipher string) {
+				// 重要:必须把 p 的其他字段(HeaderTimeoutSec / DefaultModel / Models 等)带过去,
+				// UpdateAnthropicProvider 是全列更新,只填 ID/APIKeyEncrypted/APIKey 会把其他列清零,
+				// 例如把 Ollama 的 header_timeout_sec 从 600 打成 0。
+				snapshot := *p
+				go func() {
 					// 异步写回:gin 的 recover 只护请求 goroutine,这里 panic 会杀掉整个进程
 					defer func() {
 						if r := recover(); r != nil {
 							log.Printf("PANIC in anthropic provider key migration: %v", r)
 						}
 					}()
-					_ = h.db.UpdateAnthropicProvider(&models.AnthropicProvider{
-						ID:              pid,
-						APIKeyEncrypted: cipher,
-						APIKey:          "",
-					})
-				}(p.ID, enc)
+					_ = h.db.UpdateAnthropicProvider(&snapshot)
+				}()
 			}
 		}
 		json.Unmarshal([]byte(p.Models), &cfg.Models)
@@ -649,9 +650,10 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 
-	// 使用 streamClient（body 无超时），避免 http.Client.Timeout 在长流时强制断开；
-	// 连接/握手/响应头超时由 streamTransport 兜底，瞬时连接错误在拿响应前做一次重试。
-	resp, err := doStreamRequest(h.streamClient, req)
+	// 使用按 provider 派生的 streamClient（body 无 Timeout），避免 http.Client.Timeout 在长流时强制断开；
+	// 连接/握手/响应头超时由对应 transport 兜底（Ollama 等慢上游用 600s,云厂商默认 60s），
+	// 瞬时连接错误在拿响应前做一次重试。
+	resp, err := doStreamRequest(h.pickStreamClient(provider), req)
 	// 上游开始响应后停掉拨号期高频心跳(并 join)，改用生成期的 5s 心跳(防止 thinking 阶段断流)
 	stopPreHeartbeat()
 	if err != nil {
