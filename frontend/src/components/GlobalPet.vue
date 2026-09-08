@@ -41,7 +41,7 @@
         <button class="pet-action-btn pet-close" title="隐藏（点右下角 🐾 唤回）" @click="hide">×</button>
       </div>
 
-      <!-- 变身按钮行：放在右上角，紧贴主题切换条下方 -->
+      <!-- 变身按钮行：放在顶部工具条下方 -->
       <div
         class="pet-forms"
         @mousedown.stop
@@ -52,7 +52,7 @@
           :key="f.id"
           :class="['form-btn', { active: formId === f.id }]"
           :title="'变身：' + f.label"
-          @click="setForm(f.id)"
+          @click.stop="setForm(f.id)"
         >{{ f.icon }}</button>
       </div>
 
@@ -413,18 +413,19 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
   background: rgba(255, 200, 100, 0.18);
 }
 
-/* 变身按钮行 */
+/* 变身按钮行：放在右上 actions 下方 */
 .pet-forms {
   position: absolute;
   right: 6;
-  top: 16px;
+  top: 28px;
   display: flex;
   gap: 2px;
   padding: 2px 3px;
-  background: rgba(8, 10, 18, 0.6);
+  background: rgba(8, 10, 18, 0.7);
   border-radius: 6px;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(6px);
   z-index: 5;
+  pointer-events: auto;
 }
 .form-btn {
   width: 22px;
