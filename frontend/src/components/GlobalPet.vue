@@ -179,10 +179,10 @@ function cheerNow() {
   setTimeout(() => {
     if (cheerText.value === text) cheerText.value = ''
   }, 8000)
-  // TTS（如果启用 + 有 token）
+  // 播放预录 cheer 语音（如果有）
   if (voiceOn.value) {
     document.querySelectorAll('pet-widget').forEach((el) => {
-      el.speak?.(text)
+      el.speak?.('cheer')
     })
   }
 }
@@ -249,22 +249,15 @@ function onDragEnd() {
 
 const theme = computed(() => THEMES[themeId.value])
 
-// 凭证/全局 token 推送到 widget
+// 凭证相关已删除 — 预录 MP3 不需要 token
 function pushToken() {
-  const token =
-    localStorage.getItem('pet-widget.ttsToken') ||
-    localStorage.getItem('AI_KEY_STORAGE') ||
-    localStorage.getItem('ai_gateway_super_admin_password')
-  if (token) {
-    document.querySelectorAll('pet-widget').forEach((el) => el.setTtsToken?.(token))
-  }
+  /* noop */
 }
 
 onMounted(() => {
   loadState()
-  // 初次挂载时（widget 已经被 customElements define 过）推一次 token
   nextTick(() => {
-    pushToken()
+    /* 静态音频无需推送 token */
   })
   // 启动打气定时器
   try {
@@ -278,10 +271,8 @@ onUnmounted(() => {
   stopCheerTimer()
 })
 
-// 切主题时也推（让 widget 内的 greeting 跟着）
-watch(themeId, () => {
-  nextTick(pushToken)
-})
+// 切主题时由 widget 内部自己播报（无 token 推送需要）
+watch(themeId, () => { /* noop */ })
 
 // 窗口尺寸变化时，确保宠物不超出
 function onResize() {

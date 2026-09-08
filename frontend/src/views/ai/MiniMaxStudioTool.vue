@@ -928,22 +928,16 @@ const PET_THEMES = [
 const petTheme = ref('prism')
 const petInline = ref(null)
 function petSpeak() {
+  // 预录 MP3 模式下没有任意说，触发主题欢迎语
   document.querySelectorAll('pet-widget').forEach((el) => {
-    el.speak?.('魔法宠物驻场，等待你的指令。')
+    el.speak?.(`theme_${petTheme.value}`)
   })
 }
 watch(petTheme, (val) => {
   document.querySelectorAll('pet-widget').forEach((el) => el.setTheme?.(val))
 })
-onMounted(() => {
-  // 把凭证推到 widget（如果它已就绪）
-  setTimeout(() => {
-    const token = apiKey.value || superAdminPassword.value
-    if (token) {
-      document.querySelectorAll('pet-widget').forEach((el) => el.setTtsToken?.(token))
-    }
-  }, 200)
-})
+// 预录 MP3 模式不需要 token 推送
+onMounted(() => { /* noop */ })
 
 const textLoading = ref(false)
 const textRaw = ref(null)

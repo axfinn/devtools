@@ -5,13 +5,14 @@
         <p class="eyebrow">MAGIC PET · 浏览器版</p>
         <h2>魔法宠物助手</h2>
         <p class="hero-desc">
-          嵌入式的 3D 小生灵，配上 minimax T2A 语音播报。
-          点击 / 双击 / 长按宠物体验不同动作，切主题、配置 TTS 凭证、听它说话。
+          嵌入式的 3D 小生灵，配上预录的 12 段主题语音。
+          点击 / 双击 / 长按宠物体验不同动作，切主题自动播放对应欢迎语。
         </p>
         <ul class="tips">
-          <li>🔊 已从 devtools 全局凭证 <code>AI_KEY_STORAGE</code> 自动读 TTS token</li>
-          <li>🐾 同一句话只生成一次，结果缓存在浏览器 Cache Storage</li>
-          <li>🎨 切主题会触发对应声线播放主题欢迎语</li>
+          <li>🎵 所有语音都是预生成的 MP3，零 API 调用、零延迟</li>
+          <li>🐾 包含 5 主题 + 5 动作 + 通用打气 + 首次启动问候</li>
+          <li>🎨 切主题会播放对应声线的欢迎语</li>
+          <li>💪 点 💪 按钮或等 12 分钟获得一次自动打气</li>
         </ul>
       </div>
 
@@ -38,38 +39,6 @@
     <section class="config">
       <el-card shadow="never">
         <template #header>
-          <div class="row-between">
-            <span>TTS 凭证</span>
-            <el-tag v-if="tokenSet" type="success" size="small">已配置</el-tag>
-            <el-tag v-else type="warning" size="small">未配置</el-tag>
-          </div>
-        </template>
-        <p class="hint">
-          浏览器调用 minimax T2A 需要 Bearer Token。优先级：① 下方输入框 → ② devtools 全局
-          <code>AI_KEY_STORAGE</code> → ③ <code>ai_gateway_super_admin_password</code>
-        </p>
-        <el-input
-          v-model="tokenDraft"
-          type="password"
-          show-password
-          placeholder="可选：覆盖 devtools 全局凭证"
-          @keyup.enter="saveToken"
-        >
-          <template #append>
-            <el-button @click="saveToken">保存到 widget</el-button>
-          </template>
-        </el-input>
-        <div class="row-between" style="margin-top: 12px;">
-          <el-button @click="testSpeak" type="primary" :disabled="!tokenSet">
-            ▶ 测试说话
-          </el-button>
-          <el-button @click="clearToken" v-if="tokenSet">清除 widget 凭证</el-button>
-        </div>
-        <p v-if="lastError" class="err">⚠ {{ lastError }}</p>
-      </el-card>
-
-      <el-card shadow="never">
-        <template #header>
           <span>操作速查</span>
         </template>
         <el-table :data="ACTIONS" size="small" border>
@@ -85,9 +54,9 @@
             </template>
           </el-table-column>
           <el-table-column prop="flavor" label="效果" />
-          <el-table-column label="语音" width="200">
+          <el-table-column label="语音" width="160">
             <template #default="{ row }">
-              <code v-if="row.voiceText" style="font-size: 11px;">"{{ row.voiceText }}"</code>
+              <code v-if="row.voiceKey" style="font-size: 11px;">{{ row.voiceKey }}</code>
               <span v-else style="color: #999;">—</span>
             </template>
           </el-table-column>
@@ -102,8 +71,12 @@
           </div>
         </template>
         <pre class="snippet"><code>&lt;script src="/widgets/pet-widget.js"&gt;&lt;/script&gt;
-&lt;pet-widget theme="prism" width="280" height="320" voice
-            tts-token="sk-..."&gt;&lt;/pet-widget&gt;</code></pre>
+&lt;pet-widget theme="prism" width="280" height="320" voice&gt;&lt;/pet-widget&gt;</code></pre>
+        <p class="hint" style="margin-top: 12px;">
+          预录的 MP3 在 <code>/widgets/voices/</code> 目录下：<br />
+          <code style="font-size: 11px;">theme_flame · theme_tide · theme_forest · theme_cosmic · theme_prism ·
+          act_wave · act_jump · act_dance · act_attack · act_sleep · cheer · welcome</code>
+        </p>
       </el-card>
     </section>
   </div>
@@ -112,7 +85,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
-// 内联主题 + 动作常量（避免跨项目依赖；保持与 pet-widget 同源）
+// 内联主题常量（与 pet-widget 包保持一致）
 const THEMES = [
   { id: 'flame',   name: '烈焰' },
   { id: 'tide',    name: '深海' },
@@ -122,19 +95,16 @@ const THEMES = [
 ]
 
 const ACTIONS = [
-  { name: '待机',     trigger: 'tap',   flavor: '悬浮、眨眼、微微摆头',  voiceText: '' },
-  { name: '打招呼',   trigger: 'tap',   flavor: '向你点头致意',          voiceText: '嗨～' },
-  { name: '跳跃',     trigger: 'tap',   flavor: '抛物线 + 落地 squash',  voiceText: '呀！' },
-  { name: '旋转',     trigger: 'double',flavor: '360° 转一圈',           voiceText: '' },
-  { name: '舞蹈',     trigger: 'double',flavor: '按主题节奏扭动 2.4s',   voiceText: '跳起来啦！' },
-  { name: '魔法攻击', trigger: 'hold',  flavor: '蓄力 + 释放 + 粒子',    voiceText: '元素爆发！' },
-  { name: '打盹',     trigger: 'tap',   flavor: '眼睛闭起，下沉',        voiceText: '嗯…好困…' },
+  { name: '待机',     trigger: 'tap',   flavor: '悬浮、眨眼、微微摆头',     voiceKey: '' },
+  { name: '打招呼',   trigger: 'tap',   flavor: '向你点头致意',              voiceKey: 'act_wave' },
+  { name: '跳跃',     trigger: 'tap',   flavor: '抛物线 + 落地 squash',      voiceKey: 'act_jump' },
+  { name: '旋转',     trigger: 'double',flavor: '360° 转一圈',                voiceKey: '' },
+  { name: '舞蹈',     trigger: 'double',flavor: '按主题节奏扭动 2.4s',       voiceKey: 'act_dance' },
+  { name: '魔法攻击', trigger: 'hold',  flavor: '蓄力 + 释放 + 粒子',         voiceKey: 'act_attack' },
+  { name: '打盹',     trigger: 'tap',   flavor: '眼睛闭起，下沉',             voiceKey: 'act_sleep' },
 ]
 
 const theme = ref('prism')
-const tokenDraft = ref('')
-const tokenSet = ref(false)
-const lastError = ref('')
 const widget = ref(null)
 
 const STAGE_W = 320
@@ -142,73 +112,20 @@ const STAGE_H = 360
 const stageWidth = computed(() => Math.min(STAGE_W, (typeof window !== 'undefined' ? window.innerWidth : 1080) - 64))
 const stageHeight = computed(() => STAGE_H)
 
-function checkToken() {
-  if (typeof localStorage === 'undefined') return
-  tokenSet.value = !!(
-    localStorage.getItem('pet-widget.ttsToken') ||
-    localStorage.getItem('AI_KEY_STORAGE') ||
-    localStorage.getItem('ai_gateway_super_admin_password')
-  )
-}
-
-function broadcastToken(token) {
-  document.querySelectorAll('pet-widget').forEach((el) => {
-    el.setTtsToken?.(token)
-  })
-}
-
-function saveToken() {
-  const v = tokenDraft.value.trim()
-  if (v) {
-    localStorage.setItem('pet-widget.ttsToken', v)
-    broadcastToken(v)
-  } else {
-    localStorage.removeItem('pet-widget.ttsToken')
-    broadcastToken(null)
-  }
-  tokenDraft.value = ''
-  checkToken()
-}
-
-function clearToken() {
-  localStorage.removeItem('pet-widget.ttsToken')
-  broadcastToken(null)
-  checkToken()
-}
-
-function testSpeak() {
-  document.querySelectorAll('pet-widget').forEach((el) => {
-    el.speak?.('你好，魔法宠物已上线！')
-  })
-}
-
 function copySnippet() {
   const text = `<script src="/widgets/pet-widget.js"><\/script>
-<pet-widget theme="prism" width="280" height="320" voice
-            tts-token="sk-..."></pet-widget>`
+<pet-widget theme="prism" width="280" height="320" voice></pet-widget>`
   navigator.clipboard?.writeText(text)
 }
-
-function onWidgetError(e) {
-  lastError.value = e.detail?.message || '未知错误'
-}
-
-onMounted(() => {
-  checkToken()
-  const saved = localStorage.getItem('pet-widget.ttsToken')
-  if (saved) broadcastToken(saved)
-  window.addEventListener('pet:error', onWidgetError)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('pet:error', onWidgetError)
-})
 
 watch(theme, (val) => {
   document.querySelectorAll('pet-widget').forEach((el) => {
     el.setTheme?.(val)
   })
 })
+
+onMounted(() => {})
+onUnmounted(() => {})
 </script>
 
 <style scoped>
@@ -279,8 +196,14 @@ watch(theme, (val) => {
 }
 .config {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 16px;
+}
+.row-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
 }
 .hint {
   font-size: 12px;
@@ -293,17 +216,6 @@ watch(theme, (val) => {
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 11px;
-}
-.row-between {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-}
-.err {
-  color: #ff6e8a;
-  font-size: 12px;
-  margin: 8px 0 0;
 }
 .snippet {
   background: rgba(0,0,0,0.4);
