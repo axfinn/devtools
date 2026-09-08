@@ -45691,10 +45691,11 @@ void main() {
         dispatch({ type: "RESET_COMBO" });
       }
     }, []);
-    const api = reactExports.useMemo(
+    const actions = reactExports.useMemo(
       () => ({
-        state,
-        theme: THEMES[state.theme],
+        state: initialState,
+        // dummy，下面 useEffect 同步
+        theme: THEMES[initialState.theme],
         setTheme: (id2) => dispatch({ type: "SET_THEME", theme: id2 }),
         setForm: (id2) => dispatch({ type: "SET_FORM", form: id2 }),
         tap: () => dispatch({ type: "TAP", now: performance.now() }),
@@ -45702,7 +45703,12 @@ void main() {
         forceAction: (id2) => dispatch({ type: "SET_ACTION", action: id2, now: performance.now() }),
         tick
       }),
-      [state, tick]
+      []
+      // eslint-disable-line react-hooks/exhaustive-deps
+    );
+    const api = reactExports.useMemo(
+      () => ({ ...actions, state, theme: THEMES[state.theme] }),
+      [state, actions]
     );
     return /* @__PURE__ */ jsxRuntimeExports.jsx(PetStoreContext.Provider, { value: api, children });
   }
