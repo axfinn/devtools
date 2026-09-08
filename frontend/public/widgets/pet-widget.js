@@ -46888,20 +46888,55 @@ void main() {
   });
   function PetBody({ form, color, emissive, eyeColor, eyeGlow, action }) {
     const eyeScaleY = useActionAnimation$1(form, action);
-    switch (form) {
-      case "cat":
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(CatBody, { color, emissive, eyeColor, eyeGlow, action, eyeScaleY });
-      case "robot":
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(RobotBody, { color, emissive, eyeGlow, action });
-      case "ghost":
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(GhostBody, { color, emissive, eyeColor, eyeGlow, action, eyeScaleY });
-      case "star":
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(StarBody, { color, emissive, eyeColor, eyeGlow, action, eyeScaleY });
-      case "default":
-      default:
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(DefaultBody, { color, emissive, eyeColor, eyeGlow, action, eyeScaleY });
-    }
+    const FormComp = FORM_BODIES[form] || FORM_BODIES.default;
+    const formColor = FORM_COLOR[form] || color;
+    const tintedColor = mixHex(color, formColor, 0.85);
+    const tintedEmissive = mixHex(emissive, formColor, 0.7);
+    console.log("[PetBody] form=", form, "color=", tintedColor);
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      FormComp,
+      {
+        color: tintedColor,
+        emissive: tintedEmissive,
+        eyeColor,
+        eyeGlow,
+        action,
+        eyeScaleY
+      }
+    );
   }
+  const FORM_COLOR = {
+    default: "#5cf2ff",
+    // 青
+    cat: "#ff7eb6",
+    // 粉
+    robot: "#c0c8d4",
+    // 银
+    ghost: "#f0e8ff",
+    // 紫白
+    star: "#ffd84d"
+    // 金
+  };
+  function mixHex(a, b, t2) {
+    const pa2 = hexToRgb(a), pb2 = hexToRgb(b);
+    if (!pa2 || !pb2) return a;
+    const r2 = Math.round(pa2[0] + (pb2[0] - pa2[0]) * t2);
+    const g2 = Math.round(pa2[1] + (pb2[1] - pa2[1]) * t2);
+    const bl2 = Math.round(pa2[2] + (pb2[2] - pa2[2]) * t2);
+    return `rgb(${r2}, ${g2}, ${bl2})`;
+  }
+  function hexToRgb(hex) {
+    const m2 = hex.replace("#", "").match(/^([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m2) return null;
+    return [parseInt(m2[1], 16), parseInt(m2[2], 16), parseInt(m2[3], 16)];
+  }
+  const FORM_BODIES = {
+    default: DefaultBody,
+    cat: CatBody,
+    robot: RobotBody,
+    ghost: GhostBody,
+    star: StarBody
+  };
   function useActionAnimation$1(_form, action, _color3, _emissive, _eyeColor, _eyeGlow) {
     const eyeScaleYRef = reactExports.useRef(1);
     const bodyRef = reactExports.useRef(null);
@@ -47326,8 +47361,9 @@ void main() {
       group.current.scale.setScalar(m2.s);
     });
   }
-  function Pet() {
+  function Pet({ form: formProp } = {}) {
     const { state, theme, tap, holdStart } = usePetStore();
+    const form = formProp ?? state.form;
     const groupRef = reactExports.useRef(null);
     const holdTimerRef = reactExports.useRef(null);
     const didHoldRef = reactExports.useRef(false);
@@ -47373,27 +47409,27 @@ void main() {
         },
         children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Aura, { color: theme.aura, excited: isExcited, calm: isCalm }),
-          useTrail2 ? /* @__PURE__ */ jsxRuntimeExports.jsx(Trail, { width: 0.5, length: 5, color: new Color(theme.aura), attenuation: (t2) => t2 * t2, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          useTrail2 ? /* @__PURE__ */ jsxRuntimeExports.jsx(Trail, { width: 0.5, length: 5, color: new Color(theme.aura), attenuation: (t2) => t2 * t2, children: /* @__PURE__ */ jsxRuntimeExports.jsx("group", { children: /* @__PURE__ */ jsxRuntimeExports.jsx(
             PetBody,
             {
-              form: state.form,
+              form,
               color: theme.body,
               emissive: theme.bodyEmissive,
               eyeColor: theme.eye,
               eyeGlow: theme.eyeGlow,
               action: state.action
             }
-          ) }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+          ) }, form) }) : /* @__PURE__ */ jsxRuntimeExports.jsx("group", { children: /* @__PURE__ */ jsxRuntimeExports.jsx(
             PetBody,
             {
-              form: state.form,
+              form,
               color: theme.body,
               emissive: theme.bodyEmissive,
               eyeColor: theme.eye,
               eyeGlow: theme.eyeGlow,
               action: state.action
             }
-          ),
+          ) }, form),
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             Sparkles,
             {
@@ -47520,7 +47556,7 @@ void main() {
       /* @__PURE__ */ jsxRuntimeExports.jsx("meshBasicMaterial", { color, transparent: true, opacity: 0.5, toneMapped: false })
     ] }) });
   }
-  function Scene({ cardBg = false } = {}) {
+  function Scene({ cardBg = false, form } = {}) {
     const { theme } = usePetStore();
     const dirRef = reactExports.useRef(null);
     useFrame(({ camera }) => {
@@ -47550,7 +47586,7 @@ void main() {
         }
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsx("pointLight", { position: [-3, 1, 2], intensity: 0.7, color: theme.aura, distance: 8 }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Pet, {}),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Pet, { form }),
       cardBg ? /* @__PURE__ */ jsxRuntimeExports.jsx(MagicCircle, { color: theme.circle }) : /* @__PURE__ */ jsxRuntimeExports.jsx("group", { position: [0, 0.45, 0], children: /* @__PURE__ */ jsxRuntimeExports.jsx(MagicCircle, { color: theme.circle }) }),
       cardBg && /* @__PURE__ */ jsxRuntimeExports.jsx(Ground, { color: theme.aura, fogColor: theme.fog }),
       !cardBg && /* @__PURE__ */ jsxRuntimeExports.jsx(FloatingPlatform, { color: theme.circle }),
@@ -47742,12 +47778,13 @@ void main() {
     width = 280,
     height = 320,
     showShell = true,
-    cardBg = false
+    cardBg = false,
+    form = "default"
   }) {
     const { state, theme } = usePetStore();
     const voice = useVoice();
     const lastThemeRef = reactExports.useRef(state.theme);
-    const lastFormRef = reactExports.useRef(state.form);
+    const lastFormRef = reactExports.useRef(form);
     const lastActionRef = reactExports.useRef(state.action);
     const greetedRef = reactExports.useRef(false);
     reactExports.useEffect(() => {
@@ -47762,11 +47799,11 @@ void main() {
       voice.speakGroup(`theme_${state.theme}`);
     }, [state.theme]);
     reactExports.useEffect(() => {
-      if (state.form === lastFormRef.current) return;
-      lastFormRef.current = state.form;
+      if (form === lastFormRef.current) return;
+      lastFormRef.current = form;
       voice.speakGroup("transform");
-      setTimeout(() => voice.speak(`form_${state.form}`), 350);
-    }, [state.form]);
+      setTimeout(() => voice.speak(`form_${form}`), 350);
+    }, [form]);
     reactExports.useEffect(() => {
       if (state.action === lastActionRef.current) return;
       lastActionRef.current = state.action;
@@ -47782,7 +47819,6 @@ void main() {
           position: "relative",
           width: `${width}px`,
           height: `${height}px`,
-          // 默认透明背景 — 透出页面本身的颜色
           background: cardBg ? `radial-gradient(ellipse at center, ${theme.fog} 0%, #06070d 80%)` : "transparent",
           borderRadius: cardBg ? 14 : 0,
           overflow: cardBg ? "hidden" : "visible",
@@ -47813,7 +47849,7 @@ void main() {
                 height: `${canvasH}px`,
                 display: "block"
               },
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Scene, { cardBg })
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(Scene, { cardBg, form })
             }
           ),
           showShell && /* @__PURE__ */ jsxRuntimeExports.jsx(WidgetShell, { voice })
@@ -47824,9 +47860,11 @@ void main() {
   function ThemeApplier({ theme, form, children }) {
     const { setTheme, setForm } = usePetStore();
     reactExports.useEffect(() => {
+      console.log("[ThemeApplier] setTheme=", theme);
       setTheme(theme);
     }, [theme, setTheme]);
     reactExports.useEffect(() => {
+      console.log("[ThemeApplier] setForm(", form, ")");
       setForm(form);
     }, [form, setForm]);
     return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children });
@@ -47839,7 +47877,16 @@ void main() {
     showShell = true,
     cardBg = false
   }) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx(PetStoreProvider, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ThemeApplier, { theme, form, children: /* @__PURE__ */ jsxRuntimeExports.jsx(PetAppInner, { width, height, showShell, cardBg }) }) });
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(PetStoreProvider, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(ThemeApplier, { theme, form, children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+      PetAppInner,
+      {
+        width,
+        height,
+        showShell,
+        cardBg,
+        form
+      }
+    ) }) });
   }
   const OBSERVED = ["theme", "form", "width", "height", "voice", "no-shell", "card-bg"];
   class PetWidgetElement extends HTMLElement {
@@ -47861,7 +47908,8 @@ void main() {
     static get observedAttributes() {
       return OBSERVED;
     }
-    attributeChangedCallback() {
+    attributeChangedCallback(name, oldValue, newValue) {
+      console.log("[pet-widget] attributeChanged:", name, oldValue, "->", newValue);
       if (this.root) this.applyAndRender();
     }
     applyAndRender() {
@@ -47871,6 +47919,7 @@ void main() {
       const height = parseInt(this.getAttribute("height") || "320", 10) || 320;
       const showShell = !this.hasAttribute("no-shell");
       const cardBg = this.hasAttribute("card-bg");
+      console.log("[pet-widget] applyAndRender form=", form, "theme=", theme);
       const props = { theme, form, width, height, showShell, cardBg };
       this.root?.render(reactExports.createElement(PetApp, props));
     }
@@ -47894,11 +47943,13 @@ void main() {
       return this.getAttribute("theme") ?? "prism";
     }
     setForm(id2) {
+      console.log("[pet-widget] setForm called:", id2, "FORMS includes?", FORMS.includes(id2), "current attr:", this.getAttribute("form"));
       if (!FORMS.includes(id2)) {
         console.warn(`[pet-widget] unknown form: ${id2}`);
         return;
       }
       this.setAttribute("form", id2);
+      console.log("[pet-widget] after setAttribute:", this.getAttribute("form"));
       this.dispatchEvent(new CustomEvent("pet:form-change", { detail: { form: id2 }, bubbles: true }));
     }
     getForm() {
