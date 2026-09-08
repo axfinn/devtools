@@ -294,6 +294,9 @@
         </div>
       </Transition>
     </Teleport>
+
+    <!-- 全局魔法宠物（可拖动、可隐藏） -->
+    <GlobalPet />
   </el-container>
 </template>
 
@@ -305,6 +308,7 @@ import { useTheme } from './composables/useTheme'
 import { useMediaPlayer } from './composables/useMediaPlayer'
 import { useToolPreferences } from './composables/useToolPreferences'
 import { useToolRegistry } from './composables/useToolRegistry'
+import GlobalPet from './components/GlobalPet.vue'
 
 const router = useRouter()
 const route = useRoute()
