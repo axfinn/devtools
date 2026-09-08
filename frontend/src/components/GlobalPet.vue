@@ -343,26 +343,29 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
   z-index: 9998;
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
-  overflow: hidden;
-  background: rgba(8, 10, 18, 0.7);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(8px);
+  border-radius: 0;          /* 不要圆角了（透出来） */
+  overflow: visible;         /* 不要裁剪（widget 透明背景要透出来） */
+  background: transparent;    /* 透明！透出页面背景 */
+  box-shadow: none;
+  border: none;
+  backdrop-filter: none;
 }
 
 .pet-drag-handle {
-  height: 28px;
+  height: 24px;
   display: flex;
   align-items: center;
   padding: 0 8px;
   gap: 6px;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.45);   /* 略深，确保文字可见 */
+  border-radius: 12px;               /* 拖动条独立成胶囊 */
   cursor: grab;
   user-select: none;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
+  color: rgba(255, 255, 255, 0.85);
   flex-shrink: 0;
+  margin-bottom: 2px;
+  width: fit-content;
 }
 .pet-drag-handle:active {
   cursor: grabbing;
@@ -417,13 +420,13 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
 .pet-forms {
   position: absolute;
   right: 6;
-  top: 28px;
+  top: 30px;
   display: flex;
   gap: 2px;
-  padding: 2px 3px;
-  background: rgba(8, 10, 18, 0.7);
-  border-radius: 6px;
-  backdrop-filter: blur(6px);
+  padding: 3px 4px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
   z-index: 5;
   pointer-events: auto;
 }
