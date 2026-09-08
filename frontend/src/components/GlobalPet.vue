@@ -25,7 +25,7 @@
       <div class="pet-drag-handle" @mousedown="onDragStart" @touchstart="onDragStart" title="拖动">
         <span class="handle-grip">⋮⋮</span>
         <span class="handle-title">魔法宠物</span>
-        <span class="handle-theme" :style="{ color: theme.accent }">{{ theme.name }}</span>
+        <span class="handle-theme" :style="{ color: theme.accent }">{{ theme.name }} · {{ formLabel }}</span>
       </div>
 
       <div class="pet-actions">
@@ -41,10 +41,26 @@
         <button class="pet-action-btn pet-close" title="隐藏（点右下角 🐾 唤回）" @click="hide">×</button>
       </div>
 
+      <!-- 变身按钮行：放在右上角，紧贴主题切换条下方 -->
+      <div
+        class="pet-forms"
+        @mousedown.stop
+        @touchstart.stop
+      >
+        <button
+          v-for="f in FORMS"
+          :key="f.id"
+          :class="['form-btn', { active: formId === f.id }]"
+          :title="'变身：' + f.label"
+          @click="setForm(f.id)"
+        >{{ f.icon }}</button>
+      </div>
+
       <div class="pet-canvas">
         <pet-widget
           ref="petRef"
           :theme="themeId"
+          :form="formId"
           :width="size.w"
           :height="size.h - 28"
           :voice="voiceOn ? '' : null"
@@ -104,9 +120,25 @@ const CHEERS = [
 
 const visible = ref(true)
 const themeId = ref('prism')
+const formId = ref('default')
 const voiceOn = ref(true)
 const rootEl = ref(null)
 const petRef = ref(null)
+
+const FORMS = [
+  { id: 'default', icon: '🔵', label: '默认' },
+  { id: 'cat',     icon: '🐱', label: '小猫' },
+  { id: 'robot',   icon: '🤖', label: '机械' },
+  { id: 'ghost',   icon: '👻', label: '幽灵' },
+  { id: 'star',    icon: '⭐', label: '星灵' },
+]
+const formLabel = computed(() => FORMS.find(f => f.id === formId.value)?.label || '')
+const FORM_KEY = 'pet-widget.form'
+function setForm(id) {
+  formId.value = id
+  try { localStorage.setItem(FORM_KEY, id) } catch { /* ignore */ }
+  document.querySelectorAll('pet-widget').forEach((el) => el.setForm?.(id))
+}
 
 // 打气
 const cheerText = ref('')
@@ -379,6 +411,39 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
 }
 .pet-action-btn.cheer {
   background: rgba(255, 200, 100, 0.18);
+}
+
+/* 变身按钮行 */
+.pet-forms {
+  position: absolute;
+  right: 6;
+  top: 16px;
+  display: flex;
+  gap: 2px;
+  padding: 2px 3px;
+  background: rgba(8, 10, 18, 0.6);
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+  z-index: 5;
+}
+.form-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  font-size: 12px;
+  line-height: 22px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: all 180ms;
+}
+.form-btn:hover { opacity: 0.85; transform: scale(1.1); }
+.form-btn.active {
+  opacity: 1;
+  background: rgba(92, 242, 255, 0.25);
+  box-shadow: 0 0 8px rgba(92, 242, 255, 0.4);
 }
 
 /* 打气 Toast */

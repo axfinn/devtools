@@ -21,17 +21,29 @@
           <pet-widget
             ref="widget"
             :theme="theme"
+            :form="form"
             :width="stageWidth"
             :height="stageHeight"
             voice
           />
         </div>
         <div class="stage-controls">
-          <el-radio-group v-model="theme" size="small">
-            <el-radio-button v-for="t in THEMES" :key="t.id" :value="t.id">
-              {{ t.name }}
-            </el-radio-button>
-          </el-radio-group>
+          <div class="control-row">
+            <span class="control-label">主题</span>
+            <el-radio-group v-model="theme" size="small">
+              <el-radio-button v-for="t in THEMES" :key="t.id" :value="t.id">
+                {{ t.name }}
+              </el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="control-row">
+            <span class="control-label">形态</span>
+            <el-radio-group v-model="form" size="small">
+              <el-radio-button v-for="f in FORMS" :key="f.id" :value="f.id">
+                {{ f.icon }} {{ f.label }}
+              </el-radio-button>
+            </el-radio-group>
+          </div>
         </div>
       </el-card>
     </section>
@@ -104,7 +116,16 @@ const ACTIONS = [
   { name: '打盹',     trigger: 'tap',   flavor: '眼睛闭起，下沉',             voiceKey: 'act_sleep' },
 ]
 
+const FORMS = [
+  { id: 'default', icon: '🔵', label: '默认' },
+  { id: 'cat',     icon: '🐱', label: '小猫' },
+  { id: 'robot',   icon: '🤖', label: '机械' },
+  { id: 'ghost',   icon: '👻', label: '幽灵' },
+  { id: 'star',    icon: '⭐', label: '星灵' },
+]
+
 const theme = ref('prism')
+const form = ref('default')
 const widget = ref(null)
 
 const STAGE_W = 320
@@ -121,6 +142,12 @@ function copySnippet() {
 watch(theme, (val) => {
   document.querySelectorAll('pet-widget').forEach((el) => {
     el.setTheme?.(val)
+  })
+})
+
+watch(form, (val) => {
+  document.querySelectorAll('pet-widget').forEach((el) => {
+    el.setForm?.(val)
   })
 })
 
@@ -191,8 +218,20 @@ onUnmounted(() => {})
 .stage-controls {
   width: 100%;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   padding: 8px 0 0;
+}
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.control-label {
+  font-size: 12px;
+  color: #a4abc4;
+  min-width: 32px;
 }
 .config {
   display: grid;
