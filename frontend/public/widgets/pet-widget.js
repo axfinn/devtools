@@ -46892,7 +46892,7 @@ void main() {
       case "cat":
         return /* @__PURE__ */ jsxRuntimeExports.jsx(CatBody, { color, emissive, eyeColor, eyeGlow, action, eyeScaleY });
       case "robot":
-        return /* @__PURE__ */ jsxRuntimeExports.jsx(RobotBody, { color, emissive, eyeColor, eyeGlow, action, eyeScaleY });
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(RobotBody, { color, emissive, eyeGlow, action });
       case "ghost":
         return /* @__PURE__ */ jsxRuntimeExports.jsx(GhostBody, { color, emissive, eyeColor, eyeGlow, action, eyeScaleY });
       case "star":
@@ -46924,27 +46924,22 @@ void main() {
     position,
     scaleY,
     eyeColor,
-    eyeGlow
+    eyeGlow,
+    size = 0.13
   }) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { position, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { scale: [1, scaleY, 1], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.13, 24, 24] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [size, 24, 24] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: eyeColor, emissive: eyeGlow, emissiveIntensity: 0.6, roughness: 0.2 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0, 0.08], scale: [0.5, 0.5 * scaleY, 0.5], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.13, 16, 16] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0, 0.08 * size / 0.13], scale: [0.5, 0.5 * scaleY, 0.5], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [size, 16, 16] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#0a0a14", roughness: 0.1 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.03, 0.03, 0.13], scale: [0.18, 0.18 * scaleY, 0.18], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.13, 12, 12] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.03, 0.03, 0.13 * size / 0.13], scale: [0.18, 0.18 * scaleY, 0.18], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [size, 12, 12] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff", emissive: "#ffffff", emissiveIntensity: 1 })
       ] })
-    ] });
-  }
-  function Mouth({ position, rotation }) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position, rotation: rotation ?? [Math.PI / 2, 0, 0], children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("torusGeometry", { args: [0.07, 0.012, 8, 24, Math.PI] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#1a0a14", roughness: 0.5 })
     ] });
   }
   function Mat({ color, emissive, intensity }) {
@@ -46958,6 +46953,22 @@ void main() {
         metalness: 0.15
       }
     );
+  }
+  function makeStarShape() {
+    const shape = new Shape();
+    const outer = 0.7;
+    const inner = 0.3;
+    const points = 5;
+    for (let i2 = 0; i2 < points * 2; i2++) {
+      const r2 = i2 % 2 === 0 ? outer : inner;
+      const angle = i2 / (points * 2) * Math.PI * 2 - Math.PI / 2;
+      const x2 = Math.cos(angle) * r2;
+      const y2 = Math.sin(angle) * r2;
+      if (i2 === 0) shape.moveTo(x2, y2);
+      else shape.lineTo(x2, y2);
+    }
+    shape.closePath();
+    return shape;
   }
   function DefaultBody({ color, emissive, eyeColor, eyeGlow, action, eyeScaleY }) {
     const tailRef = reactExports.useRef(null);
@@ -46974,17 +46985,24 @@ void main() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.6, 48, 48] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity })
       ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.18, 0.18], scale: [0.7, 0.55, 0.55], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.5, 32, 32] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.6 })
+      ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.28, 0.5, 0], rotation: [0, 0, 0.25], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.09, 0.28, 16] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.12, 0.34, 16] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.8 })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.28, 0.5, 0], rotation: [0, 0, -0.25], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.09, 0.28, 16] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.12, 0.34, 16] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.8 })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [-0.18, 0.18, 0.5], scaleY: eyeScaleY.current, eyeColor, eyeGlow }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [0.18, 0.18, 0.5], scaleY: eyeScaleY.current, eyeColor, eyeGlow }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Mouth, { position: [0, -0.02, 0.58] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.02, 0.58], rotation: [Math.PI / 2, 0, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("torusGeometry", { args: [0.07, 0.012, 8, 24, Math.PI] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#1a0a14", roughness: 0.5 })
+      ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { ref: tailRef, position: [0, 0.1, -0.55], rotation: [0.4, 0, 0], children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.14, 0.32, 16] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.5 })
@@ -46996,50 +47014,56 @@ void main() {
     const bodyRef = reactExports.useRef(null);
     useFrame(({ clock }) => {
       const t2 = clock.elapsedTime;
-      if (tailRef.current) tailRef.current.rotation.z = Math.sin(t2 * 3) * 0.6;
+      if (tailRef.current) tailRef.current.rotation.y = Math.sin(t2 * 3) * 0.8;
       const breath = action === "sleep" ? 0.04 : 0.02;
       if (bodyRef.current) bodyRef.current.scale.setScalar(1 + Math.sin(t2 * 1.6) * breath);
     });
     const intensity = getEmissiveIntensity(action);
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { ref: bodyRef, castShadow: true, scale: [1, 0.9, 1], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.6, 48, 48] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { ref: bodyRef, castShadow: true, scale: [1, 0.85, 0.95], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.55, 48, 48] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.28, 0.5, 0], rotation: [0, 0, 0.4], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.12, 0.34, 4] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.3, 0.55, 0], rotation: [0, 0, 0.45], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.18, 0.4, 4] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.7 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.28, 0.5, 0], rotation: [0, 0, -0.4], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.12, 0.34, 4] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.3, 0.55, 0], rotation: [0, 0, -0.45], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.18, 0.4, 4] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.7 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.28, 0.45, 0.04], rotation: [0, 0, 0.4], scale: 0.5, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.12, 0.34, 4] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffaaaa", emissive: "#ffaaaa", emissiveIntensity: 0.3 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.3, 0.5, 0.06], rotation: [0, 0, 0.45], scale: 0.55, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.18, 0.4, 4] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffaaaa", emissive: "#ff8888", emissiveIntensity: 0.4 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.28, 0.45, 0.04], rotation: [0, 0, -0.4], scale: 0.5, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.12, 0.34, 4] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffaaaa", emissive: "#ffaaaa", emissiveIntensity: 0.3 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.3, 0.5, 0.06], rotation: [0, 0, -0.45], scale: 0.55, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.18, 0.4, 4] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffaaaa", emissive: "#ff8888", emissiveIntensity: 0.4 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [-0.18, 0.15, 0.52], scaleY: eyeScaleY.current * 0.6, eyeColor, eyeGlow }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [0.18, 0.15, 0.52], scaleY: eyeScaleY.current * 0.6, eyeColor, eyeGlow }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [-0.18, 0.13, 0.5], scaleY: eyeScaleY.current * 0.5, eyeColor, eyeGlow, size: 0.11 }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [0.18, 0.13, 0.5], scaleY: eyeScaleY.current * 0.5, eyeColor, eyeGlow, size: 0.11 }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.02, 0.58], rotation: [0, 0, Math.PI / 4], children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.05, 0.05, 3] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffaaaa", emissive: "#ffaaaa", emissiveIntensity: 0.3 })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffaaaa", emissive: "#ff8888", emissiveIntensity: 0.3 })
       ] }),
-      [-1, 1].map((side) => /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [side * 0.28, 0.05, 0.52], rotation: [0, 0, side * 0.2], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.22, 5e-3, 5e-3] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [side * 0.28, -0.02, 0.52], rotation: [0, 0, side * -0.1], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.2, 5e-3, 5e-3] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff" })
-        ] })
-      ] }, side)),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { ref: tailRef, position: [0, 0, -0.7], rotation: [0.6, 0, 0], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("cylinderGeometry", { args: [0.06, 0.03, 0.6, 8] }),
+      [-1, 1].map((side) => /* @__PURE__ */ jsxRuntimeExports.jsx("group", { children: [0.05, 0, -0.05].map((dy, i2) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "mesh",
+        {
+          position: [side * 0.28, -0.02 + dy, 0.5],
+          rotation: [0, 0, side * 0.15],
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.28, 4e-3, 4e-3] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff", emissive: "#ffffff", emissiveIntensity: 0.1 })
+          ]
+        },
+        i2
+      )) }, side)),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { ref: tailRef, position: [0, 0, -0.65], rotation: [0.7, 0, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("cylinderGeometry", { args: [0.05, 0.025, 0.7, 8] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.7 })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.05, -0.95], rotation: [1.4, 0, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.04, 0.12, 8] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.7 })
       ] })
     ] });
@@ -47049,51 +47073,61 @@ void main() {
     const antennaRef = reactExports.useRef(null);
     useFrame(({ clock }) => {
       const t2 = clock.elapsedTime;
-      if (antennaRef.current) {
-        antennaRef.current.rotation.z = Math.sin(t2 * 2) * 0.15;
-      }
+      if (antennaRef.current) antennaRef.current.rotation.z = Math.sin(t2 * 2) * 0.2;
       const breath = action === "sleep" ? 0.02 : 0.01;
       if (bodyRef.current) bodyRef.current.scale.setScalar(1 + Math.sin(t2 * 1.6) * breath);
     });
     const intensity = getEmissiveIntensity(action);
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { ref: bodyRef, castShadow: true, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [1, 0.95, 0.9] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [1.1, 1, 0.95] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.5, 0.46], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.7, 0.06, 0.02] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#1a0a14", emissive, emissiveIntensity: 0.4 })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.75, 0.08, 0.04] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#0a0610", emissive, emissiveIntensity: 0.5 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.12, 0.46], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.5, 0.12, 0.04] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: eyeGlow, emissive: eyeGlow, emissiveIntensity: 1.2 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.1, 0.49], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.6, 0.16, 0.05] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: eyeGlow, emissive: eyeGlow, emissiveIntensity: 1.5, toneMapped: false })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { ref: antennaRef, position: [0, 0.55, 0], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.1, 0], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("cylinderGeometry", { args: [0.015, 0.015, 0.2, 8] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#cccccc", metalness: 0.8 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.1, 0.52], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.05, 0.18, 0.01] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#0a0610" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { ref: antennaRef, position: [0, 0.5, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.15, 0], children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("cylinderGeometry", { args: [0.02, 0.02, 0.3, 8] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#aaaaaa", metalness: 0.9, roughness: 0.3 })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.25, 0], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.05, 16, 16] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: emissive, emissive, emissiveIntensity: 2 })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.32, 0], children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.08, 16, 16] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: emissive, emissive, emissiveIntensity: 2.5, toneMapped: false })
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.15, 0.46], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.3, 0.04, 0.02] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#1a0a14" })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.12, 0.49], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.4, 0.04, 0.03] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#0a0610" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.22, 0.46], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.3, 0.04, 0.02] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#1a0a14" })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.22, 0.49], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.4, 0.04, 0.03] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#0a0610" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.6, 0, 0], rotation: [0, 0, 0.3], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.15, 0.15, 0.15] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.6 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.65, -0.05, 0], rotation: [0, 0, 0.4], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.2, 0.18, 0.18] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.7 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.6, 0, 0], rotation: [0, 0, -0.3], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.15, 0.15, 0.15] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.6 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.65, -0.05, 0], rotation: [0, 0, -0.4], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("boxGeometry", { args: [0.2, 0.18, 0.18] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.7 })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.78, 0.1, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.07, 12, 12] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#aaaaaa", metalness: 0.8 })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.78, 0.1, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.07, 12, 12] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#aaaaaa", metalness: 0.8 })
       ] })
     ] });
   }
@@ -47106,80 +47140,88 @@ void main() {
     });
     const intensity = getEmissiveIntensity(action);
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { ref: bodyRef, children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { castShadow: true, position: [0, 0.15, 0], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.55, 48, 48] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { castShadow: true, position: [0, 0.2, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.62, 48, 48] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity })
       ] }),
       Array.from({ length: 5 }, (_, i2) => {
-        const x2 = (i2 - 2) * 0.22;
-        return /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [x2, -0.3, 0], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.16, 16, 16] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.8 })
+        const x2 = (i2 - 2) * 0.26;
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [x2, -0.32, 0], children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.22, 16, 16] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity: intensity * 0.85 })
         ] }, i2);
       }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { position: [0, 0.55, 0], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.18, 0, 0], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.06, 0.16, 4] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffd700", emissive: "#ffd700", emissiveIntensity: 0.5, metalness: 0.9 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { position: [0, 0.65, 0], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.2, 0, 0], children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.08, 0.2, 4] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffd700", emissive: "#ffd700", emissiveIntensity: 0.8, metalness: 0.9 })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.04, 0], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.06, 0.22, 4] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffd700", emissive: "#ffd700", emissiveIntensity: 0.5, metalness: 0.9 })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, 0.06, 0], children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.08, 0.28, 4] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffd700", emissive: "#ffd700", emissiveIntensity: 0.8, metalness: 0.9 })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.18, 0, 0], children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.06, 0.16, 4] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffd700", emissive: "#ffd700", emissiveIntensity: 0.5, metalness: 0.9 })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.2, 0, 0], children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.08, 0.2, 4] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffd700", emissive: "#ffd700", emissiveIntensity: 0.8, metalness: 0.9 })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.05, 0], children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("torusGeometry", { args: [0.22, 0.025, 8, 24] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffd700", emissive: "#ffd700", emissiveIntensity: 0.6, metalness: 0.9 })
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.18, 0.15, 0.48], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.14, 24, 24] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: eyeColor, emissive: eyeGlow, emissiveIntensity: 0.8 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.2, 0.18, 0.5], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.18, 24, 24] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: eyeColor, emissive: eyeGlow, emissiveIntensity: 1 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.18, 0.15, 0.48], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.14, 24, 24] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: eyeColor, emissive: eyeGlow, emissiveIntensity: 0.8 })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.2, 0.18, 0.5], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.18, 24, 24] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: eyeColor, emissive: eyeGlow, emissiveIntensity: 1 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.18, 0.13, 0.58], scale: [0.5, 0.5 * eyeScaleY.current, 0.5], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.13, 16, 16] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.2, 0.15, 0.6], scale: [0.5, 0.5 * eyeScaleY.current, 0.5], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.18, 16, 16] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#000000" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.18, 0.13, 0.58], scale: [0.5, 0.5 * eyeScaleY.current, 0.5], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.13, 16, 16] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.2, 0.15, 0.6], scale: [0.5, 0.5 * eyeScaleY.current, 0.5], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("sphereGeometry", { args: [0.18, 16, 16] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#000000" })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.1, 0.5], children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("torusGeometry", { args: [0.06, 0.02, 8, 16] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.12, 0.52], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("torusGeometry", { args: [0.07, 0.025, 8, 16] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#1a0a14" })
       ] })
     ] });
   }
   function StarBody({ color, emissive, eyeColor, eyeGlow, action, eyeScaleY }) {
     const bodyRef = reactExports.useRef(null);
+    const starGeom = reactExports.useMemo(() => {
+      const shape = makeStarShape();
+      return new ExtrudeGeometry(shape, { depth: 0.25, bevelEnabled: false });
+    }, []);
     useFrame(({ clock }) => {
       const t2 = clock.elapsedTime;
       if (bodyRef.current) {
-        bodyRef.current.rotation.y = t2 * 0.5;
+        bodyRef.current.rotation.y = t2 * 0.4;
         const breath = action === "sleep" ? 0.04 : 0.02;
         bodyRef.current.scale.setScalar(1 + Math.sin(t2 * 1.6) * breath);
       }
     });
     const intensity = getEmissiveIntensity(action);
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("group", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { ref: bodyRef, castShadow: true, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("icosahedronGeometry", { args: [0.6, 0] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.6, 0, 0], rotation: [0, 0, 0.3], children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("mesh", { ref: bodyRef, castShadow: true, geometry: starGeom, position: [0, 0, -0.12], rotation: [-Math.PI / 2, 0, 0], children: /* @__PURE__ */ jsxRuntimeExports.jsx(Mat, { color, emissive, intensity }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [-0.5, 0, 0], rotation: [0, 0, 0.3], children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.2, 0.4, 4] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff", emissive: "#ffffff", emissiveIntensity: 0.5, transparent: true, opacity: 0.8 })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff", emissive: "#ffffff", emissiveIntensity: 0.5, transparent: true, opacity: 0.85 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.6, 0, 0], rotation: [0, 0, -0.3], children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0.5, 0, 0], rotation: [0, 0, -0.3], children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("coneGeometry", { args: [0.2, 0.4, 4] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff", emissive: "#ffffff", emissiveIntensity: 0.5, transparent: true, opacity: 0.8 })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#ffffff", emissive: "#ffffff", emissiveIntensity: 0.5, transparent: true, opacity: 0.85 })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [-0.15, 0.15, 0.5], scaleY: eyeScaleY.current, eyeColor, eyeGlow }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [0.15, 0.15, 0.5], scaleY: eyeScaleY.current, eyeColor, eyeGlow }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Mouth, { position: [0, -0.05, 0.55] })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [-0.15, 0, 0.12], scaleY: eyeScaleY.current, eyeColor, eyeGlow, size: 0.1 }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Eyes, { position: [0.15, 0, 0.12], scaleY: eyeScaleY.current, eyeColor, eyeGlow, size: 0.1 }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("mesh", { position: [0, -0.12, 0.14], rotation: [Math.PI / 2, 0, Math.PI], children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("torusGeometry", { args: [0.07, 0.012, 8, 24, Math.PI] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("meshStandardMaterial", { color: "#1a0a14", roughness: 0.5 })
+      ] })
     ] });
   }
   function Aura({ color, excited, calm }) {
