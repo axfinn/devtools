@@ -12,6 +12,7 @@
           <span>也支持 `超级管理员密码` 直接调试</span>
           <span><el-button type="primary" size="small" @click="$router.push('/image-understanding')">图像理解</el-button></span>
           <span><el-button type="primary" size="small" @click="$router.push('/gallery')">浏览媒体画廊</el-button></span>
+          <span><el-button type="primary" size="small" @click="$router.push('/pet')">🐾 魔法宠物</el-button></span>
         </div>
       </div>
 
@@ -48,6 +49,34 @@
           :closable="false"
           show-icon
         />
+
+        <div v-if="hasCredential" class="pet-inline">
+          <pet-widget
+            ref="petInline"
+            :theme="petTheme"
+            :width="240"
+            :height="280"
+            voice
+            no-shell
+          />
+          <div class="pet-inline-tip">
+            <div style="font-weight: 600; margin-bottom: 4px;">🐾 魔法宠物驻场</div>
+            <div style="font-size: 12px; color: #a4abc4; line-height: 1.6;">
+              已用本页凭证 TTS。点击宠物互动，切主题会跟着换声线。
+            </div>
+            <el-radio-group v-model="petTheme" size="small" style="margin-top: 8px;">
+              <el-radio-button v-for="t in PET_THEMES" :key="t.id" :value="t.id" :label="t.id">
+                {{ t.name }}
+              </el-radio-button>
+            </el-radio-group>
+            <div style="margin-top: 8px;">
+              <el-button size="small" @click="petSpeak">▶ 让它说</el-button>
+              <el-button size="small" @click="$router.push('/pet')" type="primary" plain>
+                打开完整工作台
+              </el-button>
+            </div>
+          </div>
+        </div>
       </el-card>
     </section>
 
@@ -887,6 +916,34 @@ const router = useRouter()
 const activeTab = ref('text')
 const superAdminPassword = ref(localStorage.getItem(SUPER_ADMIN_KEY) || '')
 const apiKey = ref(localStorage.getItem(API_KEY_STORAGE) || '')
+
+// 魔法宠物驻场（已配凭证时显示）
+const PET_THEMES = [
+  { id: 'flame',  name: '烈焰' },
+  { id: 'tide',   name: '深海' },
+  { id: 'forest', name: '森语' },
+  { id: 'cosmic', name: '星海' },
+  { id: 'prism',  name: '棱镜' },
+]
+const petTheme = ref('prism')
+const petInline = ref(null)
+function petSpeak() {
+  document.querySelectorAll('pet-widget').forEach((el) => {
+    el.speak?.('魔法宠物驻场，等待你的指令。')
+  })
+}
+watch(petTheme, (val) => {
+  document.querySelectorAll('pet-widget').forEach((el) => el.setTheme?.(val))
+})
+onMounted(() => {
+  // 把凭证推到 widget（如果它已就绪）
+  setTimeout(() => {
+    const token = apiKey.value || superAdminPassword.value
+    if (token) {
+      document.querySelectorAll('pet-widget').forEach((el) => el.setTtsToken?.(token))
+    }
+  }, 200)
+})
 
 const textLoading = ref(false)
 const textRaw = ref(null)
@@ -2701,6 +2758,22 @@ async function safeJson(res) {
 .capability-card {
   border: 1px solid rgba(15, 23, 42, 0.08);
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
+}
+
+.pet-inline {
+  display: flex;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  align-items: center;
+}
+.pet-inline-tip {
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  .pet-inline { flex-direction: column; }
 }
 
 .hero-copy {

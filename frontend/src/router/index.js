@@ -498,6 +498,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/pet',
+    name: 'PetWidget',
+    component: () => import('../views/ai/PetTool.vue'),
+    meta: {
+      title: '魔法宠物',
+      icon: 'MagicStick',
+      category: 'ai',
+      description: '3D 魔法小生灵 + TTS 语音，可嵌入任何页面'
+    }
+  },
+  {
     path: '/edge-tts',
     name: 'EdgeTTS',
     component: () => import('../views/dev/EdgeTTSTool.vue'),
