@@ -38,7 +38,14 @@ const processShim = () => ({
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
-    vue(),
+    vue({
+      template: {
+        compilerOptions: {
+          // pet-widget 走 web component，不当 Vue 组件解析
+          isCustomElement: (tag) => tag === 'pet-widget',
+        },
+      },
+    }),
     react(),
     processShim(),
   ],
