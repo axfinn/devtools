@@ -111,16 +111,28 @@
             </div>
           </template>
           <div v-if="history.length" class="history-list">
-            <button
+            <div
               v-for="item in history"
               :key="item.id"
               class="history-item"
-              type="button"
+              role="button"
+              tabindex="0"
               @click="restoreHistory(item)"
+              @keydown.enter.prevent="restoreHistory(item)"
             >
-              <span>{{ item.modeLabel }}</span>
-              <small>{{ item.text }}</small>
-            </button>
+              <div class="history-item-body">
+                <span>{{ item.modeLabel }}</span>
+                <small>{{ item.text }}</small>
+              </div>
+              <button
+                class="history-item-close"
+                type="button"
+                aria-label="删除历史记录"
+                @click.stop="removeHistory(item.id)"
+              >
+                <el-icon><CircleClose /></el-icon>
+              </button>
+            </div>
           </div>
           <el-empty v-else description="暂无历史" />
         </el-card>
@@ -296,7 +308,7 @@
               </div>
             </section>
 
-            <section v-if="asList(result.guided_plan).length || result.next_prompt" class="result-section guide-section">
+            <section v-if="asList(result.guided_plan).length || result.next_prompt || mode === 'guide'" class="result-section guide-section">
               <div class="section-title">
                 <span class="section-title-label">
                   <el-icon><Aim /></el-icon>
@@ -306,6 +318,7 @@
                   {{ speakingKey === 'guide' ? '停止' : '朗读' }}
                 </el-button>
               </div>
+              <el-empty v-if="!asList(result.guided_plan).length" description="AI 未返回引导学习内容" :image-size="80" />
               <div v-if="asList(result.guided_plan).length" class="guide-steps">
                 <div v-for="(item, index) in asList(result.guided_plan)" :key="index" class="guide-step">
                   <div class="guide-step-index">{{ index + 1 }}</div>
@@ -381,7 +394,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   CircleClose,
@@ -449,7 +462,7 @@ const quickTemplates = [
 
 const requestPayload = computed(() => ({
   mode: mode.value,
-  text: inputText.value.trim() || 'comfortable',
+  text: inputText.value.trim(),
   target_language: targetLanguage.value,
   level: level.value,
   custom_instruction: mode.value === 'api' ? customInstruction.value.trim() : undefined
@@ -744,10 +757,16 @@ function restoreHistory(item) {
   apiTab.value = 'body'
 }
 
+function removeHistory(id) {
+  history.value = history.value.filter(item => item.id !== id)
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value))
+}
+
 function applyTemplate(item) {
   mode.value = item.mode
   inputText.value = item.text
   customInstruction.value = item.instruction || ''
+  // 注意：快捷模板不自动提交，需点 AI 处理
 }
 
 function fillSample() {
@@ -796,8 +815,18 @@ function stopSpeak() {
   }
 }
 
-function chooseVoice(text) {
-  return /[\u4e00-\u9fff]/.test(text) ? 'zh-CN-XiaoxiaoNeural' : 'en-US-JennyNeural'
+function chooseVoice(text, language) {
+  switch (language) {
+    case '\u4e2d\u6587':
+      return 'zh-CN-XiaoxiaoNeural'
+    case '\u65e5\u6587':
+      return 'ja-JP-NanamiNeural'
+    case '\u97e9\u6587':
+      return 'ko-KR-SunHiNeural'
+    case '\u82f1\u6587':
+    default:
+      return 'en-US-JennyNeural'
+  }
 }
 
 async function toggleSpeak(key, text) {
@@ -824,20 +853,13 @@ async function speak(text, key = 'manual') {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: content.slice(0, 500),
-        voice: chooseVoice(content)
+        voice: chooseVoice(content, targetLanguage.value)
       })
     })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'TTS 合成失败')
-    audioUrl.value = data.url || `/api/chat/uploads/${data.filename}`
-    setTimeout(() => {
-      if (speakingKey.value === key) {
-        audioPlayer.value?.play?.().catch(() => {
-          speaking.value = false
-          speakingKey.value = ''
-        })
-      }
-    }, 80)
+    audioUrl.value = data.url || (data.filename ? `/api/chat/uploads/${data.filename}` : '')
+    if (!audioUrl.value) throw new Error('TTS 返回为空')
   } catch (err) {
     if ('speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(content.slice(0, 500))
@@ -859,6 +881,17 @@ async function speak(text, key = 'manual') {
     }
   }
 }
+
+watch(audioUrl, async url => {
+  if (!url) return
+  await nextTick()
+  if (speakingKey.value && audioPlayer.value) {
+    audioPlayer.value.play().catch(() => {
+      speaking.value = false
+      speakingKey.value = ''
+    })
+  }
+})
 
 onMounted(() => {
   loadSettings()
@@ -991,6 +1024,43 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-item-close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.history-item:hover .history-item-close,
+.history-item:focus-within .history-item-close {
+  opacity: 1;
+}
+
+.history-item-close:hover {
+  background: var(--bg-active);
+  color: var(--color-danger, #f56c6c);
 }
 
 .result-card {

@@ -150,7 +150,7 @@ func (h *AIGatewayHandler) EnglishTutor(c *gin.Context) {
 	}
 
 	temperature := 0.25
-	maxTokens := 1600
+	maxTokens := 2400
 	start := time.Now()
 	rawRequest := sanitizeJSON(gin.H{
 		"mode":            req.Mode,

@@ -33,7 +33,7 @@
 | 23 | **NFSShare** | `handlers/nfsshare*.go` (5 文件) | `routes/nfsshare.go` | `views/collab/NFSShareTool.vue` | SMB/NFS 文件共享，WebRTC 流媒体，HLS 分片 |
 | 24 | **ImageUnderstanding** | `handlers/image_understanding.go` | `routes/image_understanding.go` | `views/ai/ImageUnderstandingTool.vue` | 图像理解（VLM），Base64/URL 输入，返回描述 |
 | 25 | **Bailian 百炼** | `handlers/bailian.go` | `routes/bailian.go` | — | 阿里百炼图像理解 API 封装 |
-| 26 | **AIGateway** | `handlers/ai_gateway*.go` (10 文件) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/百炼，Token 计划，费用分析 |
+| 26 | **AIGateway** | `handlers/ai_gateway*.go` (10 文件) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/百炼，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
 | 27 | **Askit 同步** | `handlers/askit*.go` (3 文件) | `routes/askit.go` | `views/other/AskitInviteTool.vue` | 跨设备数据同步，邀请码，Blob 大文件，快照 |
 | 28 | **Screen 屏幕共享** | `handlers/screen.go` | `routes/screen.go` | `views/collab/ScreenShareTool.vue` | WebRTC 点对点屏幕共享，TURN 中继 |
 | 29 | **APIGateway** | `handlers/apigateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
