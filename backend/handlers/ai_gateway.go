@@ -14,7 +14,6 @@ import (
 type AIGatewayHandler struct {
 	db                *models.DB
 	cfg               *config.Config
-	bailian           *BailianHandler
 	imageHandler      *ImageUnderstandingHandler
 	enc               *utils.EncryptionService // 用于 AnthropicProvider.APIKey 加解密
 	client            *http.Client             // 带代理，用于 OpenAI 兼容接口
@@ -74,26 +73,6 @@ type ChatCompletionRequest struct {
 	ExtraBody       map[string]interface{}   `json:"extra_body"`
 	Stream          bool                     `json:"stream"`
 	Metadata        map[string]interface{}   `json:"metadata"`
-}
-
-type MediaGenerationRequest struct {
-	Model           string                 `json:"model" binding:"required"`
-	Prompt          string                 `json:"prompt" binding:"required"`
-	NegativePrompt  string                 `json:"negative_prompt"`
-	Image           string                 `json:"image"`
-	Images          []string               `json:"images"`
-	Size            string                 `json:"size"`
-	Count           int                    `json:"count"`
-	Seed            *int                   `json:"seed"`
-	Watermark       *bool                  `json:"watermark"`
-	Duration        int                    `json:"duration"`
-	Resolution      string                 `json:"resolution"`
-	FPS             int                    `json:"fps"`
-	AutoPoll        bool                   `json:"auto_poll"`
-	WaitSeconds     int                    `json:"wait_seconds"`
-	ClientName      string                 `json:"client_name"`
-	ClientRequestID string                 `json:"client_request_id"`
-	Parameters      map[string]interface{} `json:"parameters"`
 }
 
 // TTSAllowedModels MiniMax TTS 允许的模型列表（官方模型名）
@@ -188,7 +167,7 @@ type TTSRequest struct {
 	AudioFormat string  `json:"audio_format"` // mp3/wav/pcm
 }
 
-func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHandler, imageHandler *ImageUnderstandingHandler, enc *utils.EncryptionService) *AIGatewayHandler {
+func NewAIGatewayHandler(db *models.DB, cfg *config.Config, imageHandler *ImageUnderstandingHandler, enc *utils.EncryptionService) *AIGatewayHandler {
 	// 上游 HTTP 传输统一显式配置拨号/TLS 超时与连接池。零值 Transport 下
 	// TLSHandshakeTimeout / ResponseHeaderTimeout 均为 0（无限等待），上游"连上但
 	// 不回响应头"会永久卡死请求 goroutine 并泄漏连接 —— 这是代理连接不稳定的主因之一。
@@ -222,7 +201,6 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, bailian *BailianHand
 	return &AIGatewayHandler{
 		db:           db,
 		cfg:          cfg,
-		bailian:      bailian,
 		imageHandler: imageHandler,
 		enc:          enc,
 		client:       &http.Client{Timeout: 600 * time.Second},

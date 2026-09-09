@@ -29,7 +29,6 @@ type routeHandlers struct {
 	terminalHandler           *handlers.SSHHandler
 	nfsShareHandler          *handlers.NFSShareHandler
 	ocrHandler               *handlers.OCRHandler
-	bailianHandler           *handlers.BailianHandler
 	aiGatewayHandler         *handlers.AIGatewayHandler
 	imageUnderstandingHandler *handlers.ImageUnderstandingHandler
 	cpaProxyHandler          *handlers.CPAProxyHandler
@@ -69,7 +68,6 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		TerminalHandler:           h.terminalHandler,
 		NfsShareHandler:          h.nfsShareHandler,
 		OcrHandler:               h.ocrHandler,
-		BailianHandler:           h.bailianHandler,
 		AiGatewayHandler:         h.aiGatewayHandler,
 		ImageUnderstandingHandler: h.imageUnderstandingHandler,
 		CpaProxyHandler:          h.cpaProxyHandler,

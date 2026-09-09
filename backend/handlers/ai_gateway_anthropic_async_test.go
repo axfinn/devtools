@@ -48,7 +48,7 @@ func setupAnthropicAsyncRouter(t *testing.T, upstreamHandler http.HandlerFunc) (
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	// 测试环境不需要 5min 长 timeout,缩到 5s 加速失败场景
 	h.longNoProxyClient.Timeout = 5 * time.Second
 	h.noProxyClient.Timeout = 5 * time.Second
@@ -194,7 +194,7 @@ func TestRunAsyncAnthropicTask_HappyPath(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.longNoProxyClient.Timeout = 5 * time.Second
 	h.noProxyClient.Timeout = 5 * time.Second
 
@@ -259,7 +259,7 @@ func TestRunAsyncAnthropicTask_StripsThinkingBlocks(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.longNoProxyClient.Timeout = 5 * time.Second
 
 	taskID := "oant_test_think_001"
@@ -336,7 +336,7 @@ func TestAsyncAnthropicMessages_ConnectionRefused(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.longNoProxyClient.Timeout = 500 * time.Millisecond
 	h.noProxyClient.Timeout = 500 * time.Millisecond
 

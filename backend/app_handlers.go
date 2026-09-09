@@ -63,9 +63,8 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	terminalHandler := handlers.NewSSHHandler(db, encryptionService, sshConfig)
 	nfsShareHandler := handlers.NewNFSShareHandler(db, cfg.NFSShare)
 	ocrHandler := handlers.NewOCRHandler()
-	bailianHandler := handlers.NewBailianHandler(db, cfg)
 	imageUnderstandingHandler := handlers.NewImageUnderstandingHandler(cfg, rt.transientStore)
-	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, bailianHandler, imageUnderstandingHandler, aiGatewayEnc)
+	aiGatewayHandler := handlers.NewAIGatewayHandler(db, cfg, imageUnderstandingHandler, aiGatewayEnc)
 	cpaProxyHandler := handlers.NewCPAProxyHandler()
 	autoDevHandler := handlers.NewAutoDevHandler(db, cfg.AutoDev.AdminPassword, cfg.AutoDev.AutodevPath, cfg.AutoDev.DataDir, cfg.AutoDev.AllowedWorkDirs)
 	mermaidHandler := handlers.NewMermaidHandler(db, cfg)
@@ -107,7 +106,6 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		terminalHandler:           terminalHandler,
 		nfsShareHandler:           nfsShareHandler,
 		ocrHandler:                ocrHandler,
-		bailianHandler:            bailianHandler,
 		aiGatewayHandler:          aiGatewayHandler,
 		imageUnderstandingHandler: imageUnderstandingHandler,
 		cpaProxyHandler:           cpaProxyHandler,

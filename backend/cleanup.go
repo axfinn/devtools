@@ -113,11 +113,6 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			if err == nil && uploadCount > 0 {
 				log.Printf("已清理 %d 个过期上传文件", uploadCount)
 			}
-			// 清理旧的百炼任务
-			bailianCount, err := db.CleanOldBailianTasks(cfg.Bailian.TaskRetentionDays)
-			if err == nil && bailianCount > 0 {
-				log.Printf("已清理 %d 条旧百炼任务", bailianCount)
-			}
 			// 清理旧的 AI Gateway 请求明细
 			aiLogCount, err := db.CleanOldAIAPIRequestLogs(cfg.AIGateway.RequestRetentionDays)
 			if err == nil && aiLogCount > 0 {

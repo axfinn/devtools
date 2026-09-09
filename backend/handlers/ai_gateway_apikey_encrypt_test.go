@@ -192,7 +192,7 @@ func TestAIGatewayProvider_LegacyPlaintextLazyMigration(t *testing.T) {
 	db := setupAIGatewayEncryptDB(t)
 	defer db.Close()
 	enc := newEncryptEnc(t)
-	h := NewAIGatewayHandler(db, config.DefaultConfig(), nil, nil, enc)
+	h := NewAIGatewayHandler(db, config.DefaultConfig(), nil, enc)
 
 	// 1) 直插一行 legacy 明文(模拟升级前数据)
 	legacyPlain := "sk-legacy-plain-from-old-db"
@@ -271,7 +271,7 @@ func TestAIGatewayProvider_NormalEncryptedPath(t *testing.T) {
 	db := setupAIGatewayEncryptDB(t)
 	defer db.Close()
 	enc := newEncryptEnc(t)
-	h := NewAIGatewayHandler(db, config.DefaultConfig(), nil, nil, enc)
+	h := NewAIGatewayHandler(db, config.DefaultConfig(), nil, enc)
 
 	plain := "sk-normal-encrypted-key"
 	cipher, err := enc.Encrypt(plain)

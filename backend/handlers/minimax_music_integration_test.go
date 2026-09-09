@@ -313,7 +313,7 @@ func newLyricsIntegrationRouter(t *testing.T) (*gin.Engine, string) {
 	cfg.MiniMaxTokenPlan.APIKey = apiKey
 	cfg.MiniMaxTokenPlan.BaseURL = musicIntegrationBaseURL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	// 异步歌词走 musicSubmitClient(5 分钟)，客户端不再被上游耗时绑住。
 	h.mediaClient.Timeout = 110 * time.Second
 

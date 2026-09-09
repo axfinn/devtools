@@ -261,8 +261,8 @@ func TestPickMediaSubmitClientKeepsFastTimeoutForNonMusic(t *testing.T) {
 // NewAIGatewayHandler 必须正确装配两个客户端：mediaClient 90s，musicSubmitClient 5m。
 
 func TestNewAIGatewayHandlerAssemblesMediaAndMusicClients(t *testing.T) {
-	// 不需要 DB/cfg/bailian 的实际行为，只验证客户端装配。
-	// 用 nil DB / cfg / bailian / imageHandler，因为这里只读 client 字段。
+	// 不需要 DB/cfg/imageHandler 的实际行为，只验证客户端装配。
+	// 用 nil DB / cfg / imageHandler，因为这里只读 client 字段。
 	h := &AIGatewayHandler{
 		mediaClient:       &http.Client{Timeout: 90 * time.Second},
 		musicSubmitClient: &http.Client{Timeout: 5 * time.Minute},

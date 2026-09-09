@@ -46,7 +46,7 @@ func TestLyricsStressConcurrent(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = apiKey
 	cfg.MiniMaxTokenPlan.BaseURL = "https://api.minimaxi.com"
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 110 * time.Second
 
 	router := gin.New()

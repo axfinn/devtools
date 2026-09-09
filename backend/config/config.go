@@ -38,7 +38,6 @@ type Config struct {
 	MiniMaxH3Video      MiniMaxH3VideoConfig      `yaml:"minimax_h3_video"`
 	MiniMaxVoiceCloning MiniMaxVoiceCloningConfig `yaml:"minimax_voice_cloning"`
 	DashScope           DashScopeConfig           `yaml:"dashscope"`
-	Bailian             BailianConfig             `yaml:"bailian"`
 	AIGateway           AIGatewayConfig           `yaml:"ai_gateway"`
 	NFSShare            NFSShareConfig            `yaml:"nfs_share"`
 	ImageUnderstanding  ImageUnderstandingConfig  `yaml:"image_understanding"`
@@ -379,28 +378,8 @@ type PhotoWallConfig struct {
 
 // DashScopeConfig 阿里云 DashScope 文本模型配置（coding 端点，支持多品牌模型）
 type DashScopeConfig struct {
-	APIKey  string `yaml:"api_key"`  // DashScope API Key（可共用百炼 APIKey）
+	APIKey  string `yaml:"api_key"`  // DashScope API Key
 	BaseURL string `yaml:"base_url"` // API 基础地址，默认 https://coding.dashscope.aliyuncs.com/v1
-}
-
-// BailianConfig 阿里云百炼图片模型配置
-type BailianConfig struct {
-	APIKey             string               `yaml:"api_key"`              // DashScope API Key
-	AdminPassword      string               `yaml:"admin_password"`       // 调试与开放 API 管理密码
-	BaseURL            string               `yaml:"base_url"`             // API 基础地址
-	DefaultWaitSeconds int                  `yaml:"default_wait_seconds"` // 默认同步等待秒数
-	TaskRetentionDays  int                  `yaml:"task_retention_days"`  // 任务保留天数
-	Models             []BailianModelConfig `yaml:"models"`               // 模型配额配置
-}
-
-type BailianModelConfig struct {
-	Name        string `yaml:"name"`
-	Type        string `yaml:"type"`
-	Enabled     bool   `yaml:"enabled"`
-	TotalQuota  int    `yaml:"total_quota"`
-	ExpiresAt   string `yaml:"expires_at"`
-	DefaultSize string `yaml:"default_size"`
-	Description string `yaml:"description"`
 }
 
 type AIGatewayConfig struct {
@@ -561,23 +540,6 @@ func DefaultConfig() *Config {
 		DashScope: DashScopeConfig{
 			BaseURL: "https://coding.dashscope.aliyuncs.com/v1",
 		},
-		Bailian: BailianConfig{
-			BaseURL:            "https://dashscope.aliyuncs.com",
-			DefaultWaitSeconds: 45,
-			TaskRetentionDays:  180,
-			Models: []BailianModelConfig{
-				{Name: "qwen-image-2.0-pro", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "文生图/图像编辑，同步接口"},
-				{Name: "qwen-image-2.0", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "文生图/图像编辑，同步接口"},
-				{Name: "qwen-image-2.0-pro-2026-03-03", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "快照版本，同步接口"},
-				{Name: "qwen-image-2.0-2026-03-03", Type: "multimodal", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-06-01", DefaultSize: "1328x1328", Description: "快照版本，同步接口"},
-				{Name: "qwen-image-plus-2026-01-09", Type: "text2image", Enabled: true, TotalQuota: 100, ExpiresAt: "2026-04-09", DefaultSize: "1024*1024", Description: "异步文生图快照版本"},
-				{Name: "wan2.6-i2v-flash", Type: "image2video", Enabled: true, TotalQuota: 50, ExpiresAt: "2026-04-16", DefaultSize: "1280x720", Description: "图生视频 Flash"},
-				{Name: "wan2.6-i2v", Type: "image2video", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1280x720", Description: "无免费额度，默认禁用"},
-				{Name: "qwen-image-plus", Type: "text2image", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1024*1024", Description: "无免费额度，默认禁用"},
-				{Name: "qwen-image-edit-plus", Type: "multimodal", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1328x1328", Description: "无免费额度，默认禁用"},
-				{Name: "qwen-image-max", Type: "text2image", Enabled: false, TotalQuota: 0, ExpiresAt: "", DefaultSize: "1024*1024", Description: "无免费额度，默认禁用"},
-			},
-		},
 		AIGateway: AIGatewayConfig{
 			DefaultKeyExpiresDays:   90,
 			DefaultRateLimitPerHour: 1000,
@@ -724,13 +686,6 @@ func Load(path string) (*Config, error) {
 	// DashScope API Key 支持环境变量覆盖
 	if apiKey := os.Getenv("DASHSCOPE_API_KEY"); apiKey != "" {
 		cfg.DashScope.APIKey = apiKey
-	}
-	// 百炼 API Key 支持环境变量覆盖
-	if apiKey := os.Getenv("BAILIAN_API_KEY"); apiKey != "" {
-		cfg.Bailian.APIKey = apiKey
-	}
-	if adminPassword := os.Getenv("BAILIAN_ADMIN_PASSWORD"); adminPassword != "" {
-		cfg.Bailian.AdminPassword = adminPassword
 	}
 	if superAdmin := os.Getenv("AI_GATEWAY_SUPER_ADMIN_PASSWORD"); superAdmin != "" {
 		cfg.AIGateway.SuperAdminPassword = superAdmin

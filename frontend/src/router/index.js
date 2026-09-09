@@ -429,17 +429,6 @@ const toolRoutes = [
     }
   },
   {
-    path: '/bailian-image',
-    name: 'BailianImage',
-    component: () => import('../views/ai/BailianImageTool.vue'),
-    meta: {
-      title: '百炼图片',
-      icon: 'Picture',
-      category: 'ai',
-      description: '阿里云百炼图片/视频模型调试台'
-    }
-  },
-  {
     path: '/image-understanding',
     name: 'ImageUnderstanding',
     component: () => import('../views/ai/ImageUnderstandingTool.vue'),

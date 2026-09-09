@@ -78,7 +78,7 @@ func setupH3VideoTest(t *testing.T) (*gin.Engine, *httptest.Server, *atomic.Int3
 	// 不要 MiniMax.APIKey,验证 fallback 不被触发也能正常工作
 	cfg.MiniMax.APIKey = ""
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.noProxyClient.Timeout = 5 * time.Second
 
@@ -250,7 +250,7 @@ func TestResolveH3VideoConfig_Fallback(t *testing.T) {
 	cfg.MiniMaxH3Video.APIKey = ""
 	cfg.MiniMax.APIKey = "fallback-key"
 	cfg.MiniMaxH3Video.BaseURL = ""
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	apiKey, baseURL := h.resolveH3VideoConfig()
 	if apiKey != "fallback-key" {
 		t.Fatalf("expected fallback to MiniMax.APIKey, got %q", apiKey)

@@ -59,7 +59,7 @@ func setupOneClickMusicTest(t *testing.T) (*gin.Engine, *httptest.Server, *atomi
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -310,7 +310,7 @@ func TestOneClickMusicEndToEndYieldsAudioURL(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -475,7 +475,7 @@ func TestOneClickMusicPollingBackoffReturnsFinalURLAfterFailure(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -635,7 +635,7 @@ func TestOneClickMusicShareDownloadsAudioAndExposesAsset(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.noProxyClient.Timeout = 5 * time.Second
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
@@ -862,7 +862,7 @@ func TestLyricsProxyRetriesOn524ThenSucceeds(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -927,7 +927,7 @@ func TestLyricsProxyDoesNotRetryOn4xx(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
@@ -983,7 +983,7 @@ func TestLyricsProxyGivesUpAfterMaxRetries(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
@@ -1048,7 +1048,7 @@ func TestLyricsProxyRetriesOnNetworkError(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
@@ -1111,7 +1111,7 @@ func TestLyricsAsyncAcceptsEmptyFromUpstream(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
 	router := gin.New()
@@ -1180,7 +1180,7 @@ func TestLyricsProxyDecompressesGzipBodyWithoutHeader(t *testing.T) {
 	cfg.AIGateway.SuperAdminPassword = "test-admin-pw"
 	cfg.MiniMaxTokenPlan.APIKey = "test-minimax-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.musicSubmitClient.Timeout = 5 * time.Second
 	router := gin.New()
 	router.POST("/api/minimax/music/v1/lyrics_generation", h.MiniMaxLyricsGeneration)
@@ -1262,7 +1262,7 @@ func TestLyricsProxySucceedsOnLastAttemptAfter524s(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -1321,7 +1321,7 @@ func TestLyricsProxyRetriesOn500ThenSucceeds(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -1386,7 +1386,7 @@ func TestLyricsProxyRetriesOnMixedTransientFailures(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 
@@ -1507,7 +1507,7 @@ func TestLyricsProxyRealisticLoadExhaustsThenSucceeds(t *testing.T) {
 	cfg.MiniMaxTokenPlan.APIKey = "test-key"
 	cfg.MiniMaxTokenPlan.BaseURL = upstream.URL
 
-	h := NewAIGatewayHandler(db, cfg, nil, nil, testEncEncryptionService)
+	h := NewAIGatewayHandler(db, cfg, nil, testEncEncryptionService)
 	h.mediaClient.Timeout = 5 * time.Second
 	h.musicSubmitClient.Timeout = 5 * time.Second
 

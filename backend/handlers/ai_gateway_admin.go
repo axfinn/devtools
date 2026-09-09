@@ -18,7 +18,7 @@ import (
 func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"title":   "AI Gateway API 文档",
-		"summary": "统一对外开放 DeepSeek、MiniMax、Bailian 模型能力，使用超级管理员签发的 API Key 访问。DeepSeek 已兼容 deepseek-chat、deepseek-reasoner、deepseek-v4-flash、deepseek-v4-pro。",
+		"summary": "统一对外开放 DeepSeek、MiniMax 模型能力，使用超级管理员签发的 API Key 访问。DeepSeek 已兼容 deepseek-chat、deepseek-reasoner、deepseek-v4-flash、deepseek-v4-pro。",
 		"auth": gin.H{
 			"admin_header": "X-Super-Admin-Password",
 			"api_key":      "Authorization: Bearer dtk_ai_xxx",
@@ -401,17 +401,6 @@ func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
 				"description": fallbackString(model.Description, "OpenAI 兼容代理文本模型"),
 			})
 		}
-	}
-	for _, model := range h.cfg.Bailian.Models {
-		catalog = append(catalog, gin.H{
-			"model":       model.Name,
-			"provider":    "bailian",
-			"type":        model.Type,
-			"endpoint":    "/api/ai-gateway/v1/media/generations",
-			"enabled":     model.Enabled,
-			"description": model.Description,
-			"expires_at":  model.ExpiresAt,
-		})
 	}
 	c.JSON(http.StatusOK, gin.H{"models": catalog})
 }

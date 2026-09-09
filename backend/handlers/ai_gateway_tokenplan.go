@@ -17,99 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (h *AIGatewayHandler) MediaGenerations(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
-	if !ok {
-		return
-	}
-
-	var req MediaGenerationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数不完整", "code": 400})
-		return
-	}
-	if !h.ensureModelAllowed(c, key, req.Model) {
-		return
-	}
-
-	start := time.Now()
-	statusCode := http.StatusOK
-	responseBody := ""
-	success := false
-	errMessage := ""
-
-	result, sc, err := h.bailian.ExecuteTask(CreateBailianTaskRequest{
-		Model:           req.Model,
-		Prompt:          req.Prompt,
-		NegativePrompt:  req.NegativePrompt,
-		Image:           req.Image,
-		Images:          req.Images,
-		Size:            req.Size,
-		Count:           req.Count,
-		Seed:            req.Seed,
-		Watermark:       req.Watermark,
-		Duration:        req.Duration,
-		Resolution:      req.Resolution,
-		FPS:             req.FPS,
-		AutoPoll:        req.AutoPoll,
-		WaitSeconds:     req.WaitSeconds,
-		ClientName:      "api-key:" + key.ID + ":" + req.ClientName,
-		ClientRequestID: req.ClientRequestID,
-		Parameters:      req.Parameters,
-	}, "ai-gateway", c.ClientIP())
-	statusCode = sc
-	usage := h.buildMediaUsage(req.Model)
-	if result != nil {
-		responseBody = sanitizeJSON(result)
-	}
-	if err != nil {
-		errMessage = err.Error()
-		c.JSON(statusCode, gin.H{"error": errMessage, "code": statusCode, "result": result})
-	} else {
-		success = true
-		c.JSON(http.StatusOK, result)
-	}
-
-	h.logAPIRequest(key, req.Model, "bailian", "/api/ai-gateway/v1/media/generations", "media", statusCode, success, errMessage, sanitizeJSON(req), responseBody, c.ClientIP(), time.Since(start), usage)
-}
-
-func (h *AIGatewayHandler) ListMediaTasks(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
-	if !ok {
-		return
-	}
-	tasks, err := h.db.ListBailianTasksByClientPrefix(
-		boundedInt(c.Query("limit"), 20, 1, 100),
-		boundedInt(c.Query("offset"), 0, 0, 100000),
-		"api-key:"+key.ID+":",
-		c.Query("model"),
-		c.Query("status"),
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务失败", "code": 500})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"tasks": tasks})
-}
-
-func (h *AIGatewayHandler) GetMediaTask(c *gin.Context) {
-	key, ok := h.authenticateAPIKey(c, "media")
-	if !ok {
-		return
-	}
-	task, err := h.db.GetBailianTask(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在", "code": 404})
-		return
-	}
-	if !strings.HasPrefix(task.ClientName, "api-key:"+key.ID+":") {
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该任务", "code": 403})
-		return
-	}
-	events, _ := h.db.ListBailianTaskEvents(task.ID)
-	c.JSON(http.StatusOK, gin.H{"task": task, "events": events})
-}
-
 // AsyncChatCompletions 异步聊天接口：立即返回 task_id，后台调用 LLM，避免 Cloudflare 524
 // POST /api/ai-gateway/v1/chat/tasks
 
@@ -1137,7 +1044,7 @@ func (h *AIGatewayHandler) GetTokenPlanDocs(c *gin.Context) {
 // proxyAnthropic 转发 Anthropic 协议请求到指定上游
 
 func (h *AIGatewayHandler) buildMediaUsage(model string) usageSummary {
-	cost, currency := h.calculateCost(model, "bailian", 0, 0)
+	cost, currency := h.calculateCost(model, "minimax", 0, 0)
 	return usageSummary{Cost: cost, Currency: currency}
 }
 
