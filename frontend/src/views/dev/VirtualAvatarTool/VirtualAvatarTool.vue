@@ -138,7 +138,9 @@ import AssetsPanel from './AssetsPanel.vue'
 import LightPanel from './LightPanel.vue'
 import PostFXPanel from './PostFXPanel.vue'
 import { useAssets } from './composable/useAssets.js'
-import { useTheme } from '@/composables/useTheme.js'
+// 注意:vite.config.js 里 '@' 别名指向 './src/neon'(React 子应用),不是 './src'。
+// 走 '@' 会解析到 src/neon/composables/useTheme.js 并整页 500,这里必须用相对路径。
+import { useTheme } from '../../../composables/useTheme.js'
 
 const activeRail = ref('scene')
 const initError = ref('')
