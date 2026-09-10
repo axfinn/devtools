@@ -154,6 +154,11 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			if err == nil && avatarClipCount > 0 {
 				log.Printf("已清理 %d 个过期虚拟形象片段", avatarClipCount)
 			}
+			// 清理过期虚拟形象分享(avatar_shares:DB 行;不占磁盘)
+			avatarShareCount, err := db.CleanExpiredAvatarShares()
+			if err == nil && avatarShareCount > 0 {
+				log.Printf("已清理 %d 个过期虚拟形象分享", avatarShareCount)
+			}
 			// 清理孤立的 HLS 转码缓存（分享已删除但目录残留）
 			if entries, err := os.ReadDir("./data/transcode"); err == nil {
 				for _, e := range entries {

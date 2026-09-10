@@ -41,6 +41,7 @@
         </div>
         <div class="rail-item" :class="{ active: activeRail === 'assets' }" @click="activeRail = 'assets'" title="资产">
           <el-icon :size="20"><FolderOpened /></el-icon>
+          <span v-if="libCount > 0" class="rail-badge">{{ libCount }}</span>
         </div>
         <div class="rail-item" :class="{ active: activeRail === 'light' }" @click="activeRail = 'light'" title="光照">
           <el-icon :size="20"><Sunny /></el-icon>
@@ -94,12 +95,15 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import Stage from './Stage.vue'
+import { useAssets } from './composable/useAssets.js'
 
 const activeRail = ref('scene')
 const initError = ref('')
 const recentLog = ref([])
+const assets = useAssets()
+const libCount = ref(0)
 
 function onSceneReady(api) {
   recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 场景就绪 · ${api.boneNames.length} 根骨骼`)
@@ -108,6 +112,20 @@ function onSceneReady(api) {
 function onPoseChange(name) {
   recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 切换姿态 → ${name}`)
 }
+
+// P1:挂载时拉一次 /api/avatar/models,把库总数显示在左侧 rail 的资产图标旁;
+// recentLog 追加一行便于阿修 review 时肉眼确认 e2e 联通。
+onMounted(async () => {
+  const data = await assets.refreshModels({ limit: 1 })
+  if (data) {
+    libCount.value = data.count ?? (assets.models.value?.length || 0)
+    recentLog.value.unshift(
+      `[${new Date().toLocaleTimeString()}] 资产库就绪 · ${assets.models.value.length} 个模型(P1 /api/avatar/models)`
+    )
+  } else if (assets.lastError.value) {
+    initError.value = `资产库离线: ${assets.lastError.value}(检查后端是否启动)`
+  }
+})
 </script>
 
 <style scoped>
@@ -188,6 +206,25 @@ function onPoseChange(name) {
 .rail-item.active {
   background: var(--avatar-accent-soft, rgba(124, 92, 255, 0.13));
   color: var(--avatar-accent, #7C5CFF);
+}
+.rail-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--avatar-accent, #7C5CFF);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  pointer-events: none;
+}
+.rail-item {
+  position: relative;
 }
 
 .tool-main {

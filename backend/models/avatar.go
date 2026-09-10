@@ -24,34 +24,51 @@ var ErrAvatarClipNotFound = errors.New("avatar clip not found")
 var ErrAvatarMeAssetNotFound = errors.New("avatar me asset not found")
 
 // AvatarModel 模型库条目 —— 全局共享 + 用户上传;owner_id=NULL 表示系统/社区共享。
+// P1 起携带 password_hash(bcrypt)对齐 excalidraw 的双因子鉴权 —— creator_key + password 都要对才能删。
 type AvatarModel struct {
-	ID         string     `json:"id"`
-	OwnerID    string     `json:"owner_id,omitempty"` // creator_key(轻量 owner_id);空表示共享模型
-	Title      string     `json:"title"`
-	Filename   string     `json:"filename"`        // data/avatar/models/<id>.glb
-	Original   string     `json:"original"`        // 用户上传时的原始文件名
-	Format     string     `json:"format"`          // glb / gltf
-	Size       int64      `json:"size"`
-	BoneCount  int        `json:"bone_count"`      // 骨骼数(前端解析时填,后端只存)
-	PolyCount  int        `json:"poly_count"`      // 三角面数
-	HasSkeleton bool      `json:"has_skeleton"`    // 是否含 SkinnedMesh + Skeleton
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  *time.Time `json:"expires_at"`
+	ID           string     `json:"id"`
+	OwnerID      string     `json:"owner_id,omitempty"` // creator_key(轻量 owner_id);空表示共享模型
+	Title        string     `json:"title"`
+	Filename     string     `json:"filename"`     // data/avatar/models/<id>.glb
+	Original     string     `json:"original"`     // 用户上传时的原始文件名
+	Format       string     `json:"format"`       // glb / gltf
+	Size         int64      `json:"size"`
+	BoneCount    int        `json:"bone_count"`   // 骨骼数(前端解析时填,后端只存)
+	PolyCount    int        `json:"poly_count"`   // 三角面数
+	HasSkeleton  bool       `json:"has_skeleton"` // 是否含 SkinnedMesh + Skeleton
+	PasswordHash string     `json:"-"`            // bcrypt;json 永不返回(R5 鉴权对齐 excalidraw)
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at"`
 }
 
 // AvatarClip 姿态片段 —— 动捕数据 / 单帧姿态。
 type AvatarClip struct {
-	ID        string     `json:"id"`
-	ModelID   string     `json:"model_id"` // 可空(脱离模型独立)
-	OwnerID   string     `json:"owner_id,omitempty"`
-	Title     string     `json:"title"`
-	FPS       int        `json:"fps"`
-	FrameCount int       `json:"frame_count"`
-	BoneNames string     `json:"bone_names"`  // JSON 数组
-	FilePath  string     `json:"file_path"`   // data/avatar/clips/<id>.json
-	Format    string     `json:"format"`      // pose
-	CreatedAt time.Time  `json:"created_at"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	ID           string     `json:"id"`
+	ModelID      string     `json:"model_id"` // 可空(脱离模型独立)
+	OwnerID      string     `json:"owner_id,omitempty"`
+	Title        string     `json:"title"`
+	FPS          int        `json:"fps"`
+	FrameCount   int        `json:"frame_count"`
+	BoneNames    string     `json:"bone_names"` // JSON 数组
+	FilePath     string     `json:"file_path"`  // data/avatar/clips/<id>.json
+	Format       string     `json:"format"`     // pose
+	PasswordHash string     `json:"-"`          // bcrypt;json 永不返回
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at"`
+}
+
+// AvatarShare 分享短链 —— 把一个 clip / model 打包成只读 code;不泄露原 owner_id;
+// 通过 GET /api/avatar/share/:code 取到 target_type + target_id,前端再决定要不要拿内容。
+// code 是 8 字节 hex(16 chars) —— 64-bit 空间,实际可注册数量远小于短链池,够用。
+type AvatarShare struct {
+	Code        string     `json:"code"`
+	TargetType  string     `json:"target_type"`  // "model" / "clip"
+	TargetID    string     `json:"target_id"`
+	OwnerID     string     `json:"-"`             // 创建者;json 不返回
+	PasswordHash string    `json:"-"`             // 访问密码(可选);空表示无密码
+	HitCount    int        `json:"hit_count"`     // 已访问次数
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   *time.Time `json:"expires_at"`
 }
 
 // AvatarMeAsset 我的资产 —— 用户在调试时标记"我用过的模型",跨设备复用。
@@ -64,7 +81,8 @@ type AvatarMeAsset struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// InitAvatar 同时建 3 张表。
+// InitAvatar 同时建 3 张表 + P1 加的 avatar_shares 表。
+// CREATE 里直接带 password_hash 列(P1 起);旧 DB 用 ALTER 加列幂等迁移。
 func (db *DB) InitAvatar() error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS avatar_models (
@@ -78,6 +96,7 @@ func (db *DB) InitAvatar() error {
 			bone_count INTEGER NOT NULL DEFAULT 0,
 			poly_count INTEGER NOT NULL DEFAULT 0,
 			has_skeleton INTEGER NOT NULL DEFAULT 0,
+			password_hash TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			expires_at DATETIME
 		)`,
@@ -95,6 +114,7 @@ func (db *DB) InitAvatar() error {
 			bone_names TEXT NOT NULL DEFAULT '[]',
 			file_path TEXT NOT NULL,
 			format TEXT NOT NULL DEFAULT 'pose',
+			password_hash TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			expires_at DATETIME
 		)`,
@@ -112,13 +132,57 @@ func (db *DB) InitAvatar() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_avatar_me_owner ON avatar_me_assets(owner_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_avatar_me_unique ON avatar_me_assets(owner_id, model_id)`,
+
+		`CREATE TABLE IF NOT EXISTS avatar_shares (
+			code TEXT PRIMARY KEY,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			owner_id TEXT,
+			password_hash TEXT NOT NULL DEFAULT '',
+			hit_count INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_avatar_shares_target ON avatar_shares(target_type, target_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_avatar_shares_expires ON avatar_shares(expires_at)`,
 	}
 	for _, stmt := range statements {
 		if _, err := db.conn.Exec(stmt); err != nil {
 			return err
 		}
 	}
+	// 幂等迁移:为旧版 DB(P0 没建 password_hash 列)补列。SQLite 没有
+	// ADD COLUMN IF NOT EXISTS,所以用 PRAGMA 探后再 ALTER;列已存在则跳过。
+	if err := db.addAvatarColumnIfMissing("avatar_models", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := db.addAvatarColumnIfMissing("avatar_clips", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
+}
+
+// addAvatarColumnIfMissing —— 用 PRAGMA table_info 看列是否存在;不存在才 ALTER ADD COLUMN。
+func (db *DB) addAvatarColumnIfMissing(table, column, decl string) error {
+	rows, err := db.conn.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // 已存在,跳过
+		}
+	}
+	_, err = db.conn.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + decl)
+	return err
 }
 
 // --- avatar_models CRUD ---
@@ -131,9 +195,9 @@ func (db *DB) CreateAvatarModel(m *AvatarModel) error {
 		m.CreatedAt = time.Now()
 	}
 	_, err := db.conn.Exec(`
-		INSERT INTO avatar_models (id, owner_id, title, filename, original, format, size, bone_count, poly_count, has_skeleton, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, m.ID, m.OwnerID, m.Title, m.Filename, m.Original, m.Format, m.Size, m.BoneCount, m.PolyCount, boolToInt(m.HasSkeleton), m.CreatedAt, m.ExpiresAt)
+		INSERT INTO avatar_models (id, owner_id, title, filename, original, format, size, bone_count, poly_count, has_skeleton, password_hash, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, m.ID, m.OwnerID, m.Title, m.Filename, m.Original, m.Format, m.Size, m.BoneCount, m.PolyCount, boolToInt(m.HasSkeleton), m.PasswordHash, m.CreatedAt, m.ExpiresAt)
 	return err
 }
 
@@ -142,9 +206,9 @@ func (db *DB) GetAvatarModel(id string) (*AvatarModel, error) {
 	var ownerID, original sql.NullString
 	var expiresAt sql.NullTime
 	err := db.conn.QueryRow(`
-		SELECT id, owner_id, title, filename, original, format, size, bone_count, poly_count, has_skeleton, created_at, expires_at
+		SELECT id, owner_id, title, filename, original, format, size, bone_count, poly_count, has_skeleton, password_hash, created_at, expires_at
 		FROM avatar_models WHERE id = ?
-	`, id).Scan(&m.ID, &ownerID, &m.Title, &m.Filename, &original, &m.Format, &m.Size, &m.BoneCount, &m.PolyCount, &m.HasSkeleton, &m.CreatedAt, &expiresAt)
+	`, id).Scan(&m.ID, &ownerID, &m.Title, &m.Filename, &original, &m.Format, &m.Size, &m.BoneCount, &m.PolyCount, &m.HasSkeleton, &m.PasswordHash, &m.CreatedAt, &expiresAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrAvatarModelNotFound
 	}
@@ -160,16 +224,34 @@ func (db *DB) GetAvatarModel(id string) (*AvatarModel, error) {
 	return m, nil
 }
 
-// ListAvatarModels 分页列出 —— 系统共享(owner_id=NULL 或 owner_id='')放前面。
+// ListAvatarModels 分页列出 —— 三种模式:
+//   - ownerID == "": 全库(共享 + 所有用户的),系统共享放前面
+//   - ownerID == "alice": 共享 + alice 自己的
+//   - 共享 = owner_id IS NULL OR owner_id = ''
+// 系统共享(owner_id=NULL 或 owner_id='')放前面;同 owner 内按时间倒序。
 func (db *DB) ListAvatarModels(ownerID string, limit, offset int) ([]*AvatarModel, error) {
-	rows, err := db.conn.Query(`
-		SELECT id, owner_id, title, filename, original, format, size, bone_count, poly_count, has_skeleton, created_at, expires_at
-		FROM avatar_models
-		WHERE (owner_id IS NULL OR owner_id = '' OR owner_id = ?)
-		  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-		ORDER BY (CASE WHEN owner_id IS NULL OR owner_id = '' THEN 0 ELSE 1 END), created_at DESC
-		LIMIT ? OFFSET ?
-	`, ownerID, limit, offset)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if ownerID == "" {
+		rows, err = db.conn.Query(`
+			SELECT id, owner_id, title, filename, original, format, size, bone_count, poly_count, has_skeleton, password_hash, created_at, expires_at
+			FROM avatar_models
+			WHERE (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+			ORDER BY (CASE WHEN owner_id IS NULL OR owner_id = '' THEN 0 ELSE 1 END), created_at DESC
+			LIMIT ? OFFSET ?
+		`, limit, offset)
+	} else {
+		rows, err = db.conn.Query(`
+			SELECT id, owner_id, title, filename, original, format, size, bone_count, poly_count, has_skeleton, password_hash, created_at, expires_at
+			FROM avatar_models
+			WHERE (owner_id IS NULL OR owner_id = '' OR owner_id = ?)
+			  AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+			ORDER BY (CASE WHEN owner_id IS NULL OR owner_id = '' THEN 0 ELSE 1 END), created_at DESC
+			LIMIT ? OFFSET ?
+		`, ownerID, limit, offset)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +261,7 @@ func (db *DB) ListAvatarModels(ownerID string, limit, offset int) ([]*AvatarMode
 		m := &AvatarModel{}
 		var ownerID, original sql.NullString
 		var expiresAt sql.NullTime
-		if err := rows.Scan(&m.ID, &ownerID, &m.Title, &m.Filename, &original, &m.Format, &m.Size, &m.BoneCount, &m.PolyCount, &m.HasSkeleton, &m.CreatedAt, &expiresAt); err != nil {
+		if err := rows.Scan(&m.ID, &ownerID, &m.Title, &m.Filename, &original, &m.Format, &m.Size, &m.BoneCount, &m.PolyCount, &m.HasSkeleton, &m.PasswordHash, &m.CreatedAt, &expiresAt); err != nil {
 			return nil, err
 		}
 		m.OwnerID = ownerID.String
@@ -290,9 +372,9 @@ func (db *DB) CreateAvatarClip(c *AvatarClip) error {
 		c.BoneNames = "[]"
 	}
 	_, err := db.conn.Exec(`
-		INSERT INTO avatar_clips (id, model_id, owner_id, title, fps, frame_count, bone_names, file_path, format, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, c.ID, c.ModelID, c.OwnerID, c.Title, c.FPS, c.FrameCount, c.BoneNames, c.FilePath, c.Format, c.CreatedAt, c.ExpiresAt)
+		INSERT INTO avatar_clips (id, model_id, owner_id, title, fps, frame_count, bone_names, file_path, format, password_hash, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, c.ID, c.ModelID, c.OwnerID, c.Title, c.FPS, c.FrameCount, c.BoneNames, c.FilePath, c.Format, c.PasswordHash, c.CreatedAt, c.ExpiresAt)
 	return err
 }
 
@@ -301,9 +383,9 @@ func (db *DB) GetAvatarClip(id string) (*AvatarClip, error) {
 	var modelID, ownerID sql.NullString
 	var expiresAt sql.NullTime
 	err := db.conn.QueryRow(`
-		SELECT id, model_id, owner_id, title, fps, frame_count, bone_names, file_path, format, created_at, expires_at
+		SELECT id, model_id, owner_id, title, fps, frame_count, bone_names, file_path, format, password_hash, created_at, expires_at
 		FROM avatar_clips WHERE id = ?
-	`, id).Scan(&c.ID, &modelID, &ownerID, &c.Title, &c.FPS, &c.FrameCount, &c.BoneNames, &c.FilePath, &c.Format, &c.CreatedAt, &expiresAt)
+	`, id).Scan(&c.ID, &modelID, &ownerID, &c.Title, &c.FPS, &c.FrameCount, &c.BoneNames, &c.FilePath, &c.Format, &c.PasswordHash, &c.CreatedAt, &expiresAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrAvatarClipNotFound
 	}
@@ -456,4 +538,112 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// --- avatar_shares CRUD (P1 起) ---
+
+var ErrAvatarShareNotFound = errors.New("avatar share not found")
+
+// CreateAvatarShare —— code 必须已生成;INSERT 即可。
+func (db *DB) CreateAvatarShare(s *AvatarShare) error {
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = time.Now()
+	}
+	_, err := db.conn.Exec(`
+		INSERT INTO avatar_shares (code, target_type, target_id, owner_id, password_hash, hit_count, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, s.Code, s.TargetType, s.TargetID, s.OwnerID, s.PasswordHash, s.HitCount, s.CreatedAt, s.ExpiresAt)
+	return err
+}
+
+// GetAvatarShare 按 code 查;过期的不直接过滤(让 handler 决定 410 / 自动清理)。
+func (db *DB) GetAvatarShare(code string) (*AvatarShare, error) {
+	s := &AvatarShare{}
+	var ownerID sql.NullString
+	var expiresAt sql.NullTime
+	err := db.conn.QueryRow(`
+		SELECT code, target_type, target_id, owner_id, password_hash, hit_count, created_at, expires_at
+		FROM avatar_shares WHERE code = ?
+	`, code).Scan(&s.Code, &s.TargetType, &s.TargetID, &ownerID, &s.PasswordHash, &s.HitCount, &s.CreatedAt, &expiresAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrAvatarShareNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.OwnerID = ownerID.String
+	if expiresAt.Valid {
+		t := expiresAt.Time
+		s.ExpiresAt = &t
+	}
+	return s, nil
+}
+
+// IncrementAvatarShareHit 访问计数 +1 —— 异步调用也可,失败不影响主流程。
+func (db *DB) IncrementAvatarShareHit(code string) {
+	_, _ = db.conn.Exec(`UPDATE avatar_shares SET hit_count = hit_count + 1 WHERE code = ?`, code)
+}
+
+// DeleteAvatarShare —— 只有创建者能删;用 owner_id + code 双重 key 防越权。
+func (db *DB) DeleteAvatarShare(code, ownerID string) error {
+	res, err := db.conn.Exec(`DELETE FROM avatar_shares WHERE code = ? AND (owner_id = ? OR owner_id IS NULL OR owner_id = '')`, code, ownerID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrAvatarShareNotFound
+	}
+	return nil
+}
+
+// ListExpiredAvatarShares 列出过期 share code,供 cleanup goroutine 清表。
+// 注意:share 本身不占磁盘,过期直接删 DB 行即可。
+func (db *DB) ListExpiredAvatarShares() ([]string, error) {
+	rows, err := db.conn.Query(`
+		SELECT code FROM avatar_shares
+		WHERE expires_at IS NOT NULL AND expires_at < ?
+	`, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		out = append(out, code)
+	}
+	return out, nil
+}
+
+// CleanExpiredAvatarShares —— 删行,不碰磁盘(share 不落盘)。
+func (db *DB) CleanExpiredAvatarShares() (int, error) {
+	codes, err := db.ListExpiredAvatarShares()
+	if err != nil {
+		return 0, err
+	}
+	if len(codes) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]byte, 0, len(codes)*2)
+	args := make([]interface{}, 0, len(codes))
+	for i, code := range codes {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, code)
+	}
+	res, err := db.conn.Exec(
+		"DELETE FROM avatar_shares WHERE code IN ("+string(placeholders)+") AND expires_at IS NOT NULL AND expires_at < ?",
+		append(args, time.Now())...,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
