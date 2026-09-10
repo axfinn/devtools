@@ -169,12 +169,17 @@ func (h *AvatarHandler) GetModel(c *gin.Context) {
 	c.JSON(http.StatusOK, m)
 }
 
-// DeleteModel 删除记录 + 磁盘文件(仅作者或共享)。
+// DeleteModel 删除记录 + 磁盘文件 —— 必须提供 creator_key 且只能删自己上传的
+// 模型;系统共享(owner_id 为空)不允许普通调用方删除(否则匿名 DELETE 可清空共享库)。
 func (h *AvatarHandler) DeleteModel(c *gin.Context) {
 	id := c.Param("id")
 	callerOwner := strings.TrimSpace(c.GetHeader("X-Creator-Key"))
 	if callerOwner == "" {
 		callerOwner = strings.TrimSpace(c.Query("owner_id"))
+	}
+	if callerOwner == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "需要 X-Creator-Key 或 owner_id"})
+		return
 	}
 
 	m, err := h.db.GetAvatarModel(id)
@@ -186,8 +191,12 @@ func (h *AvatarHandler) DeleteModel(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
 	}
-	// 系统共享(owner_id 为空)允许删除;用户上传的需匹配 owner
-	if m.OwnerID != "" && m.OwnerID != callerOwner {
+	// 系统共享(owner_id 为空)拒绝删除;只允许作者删除自己上传的。
+	if m.OwnerID == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "系统共享模型不允许删除"})
+		return
+	}
+	if m.OwnerID != callerOwner {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非作者无权删除"})
 		return
 	}
@@ -345,12 +354,16 @@ func (h *AvatarHandler) GetClip(c *gin.Context) {
 	c.Data(http.StatusOK, "application/json", data)
 }
 
-// DeleteClip
+// DeleteClip —— 必须提供 creator_key;只允许作者删除自己的片段。
 func (h *AvatarHandler) DeleteClip(c *gin.Context) {
 	id := c.Param("id")
 	callerOwner := strings.TrimSpace(c.GetHeader("X-Creator-Key"))
 	if callerOwner == "" {
 		callerOwner = strings.TrimSpace(c.Query("owner_id"))
+	}
+	if callerOwner == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "需要 X-Creator-Key 或 owner_id"})
+		return
 	}
 	clip, err := h.db.GetAvatarClip(id)
 	if err != nil {
@@ -361,7 +374,12 @@ func (h *AvatarHandler) DeleteClip(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败"})
 		return
 	}
-	if clip.OwnerID != "" && clip.OwnerID != callerOwner {
+	// 系统共享(owner_id 为空)拒绝删除;只允许作者删除自己的。
+	if clip.OwnerID == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "系统共享片段不允许删除"})
+		return
+	}
+	if clip.OwnerID != callerOwner {
 		c.JSON(http.StatusForbidden, gin.H{"error": "非作者无权删除"})
 		return
 	}
@@ -376,6 +394,7 @@ func (h *AvatarHandler) DeleteClip(c *gin.Context) {
 }
 
 // ServeModelFile 直接返回 glb/gltf 二进制 —— 前端 GLTFLoader 直接吃。
+// 模型过期(ExpiresAt 非空且 < now)返回 410 Gone 并清理磁盘文件,不让 TTL 名存实亡。
 func (h *AvatarHandler) ServeModelFile(c *gin.Context) {
 	id := c.Param("id")
 	m, err := h.db.GetAvatarModel(id)
@@ -387,6 +406,22 @@ func (h *AvatarHandler) ServeModelFile(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "文件缺失"})
 		return
 	}
+	if m.ExpiresAt != nil && !m.ExpiresAt.IsZero() && time.Now().After(*m.ExpiresAt) {
+		// 过期:清理磁盘 + DB 行,避免后续再次命中。
+		_ = os.Remove(m.Filename)
+		_ = h.db.DeleteAvatarModel(id)
+		c.JSON(http.StatusGone, gin.H{"error": "模型已过期"})
+		return
+	}
+	// 根据格式给出准确的 Content-Type(R11),GLTFLoader 接受但浏览器下载更体面。
+	contentType := "application/octet-stream"
+	switch strings.ToLower(m.Format) {
+	case "glb":
+		contentType = "model/gltf-binary"
+	case "gltf":
+		contentType = "model/gltf+json"
+	}
 	c.Header("Cache-Control", "public, max-age=3600")
+	c.Header("Content-Type", contentType)
 	c.File(m.Filename)
 }

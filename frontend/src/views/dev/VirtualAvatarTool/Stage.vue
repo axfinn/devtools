@@ -60,7 +60,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import AvatarCanvas from './AvatarCanvas.vue'
 
 const emit = defineEmits(['scene-ready', 'scene-error', 'pose-change'])
@@ -99,7 +99,8 @@ function onSceneError(payload) {
 }
 
 function onPickPose(name) {
-  if (!sceneApi) return
+  // AvatarCanvas 卸载后 sceneApi 会被清空,这里防止野指针调用(R9)。
+  if (!sceneApi || typeof sceneApi.applyPose !== 'function') return
   if (sceneApi.applyPose(name)) {
     activePose.value = name
     emit('pose-change', name)
@@ -107,9 +108,15 @@ function onPickPose(name) {
 }
 
 function onToggleSkeleton(v) {
-  if (!sceneApi) return
+  if (!sceneApi || typeof sceneApi.setSkeletonVisible !== 'function') return
   sceneApi.setSkeletonVisible(v)
 }
+
+// AvatarCanvas 卸载时已经 dispose,但 Stage 持有的 sceneApi 引用仍是野的;
+// 在这里显式清掉,避免后续误调用(R9)。
+onBeforeUnmount(() => {
+  sceneApi = null
+})
 </script>
 
 <style scoped>

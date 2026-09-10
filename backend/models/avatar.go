@@ -3,6 +3,8 @@ package models
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 )
 
@@ -203,6 +205,78 @@ func (db *DB) DeleteAvatarModel(id string) error {
 	return nil
 }
 
+// ListExpiredAvatarModels 列出所有 expires_at 已过期的模型,返回 (id, filename) 对,
+// 供 cleanup.go 串行删除磁盘文件后批量 DELETE 行。
+func (db *DB) ListExpiredAvatarModels() ([]struct {
+	ID       string
+	Filename string
+}, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, filename FROM avatar_models
+		WHERE expires_at IS NOT NULL AND expires_at < ?
+	`, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []struct {
+		ID       string
+		Filename string
+	}
+	for rows.Next() {
+		var pair struct {
+			ID       string
+			Filename string
+		}
+		if err := rows.Scan(&pair.ID, &pair.Filename); err != nil {
+			return nil, err
+		}
+		out = append(out, pair)
+	}
+	return out, nil
+}
+
+// CleanExpiredAvatarModels 删除过期 avatar_models 记录 + 对应磁盘文件,
+// 避免 TTL 名存实亡。
+func (db *DB) CleanExpiredAvatarModels() (int, error) {
+	pairs, err := db.ListExpiredAvatarModels()
+	if err != nil {
+		return 0, err
+	}
+	if len(pairs) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		ids = append(ids, p.ID)
+		if p.Filename != "" {
+			if err := os.Remove(p.Filename); err != nil && !os.IsNotExist(err) {
+				// 文件缺失/权限错误不阻断 DB 清理;DB 行必须清,否则下次还会命中。
+				fmt.Fprintf(os.Stderr, "[avatar] 删除过期模型文件失败 %s: %v\n", p.Filename, err)
+			}
+		}
+	}
+	// 批量删除(DB 行),用 IN (...) 一次性提交。
+	placeholders := make([]byte, 0, len(ids)*2)
+	args := make([]interface{}, 0, len(ids))
+	for i, id := range ids {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, id)
+	}
+	res, err := db.conn.Exec(
+		"DELETE FROM avatar_models WHERE id IN ("+string(placeholders)+") AND expires_at IS NOT NULL AND expires_at < ?",
+		append(args, time.Now())...,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // --- avatar_clips CRUD ---
 
 func (db *DB) CreateAvatarClip(c *AvatarClip) error {
@@ -255,6 +329,74 @@ func (db *DB) DeleteAvatarClip(id string) error {
 		return ErrAvatarClipNotFound
 	}
 	return nil
+}
+
+// ListExpiredAvatarClips 列出所有 expires_at 已过期的 clip。
+func (db *DB) ListExpiredAvatarClips() ([]struct {
+	ID       string
+	FilePath string
+}, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, file_path FROM avatar_clips
+		WHERE expires_at IS NOT NULL AND expires_at < ?
+	`, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []struct {
+		ID       string
+		FilePath string
+	}
+	for rows.Next() {
+		var pair struct {
+			ID       string
+			FilePath string
+		}
+		if err := rows.Scan(&pair.ID, &pair.FilePath); err != nil {
+			return nil, err
+		}
+		out = append(out, pair)
+	}
+	return out, nil
+}
+
+// CleanExpiredAvatarClips 删除过期 avatar_clips 记录 + 磁盘 .json 文件。
+func (db *DB) CleanExpiredAvatarClips() (int, error) {
+	pairs, err := db.ListExpiredAvatarClips()
+	if err != nil {
+		return 0, err
+	}
+	if len(pairs) == 0 {
+		return 0, nil
+	}
+	ids := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		ids = append(ids, p.ID)
+		if p.FilePath != "" {
+			if err := os.Remove(p.FilePath); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "[avatar] 删除过期 clip 文件失败 %s: %v\n", p.FilePath, err)
+			}
+		}
+	}
+	placeholders := make([]byte, 0, len(ids)*2)
+	args := make([]interface{}, 0, len(ids))
+	for i, id := range ids {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, id)
+	}
+	res, err := db.conn.Exec(
+		"DELETE FROM avatar_clips WHERE id IN ("+string(placeholders)+") AND expires_at IS NOT NULL AND expires_at < ?",
+		append(args, time.Now())...,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // --- avatar_me_assets CRUD ---

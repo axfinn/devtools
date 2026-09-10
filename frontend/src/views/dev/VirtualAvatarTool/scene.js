@@ -280,28 +280,53 @@ export function createAvatarScene(canvas) {
     }
   }
   let running = true
+  let rafHandle = 0
+  let disposed = false
   let onFrame = null
   function loop() {
-    if (!running) return
+    // 已 dispose / 已停 → 不再排下一帧;若已被 cancelAnimationFrame,也不再排。
+    if (!running || disposed) return
     resize()
     if (typeof onFrame === 'function') onFrame(skeleton, byName)
     controls.update()
     renderer.render(scene, camera)
-    requestAnimationFrame(loop)
+    rafHandle = requestAnimationFrame(loop)
   }
-  loop()
+  rafHandle = requestAnimationFrame(loop)
+
+  // 释放单个材质 + 它附带的纹理(R8,准备给 GLTFLoader)
+  function disposeMaterial(m) {
+    if (!m) return
+    // 释放材质引用的所有纹理(map / normalMap / roughnessMap 等)
+    for (const key in m) {
+      const v = m[key]
+      if (v && typeof v === 'object' && typeof v.dispose === 'function' && v.isTexture) {
+        v.dispose?.()
+      }
+    }
+    m.dispose?.()
+  }
 
   function dispose() {
+    if (disposed) return
+    disposed = true
     running = false
+    // 取消已 enqueue 的那一帧,避免 dispose 后仍执行 renderer.render 持强引用(R3)。
+    if (rafHandle) {
+      cancelAnimationFrame(rafHandle)
+      rafHandle = 0
+    }
     controls.dispose()
-    renderer.dispose()
     scene.traverse((obj) => {
       if (obj.geometry) obj.geometry.dispose?.()
       if (obj.material) {
-        if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose?.())
-        else obj.material.dispose?.()
+        if (Array.isArray(obj.material)) obj.material.forEach(disposeMaterial)
+        else disposeMaterial(obj.material)
       }
     })
+    renderer.dispose()
+    // 清掉内部引用,帮 GC。
+    onFrame = null
   }
 
   return {
