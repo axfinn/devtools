@@ -509,6 +509,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/dev/avatar',
+    name: 'VirtualAvatar',
+    component: () => import('../views/dev/VirtualAvatarTool/VirtualAvatarTool.vue'),
+    meta: {
+      title: '虚拟形象',
+      icon: 'MagicStick',
+      category: 'dev',
+      description: 'Three.js 虚拟形象调试 + 动捕导出 (Dark Studio 主题)'
+    }
+  },
+  {
     path: '/games',
     name: 'GameHall',
     component: () => import('../views/life/GameHall.vue'),

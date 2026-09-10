@@ -76,6 +76,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	voiceMemoHandler := handlers.NewVoiceMemoHandler(db, plannerHandler, envOrDefault("ASR_SERVICE_URL", "http://asr-service:9000"), os.Getenv("DIARIZE_SERVICE_URL"))
 	askitSyncHandler := handlers.NewAskitSyncHandler(db, cfg.AskitSync)
 	screenHandler := handlers.NewScreenHandler(db, *cfg)
+	avatarHandler := handlers.NewAvatarHandler(db)
 
 	// Skills 模块:对外工具入口,默认未启用(cfg.Skills.Enabled = false),
 	// 由管理员在 config.yaml 显式打开后才对外暴露。
@@ -121,6 +122,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		screenHandler:             screenHandler,
 		skillsHandler:             skillsHandler,
 		skillsGuard:               skillsGuard,
+		avatarHandler:             avatarHandler,
 	}, nil
 }
 

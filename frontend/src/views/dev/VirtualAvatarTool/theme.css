@@ -1,0 +1,87 @@
+/* VirtualAvatarTool — Dark Studio + Neon Accent
+ * 本模块强制 dark-only:CSS 变量在 .avatar-dark 容器下覆盖 Element Plus + 全局主题变量。
+ * 主题色集中在 :root 的 --avatar-accent 一个值,后期换主色只改这里。
+ */
+
+.avatar-dark {
+  /* 基础色板 —— 比全站暗色更深,贴合 3D Studio 调性 */
+  --avatar-bg-stage: #0A0D14;
+  --avatar-bg-panel: #11151F;
+  --avatar-bg-elevated: #181D2B;
+  --avatar-border-subtle: #232938;
+  --avatar-border-strong: #2E3548;
+
+  --avatar-text-primary: #E6E9EF;
+  --avatar-text-secondary: #9098AB;
+  --avatar-text-tertiary: #5C6479;
+
+  /* 霓虹点缀(主色) —— 换主色只改这里 */
+  --avatar-accent: #7C5CFF;
+  --avatar-accent-soft: rgba(124, 92, 255, 0.13);
+  --avatar-accent-glow: 0 0 0 4px rgba(124, 92, 255, 0.18);
+
+  /* 语义 */
+  --avatar-success: #4ADE80;
+  --avatar-warning: #F5B547;
+  --avatar-danger: #F47174;
+  --avatar-rec-pulse: #F43F5E;
+
+  /* 字号 / 间距 / 圆角(局部) */
+  --avatar-radius-card: 12px;
+  --avatar-radius-btn: 8px;
+  --avatar-radius-input: 6px;
+}
+
+/* 把全站背景压暗 ——用更高的特异性覆盖 .dark 之外的浅色场景 */
+.avatar-dark {
+  background-color: var(--avatar-bg-stage) !important;
+  color: var(--avatar-text-primary) !important;
+}
+
+/* Element Plus 组件在 .avatar-dark 下强制走深色变量 —— 只影响本模块 */
+.avatar-dark .el-button--default {
+  background: var(--avatar-bg-elevated);
+  border-color: var(--avatar-border-subtle);
+  color: var(--avatar-text-primary);
+}
+.avatar-dark .el-button--default:hover {
+  border-color: var(--avatar-accent);
+  color: var(--avatar-accent);
+}
+.avatar-dark .el-button--primary {
+  background: var(--avatar-accent);
+  border-color: var(--avatar-accent);
+}
+.avatar-dark .el-button--primary:hover {
+  filter: brightness(1.1);
+  box-shadow: var(--avatar-accent-glow);
+}
+.avatar-dark .el-card,
+.avatar-dark .el-input__wrapper,
+.avatar-dark .el-select__wrapper {
+  background-color: var(--avatar-bg-elevated) !important;
+  box-shadow: 0 0 0 1px var(--avatar-border-subtle) inset !important;
+}
+.avatar-dark .el-input__inner,
+.avatar-dark .el-textarea__inner {
+  color: var(--avatar-text-primary);
+}
+.avatar-dark .el-tabs__item {
+  color: var(--avatar-text-secondary);
+}
+.avatar-dark .el-tabs__item.is-active {
+  color: var(--avatar-accent);
+}
+.avatar-dark .el-tabs__active-bar {
+  background-color: var(--avatar-accent);
+}
+.avatar-dark .el-alert--warning {
+  background-color: rgba(245, 181, 71, 0.08);
+  border-color: rgba(245, 181, 71, 0.3);
+  color: var(--avatar-text-primary);
+}
+.avatar-dark .el-alert--info {
+  background-color: var(--avatar-accent-soft);
+  border-color: rgba(124, 92, 255, 0.3);
+  color: var(--avatar-text-primary);
+}
