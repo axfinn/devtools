@@ -48,12 +48,13 @@
 | 38 | **Skills+MCP** | `handlers/skills*.go` (3 文件) | `routes/skills.go` | `views/other/SkillsTool.vue` | OpenAI function-calling 风格清单，MCP 协议，5 个 skill |
 | 39 | **OCR** | `handlers/ocr.go` | `routes/ocr.go` | — | 二维码识别 + OCR，Python RapidOCR |
 | 40 | **Health** | 内联 | `routes/health.go` | — | `GET /api/health` 健康检查 |
+| 41 | **Avatar 虚拟形象** | `handlers/avatar.go` | `routes/avatar.go` | `views/dev/VirtualAvatarTool/VirtualAvatarTool.vue` (+ 13 子组件) | three.js 虚拟形象调试：SkinnedMesh + Skeleton + 姿态预设；模型库 CRUD + me_asset 标记；姿态片段（pose JSON）上传/导出/分享；glb / pose.json / 视频三选一导出（MediaRecorder + WebCodecs → 降级关键帧 JSON → 复制）；摄像头调试（getUserMedia 四态降级：granted/denied/unsupported/no_device）；R5 双因子鉴权（creator_key + bcrypt password）；R10 帧数上限 60000；分享短链 16 字符 hex；CSS 变量跟随全局主题 (`--color-accent` 全局命名） |
 
 ---
 
 ## 技术栈
 
-- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（72 个 View 组件）
+- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（73 个 View 组件）
 - **后端**：Go (Gin) + SQLite + **Redis（软依赖，失败自动降级到内存存储）**
 - **辅助服务**：
   - `ocr-service`：Python FastAPI + RapidOCR（二维码识别/OCR，端口 8000）
@@ -98,7 +99,7 @@ frontend/src/views/
 ├── ai/         # AI 相关（6）：AIGatewayTool, AIChatTool, BailianImage, EnglishTutor, ImageUnderstanding, MiniMaxStudio
 ├── collab/     # 协作（8）：ChatRoom, NFSShareTool, PasteBin, ScreenShare, ScreenView, ShortUrl, ...
 ├── convert/    # 转换（8）：Base64, Dns, QrCode, Replace, Text, Timestamp, Url
-├── dev/        # 开发（9）：AutoDev, Diff, EdgeTTS, Hermes, Json, MockApi, Regex, Terminal
+├── dev/        # 开发（10）：AutoDev, Diff, EdgeTTS, Hermes, Json, MockApi, Regex, Terminal, VirtualAvatar
 ├── draw/       # 绘图（4）：Excalidraw, Markdown, Mermaid, MindMap
 ├── home/       # 首页
 ├── household/  # 家庭（9 个子组件）
@@ -117,7 +118,7 @@ backend/routes/
 ├── photowall.go / terminal.go / nfsshare.go / image_understanding.go / bailian.go
 ├── ai_gateway.go / askit.go / screen.go / apigateway.go / autodev.go / mermaid.go
 ├── proxy.go / nps.go / hermes.go / bg.go / monitor.go / console.go / skills.go
-├── ocr.go / health.go
+├── ocr.go / health.go / avatar.go
 ```
 
 ### Handler 文件分组
@@ -147,6 +148,22 @@ handlers/
 - `POST /api/excalidraw` — 创建 Excalidraw 画图
 - `GET /api/dns?domain=` — DNS 查询
 - `GET /api/ip` — 客户端 IP
+
+### 虚拟形象（avatar module, P1+P2）
+- `POST /api/avatar/models` — 上传模型（.glb / .gltf，多部分，R5 password 可选）
+- `GET /api/avatar/models?owner_id=&limit=&offset=` — 列出模型（owner_id 为空 = 全库；带值 = 我的）
+- `GET /api/avatar/models/:id` — 模型详情
+- `GET /api/avatar/models/:id/file` — 模型文件二进制（GLTFLoader 直接消费）
+- `DELETE /api/avatar/models/:id?owner_id=&password=` — 删除模型（R1+R5）
+- `POST /api/avatar/me/assets` — 把模型加入我的资产（去重 upsert）
+- `GET /api/avatar/me/assets` — 我的资产列表
+- `DELETE /api/avatar/me/assets/:id` — 移除我的资产
+- `POST /api/avatar/clips` — 上传姿态片段（JSON，R10 ≤ 60000 帧）
+- `GET /api/avatar/clips/:id?password=` — 取姿态 JSON（密码保护）
+- `DELETE /api/avatar/clips/:id?owner_id=&password=` — 删除片段
+- `POST /api/avatar/share` — 创建分享短链（target_type=model|clip, expires_in_days）
+- `GET /api/avatar/share/:code?password=` — 按 code 取元数据（命中后异步 +1 hit_count，goroutine defer recover 兜底）
+- `DELETE /api/avatar/share/:code?owner_id=` — 创建者删除分享
 
 ### 档案/社交
 - `POST /api/chat/room` — 创建聊天室（+ WebSocket `/api/chat/room/:id/ws`）
