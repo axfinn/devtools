@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -632,8 +633,15 @@ func (h *AvatarHandler) GetShare(c *gin.Context) {
 			return
 		}
 	}
-	// 异步计数
-	go h.db.IncrementAvatarShareHit(code)
+	// 异步计数 —— 用 defer recover 包住,避免 goroutine 内 panic 把进程带走(P2 后端补全)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[avatar] IncrementAvatarShareHit panic recovered: %v (code=%s)", r, code)
+			}
+		}()
+		h.db.IncrementAvatarShareHit(code)
+	}()
 	c.JSON(http.StatusOK, gin.H{
 		"code":        s.Code,
 		"target_type": s.TargetType,

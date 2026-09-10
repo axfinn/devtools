@@ -1,87 +1,167 @@
 /* VirtualAvatarTool — Dark Studio + Neon Accent
- * 本模块强制 dark-only:CSS 变量在 .avatar-dark 容器下覆盖 Element Plus + 全局主题变量。
- * 主题色集中在 :root 的 --avatar-accent 一个值,后期换主色只改这里。
+ *
+ * P2 起:从 .avatar-dark 局部覆盖 → 全局主题(P2-A)。
+ * 主题变量统一从 :root / [data-theme="dark"] 读,不再自己定义一份。
+ * Avatar 模块只在 --color-accent = #7C5CFF 上做"neon 软光"等局部修饰,
+ * 全局主题切换(html.dark / html.light)时会自动跟随。
  */
 
-.avatar-dark {
-  /* 基础色板 —— 比全站暗色更深,贴合 3D Studio 调性 */
-  --avatar-bg-stage: #0A0D14;
-  --avatar-bg-panel: #11151F;
-  --avatar-bg-elevated: #181D2B;
-  --avatar-border-subtle: #232938;
-  --avatar-border-strong: #2E3548;
+:root {
+  /* === Avatar 模块专用(全局主题切换时也保持不变)===
+   * 用 --color-accent-* 而不是 --avatar-accent-*;各模块共用一套命名。
+   * --color-accent 是 avatar 的"霓虹"强调色,与全局 --color-primary 区分。 */
+  --color-accent: #7C5CFF;
+  --color-accent-soft: rgba(124, 92, 255, 0.13);
+  --color-accent-glow: 0 0 0 4px rgba(124, 92, 255, 0.18);
 
-  --avatar-text-primary: #E6E9EF;
-  --avatar-text-secondary: #9098AB;
-  --avatar-text-tertiary: #5C6479;
+  /* 3D Studio 暗背景 —— dark 主题下用更深,light 主题下用浅 */
+  --color-stage: #0A0D14;
+  --color-stage-light: #f5f7fa;
 
-  /* 霓虹点缀(主色) —— 换主色只改这里 */
-  --avatar-accent: #7C5CFF;
-  --avatar-accent-soft: rgba(124, 92, 255, 0.13);
-  --avatar-accent-glow: 0 0 0 4px rgba(124, 92, 255, 0.18);
-
-  /* 语义 */
-  --avatar-success: #4ADE80;
-  --avatar-warning: #F5B547;
-  --avatar-danger: #F47174;
-  --avatar-rec-pulse: #F43F5E;
-
-  /* 字号 / 间距 / 圆角(局部) */
-  --avatar-radius-card: 12px;
-  --avatar-radius-btn: 8px;
-  --avatar-radius-input: 6px;
+  /* 录制红(独立色) */
+  --color-rec: #F43F5E;
 }
 
-/* 把全站背景压暗 ——用更高的特异性覆盖 .dark 之外的浅色场景 */
-.avatar-dark {
-  background-color: var(--avatar-bg-stage) !important;
-  color: var(--avatar-text-primary) !important;
+/* === 全局:avatar dark 模式下,stage 用深背景(覆盖全局 --bg-base) === */
+:root.dark .avatar-dark,
+:root.dark body .avatar-dark {
+  background-color: var(--color-stage) !important;
+  color: var(--text-primary) !important;
+}
+:root:not(.dark) .avatar-dark,
+:root:not(.dark) body .avatar-dark {
+  background-color: var(--color-stage-light) !important;
+  color: var(--text-primary) !important;
 }
 
-/* Element Plus 组件在 .avatar-dark 下强制走深色变量 —— 只影响本模块 */
-.avatar-dark .el-button--default {
-  background: var(--avatar-bg-elevated);
-  border-color: var(--avatar-border-subtle);
-  color: var(--avatar-text-primary);
+/* === Avatar 顶栏 / 主面板背景 + 边框,跟随全局主题 === */
+.avatar-dark .tool-topbar,
+.avatar-dark .tool-rail,
+.avatar-dark .tool-inspector {
+  background: var(--bg-primary);
+  border-color: var(--border-light);
 }
-.avatar-dark .el-button--default:hover {
-  border-color: var(--avatar-accent);
-  color: var(--avatar-accent);
+.avatar-dark .tool-rail {
+  border-right: 1px solid var(--border-light);
 }
+.avatar-dark .tool-inspector {
+  border-left: 1px solid var(--border-light);
+}
+
+.avatar-dark .topbar-icon {
+  color: var(--color-accent);
+}
+.avatar-dark .topbar-title {
+  color: var(--text-primary);
+}
+.avatar-dark .topbar-subtitle {
+  color: var(--text-tertiary);
+}
+
+.avatar-dark .rail-item {
+  color: var(--text-secondary);
+}
+.avatar-dark .rail-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.avatar-dark .rail-item.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+.avatar-dark .rail-badge {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+/* === 面板内 section === */
+.avatar-dark .inspector-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-light);
+}
+.avatar-dark .inspector-title {
+  color: var(--text-tertiary);
+}
+.avatar-dark .inspector-empty {
+  color: var(--text-tertiary);
+}
+.avatar-dark .inspector-log {
+  color: var(--text-secondary);
+}
+.avatar-dark .inspector-log li {
+  border-bottom: 1px solid var(--border-light);
+}
+.avatar-dark .inspector-log-empty {
+  color: var(--text-tertiary);
+}
+
+/* === Stage / Scene === */
+.avatar-dark .stage-wrap {
+  background: var(--color-stage);
+  color: var(--text-primary);
+}
+:root:not(.dark) .avatar-dark .stage-wrap {
+  background: var(--color-stage-light);
+}
+.avatar-dark .stage-topbar {
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-primary);
+}
+.avatar-dark .stage-topbar-label {
+  color: var(--text-tertiary);
+}
+.avatar-dark .stage-topbar-status {
+  color: var(--text-secondary);
+}
+.avatar-dark .status-loading { background: var(--color-warning, #e6a23c); }
+.avatar-dark .status-ready { background: var(--color-success, #67c23a); }
+.avatar-dark .status-error { background: var(--color-danger, #f56c6c); }
+
+.avatar-dark .stage-timeline {
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-primary);
+}
+.avatar-dark .timeline-placeholder {
+  color: var(--text-tertiary);
+}
+
+/* === Avatar canvas === */
+.avatar-dark .avatar-canvas-wrap {
+  background: var(--color-stage);
+}
+:root:not(.dark) .avatar-dark .avatar-canvas-wrap {
+  background: var(--color-stage-light);
+}
+.avatar-dark .avatar-canvas-fallback {
+  color: var(--text-secondary);
+}
+.avatar-dark .fallback-title {
+  color: var(--text-primary);
+}
+
+/* === Element Plus 覆盖:avatar 模块强制走 --el-* 全局变量 === */
+/* 不再硬编码颜色,让全局主题自己决定;只保留一些必要修饰 */
 .avatar-dark .el-button--primary {
-  background: var(--avatar-accent);
-  border-color: var(--avatar-accent);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
 }
 .avatar-dark .el-button--primary:hover {
   filter: brightness(1.1);
-  box-shadow: var(--avatar-accent-glow);
-}
-.avatar-dark .el-card,
-.avatar-dark .el-input__wrapper,
-.avatar-dark .el-select__wrapper {
-  background-color: var(--avatar-bg-elevated) !important;
-  box-shadow: 0 0 0 1px var(--avatar-border-subtle) inset !important;
-}
-.avatar-dark .el-input__inner,
-.avatar-dark .el-textarea__inner {
-  color: var(--avatar-text-primary);
-}
-.avatar-dark .el-tabs__item {
-  color: var(--avatar-text-secondary);
-}
-.avatar-dark .el-tabs__item.is-active {
-  color: var(--avatar-accent);
-}
-.avatar-dark .el-tabs__active-bar {
-  background-color: var(--avatar-accent);
+  box-shadow: var(--color-accent-glow);
 }
 .avatar-dark .el-alert--warning {
-  background-color: rgba(245, 181, 71, 0.08);
-  border-color: rgba(245, 181, 71, 0.3);
-  color: var(--avatar-text-primary);
+  border-color: var(--color-warning, #e6a23c);
 }
 .avatar-dark .el-alert--info {
-  background-color: var(--avatar-accent-soft);
-  border-color: rgba(124, 92, 255, 0.3);
-  color: var(--avatar-text-primary);
+  border-color: var(--color-accent);
+}
+.avatar-dark .el-radio-button__inner {
+  background: var(--bg-secondary);
+  border-color: var(--border-light);
+  color: var(--text-regular);
+}
+.avatar-dark .el-radio-button.is-active .el-radio-button__inner {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
 }
