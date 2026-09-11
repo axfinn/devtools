@@ -386,6 +386,8 @@ onBeforeUnmount(() => {
   display: flex;
   border-right: 1px solid var(--border-light);
   background: var(--bg-primary);
+  grid-column: span 2;
+  min-width: 0;
 }
 .tool-rail {
   display: flex;
