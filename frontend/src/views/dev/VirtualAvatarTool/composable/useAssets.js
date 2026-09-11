@@ -119,9 +119,11 @@ export async function deleteMyAsset(id, { creatorKey } = {}) {
 
 // ---- 姿态片段 ----
 
-export async function uploadClip(payload, { creatorKey } = {}) {
+export async function uploadClipFn(payload, { creatorKey } = {}) {
   return avatarFetch('/clips', { method: 'POST', creatorKey, body: payload })
 }
+// 兼容旧 import 名
+export const uploadClip = uploadClipFn
 
 export async function getClip(id, { password, creatorKey } = {}) {
   const qs = new URLSearchParams()
@@ -232,6 +234,10 @@ export function useAssets() {
     },
     async createShareLink(targetType, targetId, opts = {}) {
       return createShare({ targetType, targetId, ...opts })
+    },
+    async uploadClip(payload, opts = {}) {
+      const r = await uploadClipFn(payload, opts)
+      return r
     },
   }
 }

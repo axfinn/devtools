@@ -157,6 +157,7 @@ const selectedBoneName = ref('')
 const selectedModelId = ref('')
 const clips = ref([])
 const activeClipId = ref('')
+const currentPoseName = ref('T-pose')
 
 const cameraOpen = ref(false)
 const exportOpen = ref(false)
@@ -190,6 +191,7 @@ function onSceneReady(api) {
 }
 
 function onPoseChange(name) {
+  currentPoseName.value = name
   recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 切换姿态 → ${name}`)
 }
 
@@ -231,17 +233,34 @@ function onClipSelect(clip) {
 }
 
 function onClipPlay(clip) {
-  recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 播放片段 → ${clip.title || clip.id}`)
+  // 播放:把 clip 的 poseName 喂给 sceneApi → 用户能直观看到姿态切回去
+  const target = clip.poseName || currentPoseName.value
+  if (sceneApi.value && typeof sceneApi.value.applyPose === 'function' && sceneApi.value.applyPose(target)) {
+    ElMessage.success(`正在播放 · ${clip.title || clip.id} (姿态=${target})`)
+    recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 播放片段 → ${clip.title || clip.id} · ${target}`)
+  } else {
+    ElMessage.warning('场景未就绪,无法播放')
+  }
 }
 
 function onClipShare(clip) {
+  // 必须用后端真 id(local-xxx 后端不认识)→ 拒绝分享占位 clip
+  if (!clip.id || String(clip.id).startsWith('local-')) {
+    ElMessage.error('该片段还未同步到后端,请先停止录制并等待上传完成')
+    return
+  }
   // 调后端创建 share link
   assets.createShareLink('clip', clip.id, { expiresInDays: 30 })
     .then((r) => {
-      ElMessage.success(`分享码: ${r.code}`)
-      recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 分享片段 → ${r.share_url}`)
+      const code = r.code || r.share_code || '(无码)'
+      const url = r.share_url || (location.origin + '/api/avatar/share/' + code)
+      ElMessage.success(`分享码 ${code} · ${url}`)
+      recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 分享片段 → ${code} · ${url}`)
+      try {
+        navigator.clipboard?.writeText(url).catch(() => {})
+      } catch (_e) { /* clipboard 可能被禁,提示就够了 */ }
     })
-    .catch((e) => ElMessage.error('分享失败:' + e.message))
+    .catch((e) => ElMessage.error('分享失败:' + (e.message || String(e))))
 }
 
 function onClipDelete(clip) {
@@ -256,22 +275,51 @@ function onClipsClear() {
 
 function onRecToggle(on) {
   if (on) {
-    ElMessage.info('开始录制(本期只占位,真实录制进 P3 联调)')
+    ElMessage.info('开始录制 · 当前姿态将被记录')
   } else {
-    // 录制结束 → 自动加一个 clip
+    // 录制结束 → 先入占位(UI 立即可见)→ 后台同步到后端 /api/avatar/clips
     const dur = 3
     const startSec = clips.value.reduce((acc, c) => Math.max(acc, (c.startSec || 0) + (c.durationSec || 0)), 0)
-    const clip = {
-      id: 'local-' + Date.now().toString(36),
+    const localId = 'local-' + Date.now().toString(36)
+    const localClip = {
+      id: localId,
       title: '本地录制 #' + (clips.value.length + 1),
       durationSec: dur,
       frameCount: dur * 30,
       fps: 30,
       startSec,
+      poseName: currentPoseName.value,
       createdAt: new Date().toISOString(),
+      _syncing: true,
     }
-    clips.value = [...clips.value, clip]
-    recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 新片段 → ${clip.title}`)
+    clips.value = [...clips.value, localClip]
+    recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 新片段(上传中) → ${localClip.title}`)
+
+    // 后台上传 metadata 到后端(frames 空,等真实 P3 联调替换)
+    assets.uploadClip({
+      title: localClip.title,
+      model_id: selectedModelId.value || '',
+      fps: 30,
+      bone_names: sceneApi.value?.boneNames || [],
+      frames: [],
+    }).then((serverClip) => {
+      const realId = serverClip?.id
+      if (!realId) {
+        clips.value = clips.value.filter((c) => c.id !== localId)
+        ElMessage.error('片段上传失败,未拿到后端 id')
+        return
+      }
+      clips.value = clips.value.map((c) =>
+        c.id === localId ? { ...c, id: realId, _syncing: false } : c
+      )
+      if (activeClipId.value === localId) activeClipId.value = realId
+      ElMessage.success(`片段已同步 → ${realId}`)
+      recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 片段已同步 → ${realId}`)
+    }).catch((e) => {
+      clips.value = clips.value.filter((c) => c.id !== localId)
+      ElMessage.error('片段上传失败:' + (e.message || String(e)))
+      recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 片段上传失败 → ${e.message || e}`)
+    })
   }
 }
 
