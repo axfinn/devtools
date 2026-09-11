@@ -22,12 +22,12 @@
       @click="triggerFilePicker"
     >
       <div class="drop-icon">📥</div>
-      <div class="drop-title">把 .glb / .gltf 拖到这里</div>
+      <div class="drop-title">把 .vrm / .glb / .gltf 拖到这里</div>
       <div class="drop-sub">或者<span class="drop-link">点击选择文件</span></div>
       <input
         ref="fileInputRef"
         type="file"
-        accept=".glb,.gltf"
+        accept=".vrm,.glb,.gltf"
         style="display:none"
         @change="onFileChange"
       />
@@ -95,8 +95,8 @@ function onDrop(e) {
 
 function acceptFile(f) {
   const lower = f.name.toLowerCase()
-  if (!lower.endsWith('.glb') && !lower.endsWith('.gltf')) {
-    ElMessage.warning('只支持 .glb / .gltf 文件')
+  if (!lower.endsWith('.glb') && !lower.endsWith('.gltf') && !lower.endsWith('.vrm')) {
+    ElMessage.warning('只支持 .vrm / .glb / .gltf 文件')
     return
   }
   pendingFile.value = f
@@ -107,7 +107,10 @@ async function onUpload() {
   if (!pendingFile.value) return
   uploading.value = true
   try {
-    const r = await uploadModel(pendingFile.value, { title: title.value, format: ext(pendingFile.value) })
+    // VRM 文件内容是 glTF + 扩展,后端按 .glb 落盘不影响前端解析(VRMLoaderPlugin 看内容)
+    const fileExt = ext(pendingFile.value)
+    const storeFormat = fileExt === 'vrm' ? 'glb' : fileExt
+    const r = await uploadModel(pendingFile.value, { title: title.value, format: storeFormat })
     ElMessage.success(`上传成功: ${r.id}`)
     emit('imported', r)
     pendingFile.value = null

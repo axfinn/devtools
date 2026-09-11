@@ -124,7 +124,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Upload, VideoCamera, Download, Picture, FolderOpened, Sunny, MagicStick, Sunny as Sun, Moon, Monitor } from '@element-plus/icons-vue'
 import Stage from './Stage.vue'
@@ -141,6 +141,7 @@ import { useAssets } from './composable/useAssets.js'
 // 注意:vite.config.js 里 '@' 别名指向 './src/neon'(React 子应用),不是 './src'。
 // 走 '@' 会解析到 src/neon/composables/useTheme.js 并整页 500,这里必须用相对路径。
 import { useTheme } from '../../../composables/useTheme.js'
+import { loadVRMIntoScene, disposeCurrentVRM } from './vrmLoader.js'
 
 const activeRail = ref('scene')
 const initError = ref('')
@@ -161,6 +162,7 @@ const cameraOpen = ref(false)
 const exportOpen = ref(false)
 const importDrawerOpen = ref(false)
 const cameraState = ref('idle')
+const loadingVRM = ref(false)
 
 // 主题:沿用全局 useTheme
 const { themeMode, setThemeMode } = useTheme()
@@ -290,6 +292,25 @@ function onExported(payload) {
 function onImported(payload) {
   recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] 上传模型 → ${payload.id}`)
   assets.refreshModels({ limit: 50 })
+  // N+1 轮:上传成功 → 自动载入到画布。失败不阻塞,只提示。
+  if (!sceneApi.value) {
+    ElMessage.warning('场景尚未就绪,稍后再试')
+    return
+  }
+  const url = `/api/avatar/models/${payload.id}/file`
+  loadingVRM.value = true
+  loadVRMIntoScene(sceneApi.value, url)
+    .then((r) => {
+      recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] VRM 载入成功 · meta=${r.meta?.name || 'unknown'} · humanoid=${r.humanoid ? 'OK' : 'no'}`)
+      ElMessage.success('VRM 已载入画布')
+    })
+    .catch((e) => {
+      recentLog.value.unshift(`[${new Date().toLocaleTimeString()}] VRM 载入失败 → ${e.message || e}`)
+      ElMessage.error('VRM 载入失败:' + (e.message || e))
+    })
+    .finally(() => {
+      loadingVRM.value = false
+    })
 }
 
 // P1:挂载时拉一次 /api/avatar/models,把库总数显示在左侧 rail 的资产图标旁;
@@ -303,6 +324,11 @@ onMounted(async () => {
   } else if (assets.lastError.value) {
     initError.value = `资产库离线: ${assets.lastError.value}(检查后端是否启动)`
   }
+})
+
+// 组件卸载时释放 VRM 资源(避免 GPU 泄漏)
+onBeforeUnmount(() => {
+  if (sceneApi.value) disposeCurrentVRM(sceneApi.value)
 })
 </script>
 
