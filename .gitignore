@@ -1,6 +1,7 @@
 # Node
 node_modules/
 frontend/node_modules/
+scripts/node_modules/    # ESM 解析 helper — symlink 到 frontend/node_modules
 .pnpm-store/
 frontend/dist/
 backend/node_modules/
