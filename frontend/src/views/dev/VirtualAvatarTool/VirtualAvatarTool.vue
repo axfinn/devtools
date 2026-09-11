@@ -74,7 +74,7 @@
       <main class="tool-main">
         <Stage @scene-ready="onSceneReady" @pose-change="onPoseChange">
           <template #camera-peek>
-            <CameraPeek v-if="cameraOpen" @state-change="onCameraState" />
+            <CameraPeek v-if="cameraOpen" :scene-api="sceneApi" @state-change="onCameraState" />
           </template>
         </Stage>
       </main>

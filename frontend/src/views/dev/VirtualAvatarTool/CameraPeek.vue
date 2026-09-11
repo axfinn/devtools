@@ -52,7 +52,30 @@
       <el-button v-else-if="state === CameraState.GRANTED" size="small" plain @click="onStop">
         <el-icon><VideoPause /></el-icon> 关闭
       </el-button>
+      <!-- 动捕按钮:摄像头授权后才能启用 -->
+      <el-button
+        v-if="state === CameraState.GRANTED && sceneApi"
+        :type="mocapOn ? 'danger' : 'success'"
+        size="small"
+        plain
+        :loading="mocapState === MocapState.LOADING"
+        @click="onToggleMocap"
+      >
+        <el-icon><Aim v-if="!mocapOn" /><VideoPause v-else /></el-icon>
+        {{ mocapOn ? '关闭动捕' : '动捕试一下' }}
+      </el-button>
+      <el-tooltip v-if="mocapOn && mocapFps" :content="`动捕中 · ${mocapFps} fps`" placement="top">
+        <span class="mocap-pill">{{ mocapFps }} fps</span>
+      </el-tooltip>
     </div>
+    <el-alert
+      v-if="mocapState === MocapState.ERROR && mocapError"
+      class="mocap-alert"
+      type="error"
+      :title="`动捕失败:${mocapError.message || String(mocapError)}`"
+      :closable="false"
+      show-icon
+    />
 
     <el-drawer v-model="showHelp" title="为什么摄像头无法启动?" direction="rtl" size="320px">
       <div class="help-content">
@@ -74,20 +97,28 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { VideoCamera, VideoPause } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import { Aim, VideoCamera, VideoPause } from '@element-plus/icons-vue'
 import { useCamera, stateEmoji } from './composable/useCamera.js'
 import { CameraState } from './cameraProbe.js'
+import { createMocap, MocapState } from './mocap.js'
 
 const props = defineProps({
   autoStart: { type: Boolean, default: false },
+  sceneApi: { type: Object, default: null },
 })
 
-const emit = defineEmits(['state-change'])
+const emit = defineEmits(['state-change', 'mocap-change'])
 
 const cam = useCamera({ facingMode: 'user', audio: false })
 const videoRef = ref(null)
 const showHelp = ref(false)
+let mocap = null
+const mocapOn = ref(false)
+const mocapState = ref(MocapState.IDLE)
+const mocapError = ref(null)
+const mocapFps = ref(0)
 
 const state = computed(() => cam.state.value)
 const error = computed(() => cam.error.value)
@@ -143,11 +174,61 @@ function onRequest() { cam.request() }
 function onStop() { cam.stop() }
 function onRetry() { cam.retry() }
 
+async function onToggleMocap() {
+  if (!props.sceneApi) {
+    ElMessage.warning('场景还没就绪,稍后再试')
+    return
+  }
+  if (mocapOn.value) {
+    // 关闭 → 停掉循环,恢复当前姿态
+    if (mocap) mocap.stop()
+    props.sceneApi.resetMocap?.()
+    mocapOn.value = false
+    mocapFps.value = 0
+    emit('mocap-change', false)
+    return
+  }
+  if (!videoRef.value || state.value !== CameraState.GRANTED) {
+    ElMessage.warning('请先启动摄像头并允许权限')
+    return
+  }
+  // 启动
+  mocap = createMocap({ sceneApi: props.sceneApi })
+  const unsub = mocap.subscribe(({ state, error, fps }) => {
+    mocapState.value = state
+    mocapError.value = error
+    if (typeof fps === 'number') mocapFps.value = fps
+  })
+  try {
+    await mocap.start(videoRef.value)
+    mocapOn.value = true
+    emit('mocap-change', true)
+    ElMessage.success('动捕已开启 · 站立于摄像头前看效果')
+  } catch (e) {
+    mocapOn.value = false
+    ElMessage.error('动捕启动失败:' + (e.message || String(e)))
+    unsub()
+    mocap?.dispose()
+    mocap = null
+  }
+}
+
 watch(state, (s) => emit('state-change', s))
+// 摄像头被外部关闭时 → 自动停动捕
+watch(state, (s) => {
+  if (s !== CameraState.GRANTED && mocapOn.value) onToggleMocap()
+})
 
 onMounted(async () => {
   if (videoRef.value) cam.attach(videoRef.value)
   if (props.autoStart) await cam.request()
+})
+
+onBeforeUnmount(async () => {
+  if (mocap) {
+    try { await mocap.dispose() } catch (_) {}
+    mocap = null
+  }
 })
 </script>
 
@@ -244,5 +325,20 @@ onMounted(async () => {
   border-radius: 4px;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
+}
+.mocap-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  margin-left: 8px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  background: var(--color-success-soft, rgba(103, 194, 58, 0.15));
+  color: var(--color-success, #67c23a);
+  border-radius: 10px;
+}
+.mocap-alert {
+  margin: 6px 8px 8px;
 }
 </style>

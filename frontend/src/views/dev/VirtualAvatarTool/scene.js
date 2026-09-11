@@ -393,6 +393,57 @@ export function createAvatarScene(canvas) {
     skeleton.update()
     return true
   }
+
+  // 动捕桥接 —— 接 kalidokit Pose.solve 输出,直接把 quaternion 写到 byName 骨骼
+  // kalidokit 没有 chest/neck/head/foot —— 这几个由 spine 补偿
+  function applyLandmarks(rigged) {
+    if (!rigged || !mesh) return
+    const M = {
+      Hips: 'hips',
+      Spine: 'spine',
+      LeftUpperArm: 'upperarm_l',
+      LeftLowerArm: 'forearm_l',
+      LeftHand: 'hand_l',
+      RightUpperArm: 'upperarm_r',
+      RightLowerArm: 'forearm_r',
+      RightHand: 'hand_r',
+      LeftUpperLeg: 'upperleg_l',
+      LeftLowerLeg: 'lowerleg_l',
+      RightUpperLeg: 'upperleg_r',
+      RightLowerLeg: 'lowerleg_r',
+    }
+    for (const k of Object.keys(M)) {
+      const slot = rigged[k]
+      if (!slot || !slot.rotation) continue
+      const b = byName[M[k]]
+      if (!b) continue
+      const q = slot.rotation
+      if (typeof q.x === 'number') {
+        b.quaternion.set(q.x, q.y, q.z, q.w)
+        b.rotation.set(0, 0, 0)
+      }
+    }
+    // chest / neck / head 从 spine 平滑过渡
+    const spineSlot = rigged.Spine?.rotation
+    const sBone = byName['spine']
+    const cBone = byName['chest']
+    const nBone = byName['neck']
+    const hBone = byName['head']
+    if (spineSlot && sBone && cBone && nBone && typeof spineSlot.x === 'number') {
+      const sq = sBone.quaternion
+      // chest = spine × 70%,neck = spine × 35%,head = spine(简化)
+      const qChest = sq.clone().slerp(new THREE.Quaternion(), 0.30)
+      const qNeck = sq.clone().slerp(new THREE.Quaternion(), 0.65)
+      cBone.quaternion.copy(qChest)
+      nBone.quaternion.copy(qNeck)
+      if (hBone) hBone.quaternion.copy(sq)
+    }
+    skeleton.update()
+  }
+
+  function resetMocap() {
+    applyPose(currentPose)
+  }
   applyPose('T-pose')
 
   function resize() {
@@ -473,6 +524,8 @@ export function createAvatarScene(canvas) {
     get currentPose() { return currentPose },
     applyPose,
     applyVisualPreset,
+    applyLandmarks,
+    resetMocap,
     setOnFrame: (fn) => { onFrame = fn },
     setSkeletonVisible: (v) => { skelHelper.visible = !!v },
     dispose,
