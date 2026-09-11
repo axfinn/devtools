@@ -56,8 +56,8 @@ function buildBoneTree() {
   return { root: byName.root, byName }
 }
 
-// 身体段定义 — 颜色 + 半径 + 长度
-const SEGMENTS = [
+// 身体段定义 — 颜色 + 半径 + 长度(给 human 预设用)
+const SEGMENTS_HUMAN = [
   { bone: 'spine',       color: 0xb3c0d8, r: 0.10, length: 0.25 },
   { bone: 'chest',       color: 0xb3c0d8, r: 0.14, length: 0.25 },
   { bone: 'neck',        color: 0xe6c7a8, r: 0.04, length: 0.18 },
@@ -75,6 +75,73 @@ const SEGMENTS = [
   { bone: 'lowerleg_r',  color: 0x6b7a99, r: 0.055, length: 0.42 },
   { bone: 'foot_r',      color: 0x6b7a99, r: 0.05, length: 0.20 },
 ]
+
+// 4 个内置"形象" — 共享 BONE_DEFS 骨骼,只是几何体不同
+// 用途:让用户一眼看出"这页是改 3D 形象"的,而不是一个空 demo
+const VISUAL_PRESETS = {
+  // 默认人形 — 胶囊 + 球头 + 肤色
+  human: {
+    label: '经典人形',
+    desc: '经典胶囊身形,头部/躯干/四肢分明',
+    accent: '#b3c0d8',
+    segments: SEGMENTS_HUMAN,
+    geomType: 'capsule',
+  },
+  // 机器人 — 钢色 Box,硬边
+  robot: {
+    label: '硬核机器人',
+    desc: '钢蓝方块,几何感强',
+    accent: '#5c8ed6',
+    geomType: 'box',
+    segments: SEGMENTS_HUMAN.map((s, i) => ({
+      ...s,
+      // 头:改成钢蓝立方体
+      ...(s.bone === 'head' ? { color: 0x5c8ed6, sphere: false, r: 0.13, length: 0.22 } : {}),
+      // 躯干:加深
+      ...(['spine', 'chest'].includes(s.bone) ? { color: 0x4a6fa0, r: 0.12 } : {}),
+      // 四肢:钢灰
+      ...(s.bone.startsWith('upperarm') || s.bone.startsWith('forearm') || s.bone.startsWith('hand')
+        ? { color: 0x6a7e9c, r: s.r * 1.1 } : {}),
+      ...(s.bone.startsWith('upperleg') || s.bone.startsWith('lowerleg') || s.bone.startsWith('foot')
+        ? { color: 0x445672, r: s.r * 1.05 } : {}),
+      // 脖子:小金属
+      ...(s.bone === 'neck' ? { color: 0x7a8aac, r: 0.045 } : {}),
+    })),
+  },
+  // 圆滚滚 — 全身 Sphere
+  sphere: {
+    label: '圆滚滚',
+    desc: '全身圆球,卡通可爱',
+    accent: '#ff7eb6',
+    geomType: 'sphere',
+    segments: SEGMENTS_HUMAN.map((s) => ({
+      bone: s.bone,
+      color: s.color === 0x6b7a99 ? 0xc8a4d6
+        : s.color === 0xb3c0d8 ? 0xffb3d1
+        : s.color === 0xe6c7a8 ? 0xfff0e1
+        : s.color,
+      sphere: true,
+      r: s.sphere ? s.r * 1.1 : s.r * 1.15,
+      length: s.length,
+    })),
+  },
+  // 体素 — 多色 Box,像素感
+  voxel: {
+    label: '体素风',
+    desc: '方块拼接,体素风',
+    accent: '#7bc96f',
+    geomType: 'box',
+    segments: SEGMENTS_HUMAN.map((s) => ({
+      ...s,
+      color: s.color === 0xb3c0d8 ? 0x7bc96f
+        : s.color === 0xe6c7a8 ? 0xffd166
+        : s.color === 0x6b7a99 ? 0x06a77d
+        : s.color,
+      r: s.sphere ? 0.16 : s.r * 1.15,
+      length: s.sphere ? undefined : (s.length || 0.2) * 1.05,
+    })),
+  },
+}
 
 // 计算所有骨骼在静止姿态下的世界变换 — 给 SkinnedMesh 的 skinIndex/skinWeight 做参考系
 function collectWorldRestPoses() {
@@ -97,7 +164,8 @@ function collectWorldRestPoses() {
 }
 
 // 构造 SkinnedMesh —— 整身一个 mesh,每根骨骼绑一段顶点(skinIndex/skinWeight)
-function buildSkinnedMesh() {
+// segments: 视觉预设里的段定义;geomType: 'capsule' | 'box' | 'sphere'(box/sphere 都不依赖 seg.sphere)
+function buildSkinnedMesh(segments, geomType = 'capsule') {
   const { root, byName, world } = collectWorldRestPoses()
 
   const positions = []
@@ -108,12 +176,27 @@ function buildSkinnedMesh() {
   const indices = []
   let vOffset = 0
 
-  for (const seg of SEGMENTS) {
+  for (const seg of segments) {
     const boneIndex = BONE_DEFS.findIndex((d) => d.name === seg.bone)
     if (boneIndex < 0) continue
-    const srcGeom = seg.sphere
-      ? new THREE.SphereGeometry(seg.r, 16, 12)
-      : new THREE.CapsuleGeometry(seg.r, Math.max(seg.length - 2 * seg.r, 0.001), 4, 10)
+    // 几何选择:capsule 用 length;box/sphere 不用 length
+    let srcGeom
+    if (geomType === 'sphere') {
+      srcGeom = new THREE.SphereGeometry(seg.r, 16, 12)
+    } else if (geomType === 'box') {
+      // 头用球,其余用方块
+      if (seg.sphere || seg.bone === 'head') {
+        srcGeom = new THREE.BoxGeometry(seg.r * 2, seg.r * 2, seg.r * 2)
+      } else {
+        const len = seg.length || 0.2
+        srcGeom = new THREE.BoxGeometry(seg.r * 2, len, seg.r * 2)
+      }
+    } else {
+      // capsule(默认)
+      srcGeom = seg.sphere
+        ? new THREE.SphereGeometry(seg.r, 16, 12)
+        : new THREE.CapsuleGeometry(seg.r, Math.max(seg.length - 2 * seg.r, 0.001), 4, 10)
+    }
     const flat = srcGeom.toNonIndexed()
     const posAttr = flat.getAttribute('position').array
     const normAttr = flat.getAttribute('normal').array
@@ -239,12 +322,16 @@ export function createAvatarScene(canvas) {
   const grid = new THREE.GridHelper(8, 16, '#bcc6d6', '#dde3ec')
   scene.add(grid)
 
-  const { mesh, skeleton, bones, byName, root } = buildSkinnedMesh()
+  const initial = buildSkinnedMesh(
+    VISUAL_PRESETS.human.segments,
+    VISUAL_PRESETS.human.geomType
+  )
+  let { mesh, skeleton, bones, byName, root } = initial
   // 骨头树单独挂入场景,便于 SkeletonHelper 显示
   scene.add(root)
   scene.add(mesh)
 
-  const skelHelper = new THREE.SkeletonHelper(mesh)
+  let skelHelper = new THREE.SkeletonHelper(mesh)
   skelHelper.material.linewidth = 2
   skelHelper.visible = false
   scene.add(skelHelper)
@@ -253,6 +340,43 @@ export function createAvatarScene(canvas) {
   controls.target.set(0, 1.0, 0)
   controls.enableDamping = true
   controls.update()
+
+  // 当前选中的 visual preset / pose —— applyVisualPreset 会切 preset 但保留 pose
+  let currentVisualPreset = 'human'
+  let currentPose = 'T-pose'
+
+  // 切换 visual preset —— 重建 SkinnedMesh,几何 + 颜色换,骨骼树形状不变
+  function applyVisualPreset(name) {
+    const preset = VISUAL_PRESETS[name]
+    if (!preset) return false
+    if (currentVisualPreset === name && mesh) return true
+    // 卸下旧 mesh + helper
+    scene.remove(mesh)
+    scene.remove(skelHelper)
+    mesh.geometry?.dispose?.()
+    if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose?.())
+    else mesh.material?.dispose?.()
+    skelHelper.dispose?.()
+    // 重建
+    const built = buildSkinnedMesh(preset.segments, preset.geomType)
+    scene.add(built.root)
+    scene.add(built.mesh)
+    const newHelper = new THREE.SkeletonHelper(built.mesh)
+    newHelper.material.linewidth = 2
+    newHelper.visible = skelHelper.visible
+    scene.add(newHelper)
+    // 替换闭包引用
+    mesh = built.mesh
+    skeleton = built.skeleton
+    bones = built.bones
+    byName = built.byName
+    root = built.root
+    skelHelper = newHelper
+    currentVisualPreset = name
+    // 应用当前姿态
+    applyPose(currentPose)
+    return true
+  }
 
   function applyPose(presetName) {
     const def = POSE_PRESETS[presetName]
@@ -265,6 +389,7 @@ export function createAvatarScene(canvas) {
       if (typeof r.ry === 'number') b.rotation.y = r.ry
       if (typeof r.rz === 'number') b.rotation.z = r.rz
     }
+    currentPose = presetName
     skeleton.update()
     return true
   }
@@ -334,15 +459,20 @@ export function createAvatarScene(canvas) {
     scene,
     camera,
     controls,
-    mesh,
-    skeleton,
-    bones,
-    byName,
-    root,
-    skelHelper,
-    boneNames: Object.keys(byName),
+    // 用 getter 让外部总是读到最新引用(applyVisualPreset 重建后)
+    get mesh() { return mesh },
+    get skeleton() { return skeleton },
+    get bones() { return bones },
+    get byName() { return byName },
+    get root() { return root },
+    get skelHelper() { return skelHelper },
+    get boneNames() { return Object.keys(byName) },
     poses: Object.keys(POSE_PRESETS),
+    visualPresets: Object.keys(VISUAL_PRESETS).map((k) => ({ name: k, label: VISUAL_PRESETS[k].label, desc: VISUAL_PRESETS[k].desc, accent: VISUAL_PRESETS[k].accent })),
+    get currentVisualPreset() { return currentVisualPreset },
+    get currentPose() { return currentPose },
     applyPose,
+    applyVisualPreset,
     setOnFrame: (fn) => { onFrame = fn },
     setSkeletonVisible: (v) => { skelHelper.visible = !!v },
     dispose,

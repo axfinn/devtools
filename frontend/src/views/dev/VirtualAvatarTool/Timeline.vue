@@ -174,10 +174,12 @@ const trackRef = ref(null)
 .timeline {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px 12px 8px;
+  gap: 3px;
+  padding: 6px 10px;
   background: var(--bg-primary, #1e1e1e);
   border-top: 1px solid var(--border-base, #404040);
+  min-height: 92px;
+  max-height: 200px;
 }
 .timeline-toolbar {
   display: flex;

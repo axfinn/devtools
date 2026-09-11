@@ -9,6 +9,24 @@
 <template>
   <div class="scene-panel">
     <el-form label-position="top" size="small">
+      <!-- 形象示例:4 个内置 visual preset,点一下换画布里的人物造型 -->
+      <el-form-item v-if="visualPresets.length" label="示例形象">
+        <div class="preset-grid">
+          <button
+            v-for="p in visualPresets"
+            :key="p.name"
+            class="preset-card"
+            :class="{ active: currentPreset === p.name }"
+            :style="{ '--accent': p.accent }"
+            :title="p.desc"
+            @click="onPickPreset(p.name)"
+          >
+            <span class="preset-emoji">{{ presetEmoji(p.name) }}</span>
+            <span class="preset-label">{{ labelFor(p) }}</span>
+          </button>
+        </div>
+        <small class="preset-hint">点击切换 — 直接在画布看到不同造型</small>
+      </el-form-item>
       <el-form-item label="网格">
         <el-switch v-model="gridOn" @change="apply" />
       </el-form-item>
@@ -27,7 +45,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 
 const props = defineProps({
   sceneApi: { type: Object, default: null },
@@ -42,6 +60,24 @@ const ENV_COLORS = {
   dark: '#0A0D14',
   light: '#eef2f7',
   gradient: null, // 用 gradient texture
+}
+
+// 示例形象:从 sceneApi 拉出来
+const visualPresets = computed(() => props.sceneApi?.visualPresets || [])
+const currentPreset = computed(() => props.sceneApi?.currentVisualPreset || 'human')
+
+function labelFor(p) {
+  return p.label || p.name
+}
+function presetEmoji(name) {
+  // 用 emoji 给每个 preset 一个直观图标,降低"这是什么"的认知负担
+  return ({ human: '🧍', robot: '🤖', sphere: '🟣', voxel: '🟩' })[name] || '✨'
+}
+function onPickPreset(name) {
+  if (!props.sceneApi) return
+  if (props.sceneApi.applyVisualPreset?.(name)) {
+    emit('change', { kind: 'visualPreset', name })
+  }
 }
 
 watch(() => props.sceneApi, (api) => {
@@ -106,5 +142,53 @@ function applyEnv(p) {
   color: var(--text-tertiary, #909399);
   letter-spacing: 0.3px;
   padding-bottom: 2px;
+}
+
+/* 示例形象卡片 — 2x2 网格,直观点击切换 */
+.preset-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border: 1px solid var(--border-light, #333);
+  border-radius: 6px;
+  background: var(--bg-secondary, #252525);
+  color: var(--text-secondary, #a0a0a0);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 120ms;
+}
+.preset-card:hover {
+  border-color: var(--accent, #409eff);
+  color: var(--text-primary, #e0e0e0);
+}
+.preset-card.active {
+  border-color: var(--accent, #409eff);
+  background: color-mix(in srgb, var(--accent, #409eff) 14%, var(--bg-secondary, #252525));
+  color: var(--text-primary, #e0e0e0);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #409eff) 25%, transparent);
+}
+.preset-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+.preset-label {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.preset-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-tertiary, #909399);
+  line-height: 1.4;
 }
 </style>
