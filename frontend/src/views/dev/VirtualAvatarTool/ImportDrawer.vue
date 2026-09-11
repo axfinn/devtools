@@ -108,7 +108,7 @@ async function onUpload() {
   uploading.value = true
   try {
     // VRM 文件内容是 glTF + 扩展,后端按 .glb 落盘不影响前端解析(VRMLoaderPlugin 看内容)
-    const fileExt = ext(pendingFile.value)
+    const fileExt = ext(pendingFile.value.name)
     const storeFormat = fileExt === 'vrm' ? 'glb' : fileExt
     const r = await uploadModel(pendingFile.value, { title: title.value, format: storeFormat })
     ElMessage.success(`上传成功: ${r.id}`)

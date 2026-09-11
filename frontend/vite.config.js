@@ -67,7 +67,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8082',
+        target: 'http://localhost:8080',
         changeOrigin: true,
         // vite 7 默认不代理 WebSocket upgrade — 必须显式 ws: true,
         // 否则屏幕共享等需要 WS 的功能会卡住(浏览器永远等不到握手完成)

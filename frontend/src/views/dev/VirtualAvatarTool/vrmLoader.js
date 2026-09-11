@@ -26,6 +26,9 @@ export async function loadVRMIntoScene(sceneApi, url) {
   if (!sceneApi || !sceneApi.scene) {
     throw new Error('sceneApi 未就绪')
   }
+  // 调试钩:让 smoke 能确认 loadVRMIntoScene 真的被调了
+  // (VRM 载入成功/失败都可能到 — 我们只关心"路径通了")
+  try { console.info('[vrmLoader] loadVRMIntoScene', url) } catch (_) {}
   // 释放上一只
   disposeCurrentVRM(sceneApi)
 

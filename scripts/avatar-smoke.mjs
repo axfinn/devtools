@@ -1,6 +1,6 @@
 // scripts/avatar-smoke.mjs
 // ----------------------------------------------------------------
-// 本地可用性 smoke —— 对应 DEVT-12 验收契约的 7 项断言:
+// 本地可用性 smoke —— 对应 DEVT-12 验收契约的 8 项断言:
 //
 //   1. 路由 /dev/avatar             HTTP 200
 //   2. 控制台                       0 error (已过滤环境伪错误)
@@ -13,11 +13,15 @@
 //   6. 摄像头无设备降级              状态切到 no_device / unsupported / error
 //      + "再试" 按钮出现
 //   7. 导出                         真的下载文件 + glTF magic 'glTF' (glb)
+//   8. VRM 载入 hookup              上传 .vrm 后,VirtualAvatarTool.onImported
+//                                    真的调到了 vrmLoader.loadVRMIntoScene
 //
 // 调用约定 (与本仓 loops 流程一致):
 //   假设 backend :8080 与 vite :5173 已由本轮 orchestrator 起好;
 //   在 frontend/ 下执行以让 Node 解析到根的 node_modules:
 //     cd frontend && node ../scripts/avatar-smoke.mjs
+//   或者任何 cwd,但需要 ./frontend/node_modules 能被解析到 playwright
+//   (本仓已经 symlink scripts/node_modules → ../frontend/node_modules)
 //
 // 产出:
 //   ~/.avatar-loop/smoke-report.json
@@ -76,11 +80,14 @@ async function main() {
     })
     const page = await ctx.newPage()
     const consoleErrors = []
+    const consoleInfos = []
     page.on('console', m => {
         if (m.type() === 'error') {
             const text = m.text()
             if (!isEnvError(text)) consoleErrors.push(text)
         }
+        // 收 info 级 console,VRM 断言要用
+        if (m.type() === 'info') consoleInfos.push(m.text())
     })
     page.on('pageerror', e => consoleErrors.push('pageerror: ' + e.message))
 
@@ -236,6 +243,35 @@ async function main() {
         if (magic !== 'glTF') throw new Error('glb magic 错误: ' + JSON.stringify(magic))
         exportDetail = { filename, bytes: st.size, magic }
         return exportDetail
+    }))
+
+    // ===== 8. VRM 载入 hookup — 上传 → onImported → loadVRMIntoScene =====
+    rec(await assert('8. 上传 .vrm 后 loadVRMIntoScene 被调用', async () => {
+        // 打开导入抽屉
+        await page.click('.tool-topbar button:has-text("导入模型")')
+        await page.waitForSelector('.import-drop', { timeout: 5000 })
+        // 注入虚拟 .vrm 字节(后端能存,VRMLoaderPlugin 会判它不是合法 VRM 抛错;
+        // 测的是"代码路径真的被调了",不是 VRM 内容合法性)
+        // magic 'glTF' + version=2, 后端按 glb 落盘
+        const vrmBytes = Buffer.from(new Uint8Array([0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00]))
+        const input = await page.$('.import-drop input[type=file]')
+        await input.setInputFiles({ name: 'fake.vrm', mimeType: 'application/octet-stream', buffer: vrmBytes })
+        await page.waitForTimeout(300)
+        // 点"上传"
+        await page.click('.file-card .el-button--primary:has-text("上传")')
+        // 等 console.info "[vrmLoader] loadVRMIntoScene" 出现 — 证明 onImported → loadVRMIntoScene 真被调
+        let hookupSeen = false
+        for (let i = 0; i < 60; i++) {
+            if (consoleInfos.some(t => /\[vrmLoader\]/.test(t))) {
+                hookupSeen = true
+                break
+            }
+            await page.waitForTimeout(150)
+        }
+        if (!hookupSeen) {
+            throw new Error('VRM 载入流程没触发:onImported → loadVRMIntoScene 没被调用')
+        }
+        return { info: consoleInfos.find(t => /\[vrmLoader\]/.test(t)) }
     }))
 
     // ===== 2. console.error = 0 =====
