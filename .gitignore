@@ -1,7 +1,9 @@
 # Node
 node_modules/
 frontend/node_modules/
-scripts/node_modules/    # ESM 解析 helper — symlink 到 frontend/node_modules
+# scripts/node_modules 是 ESM 解析 helper 的 symlink（指向 ../frontend/node_modules）；
+# 不带末尾 / 才能让 gitignore 同时匹配 symlink 本身和目录。
+scripts/node_modules
 .pnpm-store/
 frontend/dist/
 backend/node_modules/
