@@ -1,116 +1,171 @@
-// Package trip 实现"旅游行程助手"限界上下文。
+// Package trip 是「旅游行程助手」的 DDD 限界上下文。
 //
-// 领域模型(DDD):
-//   - Trip         聚合根 —— 一次完整旅行
-//   - DayPlan      Trip 下的实体 —— 某一天的计划
-//   - Activity     DayPlan 下的实体 —— 某天的活动/景点/餐饮/住宿...
-//   - Destination  值对象 —— 城市/区域的目的地参考信息
+// 设计原则:
+//   - Trip 是聚合根,DayPlan 是聚合内的实体,Activity 是 DayPlan 内的实体。
+//   - Destination 是值对象,不可变,只承载城市/区域/坐标/官方信息。
+//   - Reminder 是 Activity 上的提醒配置(单位:分钟),由后台 cleanup 协程扫表发邮件。
+//   - 数据访问走 Repository 接口;Service 是用例层,负责增删改查 + Markdown 渲染。
 //
-// 仓储接口在 repository.go,业务编排与 Markdown 渲染在 service.go,
-// 14 天国庆粤港澳潮汕真实行程的 fixture 在 seed.go。
+// 模块独立:不依赖 handlers / routes;由 backend/handlers/trip.go 做 HTTP 适配,
+// 由 backend/cmd/trip 做 CLI 适配。
 package trip
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
-// ActivityKind 活动类型 —— 值对象,枚举。
+// ActivityKind 活动类型。
 type ActivityKind string
 
 const (
-	ActivityTransport  ActivityKind = "transport"  // 交通(过关/高铁/打车/船)
-	ActivitySight      ActivityKind = "sight"      // 景点/观光
-	ActivityFood       ActivityKind = "food"       // 餐饮
-	ActivityLodging    ActivityKind = "lodging"    // 住宿
-	ActivityShopping   ActivityKind = "shopping"   // 购物
-	ActivityNote       ActivityKind = "note"       // 自由活动 / 备注
+	ActivityTransit   ActivityKind = "transit"   // 交通(过关 / 高铁 / 大巴)
+	ActivitySight     ActivityKind = "sight"     // 景点
+	ActivityFood      ActivityKind = "food"      // 餐饮
+	ActivityLodging   ActivityKind = "lodging"   // 住宿
+	ActivityShopping  ActivityKind = "shopping"  // 购物
+	ActivityLeisure   ActivityKind = "leisure"   // 自由活动 / 休息
+	ActivityReminder  ActivityKind = "reminder"  // 提醒锚点(非实体活动,只用于在 Markdown 中显示一行提醒说明)
 )
 
-// ValidActivityKinds 用于校验入参。
-var ValidActivityKinds = map[ActivityKind]bool{
-	ActivityTransport: true,
-	ActivitySight:     true,
-	ActivityFood:      true,
-	ActivityLodging:   true,
-	ActivityShopping:  true,
-	ActivityNote:      true,
+// ValidKinds 用于校验外部输入。
+var ValidKinds = map[ActivityKind]bool{
+	ActivityTransit: true, ActivitySight: true, ActivityFood: true,
+	ActivityLodging: true, ActivityShopping: true, ActivityLeisure: true,
 }
 
-// KindLabel 中文标签 —— 渲染用。
-var KindLabel = map[ActivityKind]string{
-	ActivityTransport: "交通",
-	ActivitySight:     "景点",
-	ActivityFood:      "餐饮",
-	ActivityLodging:   "住宿",
-	ActivityShopping:  "购物",
-	ActivityNote:      "备注",
+// Destination 值对象:城市/区域/经纬度/官方信息。
+type Destination struct {
+	City      string  `json:"city"`                // 城市(如 "深圳" / "澳门")
+	Region    string  `json:"region,omitempty"`    // 区域(如 "氹仔" / "尖沙咀")
+	Country   string  `json:"country,omitempty"`   // 国家/地区
+	Latitude  float64 `json:"latitude,omitempty"`  // 纬度
+	Longitude float64 `json:"longitude,omitempty"` // 经度
+	Note      string  `json:"note,omitempty"`      // 备注(签证/天气/海拔...)
 }
 
-// Trip 行程聚合根。
-type Trip struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	StartDate string    `json:"start_date"` // YYYY-MM-DD,出发日期
-	EndDate   string    `json:"end_date"`   // YYYY-MM-DD,返程日期
-	Summary   string    `json:"summary"`    // 一句话描述
-	Cities    string    `json:"cities"`     // 覆盖城市列表(逗号分隔),冗余便于检索
-	Tags      string    `json:"tags"`       // 标签(逗号分隔),便于检索
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+// Activity DayPlan 内的实体:一个具体事件。
+type Activity struct {
+	ID         string       `json:"id"`
+	DayID      string       `json:"day_id"`
+	Kind       ActivityKind `json:"kind"`
+	Title      string       `json:"title"`
+	Location   string       `json:"location,omitempty"`   // 自由文本,如 "尖沙咀星光大道"
+	Destination Destination  `json:"destination"`          // 值对象;空也合法
+	StartTime  string       `json:"start_time,omitempty"` // "HH:MM",留空表示整天
+	DurationMin int         `json:"duration_min,omitempty"`
+	Note       string       `json:"note,omitempty"`
+	Order      int          `json:"order"`
 
-	// 关联对象(由 Repository 在 Load 时填充,不持久化到 trips 表)
-	Days []*DayPlan `json:"days,omitempty"`
+	// 提醒配置:Activity 时间 - remind_before_minutes = 提醒时刻。
+	// 0 表示不提醒。后台 cleanup 协程扫表,到点调 notif.Send 发邮件。
+	RemindBeforeMinutes int      `json:"remind_before_minutes,omitempty"`
+	RemindEmails        []string `json:"remind_emails,omitempty"` // 空 = 走 Trip.NotifyEmail
 }
 
-// DayPlan 每日计划 —— Trip 下的实体。
+// DayPlan Trip 下的实体:一天的所有活动。
 type DayPlan struct {
-	ID        string `json:"id"`
-	TripID    string `json:"trip_id"`
-	DayIndex  int    `json:"day_index"` // 1-based,在 trip 内的顺序
-	Date      string `json:"date"`      // YYYY-MM-DD
-	City      string `json:"city"`      // 当天主城市(用于分组与检索)
-	Title     string `json:"title"`     // 当天一句话,如 "D1 深圳集合日"
-	Summary   string `json:"summary"`
-
+	ID         string     `json:"id"`
+	TripID     string     `json:"trip_id"`
+	Date       string     `json:"date"` // YYYY-MM-DD(本地日期;不存时区,出行者按本地理解)
+	Destination Destination `json:"destination"` // 当天主目的地(冗余方便查询)
+	Order      int        `json:"order"`
 	Activities []*Activity `json:"activities,omitempty"`
 }
 
-// Activity 单个活动/景点 —— DayPlan 下的实体。
-type Activity struct {
-	ID            string       `json:"id"`
-	DayPlanID     string       `json:"day_plan_id"`
-	Seq           int          `json:"seq"`         // 一天内的顺序,1-based
-	Kind          ActivityKind `json:"kind"`        // transport/sight/food/...
-	Time          string       `json:"time"`        // "上午"/"下午"/"晚上"/"全天"/"09:30"
-	Title         string       `json:"title"`       // 活动名,如 "维多利亚港星光大道"
-	Location      string       `json:"location"`    // 具体地点
-	Notes         string       `json:"notes"`       // 备注/推荐
-	DestinationID string       `json:"destination_id,omitempty"`
+// Trip 聚合根。
+type Trip struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	StartDate   string    `json:"start_date"` // YYYY-MM-DD
+	EndDate     string    `json:"end_date"`   // YYYY-MM-DD
+	Tags        []string  `json:"tags,omitempty"`
+	CoverCities []string  `json:"cover_cities,omitempty"` // 冗余字段,首日 / 末日方便筛选
+	NotifyEmail string    `json:"notify_email,omitempty"` // 行程级默认提醒收件人
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Days        []*DayPlan `json:"days,omitempty"`
 }
 
-// Destination 目的地值对象 —— 城市/区域参考信息。
-type Destination struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`   // 城市/区域名,如 "深圳"/"氹仔"
-	Region string `json:"region"` // 大区/省/国家,如 "广东"/"澳门"
-	Info   string `json:"info"`   // 简短介绍
-}
-
-// Domain-level 错误。
-var (
-	ErrTripNotFound       = errors.New("trip not found")
-	ErrDayNotFound        = errors.New("day plan not found")
-	ErrInvalidActivityKind = errors.New("invalid activity kind")
-)
-
-// Validate Activity 入参合法性。
-func (a *Activity) Validate() error {
-	if a.Title == "" {
-		return errors.New("activity title is required")
+// Validate 日期合法性 + 名称非空。
+func (t *Trip) Validate() error {
+	if strings.TrimSpace(t.Name) == "" {
+		return errors.New("trip name is required")
 	}
-	if !ValidActivityKinds[a.Kind] {
-		return ErrInvalidActivityKind
+	start, err := time.Parse("2006-01-02", t.StartDate)
+	if err != nil {
+		return fmt.Errorf("invalid start_date %q: %w", t.StartDate, err)
+	}
+	end, err := time.Parse("2006-01-02", t.EndDate)
+	if err != nil {
+		return fmt.Errorf("invalid end_date %q: %w", t.EndDate, err)
+	}
+	if end.Before(start) {
+		return fmt.Errorf("end_date %s is before start_date %s", t.EndDate, t.StartDate)
 	}
 	return nil
+}
+
+// Validate DayPlan 字段。
+func (d *DayPlan) Validate() error {
+	if _, err := time.Parse("2006-01-02", d.Date); err != nil {
+		return fmt.Errorf("invalid day date %q: %w", d.Date, err)
+	}
+	if d.TripID == "" {
+		return errors.New("day plan missing trip_id")
+	}
+	return nil
+}
+
+// Validate Activity 字段。
+func (a *Activity) Validate() error {
+	if strings.TrimSpace(a.Title) == "" {
+		return errors.New("activity title is required")
+	}
+	if !ValidKinds[a.Kind] {
+		return fmt.Errorf("invalid activity kind %q", a.Kind)
+	}
+	if a.StartTime != "" {
+		if _, err := time.Parse("15:04", a.StartTime); err != nil {
+			return fmt.Errorf("invalid start_time %q (want HH:MM): %w", a.StartTime, err)
+		}
+	}
+	if a.RemindBeforeMinutes < 0 {
+		return errors.New("remind_before_minutes must be >= 0")
+	}
+	return nil
+}
+
+// ActivityTime 把 Activity.Date + Activity.StartTime 合成一个 time.Time。
+// 用于提醒调度;StartTime 为空时取当天 09:00 作为提醒锚点。
+func ActivityTime(day *DayPlan, a *Activity) (time.Time, bool) {
+	dayDate, err := time.ParseInLocation("2006-01-02", day.Date, time.Local)
+	if err != nil {
+		return time.Time{}, false
+	}
+	if a.StartTime == "" {
+		return time.Date(dayDate.Year(), dayDate.Month(), dayDate.Day(), 9, 0, 0, 0, time.Local), true
+	}
+	t, err := time.ParseInLocation("15:04", a.StartTime, dayDate.Location())
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Date(dayDate.Year(), dayDate.Month(), dayDate.Day(), t.Hour(), t.Minute(), 0, 0, time.Local), true
+}
+
+// ActivityReminderTime 算出提醒真正触发的时刻。
+// 公式:activity_at - remind_before_minutes。
+// 当 remind_before_minutes == 0 时返回 (zero, false),表示不提醒。
+func ActivityReminderTime(day *DayPlan, a *Activity) (time.Time, bool) {
+	if a.RemindBeforeMinutes <= 0 {
+		return time.Time{}, false
+	}
+	at, ok := ActivityTime(day, a)
+	if !ok {
+		return time.Time{}, false
+	}
+	return at.Add(-time.Duration(a.RemindBeforeMinutes) * time.Minute), true
 }

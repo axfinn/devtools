@@ -1,29 +1,30 @@
 // Command trip 是「旅游行程助手」的 CLI 入口。
 //
-// 用法:
-//
-//	trip [--db PATH] <command> [args...]
+// 与 HTTP 端点共享 backend/trip.Service;CLI 默认连独立 SQLite 文件
+// (./data/trip.db,与 HTTP 默认走的主库 ./data/paste.db 不共享连接),
+// 避免 CLI 误操作影响 HTTP 服务。HTTP/CLI 共用同一份领域代码。
 //
 // 子命令:
 //
 //	init                          初始化数据库表(幂等)
-//	seed                          落地第一个行程(已存在则跳过)
-//	create --name N --start S --end E [--summary X] [--cities X] [--tags X]
-//	list                          列出所有行程
+//	seed [--force]                落地第一个行程(已存在则跳过;--force 删除同名重建)
+//	list [--json]                 列出所有行程
 //	show <trip-id>                渲染完整 Markdown 行程单到 stdout
+//	create --name N --start S --end E [--description X] [--cities X] [--tags X] [--notify-email E]
 //	delete <trip-id>              删除行程(级联 days+activities)
-//	add-day <trip-id> --date S [--city X] [--title X] [--summary X]
+//	add-day <trip-id> --date S [--city X] [--region X] [--country X]
 //	add-activity <day-id> --kind K --title N [--time X] [--location X] [--notes X]
+//	                          [--city X --region X --country X]
+//	                          [--remind-before-minutes N --remind-email E1,E2]
+//	remind <activity-id> --before N [--email E1,E2] [--reset]
 //	days <trip-id>                列出某 trip 的所有 DayPlan
 //	activities <day-id>           列出某天的所有 Activity
 //	help                          显示帮助
-//
-// 默认 SQLite 路径: ./data/trip.db(可通过 --db 覆盖)。
-// 数据库 schema 由 trip 包内的 InitSchema 负责,CLI 启动时自动建表。
 package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -31,7 +32,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"devtools/trip"
 
@@ -48,23 +48,19 @@ func main() {
 }
 
 func run() error {
-	// 把第一个非 flag 参数作为子命令,后续参数由子命令解析。
-	// 这避免子命令各自 fs.Parse 时的「flag provided but not defined」误伤。
 	args := os.Args[1:]
-	// 全局 --db 提到前面。
 	var dbPath string
 	for i := 0; i < len(args); {
-		if args[i] == "--db" && i+1 < len(args) {
+		switch {
+		case args[i] == "--db" && i+1 < len(args):
 			dbPath = args[i+1]
 			args = append(args[:i], args[i+2:]...)
-			continue
-		}
-		if strings.HasPrefix(args[i], "--db=") {
+		case strings.HasPrefix(args[i], "--db="):
 			dbPath = strings.TrimPrefix(args[i], "--db=")
 			args = append(args[:i], args[i+1:]...)
-			continue
+		default:
+			i++
 		}
-		i++
 	}
 	if dbPath == "" {
 		dbPath = defaultDBPath
@@ -76,24 +72,23 @@ func run() error {
 	cmd := args[0]
 	rest := args[1:]
 
-	// 确保 data/ 目录存在(若使用默认相对路径)。
 	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", dir, err)
 		}
 	}
-
-	repo, err := trip.OpenSQLite(dbPath)
+	conn, err := sql.Open("sqlite3", dbPath+"?_parse_time=true")
 	if err != nil {
 		return fmt.Errorf("open db %s: %w", dbPath, err)
 	}
-	defer repo.Close()
+	defer conn.Close()
 
-	ctx := context.Background()
-	if err := repo.InitSchema(ctx); err != nil {
-		return err
-	}
+	repo := trip.NewSQLiteRepository(conn)
 	svc := trip.NewService(repo)
+	ctx := context.Background()
+	if err := svc.EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("ensure schema: %w", err)
+	}
 
 	switch cmd {
 	case "help", "-h", "--help":
@@ -107,26 +102,11 @@ func run() error {
 	case "seed":
 		fs := flag.NewFlagSet("seed", flag.ContinueOnError)
 		fs.SetOutput(os.Stderr)
-		force := fs.Bool("force", false, "re-seed even if a trip with the same name already exists")
+		force := fs.Bool("force", false, "delete existing trip with same name first")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}
-		if *force {
-			// force: 删除已有同名行程后重建
-			existing, err := svc.List(ctx)
-			if err != nil {
-				return err
-			}
-			for _, t := range existing {
-				if t.Name == "国庆 2026 粤港澳潮汕 14 日深度游" {
-					if err := svc.DeleteTrip(ctx, t.ID); err != nil {
-						return err
-					}
-					fmt.Printf("trip: removed existing %s (%s)\n", t.Name, t.ID)
-				}
-			}
-		}
-		t, created, err := trip.SeedFirstTrip(ctx, svc)
+		id, created, err := svc.SeedRealTrip(ctx, *force)
 		if err != nil {
 			return err
 		}
@@ -134,38 +114,12 @@ func run() error {
 		if !created {
 			verb = "kept existing"
 		}
-		fmt.Printf("trip: %s %s (id=%s, %d days)\n", verb, t.Name, t.ID, len(t.Days))
-		return nil
-
-	case "create":
-		fs := flag.NewFlagSet("create", flag.ContinueOnError)
-		fs.SetOutput(os.Stderr)
-		name := fs.String("name", "", "trip name (required)")
-		start := fs.String("start", "", "start date YYYY-MM-DD (required)")
-		end := fs.String("end", "", "end date YYYY-MM-DD (required)")
-		summary := fs.String("summary", "", "one-line summary")
-		cities := fs.String("cities", "", "comma-separated cities")
-		tags := fs.String("tags", "", "comma-separated tags")
-		if err := fs.Parse(rest); err != nil {
-			return err
-		}
-		t, err := svc.CreateTrip(ctx, trip.CreateTripInput{
-			Name:      *name,
-			StartDate: *start,
-			EndDate:   *end,
-			Summary:   *summary,
-			Cities:    *cities,
-			Tags:      *tags,
-		})
-		if err != nil {
-			return err
-		}
-		fmt.Printf("trip: created id=%s name=%q\n", t.ID, t.Name)
+		fmt.Printf("trip: %s trip_id=%s\n", verb, id)
 		return nil
 
 	case "list":
 		asJSON := hasFlag(rest, "--json")
-		trips, err := svc.List(ctx)
+		trips, err := svc.ListTrips(ctx)
 		if err != nil {
 			return err
 		}
@@ -178,24 +132,23 @@ func run() error {
 			enc.SetIndent("", "  ")
 			return enc.Encode(trips)
 		}
-		fmt.Printf("%-32s  %-12s  %-12s  %-12s  %s\n", "NAME", "START", "END", "ID", "CITIES")
-		fmt.Println(strings.Repeat("-", 96))
+		fmt.Printf("%-36s  %-12s  %-12s  %-36s\n", "NAME", "START", "END", "ID")
+		fmt.Println(strings.Repeat("-", 110))
 		for _, t := range trips {
-			fmt.Printf("%-32s  %-12s  %-12s  %-12s  %s\n",
-				truncate(t.Name, 32), t.StartDate, t.EndDate, t.ID, t.Cities)
+			fmt.Printf("%-36s  %-12s  %-12s  %-36s\n",
+				truncate(t.Name, 36), t.StartDate, t.EndDate, t.ID)
 		}
 		return nil
 
 	case "show":
 		if len(rest) == 0 {
-			return errors.New("usage: trip show <trip-id> [--md]")
+			return errors.New("usage: trip show <trip-id>")
 		}
-		tripID := rest[0]
-		t, err := svc.Show(ctx, tripID)
+		md, err := svc.RenderMarkdown(ctx, rest[0])
 		if err != nil {
 			return err
 		}
-		fmt.Print(svc.RenderMarkdown(t))
+		fmt.Print(md)
 		return nil
 
 	case "delete":
@@ -208,58 +161,146 @@ func run() error {
 		fmt.Printf("trip: deleted %s\n", rest[0])
 		return nil
 
-	case "add-day":
-		flags, positional, err := parseFlagsAndPositional(rest, []string{"date", "city", "title", "summary"})
-		if err != nil {
+	case "create":
+		fs := flag.NewFlagSet("create", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		name := fs.String("name", "", "trip name (required)")
+		start := fs.String("start", "", "start date YYYY-MM-DD (required)")
+		end := fs.String("end", "", "end date YYYY-MM-DD (required)")
+		desc := fs.String("description", "", "one-line description")
+		cities := fs.String("cities", "", "comma-separated cities")
+		tags := fs.String("tags", "", "comma-separated tags")
+		notify := fs.String("notify-email", "", "default reminder recipient email")
+		if err := fs.Parse(rest); err != nil {
 			return err
 		}
-		if len(positional) == 0 {
-			return errors.New("usage: trip add-day <trip-id> --date YYYY-MM-DD [...]")
+		t := &trip.Trip{
+			Name:        strings.TrimSpace(*name),
+			Description: strings.TrimSpace(*desc),
+			StartDate:   strings.TrimSpace(*start),
+			EndDate:     strings.TrimSpace(*end),
+			CoverCities: splitCSV(*cities),
+			Tags:        splitCSV(*tags),
+			NotifyEmail: strings.TrimSpace(*notify),
 		}
-		if flags["date"] == "" {
+		if err := svc.CreateTrip(ctx, t); err != nil {
+			return err
+		}
+		fmt.Printf("trip: created id=%s name=%q\n", t.ID, t.Name)
+		return nil
+
+	case "add-day":
+		fs := flag.NewFlagSet("add-day", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		positional := fs.String("trip-id", "", "trip id (positional also accepted)")
+		date := fs.String("date", "", "YYYY-MM-DD (required)")
+		city := fs.String("city", "", "primary city for the day")
+		region := fs.String("region", "", "region within city")
+		country := fs.String("country", "", "country")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		tripID := *positional
+		if tripID == "" && fs.NArg() > 0 {
+			tripID = fs.Arg(0)
+		}
+		if tripID == "" {
+			return errors.New("usage: trip add-day <trip-id> --date YYYY-MM-DD")
+		}
+		if *date == "" {
 			return errors.New("--date is required (YYYY-MM-DD)")
 		}
-		d, err := svc.AddDay(ctx, trip.AddDayInput{
-			TripID:  positional[0],
-			Date:    flags["date"],
-			City:    flags["city"],
-			Title:   flags["title"],
-			Summary: flags["summary"],
-		})
-		if err != nil {
+		dp := &trip.DayPlan{
+			TripID: tripID,
+			Date:   strings.TrimSpace(*date),
+			Destination: trip.Destination{
+				City:    strings.TrimSpace(*city),
+				Region:  strings.TrimSpace(*region),
+				Country: strings.TrimSpace(*country),
+			},
+		}
+		if err := svc.AddDay(ctx, dp); err != nil {
 			return err
 		}
-		fmt.Printf("trip: added day id=%s trip=%s index=%d date=%s\n",
-			d.ID, d.TripID, d.DayIndex, d.Date)
+		fmt.Printf("trip: added day id=%s trip=%s date=%s\n", dp.ID, dp.TripID, dp.Date)
 		return nil
 
 	case "add-activity":
-		flags, positional, err := parseFlagsAndPositional(rest, []string{"kind", "time", "title", "location", "notes", "dest-name", "dest-region"})
-		if err != nil {
+		fs := flag.NewFlagSet("add-activity", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		positional := fs.String("day-id", "", "day id (positional also accepted)")
+		kind := fs.String("kind", "sight", "transit|sight|food|lodging|shopping|leisure")
+		title := fs.String("title", "", "activity title (required)")
+		t := fs.String("time", "", "HH:MM or 上午/下午/晚上")
+		loc := fs.String("location", "", "free-text location")
+		notes := fs.String("notes", "", "free-text notes")
+		city := fs.String("city", "", "destination city")
+		region := fs.String("region", "", "destination region")
+		country := fs.String("country", "", "destination country")
+		duration := fs.Int("duration-min", 0, "duration in minutes")
+		remBefore := fs.Int("remind-before-minutes", 0, "send reminder N minutes before start time (0=disable)")
+		remEmails := fs.String("remind-email", "", "comma-separated reminder recipients")
+		if err := fs.Parse(rest); err != nil {
 			return err
 		}
-		if len(positional) == 0 {
+		dayID := *positional
+		if dayID == "" && fs.NArg() > 0 {
+			dayID = fs.Arg(0)
+		}
+		if dayID == "" {
 			return errors.New("usage: trip add-activity <day-id> --title X --kind K [...]")
 		}
-		kind := trip.ActivityKind(flags["kind"])
-		if kind == "" {
-			kind = trip.ActivitySight
+		if *title == "" {
+			return errors.New("--title is required")
 		}
-		a, err := svc.AddActivity(ctx, trip.AddActivityInput{
-			DayPlanID:         positional[0],
-			Kind:              kind,
-			Time:              flags["time"],
-			Title:             flags["title"],
-			Location:          flags["location"],
-			Notes:             flags["notes"],
-			DestinationName:   flags["dest-name"],
-			DestinationRegion: flags["dest-region"],
-		})
-		if err != nil {
+		a := &trip.Activity{
+			DayID:               dayID,
+			Kind:                trip.ActivityKind(strings.TrimSpace(*kind)),
+			Title:               strings.TrimSpace(*title),
+			StartTime:           strings.TrimSpace(*t),
+			Location:            strings.TrimSpace(*loc),
+			Note:                strings.TrimSpace(*notes),
+			DurationMin:         *duration,
+			RemindBeforeMinutes: *remBefore,
+			RemindEmails:        splitCSV(*remEmails),
+			Destination: trip.Destination{
+				City:    strings.TrimSpace(*city),
+				Region:  strings.TrimSpace(*region),
+				Country: strings.TrimSpace(*country),
+			},
+		}
+		if err := svc.AddActivity(ctx, a); err != nil {
 			return err
 		}
-		fmt.Printf("trip: added activity id=%s day=%s seq=%d [%s] %s\n",
-			a.ID, a.DayPlanID, a.Seq, a.Kind, a.Title)
+		fmt.Printf("trip: added activity id=%s day=%s [%s] %s\n", a.ID, a.DayID, a.Kind, a.Title)
+		return nil
+
+	case "remind":
+		fs := flag.NewFlagSet("remind", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		positional := fs.String("activity-id", "", "activity id (positional also accepted)")
+		before := fs.Int("before", 0, "minutes before start (0=disable)")
+		emails := fs.String("email", "", "comma-separated reminder recipients")
+		reset := fs.Bool("reset", false, "clear sent_at so reminder can fire again")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		actID := *positional
+		if actID == "" && fs.NArg() > 0 {
+			actID = fs.Arg(0)
+		}
+		if actID == "" {
+			return errors.New("usage: trip remind <activity-id> --before N [--email E] [--reset]")
+		}
+		if err := svc.SetReminder(ctx, actID, *before, splitCSV(*emails)); err != nil {
+			return err
+		}
+		if *reset {
+			if _, err := repo.ResetReminderSent(ctx, actID); err != nil {
+				return err
+			}
+		}
+		fmt.Printf("trip: reminder updated activity=%s before=%dmin\n", actID, *before)
 		return nil
 
 	case "days":
@@ -270,10 +311,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%-4s  %-12s  %-12s  %s\n", "DAY", "DATE", "CITY", "TITLE")
+		fmt.Printf("%-4s  %-12s  %-12s  %s\n", "DAY", "DATE", "CITY", "ID")
 		fmt.Println(strings.Repeat("-", 80))
 		for _, d := range days {
-			fmt.Printf("%-4d  %-12s  %-12s  %s\n", d.DayIndex, d.Date, d.City, d.Title)
+			city := d.Destination.City
+			fmt.Printf("%-4d  %-12s  %-12s  %s\n", d.Order, d.Date, city, d.ID)
 		}
 		return nil
 
@@ -285,10 +327,10 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%-4s  %-8s  %-8s  %s\n", "SEQ", "KIND", "TIME", "TITLE")
+		fmt.Printf("%-4s  %-12s  %-8s  %s\n", "ORDER", "KIND", "TIME", "TITLE")
 		fmt.Println(strings.Repeat("-", 80))
 		for _, a := range acts {
-			fmt.Printf("%-4d  %-8s  %-8s  %s\n", a.Seq, a.Kind, a.Time, a.Title)
+			fmt.Printf("%-4d  %-12s  %-8s  %s\n", a.Order, a.Kind, a.StartTime, a.Title)
 		}
 		return nil
 
@@ -307,21 +349,22 @@ Usage:
 Commands:
   init                          初始化数据库表(幂等)
   seed [--force]                落地第一个行程(已存在则跳过)
-  create --name N --start S --end E [--summary X] [--cities X] [--tags X]
   list [--json]                 列出所有行程
   show <trip-id>                渲染完整 Markdown 行程单
   delete <trip-id>              删除行程
-  add-day <trip-id> --date S [--city X] [--title X] [--summary X]
-  add-activity <day-id> --kind K --title N [--time X] [--location X] [--notes X]
-                                [--dest-name X --dest-region X]
+  create --name N --start S --end E [--description X --cities X --tags X --notify-email E]
+  add-day <trip-id> --date S [--city X --region X --country X]
+  add-activity <day-id> --kind K --title N [--time X --location X --notes X]
+                                [--city X --region X --country X]
+                                [--remind-before-minutes N --remind-email E1,E2]
+  remind <activity-id> --before N [--email E1,E2] [--reset]
   days <trip-id>                列出某 trip 的所有 DayPlan
   activities <day-id>           列出某天的所有 Activity
-  help                          显示本帮助
+  help                          显示帮助
 
 Default DB path: ./data/trip.db (override with --db PATH)`)
 }
 
-// hasFlag —— 在 rest 里找完整 token(简单粗暴,但足够)。
 func hasFlag(rest []string, name string) bool {
 	for _, a := range rest {
 		if a == name {
@@ -331,48 +374,21 @@ func hasFlag(rest []string, name string) bool {
 	return false
 }
 
-// parseFlagsAndPositional 手动拆分 --flag value 与位置参数,允许位置参数出现在任意位置。
-// 之所以不用 fs.Parse:Go 的 flag 包在遇到第一个非 flag 实参时会停止,导致
-// `trip add-day TRIP --date X` 解析不到 --date。
-func parseFlagsAndPositional(rest []string, knownFlags []string) (map[string]string, []string, error) {
-	flags := map[string]string{}
-	for _, n := range knownFlags {
-		flags[n] = ""
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
 	}
-	var positional []string
-	i := 0
-	for i < len(rest) {
-		a := rest[i]
-		if strings.HasPrefix(a, "--") {
-			name := strings.TrimPrefix(a, "--")
-			var value string
-			hasValue := false
-			if eq := strings.Index(name, "="); eq >= 0 {
-				value = name[eq+1:]
-				name = name[:eq]
-				hasValue = true
-			}
-			if _, ok := flags[name]; !ok {
-				return nil, nil, fmt.Errorf("unknown flag --%s", name)
-			}
-			if !hasValue {
-				if i+1 >= len(rest) {
-					return nil, nil, fmt.Errorf("flag --%s requires a value", name)
-				}
-				value = rest[i+1]
-				i++
-			}
-			flags[name] = value
-			i++
-			continue
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
 		}
-		positional = append(positional, a)
-		i++
 	}
-	return flags, positional, nil
+	return out
 }
 
-// truncate 截断字符串到 n 字符(中文也算 1)。
 func truncate(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
@@ -383,6 +399,3 @@ func truncate(s string, n int) string {
 	}
 	return string(r[:n-1]) + "…"
 }
-
-// 为了消除 unused import 警告(time 保留给未来扩展)。
-var _ = time.Now

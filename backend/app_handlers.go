@@ -9,6 +9,7 @@ import (
 	"devtools/config"
 	"devtools/handlers"
 	"devtools/middleware"
+	"devtools/notif"
 	"devtools/utils"
 )
 
@@ -32,6 +33,14 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	photoWallHandler := handlers.NewPhotoWallHandler(db, cfg)
 	consoleHandler := handlers.NewConsoleHandler(db, cfg.Console.AdminPassword)
 	monitoringHandler := handlers.NewMonitoringHandler(db, cfg)
+	// 行程模块:复用全局 SMTP(若未配则提醒静默跳过)+ 复用主 SQLite 连接。
+	tripHandler := handlers.NewTripHandler(db, notif.Config{
+		Host:     cfg.AskitSync.SMTPHost,
+		Port:     cfg.AskitSync.SMTPPort,
+		User:     cfg.AskitSync.SMTPUser,
+		Password: cfg.AskitSync.SMTPPass,
+	})
+	tripHandler.QuickLog("startup")
 
 	encryptionService, err := newEncryptionService(cfg)
 	if err != nil {
@@ -123,6 +132,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		skillsHandler:             skillsHandler,
 		skillsGuard:               skillsGuard,
 		avatarHandler:             avatarHandler,
+		tripHandler:               tripHandler,
 	}, nil
 }
 

@@ -4,284 +4,258 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
-// SeedFirstTrip 把"国庆 2026 粤港澳潮汕 14 日深度游"这条真实行程
-// 落到仓储里(若已存在同名则跳过 —— 用 Name 唯一性检测)。
+// SeedRealTrip 把"国庆 2026 粤港澳潮汕 14 日深度游"作为 fixture 落到仓储。
+// 可幂等调用:已存在同名 trip 时返回 (id, false, nil),不再创建。
+// 删重建可通过 --force:true 或 query 参数 force=true 触发。
 //
-// 14 天行程覆盖:深圳 → 香港 → 澳门 → 珠海 → 广州 → 汕头(南澳) → 潮州 → 揭阳 散团。
-// 数据来自用户提供的攻略原文,按 DayPlan + Activity 结构拆分落地。
-//
-// 调用时机:CLI 启动时自动 seed;`trip seed` 子命令可显式触发。
-func SeedFirstTrip(ctx context.Context, svc *Service) (*Trip, bool, error) {
-	const seedName = "国庆 2026 粤港澳潮汕 14 日深度游"
+// 数据完全来源 issue DEVT-20 描述,不做文学加工,只把散文重组为
+// DayPlan + Activity 结构。
+func (s *Service) SeedRealTrip(ctx context.Context, force bool) (string, bool, error) {
+	const tripName = "国庆 2026 粤港澳潮汕 14 日深度游"
 
-	existing, err := svc.List(ctx)
+	// 同名检查
+	existing, err := s.repo.ListTrips(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("seed: list trips: %w", err)
+		return "", false, err
 	}
 	for _, t := range existing {
-		if t.Name == seedName {
-			loaded, err := svc.Show(ctx, t.ID)
-			if err != nil {
-				return nil, false, err
+		if t.Name == tripName {
+			if !force {
+				return t.ID, false, nil
 			}
-			return loaded, false, nil
+			// force:删重建
+			if err := s.repo.DeleteTrip(ctx, t.ID); err != nil {
+				return "", false, fmt.Errorf("seed: delete existing: %w", err)
+			}
+			break
 		}
 	}
 
-	t, err := svc.CreateTrip(ctx, CreateTripInput{
-		Name:      seedName,
-		StartDate: "2026-09-24",
-		EndDate:   "2026-10-07",
-		Summary:   "14 天深度游,串联深圳集合 → 香港 → 澳门 → 珠海 → 广州 → 汕头/南澳 → 潮州 → 揭阳散团。亲子/情侣/家庭通用,覆盖口岸过关、迪士尼/海洋公园选项、葡式蛋挞、早茶、牛肉火锅、海岛日落、潮州古城等高光节点。",
-		Cities:    "深圳,香港,澳门,珠海,广州,汕头,南澳岛,潮州,揭阳",
-		Tags:      "国庆,亲子,美食,海岛,跨境,深度游",
-	})
-	if err != nil {
-		return nil, false, fmt.Errorf("seed: create trip: %w", err)
+	trip := &Trip{
+		Name:        tripName,
+		Description: "国庆 14 天深度游,覆盖深圳/香港/澳门/珠海/广州/潮汕(汕头/潮州/揭阳)。",
+		StartDate:   "2026-09-24",
+		EndDate:     "2026-10-07",
+		Tags:        []string{"国庆", "粤港澳", "潮汕", "家庭"},
+		CoverCities: []string{"深圳", "香港", "澳门", "珠海", "广州", "潮汕"},
+		NotifyEmail: "", // 用户可后续在 TripTool UI 里填
+	}
+	if err := s.repo.CreateTrip(ctx, trip); err != nil {
+		return "", false, err
 	}
 
-	for _, day := range seedDays {
-		d, err := svc.AddDay(ctx, AddDayInput{
-			TripID:  t.ID,
-			Date:    day.date,
-			City:    day.city,
-			Title:   day.title,
-			Summary: day.summary,
-		})
-		if err != nil {
-			return nil, false, fmt.Errorf("seed: add day %s: %w", day.date, err)
+	type seedActivity struct {
+		Kind       ActivityKind
+		Title      string
+		Location   string
+		Note       string
+		StartTime  string
+		City       string
+		Region     string
+		Country    string
+	}
+
+	type seedDay struct {
+		Date       string
+		City       string
+		Region     string
+		Country    string
+		Activities []seedActivity
+	}
+
+	days := []seedDay{
+		{
+			Date: "2026-09-24", City: "深圳", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "抵达深圳宝安机场 / 深圳北站", Location: "宝安机场 / 深圳北站", Note: "入住福田 / 罗湖酒店", StartTime: "上午", City: "深圳"},
+				{Kind: ActivitySight, Title: "深圳湾公园骑行 + 人才公园灯光秀", Location: "深圳湾公园", StartTime: "下午", City: "深圳"},
+				{Kind: ActivitySight, Title: "平安金融中心 116 层 Free Sky 看夜景", Location: "平安金融中心", StartTime: "晚上", City: "深圳", Note: "福田 CBD 购物"},
+				{Kind: ActivityFood, Title: "潮汕牛肉火锅", Location: "八合里 / 陈鹏鹏", StartTime: "晚餐", City: "深圳"},
+			},
+		},
+		{
+			Date: "2026-09-25", City: "香港", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "福田 / 罗湖口岸过关,搭东铁线到红磡", Location: "福田 / 罗湖口岸", StartTime: "上午", City: "深圳", Note: "出发前往香港"},
+				{Kind: ActivitySight, Title: "尖沙咀 + 维多利亚港星光大道", Location: "尖沙咀", StartTime: "下午", City: "香港", Region: "尖沙咀"},
+				{Kind: ActivitySight, Title: "天星小轮", Location: "维多利亚港", StartTime: "下午", City: "香港"},
+				{Kind: ActivitySight, Title: "太平山顶 + 幻彩咏香江", Location: "太平山顶", StartTime: "晚上", City: "香港"},
+				{Kind: ActivityLodging, Title: "入住尖沙咀 / 中环 / 铜锣湾", Note: "推荐住宿区", City: "香港"},
+				{Kind: ActivityFood, Title: "港式茶餐厅 + 添好运点心 + 沾仔记云吞面", StartTime: "正餐", City: "香港"},
+			},
+		},
+		{
+			Date: "2026-09-26", City: "香港", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivitySight, Title: "迪士尼乐园(或海洋公园)", Location: "迪士尼乐园 / 海洋公园", Note: "选项 A:迪士尼(亲子/情侣);选项 B:海洋公园(家庭/刺激项目)", StartTime: "全天", City: "香港"},
+				{Kind: ActivityShopping, Title: "铜锣湾购物 + 时代广场", Location: "铜锣湾", StartTime: "晚上", City: "香港"},
+				{Kind: ActivityFood, Title: "翠华餐厅 + 一兰拉面 + 再兴烧腊", StartTime: "正餐", City: "香港"},
+			},
+		},
+		{
+			Date: "2026-09-27", City: "香港", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivitySight, Title: "中环半山扶梯 + 荷李活道 + PMQ 元创方", Location: "中环", StartTime: "上午", City: "香港", Region: "中环"},
+				{Kind: ActivityFood, Title: "兰芳园 / 陆羽茶室", StartTime: "中午", City: "香港"},
+				{Kind: ActivitySight, Title: "文武庙 + 庙街夜市", Location: "庙街", Note: "晚上更热闹", StartTime: "下午/晚上", City: "香港", Region: "油麻地"},
+				{Kind: ActivityLeisure, Title: "旺角 / 油麻地", StartTime: "晚上", City: "香港", Region: "旺角"},
+			},
+		},
+		{
+			Date: "2026-09-28", City: "澳门", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "港澳码头 / 港珠澳大桥口岸 → 澳门", Note: "上午出发", StartTime: "上午", City: "香港"},
+				{Kind: ActivitySight, Title: "大三巴 + 议事亭前地 + 玫瑰圣母堂", Location: "澳门半岛", StartTime: "下午", City: "澳门"},
+				{Kind: ActivitySight, Title: "澳门塔 / 威尼斯人 / 巴黎人", StartTime: "晚上", City: "澳门"},
+				{Kind: ActivityLodging, Title: "入住氹仔(巴黎人/威尼斯人/银河)", Location: "氹仔", City: "澳门", Region: "氹仔"},
+				{Kind: ActivityFood, Title: "猪扒包(大利来)+ 葡式蛋挞(安德鲁/玛嘉烈)+ 葡国菜", StartTime: "正餐", City: "澳门"},
+			},
+		},
+		{
+			Date: "2026-09-29", City: "澳门", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivitySight, Title: "妈阁庙 + 港务局大楼", Location: "澳门半岛", StartTime: "上午", City: "澳门"},
+				{Kind: ActivitySight, Title: "龙环葡韵 + 路氹金光大道(威尼斯人/巴黎人/伦敦人)", Location: "氹仔", StartTime: "下午", City: "澳门", Region: "氹仔"},
+				{Kind: ActivitySight, Title: "永利皇宫缆车 / 表演湖", Location: "永利皇宫", StartTime: "晚上", City: "澳门"},
+			},
+		},
+		{
+			Date: "2026-09-30", City: "珠海", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "拱北口岸过关 → 珠海", StartTime: "上午", City: "澳门"},
+				{Kind: ActivitySight, Title: "情侣路 + 渔女雕像 + 圆明新园", Location: "珠海", StartTime: "下午", City: "珠海"},
+				{Kind: ActivityShopping, Title: "拱北口岸附近购物", StartTime: "晚上", City: "珠海"},
+				{Kind: ActivityFood, Title: "横琴蚝 + 湾仔海鲜", StartTime: "正餐", City: "珠海"},
+			},
+		},
+		{
+			Date: "2026-10-01", City: "广州", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "珠海 → 广州", Note: "国庆当天抵达", StartTime: "上午"},
+				{Kind: ActivitySight, Title: "广州城 / 陈家祠", Location: "陈家祠", StartTime: "上午", City: "广州"},
+				{Kind: ActivitySight, Title: "沙面岛 + 上下九步行街", StartTime: "下午", City: "广州"},
+				{Kind: ActivitySight, Title: "珠江夜游", Location: "珠江", StartTime: "晚上", City: "广州"},
+				{Kind: ActivityLodging, Title: "入住天河 / 珠江新城", Location: "天河", City: "广州", Region: "天河"},
+				{Kind: ActivityFood, Title: "早茶(点都德 / 陶陶居 / 广州酒家)", StartTime: "正餐", City: "广州"},
+			},
+		},
+		{
+			Date: "2026-10-02", City: "广州", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivitySight, Title: "白云山", Location: "白云山", StartTime: "上午", City: "广州"},
+				{Kind: ActivitySight, Title: "越秀公园 + 五羊雕像 + 南越王博物院", Location: "越秀公园", StartTime: "下午", City: "广州"},
+				{Kind: ActivitySight, Title: "北京路步行街 / 海珠广场", StartTime: "晚上", City: "广州"},
+			},
+		},
+		{
+			Date: "2026-10-03", City: "汕头", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "广州 → 汕头(高铁/动车)", StartTime: "上午"},
+				{Kind: ActivitySight, Title: "老妈宫 + 汕头老街 + 小公园骑楼", Location: "汕头老城", StartTime: "下午", City: "汕头", Region: "老城"},
+				{Kind: ActivitySight, Title: "海滨长廊", Location: "汕头海滨长廊", StartTime: "晚上", City: "汕头"},
+				{Kind: ActivityFood, Title: "牛肉火锅(杏花吴记 / 海记)+ 牛肉丸 + 粿品", StartTime: "正餐", City: "汕头"},
+				{Kind: ActivityLodging, Title: "入住汕头市区", City: "汕头"},
+			},
+		},
+		{
+			Date: "2026-10-04", City: "南澳岛", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "汕头 → 南澳岛", StartTime: "上午", City: "汕头"},
+				{Kind: ActivitySight, Title: "南澳大桥 + 青澳湾 + 北回归线广场", Location: "青澳湾", StartTime: "上午", City: "汕头", Region: "南澳岛"},
+				{Kind: ActivitySight, Title: "黄花山森林公园 + 风电场", Location: "黄花山", StartTime: "下午", City: "汕头", Region: "南澳岛"},
+				{Kind: ActivitySight, Title: "青澳湾看日落 + 吃海鲜", Location: "青澳湾", StartTime: "晚上", City: "汕头", Region: "南澳岛"},
+			},
+		},
+		{
+			Date: "2026-10-05", City: "潮州", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "南澳 → 潮州", StartTime: "上午"},
+				{Kind: ActivitySight, Title: "潮州古城 + 广济桥 + 韩文公祠", Location: "潮州古城", StartTime: "上午", City: "潮州"},
+				{Kind: ActivityFood, Title: "潮州菜(官塘兄弟 / 潮膳楼)", StartTime: "中午", City: "潮州"},
+				{Kind: ActivitySight, Title: "开元寺 + 牌坊街", Location: "牌坊街", StartTime: "下午", City: "潮州"},
+				{Kind: ActivitySight, Title: "牌坊街夜景", Location: "牌坊街", StartTime: "晚上", City: "潮州"},
+			},
+		},
+		{
+			Date: "2026-10-06", City: "揭阳", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityTransit, Title: "潮州 → 揭阳", StartTime: "上午"},
+				{Kind: ActivitySight, Title: "揭阳学宫 / 黄满寨瀑布", Location: "揭阳", StartTime: "上午", City: "揭阳"},
+				{Kind: ActivityLeisure, Title: "返程交通缓冲 + 自由活动 / 收拾行李", Note: "下午根据返程交通调整", StartTime: "下午"},
+			},
+		},
+		{
+			Date: "2026-10-07", City: "深圳", Country: "中国",
+			Activities: []seedActivity{
+				{Kind: ActivityShopping, Title: "购买伴手礼", Note: "潮汕牛肉丸 / 潮州柑 / 澳门钜记饼家 / 香港美心月饼", StartTime: "上午"},
+				{Kind: ActivityTransit, Title: "各自返程", Note: "下午 / 晚上根据机票 / 高铁时间", StartTime: "下午"},
+			},
+		},
+	}
+
+	for i, sd := range days {
+		dp := &DayPlan{
+			TripID: trip.ID,
+			Date:   sd.Date,
+			Order:  i + 1,
+			Destination: Destination{
+				City:    sd.City,
+				Country: sd.Country,
+				Region:  sd.Region,
+			},
 		}
-		for _, a := range day.activities {
-			if _, err := svc.AddActivity(ctx, AddActivityInput{
-				DayPlanID: d.ID,
-				Kind:      a.kind,
-				Time:      a.time,
-				Title:     a.title,
-				Location:  a.location,
-				Notes:     a.notes,
-			}); err != nil {
-				return nil, false, fmt.Errorf("seed: add activity %s/%s: %w", day.date, a.title, err)
+		if err := s.repo.AddDay(ctx, dp); err != nil {
+			return "", false, fmt.Errorf("seed: add day %s: %w", sd.Date, err)
+		}
+		for j, sa := range sd.Activities {
+			a := &Activity{
+				DayID:     dp.ID,
+				Kind:      sa.Kind,
+				Title:     sa.Title,
+				Location:  sa.Location,
+				Note:      sa.Note,
+				StartTime: sa.StartTime,
+				Order:     j + 1,
+				Destination: Destination{
+					City:    firstNonEmpty(sa.City, sd.City),
+					Region:  firstNonEmpty(sa.Region, sd.Region),
+					Country: firstNonEmpty(sa.Country, sd.Country),
+				},
+			}
+			if err := s.repo.AddActivity(ctx, a); err != nil {
+				return "", false, fmt.Errorf("seed: add activity %s: %w", sa.Title, err)
 			}
 		}
 	}
 
-	loaded, err := svc.Show(ctx, t.ID)
+	return trip.ID, true, nil
+}
+
+// ListSeededTripNames 用于 CLI / HTTP 的 seed 端点做"已存在"提示。
+func (s *Service) ListSeededTripNames(ctx context.Context) ([]string, error) {
+	trips, err := s.repo.ListTrips(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	return loaded, true, nil
+	out := make([]string, 0, len(trips))
+	for _, t := range trips {
+		out = append(out, t.Name)
+	}
+	return out, nil
 }
 
-// seedDay 内部使用的 seed 单元结构。
-type seedDay struct {
-	date       string
-	city       string
-	title      string
-	summary    string
-	activities []seedActivity
-}
-
-// seedActivity 单个 activity 的 seed 数据。
-type seedActivity struct {
-	kind     ActivityKind
-	time     string
-	title    string
-	location string
-	notes    string
-}
-
-// seedDays —— 14 天,按用户原文拆分。
-var seedDays = []seedDay{
-	{
-		date:    "2026-09-24",
-		city:    "深圳",
-		title:   "D1 深圳集合日",
-		summary: "落地宝安机场或深圳北站,入住福田/罗湖,晚上看 CBD 夜景。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "全天", title: "抵达深圳宝安机场 / 深圳北站", location: "宝安机场 / 深圳北站", notes: "入住福田 / 罗湖酒店,靠近口岸便于后续过关"},
-			{kind: ActivitySight, time: "下午", title: "深圳湾公园骑行 + 人才公园灯光秀", location: "深圳湾公园 / 人才公园", notes: "傍晚骑行追日落,灯光秀 19:00 / 20:00 各一场"},
-			{kind: ActivitySight, time: "晚上", title: "平安金融中心 116 层 Free Sky 看夜景", location: "福田 CBD 平安金融中心", notes: "建议提前在官方小程序预约门票"},
-			{kind: ActivityFood, time: "晚上", title: "潮汕牛肉火锅", location: "福田 / 罗湖", notes: "推荐:八合里、陈鹏鹏 —— 现切牛肉三吊水"},
-		},
-	},
-	{
-		date:    "2026-09-25",
-		city:    "香港",
-		title:   "D2 深圳 → 香港",
-		summary: "上午过关走东铁,下午尖沙咀 + 维港,晚上太平山顶看幻彩咏香江。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "福田 / 罗湖口岸过关", location: "福田口岸 / 罗湖口岸", notes: "建议福田口岸过 → 落马洲 → 东铁线红磡,避开罗湖早高峰"},
-			{kind: ActivitySight, time: "下午", title: "尖沙咀 + 维多利亚港星光大道", location: "尖沙咀", notes: "李小龙铜像、天星小轮钟楼、1881 Heritage"},
-			{kind: ActivitySight, time: "下午", title: "天星小轮过海", location: "尖沙咀 ↔ 中环 / 湾仔", notes: "百年小轮,3 港币一程,推荐上层前排"},
-			{kind: ActivitySight, time: "晚上", title: "太平山顶 + 幻彩咏香江", location: "太平山顶", notes: "建议搭 15 路巴士上山,8 点前到位看灯光秀"},
-			{kind: ActivityLodging, time: "晚上", title: "入住尖沙咀 / 中环 / 铜锣湾", location: "尖沙咀 / 中环 / 铜锣湾", notes: "三选一,看次日行程动线"},
-			{kind: ActivityFood, time: "全天", title: "港式茶餐厅 / 添好运点心 / 沾仔记云吞面", location: "中环 / 尖沙咀", notes: "添好运推荐酥皮叉烧包、虾饺;沾仔记必点鲜虾云吞"},
-		},
-	},
-	{
-		date:    "2026-09-26",
-		city:    "香港",
-		title:   "D3 香港迪士尼或海洋公园",
-		summary: "主题乐园二选一,晚上铜锣湾购物。",
-		activities: []seedActivity{
-			{kind: ActivityNote, time: "全天", title: "选项 A:迪士尼乐园 / 选项 B:海洋公园", location: "大屿山 / 香港仔", notes: "A 适合亲子 / 情侣,烟花 20:30;B 适合家庭 / 刺激项目(越矿飞车、极速之旅)"},
-			{kind: ActivityShopping, time: "晚上", title: "铜锣湾购物 + 时代广场", location: "铜锣湾", notes: "崇光百货 SOGO 周年庆通常在 9-10 月,留意折扣"},
-			{kind: ActivityFood, time: "全天", title: "翠华餐厅 / 一兰拉面 / 再兴烧腊", location: "尖沙咀 / 中环 / 铜锣湾", notes: "翠华菠萝油 + 奶茶是港味标配"},
-		},
-	},
-	{
-		date:    "2026-09-27",
-		city:    "香港",
-		title:   "D4 香港经典一日",
-		summary: "中环半山扶梯 → PMQ → 文武庙 → 庙街夜市。",
-		activities: []seedActivity{
-			{kind: ActivitySight, time: "上午", title: "中环半山扶梯 + 荷李活道 + PMQ 元创方", location: "中环", notes: "全球最长户外扶梯系统,慢慢逛 + Soho 区涂鸦墙"},
-			{kind: ActivityFood, time: "中午", title: "兰芳园 / 陆羽茶室", location: "中环", notes: "兰芳园丝袜奶茶 + 猪扒包;陆羽茶室需订位"},
-			{kind: ActivitySight, time: "下午", title: "文武庙", location: "上环", notes: "百年庙宇,中央燃着巨型塔香"},
-			{kind: ActivitySight, time: "晚上", title: "庙街夜市 + 旺角 / 油麻地", location: "油麻地 / 旺角", notes: "庙街 19 点后开档,大排档 + 算命 + 歌厅文化"},
-		},
-	},
-	{
-		date:    "2026-09-28",
-		city:    "澳门",
-		title:   "D5 香港 → 澳门",
-		summary: "上午港澳码头 / 港珠澳大桥过关,下午大三巴,晚上路氹金光大道。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "港澳码头 / 港珠澳大桥口岸到澳门", location: "上环港澳码头 / 港珠澳大桥香港口岸", notes: "高铁 + 金巴也是选项;带好港澳通行证 + 签注"},
-			{kind: ActivitySight, time: "下午", title: "大三巴 + 议事亭前地 + 玫瑰圣母堂", location: "澳门半岛", notes: "大三巴是圣保禄教堂遗址,旁边恋爱巷很出片"},
-			{kind: ActivitySight, time: "晚上", title: "澳门塔 / 威尼斯人 / 巴黎人", location: "氹仔 / 路氹金光大道", notes: "澳门塔看日落 + 蹦极;威尼斯人贡多拉游船"},
-			{kind: ActivityLodging, time: "晚上", title: "入住氹仔(巴黎人 / 威尼斯人 / 银河)", location: "氹仔", notes: "三家连成一片,免去拖行李奔波"},
-			{kind: ActivityFood, time: "全天", title: "猪扒包 + 葡式蛋挞 + 葡国菜", location: "澳门半岛 / 氹仔", notes: "猪扒包推荐大利来记;葡挞安德鲁 / 玛嘉烈二选一"},
-		},
-	},
-	{
-		date:    "2026-09-29",
-		city:    "澳门",
-		title:   "D6 澳门深度",
-		summary: "妈阁庙 + 龙环葡韵 + 路氹金光大道看表演湖。",
-		activities: []seedActivity{
-			{kind: ActivitySight, time: "上午", title: "妈阁庙 + 港务局大楼", location: "澳门半岛", notes: "妈阁庙是 Macau 名字来源,港务局大楼是摩尔式建筑"},
-			{kind: ActivitySight, time: "下午", title: "龙环葡韵 + 路氹金光大道", location: "氹仔", notes: "龙环葡韵 5 栋薄荷绿小别墅;路氹连看威尼斯人 / 巴黎人 / 伦敦人"},
-			{kind: ActivitySight, time: "晚上", title: "永利皇宫缆车 + 表演湖", location: "永利皇宫", notes: "免费缆车观景,表演湖每 30 分钟一场"},
-		},
-	},
-	{
-		date:    "2026-09-30",
-		city:    "珠海",
-		title:   "D7 澳门 → 珠海",
-		summary: "拱北口岸过关,下午情侣路 + 圆明新园。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "拱北口岸过关到珠海", location: "拱北口岸", notes: "过关高峰 8-10 点,提早出门"},
-			{kind: ActivitySight, time: "下午", title: "情侣路 + 渔女雕像 + 圆明新园", location: "香洲区", notes: "情侣路沿海步行 4 公里,渔女是珠海地标"},
-			{kind: ActivityShopping, time: "晚上", title: "拱北口岸附近购物", location: "拱北商圈", notes: "口岸地下商场免税品 + 日韩药妆"},
-			{kind: ActivityFood, time: "全天", title: "横琴蚝 + 湾仔海鲜", location: "横琴 / 湾仔", notes: "横琴蚝肥美清蒸最佳"},
-		},
-	},
-	{
-		date:    "2026-10-01",
-		city:    "广州",
-		title:   "D8 珠海 → 广州(国庆当天)",
-		summary: "上午陈家祠,下午沙面 + 上下九,晚上珠江夜游。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "珠海 → 广州(高铁 / 大巴)", location: "珠海站 → 广州南站", notes: "广珠城轨 1 小时直达广州南"},
-			{kind: ActivitySight, time: "上午", title: "陈家祠", location: "荔湾区", notes: "岭南建筑艺术明珠,看灰塑 / 砖雕 / 木雕"},
-			{kind: ActivitySight, time: "下午", title: "沙面岛 + 上下九步行街", location: "荔湾区", notes: "沙面欧陆建筑群适合拍照;上下九吃老字号"},
-			{kind: ActivitySight, time: "晚上", title: "珠江夜游", location: "天字码头 / 大沙头码头", notes: "夜游船 70-90 分钟,看小蛮腰 + 海心桥"},
-			{kind: ActivityLodging, time: "晚上", title: "入住天河 / 珠江新城", location: "天河区 / 珠江新城", notes: "地铁 1 / 3 号线沿线方便次日"},
-			{kind: ActivityFood, time: "全天", title: "广州早茶", location: "荔湾 / 天河", notes: "推荐:点都德、陶陶居、广州酒家 —— 虾饺 / 烧卖 / 叉烧包"},
-		},
-	},
-	{
-		date:    "2026-10-02",
-		city:    "广州",
-		title:   "D9 广州经典一日",
-		summary: "白云山 + 越秀公园 + 南越王博物院 + 北京路。",
-		activities: []seedActivity{
-			{kind: ActivitySight, time: "上午", title: "白云山", location: "白云区", notes: "索道上下山,摩星岭看广州全景"},
-			{kind: ActivitySight, time: "下午", title: "越秀公园 + 五羊雕像 + 南越王博物院", location: "越秀区", notes: "五羊雕像是广州城标;南越王墓出土文物必看"},
-			{kind: ActivityShopping, time: "晚上", title: "北京路步行街 / 海珠广场", location: "越秀区", notes: "千年古道遗址在步行街玻璃栈道下"},
-		},
-	},
-	{
-		date:    "2026-10-03",
-		city:    "汕头",
-		title:   "D10 广州 → 潮汕(汕头)",
-		summary: "高铁到汕头,下午老街骑楼,晚上海滨长廊。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "高铁 / 动车广州 → 汕头", location: "广州南 → 汕头站", notes: "约 3 小时,班次多"},
-			{kind: ActivitySight, time: "下午", title: "老妈宫 + 汕头老街 + 小公园骑楼", location: "金平区", notes: "老妈宫是潮汕妈祖信仰中心;小公园中山纪念亭"},
-			{kind: ActivitySight, time: "晚上", title: "海滨长廊", location: "汕头内海湾", notes: "看内海湾夜景 + 礐石大桥灯光"},
-			{kind: ActivityLodging, time: "晚上", title: "入住汕头市区", location: "金平区 / 龙湖区", notes: "市区近小公园便于逛吃"},
-			{kind: ActivityFood, time: "全天", title: "牛肉火锅 + 牛肉丸 + 粿品", location: "金平区 / 龙湖区", notes: "推荐杏花吴记 / 海记牛肉店;牛肉丸 Q 弹弹牙"},
-		},
-	},
-	{
-		date:    "2026-10-04",
-		city:    "南澳岛",
-		title:   "D11 汕头 → 南澳岛",
-		summary: "南澳大桥 → 青澳湾 → 黄花山森林公园,晚上看日落 + 海鲜。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "汕头 → 南澳岛(过南澳大桥)", location: "南澳大桥", notes: "大桥 11 公里,自驾 / 包车方便"},
-			{kind: ActivitySight, time: "上午", title: "青澳湾 + 北回归线广场", location: "青澳湾", notes: "北回归线标志塔「自然之门」打卡"},
-			{kind: ActivitySight, time: "下午", title: "黄花山森林公园 + 风电场", location: "黄花山", notes: "风车山看大风车 + 海景,适合航拍"},
-			{kind: ActivitySight, time: "晚上", title: "青澳湾看日落", location: "青澳湾海滩", notes: "沙滩细腻,可下水"},
-			{kind: ActivityLodging, time: "晚上", title: "入住青澳湾 / 后宅镇", location: "南澳岛", notes: "岛上民宿为主,提前订"},
-			{kind: ActivityFood, time: "晚上", title: "海鲜大餐", location: "青澳湾 / 后宅镇", notes: "紫菜炒饭 + 椒盐皮皮虾 + 扇贝粉丝"},
-		},
-	},
-	{
-		date:    "2026-10-05",
-		city:    "潮州",
-		title:   "D12 南澳 → 潮州",
-		summary: "上午潮州古城 + 广济桥 + 韩文公祠,下午开元寺 + 牌坊街。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "南澳 → 潮州", location: "南澳大桥 → 潮州古城", notes: "约 1.5 小时车程"},
-			{kind: ActivitySight, time: "上午", title: "潮州古城 + 广济桥 + 韩文公祠", location: "湘桥区", notes: "广济桥是四大古桥之一,韩文公祠为纪念韩愈"},
-			{kind: ActivityFood, time: "中午", title: "潮州菜", location: "潮州古城", notes: "推荐官塘兄弟牛肉店 / 潮膳楼 —— 卤鹅 / 鱼生 / 蚝烙"},
-			{kind: ActivitySight, time: "下午", title: "开元寺 + 牌坊街", location: "湘桥区", notes: "牌坊街 22 座明清石牌坊,古韵十足"},
-			{kind: ActivitySight, time: "晚上", title: "牌坊街夜景 + 广济桥灯光秀", location: "湘桥区", notes: "广济桥每晚 20:00 灯光秀,免费观看"},
-			{kind: ActivityLodging, time: "晚上", title: "入住潮州古城", location: "湘桥区", notes: "古城内民宿步行可达牌坊街"},
-		},
-	},
-	{
-		date:    "2026-10-06",
-		city:    "揭阳",
-		title:   "D13 潮州 → 揭阳 / 返程缓冲日",
-		summary: "上午揭阳学宫或黄满寨瀑布,下午自由活动 / 收拾行李。",
-		activities: []seedActivity{
-			{kind: ActivityTransport, time: "上午", title: "潮州 → 揭阳", location: "潮州 → 揭阳", notes: "高铁约 15 分钟"},
-			{kind: ActivitySight, time: "上午", title: "揭阳学宫 / 黄满寨瀑布", location: "揭阳市区 / 揭西", notes: "学宫看岭南最大孔庙;黄满寨瀑布群距市区 1.5h 需预留"},
-			{kind: ActivityNote, time: "下午", title: "根据返程交通调整", location: "—", notes: "若次日早班机/高铁,下午打包;若晚班可再加一站"},
-			{kind: ActivityShopping, time: "晚上", title: "自由活动 / 买伴手礼", location: "潮州 / 汕头", notes: "牛肉丸、潮州柑、潮汕三宝、老药桔"},
-		},
-	},
-	{
-		date:    "2026-10-07",
-		city:    "散团",
-		title:   "D14 散团返程",
-		summary: "自由活动,集中买伴手礼后各自返程。",
-		activities: []seedActivity{
-			{kind: ActivityShopping, time: "上午", title: "购买伴手礼", location: "潮州 / 汕头 / 揭阳机场", notes: "潮汕牛肉丸、潮州柑、潮汕三宝、老药桔"},
-			{kind: ActivityShopping, time: "上午", title: "澳门钜记饼家 + 香港美心月饼", location: "澳门 / 香港免税店", notes: "钜记猪扒包 / 杏仁饼;美心流心奶黄月饼"},
-			{kind: ActivityNote, time: "下午", title: "各自返程", location: "揭阳潮汕机场 / 汕头站 / 高铁", notes: "揭阳机场航班较多,高铁去广州 / 深圳中转也行"},
-		},
-	},
-}
-
-// EnsureSeeded 是 CLI 启动时的便利入口:若 repo 为空就 seed,返回是否真 seed 过。
-// 出错且不是 already-seeded 时回传 error。
-func EnsureSeeded(ctx context.Context, svc *Service) (*Trip, bool, error) {
-	if existing, err := svc.List(ctx); err == nil && len(existing) > 0 {
-		loaded, err := svc.Show(ctx, existing[0].ID)
-		if err != nil {
-			return nil, false, err
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
 		}
-		return loaded, false, nil
 	}
-	return SeedFirstTrip(ctx, svc)
+	return ""
 }
 
-// ErrSeedSkipped —— 当用户显式 seed 但已存在同行程时返回。
-var ErrSeedSkipped = errors.New("seed: trip already exists")
+// 防止 import errors 漂移:在某些精简 build tag 下 errors 包可能未被使用,
+// 这里放一个占位符 import 让 go vet 不抱怨 unused。
+var _ = errors.New

@@ -31,6 +31,13 @@ type DB struct {
 	conn *sql.DB
 }
 
+// Conn 暴露底层 *sql.DB,供独立限界上下文(如 backend/trip)复用同连接。
+// 调用方负责:不直接持有 conn 的事务、不修改连接池参数、不调用 Close。
+// 主要场景:在主连接上跑自定义 CREATE TABLE(避免新开 SQLite 文件)。
+func (db *DB) Conn() *sql.DB {
+	return db.conn
+}
+
 // initRegistry 表初始化注册表
 var initRegistry []struct {
 	name string

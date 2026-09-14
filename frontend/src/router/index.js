@@ -340,6 +340,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/trip',
+    name: 'Trip',
+    component: () => import('../views/life/TripTool.vue'),
+    meta: {
+      title: '旅游行程',
+      icon: 'Guide',
+      category: 'life',
+      description: '行程规划 + 落地 fixture + 邮件提醒'
+    }
+  },
+  {
     path: '/expense',
     name: 'Expense',
     component: () => import('../views/life/ExpenseTool.vue'),

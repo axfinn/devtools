@@ -2,328 +2,503 @@ package trip
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/google/uuid"
 )
 
-// Repository 行程仓储接口(DDD 风格:抽象聚合持久化)。
+// ErrNotFound 仓储层统一"未找到"错误,Service 层翻译为业务错误。
+var ErrNotFound = errors.New("trip: not found")
+
+// Repository 是聚合根的仓储接口;供 Service 调用,也方便单测用 mock。
 //
-// 真实实现是 SQLiteTripRepository。任何 *sql.DB 实例都可注入,使得 CLI
-// 和未来的 HTTP handler 共用同一套语义。
+// 实现:SQLiteRepository,基于 *sql.DB,与 models.DB 共享同一连接池
+// (即调用方传 db.Conn() 进来即可)。这意味着 trip 表与 pastes / shorturls /
+// planner 等其他表共存于 ./data/paste.db,无独立 db 文件。
 type Repository interface {
-	InitSchema(ctx context.Context) error
+	EnsureSchema(ctx context.Context) error
 
 	// Trip
 	CreateTrip(ctx context.Context, t *Trip) error
 	GetTrip(ctx context.Context, id string) (*Trip, error)
+	GetTripWithDays(ctx context.Context, id string) (*Trip, error)
 	ListTrips(ctx context.Context) ([]*Trip, error)
-	UpdateTripSummary(ctx context.Context, id, summary, cities, tags string) error
+	UpdateTrip(ctx context.Context, t *Trip) error
 	DeleteTrip(ctx context.Context, id string) error
 
 	// DayPlan
-	CreateDayPlan(ctx context.Context, d *DayPlan) error
+	AddDay(ctx context.Context, d *DayPlan) error
+	GetDay(ctx context.Context, id string) (*DayPlan, error)
 	ListDaysByTrip(ctx context.Context, tripID string) ([]*DayPlan, error)
-	DeleteDayPlan(ctx context.Context, id string) error
+	DeleteDay(ctx context.Context, id string) error
 
 	// Activity
-	CreateActivity(ctx context.Context, a *Activity) error
-	ListActivitiesByDay(ctx context.Context, dayPlanID string) ([]*Activity, error)
+	AddActivity(ctx context.Context, a *Activity) error
+	ListActivitiesByDay(ctx context.Context, dayID string) ([]*Activity, error)
+	UpdateActivityReminder(ctx context.Context, activityID string, remindBeforeMinutes int, remindEmails []string) error
+	DeleteActivity(ctx context.Context, id string) error
 
-	// Destination(值对象)
-	UpsertDestination(ctx context.Context, d *Destination) (*Destination, error)
+	// Reminder scheduling:扫所有 remind_before_minutes > 0 的活动,
+	// 返回触发时刻在 [from, to) 区间内、且尚未发送过提醒的活动。
+	// sent_at 非空的活动不再返回,实现"幂等发一次"。
+	ListDueReminders(ctx context.Context, from, to time.Time, limit int) ([]*ActivityReminderItem, error)
+	MarkReminderSent(ctx context.Context, activityID string, sentAt time.Time) error
+	ResetReminderSent(ctx context.Context, activityID string) (int64, error)
+}
+
+// ActivityReminderItem 把 Activity + 所属 Day + Trip 拼到一起,
+// 提醒发送协程一次性拿到所有上下文,避免 N+1 查询。
+type ActivityReminderItem struct {
+	Activity *Activity
+	Day      *DayPlan
+	Trip     *Trip
 }
 
 // SQLiteRepository 是 Repository 的 SQLite 实现。
+// 表名一律 trip_ 前缀,与 models 包已有表无冲突。
 type SQLiteRepository struct {
 	db *sql.DB
 }
 
-// NewSQLiteRepository 用一个 *sql.DB 构造仓储。
-// 调用方负责连接生命周期(关闭、conn pool 等)。
+// NewSQLiteRepository 把 *sql.DB 包装为 Repository;不做 schema 初始化。
+// 调用方(Handler / CLI 启动期)需调 EnsureSchema 一次。
 func NewSQLiteRepository(db *sql.DB) *SQLiteRepository {
 	return &SQLiteRepository{db: db}
 }
 
-// OpenSQLite 打开一个 SQLite 连接并启用 _parse_time=true。
-// 这是 cmd/trip CLI 单独使用的便捷构造。
-func OpenSQLite(path string) (*SQLiteRepository, error) {
-	conn, err := sql.Open("sqlite3", path+"?_parse_time=true")
-	if err != nil {
-		return nil, err
+// EnsureSchema 幂等建表;启动期调用一次即可。
+func (r *SQLiteRepository) EnsureSchema(ctx context.Context) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS trip_trips (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			start_date TEXT NOT NULL,
+			end_date TEXT NOT NULL,
+			tags TEXT NOT NULL DEFAULT '[]',
+			cover_cities TEXT NOT NULL DEFAULT '[]',
+			notify_email TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS trip_days (
+			id TEXT PRIMARY KEY,
+			trip_id TEXT NOT NULL,
+			date TEXT NOT NULL,
+			destination TEXT NOT NULL DEFAULT '{}',
+			"order" INTEGER NOT NULL DEFAULT 0,
+			FOREIGN KEY (trip_id) REFERENCES trip_trips(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_trip_days_trip ON trip_days(trip_id)`,
+		`CREATE TABLE IF NOT EXISTS trip_activities (
+			id TEXT PRIMARY KEY,
+			day_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			title TEXT NOT NULL,
+			location TEXT NOT NULL DEFAULT '',
+			destination TEXT NOT NULL DEFAULT '{}',
+			start_time TEXT NOT NULL DEFAULT '',
+			duration_min INTEGER NOT NULL DEFAULT 0,
+			note TEXT NOT NULL DEFAULT '',
+			"order" INTEGER NOT NULL DEFAULT 0,
+			remind_before_minutes INTEGER NOT NULL DEFAULT 0,
+			remind_emails TEXT NOT NULL DEFAULT '[]',
+			remind_sent_at DATETIME NOT NULL DEFAULT '',
+			FOREIGN KEY (day_id) REFERENCES trip_days(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_trip_activities_day ON trip_activities(day_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_trip_activities_reminder
+			ON trip_activities(remind_before_minutes)
+			WHERE remind_before_minutes > 0`,
 	}
-	// 单进程 CLI 顺序访问,保持 1 连接避免 :memory: 并发坑。
-	conn.SetMaxOpenConns(1)
-	if err := conn.PingContext(context.Background()); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	return &SQLiteRepository{db: conn}, nil
-}
-
-// Close 关闭底层连接。
-func (r *SQLiteRepository) Close() error {
-	if r == nil || r.db == nil {
-		return nil
-	}
-	return r.db.Close()
-}
-
-// generateID 与 models.generateID 等价的 hex id 生成 —— 16 字节 = 32 字符,
-// 比 8 字符更长以容纳更多 fixture(避免和 paste/shorturl 等 8 字符 id 撞库)。
-func generateID(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("t%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(b)[:n]
-}
-
-// --- schema ---
-
-const schema = `
-CREATE TABLE IF NOT EXISTS trip_trips (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL,
-	start_date TEXT NOT NULL,
-	end_date TEXT NOT NULL,
-	summary TEXT NOT NULL DEFAULT '',
-	cities TEXT NOT NULL DEFAULT '',
-	tags TEXT NOT NULL DEFAULT '',
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_trip_trips_start ON trip_trips(start_date);
-
-CREATE TABLE IF NOT EXISTS trip_day_plans (
-	id TEXT PRIMARY KEY,
-	trip_id TEXT NOT NULL,
-	day_index INTEGER NOT NULL,
-	date TEXT NOT NULL,
-	city TEXT NOT NULL DEFAULT '',
-	title TEXT NOT NULL DEFAULT '',
-	summary TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_trip_day_plans_trip ON trip_day_plans(trip_id, day_index);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_day_plans_unique ON trip_day_plans(trip_id, day_index);
-
-CREATE TABLE IF NOT EXISTS trip_activities (
-	id TEXT PRIMARY KEY,
-	day_plan_id TEXT NOT NULL,
-	seq INTEGER NOT NULL,
-	kind TEXT NOT NULL,
-	time TEXT NOT NULL DEFAULT '',
-	title TEXT NOT NULL,
-	location TEXT NOT NULL DEFAULT '',
-	notes TEXT NOT NULL DEFAULT '',
-	destination_id TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_trip_activities_day ON trip_activities(day_plan_id, seq);
-
-CREATE TABLE IF NOT EXISTS trip_destinations (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL,
-	region TEXT NOT NULL DEFAULT '',
-	info TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS idx_trip_destinations_name ON trip_destinations(name, region);
-`
-
-// InitSchema 建表;幂等。
-func (r *SQLiteRepository) InitSchema(ctx context.Context) error {
-	if _, err := r.db.ExecContext(ctx, schema); err != nil {
-		return fmt.Errorf("trip: init schema: %w", err)
+	for _, s := range stmts {
+		if _, err := r.db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("trip: ensure schema (%s): %w", firstLine(s), err)
+		}
 	}
 	return nil
 }
 
-// --- Trip ---
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// ---- Trip CRUD ----
 
 func (r *SQLiteRepository) CreateTrip(ctx context.Context, t *Trip) error {
 	if t.ID == "" {
-		t.ID = generateID(12)
+		t.ID = uuid.NewString()
 	}
 	now := time.Now()
-	if t.CreatedAt.IsZero() {
-		t.CreatedAt = now
-	}
+	t.CreatedAt = now
 	t.UpdatedAt = now
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO trip_trips (id, name, start_date, end_date, summary, cities, tags, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, t.ID, t.Name, t.StartDate, t.EndDate, t.Summary, t.Cities, t.Tags, t.CreatedAt, t.UpdatedAt)
-	if err != nil {
-		return fmt.Errorf("trip: create: %w", err)
-	}
-	return nil
+	tags := mustJSON(t.Tags)
+	cities := mustJSON(t.CoverCities)
+	// go-sqlite3 在 _parse_time=true 下只解析 "2006-01-02 15:04:05.999999999-07:00" 格式,
+	// 不接受 RFC3339 的 T 分隔符。复刻 go-sqlite3 内部解析格式以保证 Scan 成功。
+	createdAt := formatSQLiteTime(t.CreatedAt)
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO trip_trips (id, name, description, start_date, end_date, tags, cover_cities, notify_email, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.Name, t.Description, t.StartDate, t.EndDate, tags, cities, t.NotifyEmail,
+		createdAt, createdAt,
+	)
+	return err
 }
 
 func (r *SQLiteRepository) GetTrip(ctx context.Context, id string) (*Trip, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, name, start_date, end_date, summary, cities, tags, created_at, updated_at
-		FROM trip_trips WHERE id = ?
-	`, id)
-	var t Trip
-	if err := row.Scan(&t.ID, &t.Name, &t.StartDate, &t.EndDate, &t.Summary, &t.Cities, &t.Tags, &t.CreatedAt, &t.UpdatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrTripNotFound
-		}
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, name, description, start_date, end_date, tags, cover_cities, notify_email, created_at, updated_at
+		 FROM trip_trips WHERE id = ?`, id)
+	return scanTrip(row)
+}
+
+func (r *SQLiteRepository) GetTripWithDays(ctx context.Context, id string) (*Trip, error) {
+	t, err := r.GetTrip(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-	return &t, nil
+	days, err := r.ListDaysByTrip(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range days {
+		acts, err := r.ListActivitiesByDay(ctx, d.ID)
+		if err != nil {
+			return nil, err
+		}
+		d.Activities = acts
+	}
+	t.Days = days
+	return t, nil
 }
 
 func (r *SQLiteRepository) ListTrips(ctx context.Context) ([]*Trip, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, start_date, end_date, summary, cities, tags, created_at, updated_at
-		FROM trip_trips ORDER BY start_date DESC, created_at DESC
-	`)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, name, description, start_date, end_date, tags, cover_cities, notify_email, created_at, updated_at
+		 FROM trip_trips ORDER BY start_date DESC, created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*Trip
 	for rows.Next() {
-		var t Trip
-		if err := rows.Scan(&t.ID, &t.Name, &t.StartDate, &t.EndDate, &t.Summary, &t.Cities, &t.Tags, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		t, err := scanTrip(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, &t)
+		out = append(out, t)
 	}
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) UpdateTripSummary(ctx context.Context, id, summary, cities, tags string) error {
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE trip_trips SET summary = ?, cities = ?, tags = ?, updated_at = ? WHERE id = ?
-	`, summary, cities, tags, time.Now(), id)
-	return err
-}
-
-func (r *SQLiteRepository) DeleteTrip(ctx context.Context, id string) error {
-	// 先删 day_plans,再删 activities,最后删 trip —— 顺序保证无悬挂引用
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM trip_activities WHERE day_plan_id IN (SELECT id FROM trip_day_plans WHERE trip_id = ?)`, id); err != nil {
-		return err
-	}
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM trip_day_plans WHERE trip_id = ?`, id); err != nil {
-		return err
-	}
-	_, err := r.db.ExecContext(ctx, `DELETE FROM trip_trips WHERE id = ?`, id)
-	return err
-}
-
-// --- DayPlan ---
-
-func (r *SQLiteRepository) CreateDayPlan(ctx context.Context, d *DayPlan) error {
-	if d.ID == "" {
-		d.ID = generateID(12)
-	}
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO trip_day_plans (id, trip_id, day_index, date, city, title, summary)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, d.ID, d.TripID, d.DayIndex, d.Date, d.City, d.Title, d.Summary)
+func (r *SQLiteRepository) UpdateTrip(ctx context.Context, t *Trip) error {
+	t.UpdatedAt = time.Now()
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE trip_trips
+		 SET name = ?, description = ?, start_date = ?, end_date = ?,
+		     tags = ?, cover_cities = ?, notify_email = ?, updated_at = ?
+		 WHERE id = ?`,
+		t.Name, t.Description, t.StartDate, t.EndDate,
+		mustJSON(t.Tags), mustJSON(t.CoverCities), t.NotifyEmail,
+		formatSQLiteTime(t.UpdatedAt), t.ID,
+	)
 	if err != nil {
-		return fmt.Errorf("trip: create day: %w", err)
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
 
+func (r *SQLiteRepository) DeleteTrip(ctx context.Context, id string) error {
+	// ON DELETE CASCADE 处理 days + activities;先禁掉外键检查防御性提升。
+	_, err := r.db.ExecContext(ctx, `DELETE FROM trip_trips WHERE id = ?`, id)
+	return err
+}
+
+// ---- DayPlan CRUD ----
+
+func (r *SQLiteRepository) AddDay(ctx context.Context, d *DayPlan) error {
+	if d.ID == "" {
+		d.ID = uuid.NewString()
+	}
+	destJSON, _ := json.Marshal(d.Destination)
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO trip_days (id, trip_id, date, destination, "order")
+		 VALUES (?, ?, ?, ?, ?)`,
+		d.ID, d.TripID, d.Date, string(destJSON), d.Order,
+	)
+	return err
+}
+
+func (r *SQLiteRepository) GetDay(ctx context.Context, id string) (*DayPlan, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, trip_id, date, destination, "order" FROM trip_days WHERE id = ?`, id)
+	return scanDay(row)
+}
+
 func (r *SQLiteRepository) ListDaysByTrip(ctx context.Context, tripID string) ([]*DayPlan, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, trip_id, day_index, date, city, title, summary
-		FROM trip_day_plans WHERE trip_id = ? ORDER BY day_index ASC
-	`, tripID)
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, trip_id, date, destination, "order" FROM trip_days
+		 WHERE trip_id = ? ORDER BY date ASC, "order" ASC`, tripID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*DayPlan
 	for rows.Next() {
-		var d DayPlan
-		if err := rows.Scan(&d.ID, &d.TripID, &d.DayIndex, &d.Date, &d.City, &d.Title, &d.Summary); err != nil {
+		d, err := scanDay(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, &d)
+		out = append(out, d)
 	}
 	return out, rows.Err()
 }
 
-func (r *SQLiteRepository) DeleteDayPlan(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `
-		DELETE FROM trip_activities WHERE day_plan_id = ?;
-		DELETE FROM trip_day_plans WHERE id = ?;
-	`, id, id)
+func (r *SQLiteRepository) DeleteDay(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM trip_days WHERE id = ?`, id)
 	return err
 }
 
-// --- Activity ---
+// ---- Activity CRUD ----
 
-func (r *SQLiteRepository) CreateActivity(ctx context.Context, a *Activity) error {
+func (r *SQLiteRepository) AddActivity(ctx context.Context, a *Activity) error {
 	if a.ID == "" {
-		a.ID = generateID(12)
+		a.ID = uuid.NewString()
 	}
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO trip_activities (id, day_plan_id, seq, kind, time, title, location, notes, destination_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, a.ID, a.DayPlanID, a.Seq, string(a.Kind), a.Time, a.Title, a.Location, a.Notes, a.DestinationID)
-	if err != nil {
-		return fmt.Errorf("trip: create activity: %w", err)
-	}
-	return nil
+	destJSON, _ := json.Marshal(a.Destination)
+	emails := mustJSON(a.RemindEmails)
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO trip_activities
+		 (id, day_id, kind, title, location, destination, start_time, duration_min, note, "order", remind_before_minutes, remind_emails)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.DayID, string(a.Kind), a.Title, a.Location, string(destJSON),
+		a.StartTime, a.DurationMin, a.Note, a.Order,
+		a.RemindBeforeMinutes, emails,
+	)
+	return err
 }
 
-func (r *SQLiteRepository) ListActivitiesByDay(ctx context.Context, dayPlanID string) ([]*Activity, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, day_plan_id, seq, kind, time, title, location, notes, destination_id
-		FROM trip_activities WHERE day_plan_id = ? ORDER BY seq ASC
-	`, dayPlanID)
+func (r *SQLiteRepository) ListActivitiesByDay(ctx context.Context, dayID string) ([]*Activity, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, day_id, kind, title, location, destination, start_time, duration_min, note, "order",
+		        remind_before_minutes, remind_emails
+		 FROM trip_activities WHERE day_id = ? ORDER BY "order" ASC, start_time ASC, title ASC`, dayID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*Activity
 	for rows.Next() {
-		var a Activity
-		var kind string
-		if err := rows.Scan(&a.ID, &a.DayPlanID, &a.Seq, &kind, &a.Time, &a.Title, &a.Location, &a.Notes, &a.DestinationID); err != nil {
+		a, err := scanActivity(rows)
+		if err != nil {
 			return nil, err
 		}
-		a.Kind = ActivityKind(kind)
-		out = append(out, &a)
+		out = append(out, a)
 	}
 	return out, rows.Err()
 }
 
-// --- Destination ---
+func (r *SQLiteRepository) UpdateActivityReminder(ctx context.Context, activityID string, remindBeforeMinutes int, remindEmails []string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE trip_activities
+		 SET remind_before_minutes = ?, remind_emails = ?
+		 WHERE id = ?`,
+		remindBeforeMinutes, mustJSON(remindEmails), activityID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
 
-func (r *SQLiteRepository) UpsertDestination(ctx context.Context, d *Destination) (*Destination, error) {
-	if d.Name == "" {
-		return nil, errors.New("destination name is required")
+func (r *SQLiteRepository) DeleteActivity(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM trip_activities WHERE id = ?`, id)
+	return err
+}
+
+// ---- Reminder scheduling ----
+
+func (r *SQLiteRepository) ListDueReminders(ctx context.Context, from, to time.Time, limit int) ([]*ActivityReminderItem, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
 	}
-	// 先按 name+region 查;找到就返回,没找到就建一条。
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, name, region, info FROM trip_destinations
-		WHERE name = ? AND region = ? LIMIT 1
-	`, d.Name, d.Region)
-	var existing Destination
-	if err := row.Scan(&existing.ID, &existing.Name, &existing.Region, &existing.Info); err == nil {
-		return &existing, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	if d.ID == "" {
-		d.ID = generateID(10)
-	}
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO trip_destinations (id, name, region, info) VALUES (?, ?, ?, ?)
-	`, d.ID, d.Name, d.Region, d.Info)
+	// 取所有 remind_before_minutes > 0 且未发送的活动,加载 DayPlan + Trip,
+	// 在 Go 侧按 ActivityReminderTime 计算精确的触发时刻,落在 [from, to) 区间即返回。
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT a.id, a.day_id, a.kind, a.title, a.location, a.destination, a.start_time, a.duration_min, a.note, a."order",
+		        a.remind_before_minutes, a.remind_emails,
+		        d.id, d.trip_id, d.date, d.destination, d."order",
+		        t.id, t.name, t.description, t.start_date, t.end_date, t.tags, t.cover_cities, t.notify_email, t.created_at, t.updated_at
+		 FROM trip_activities a
+		 JOIN trip_days d ON d.id = a.day_id
+		 JOIN trip_trips t ON t.id = d.trip_id
+		 WHERE a.remind_before_minutes > 0 AND a.remind_sent_at = 0`)
 	if err != nil {
 		return nil, err
 	}
-	return d, nil
+	defer rows.Close()
+	var out []*ActivityReminderItem
+	for rows.Next() {
+		var (
+			a     Activity
+			d     DayPlan
+			t     Trip
+			destA string
+			destD string
+			tags  string
+			cities string
+			emails string
+		)
+		if err := rows.Scan(
+			&a.ID, &a.DayID, &a.Kind, &a.Title, &a.Location, &destA, &a.StartTime, &a.DurationMin, &a.Note, &a.Order,
+			&a.RemindBeforeMinutes, &emails,
+			&d.ID, &d.TripID, &d.Date, &destD, &d.Order,
+			&t.ID, &t.Name, &t.Description, &t.StartDate, &t.EndDate, &tags, &cities, &t.NotifyEmail, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(destA), &a.Destination)
+		_ = json.Unmarshal([]byte(destD), &d.Destination)
+		_ = json.Unmarshal([]byte(tags), &t.Tags)
+		_ = json.Unmarshal([]byte(cities), &t.CoverCities)
+		_ = json.Unmarshal([]byte(emails), &a.RemindEmails)
+
+		trig, ok := ActivityReminderTime(&d, &a)
+		if !ok {
+			continue
+		}
+		// 触发时刻需落在 [from, to) 区间内:trig < from 或 trig >= to 都跳过。
+		if trig.Before(from) || !trig.Before(to) {
+			continue
+		}
+		d.Activities = nil
+		out = append(out, &ActivityReminderItem{Activity: &a, Day: &d, Trip: &t})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
+func (r *SQLiteRepository) MarkReminderSent(ctx context.Context, activityID string, sentAt time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE trip_activities SET remind_sent_at = ? WHERE id = ?`,
+		formatSQLiteTime(sentAt), activityID,
+	)
+	return err
+}
+
+// ResetReminderSent 把活动的 remind_sent_at 清零,允许重发。
+func (r *SQLiteRepository) ResetReminderSent(ctx context.Context, activityID string) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE trip_activities SET remind_sent_at = 0 WHERE id = ?`,
+		activityID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// ---- helpers ----
+
+// rowScanner 抽象 *sql.Row 和 *sql.Rows,scanTrip / scanDay / scanActivity 共用。
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanTrip(s rowScanner) (*Trip, error) {
+	var (
+		t      Trip
+		tags   string
+		cities string
+	)
+	err := s.Scan(&t.ID, &t.Name, &t.Description, &t.StartDate, &t.EndDate,
+		&tags, &cities, &t.NotifyEmail, &t.CreatedAt, &t.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(tags), &t.Tags)
+	_ = json.Unmarshal([]byte(cities), &t.CoverCities)
+	return &t, nil
+}
+
+func scanDay(s rowScanner) (*DayPlan, error) {
+	var (
+		d   DayPlan
+		dst string
+	)
+	err := s.Scan(&d.ID, &d.TripID, &d.Date, &dst, &d.Order)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(dst), &d.Destination)
+	return &d, nil
+}
+
+func scanActivity(s rowScanner) (*Activity, error) {
+	var (
+		a      Activity
+		dest   string
+		emails string
+	)
+	err := s.Scan(&a.ID, &a.DayID, &a.Kind, &a.Title, &a.Location, &dest,
+		&a.StartTime, &a.DurationMin, &a.Note, &a.Order,
+		&a.RemindBeforeMinutes, &emails)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal([]byte(dest), &a.Destination)
+	_ = json.Unmarshal([]byte(emails), &a.RemindEmails)
+	return &a, nil
+}
+
+func mustJSON(v any) string {
+	if v == nil {
+		return "[]"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// formatSQLiteTime 用 go-sqlite3 内部 SQLITE_TIME_FORMAT 写入 time.Time,
+// 这样 driver 在 Scan 回 *time.Time 时不会报 "string into *time.Time"。
+// 留空字符串等同于 "零值",保持 reminder 未发状态。
+func formatSQLiteTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	// go-sqlite3 internal format: "2006-01-02 15:04:05.999999999-07:00"
+	// 简化版:秒级精度即可;毫秒/纳秒为可选字段。
+	return t.UTC().Format("2006-01-02 15:04:05.999999999-07:00")
 }

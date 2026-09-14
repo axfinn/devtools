@@ -45,6 +45,7 @@ type RouteHandlers struct {
 	SkillsHandler             *handlers.SkillsHandler
 	SkillsGuard               *middleware.SkillsGuard
 	AvatarHandler             *handlers.AvatarHandler
+	TripHandler               *handlers.TripHandler
 }
 
 // RegisterAllRoutes wires up all domain route groups.
@@ -86,4 +87,5 @@ func RegisterAllRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateLimiter
 	RegisterOCRRoutes(api, h, createRateLimiter)
 	RegisterHealthRoute(api)
 	RegisterAvatarRoutes(api, h, createRateLimiter)
+	RegisterTripRoutes(api, h, createRateLimiter)
 }

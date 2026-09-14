@@ -12,7 +12,7 @@ import (
 )
 
 // startCleanupRoutine 启动定时清理协程，每小时清理过期数据
-func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler, cfg *config.Config) {
+func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler, tripHandler *handlers.TripHandler, cfg *config.Config) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -129,6 +129,8 @@ func startCleanupRoutine(db *models.DB, plannerHandler *handlers.PlannerHandler,
 			}
 			// 扫描事项提醒
 			plannerHandler.ProcessDueReminders()
+			// 扫描行程提醒(独立上下文,与 planner 提醒同源 SMTP 复用)
+			tripHandler.ProcessDueReminders()
 			// 清理过期语音备忘录（草稿14天未处理 + 已删除7天）
 			vmCount, err := db.CleanExpiredVoiceMemos()
 			if err == nil && vmCount > 0 {
