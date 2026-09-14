@@ -49,6 +49,7 @@
 | 39 | **OCR** | `handlers/ocr.go` | `routes/ocr.go` | — | 二维码识别 + OCR，Python RapidOCR |
 | 40 | **Health** | 内联 | `routes/health.go` | — | `GET /api/health` 健康检查 |
 | 41 | **Avatar 虚拟形象** | `handlers/avatar.go` | `routes/avatar.go` | `views/dev/VirtualAvatarTool/VirtualAvatarTool.vue` (+ 13 子组件) | three.js 虚拟形象调试：SkinnedMesh + Skeleton + 姿态预设；模型库 CRUD + me_asset 标记；姿态片段（pose JSON）上传/导出/分享；glb / pose.json / 视频三选一导出（MediaRecorder + WebCodecs → 降级关键帧 JSON → 复制）；摄像头调试（getUserMedia 四态降级：granted/denied/unsupported/no_device）；R5 双因子鉴权（creator_key + bcrypt password）；R10 帧数上限 60000；分享短链 16 字符 hex；CSS 变量跟随全局主题 (`--color-accent` 全局命名） |
+| 42 | **Trip 旅游行程** | `backend/trip/*.go` + `backend/cmd/trip/main.go` | — (CLI-only) | — | DDD bounded context：聚合根 `Trip` → 实体 `DayPlan` → 实体 `Activity`；值对象 `Destination` + `ActivityKind`(transport/sight/food/lodging/shopping/note)；仓储 `Repository` 接口 + SQLiteRepository；服务 `Service.RenderMarkdown` 输出可读 14 天攻略；CLI `trip create/list/show/delete/add-day/add-activity/seed/init`；第一个真实行程 fixture = 国庆 2026 粤港澳潮汕 14 日深度游（已 seed）；默认 SQLite `./data/trip.db`（`--db` 覆盖） |
 
 ---
 
