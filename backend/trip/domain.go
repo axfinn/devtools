@@ -36,6 +36,26 @@ var ValidKinds = map[ActivityKind]bool{
 	ActivityLodging: true, ActivityShopping: true, ActivityLeisure: true,
 }
 
+// ExpenseKind 费用分类。复用了大部分 ActivityKind 语义,
+// 但加了 ExpenseMisc(杂项,如停车费/小费)和 ExpenseTicket(门票,
+// 跟 lodging 区分以便按类别渲染汇总时不被遗漏)。
+type ExpenseKind string
+
+const (
+	ExpenseTransport ExpenseKind = "transport" // 交通
+	ExpenseLodging   ExpenseKind = "lodging"   // 住宿
+	ExpenseFood      ExpenseKind = "food"      // 餐饮
+	ExpenseSight     ExpenseKind = "sight"     // 门票/景点
+	ExpenseShopping  ExpenseKind = "shopping"  // 购物
+	ExpenseMisc      ExpenseKind = "misc"      // 杂项(停车/小费/通讯/换汇等)
+)
+
+// ValidExpenseKinds 用于校验外部输入。
+var ValidExpenseKinds = map[ExpenseKind]bool{
+	ExpenseTransport: true, ExpenseLodging: true, ExpenseFood: true,
+	ExpenseSight: true, ExpenseShopping: true, ExpenseMisc: true,
+}
+
 // Destination 值对象:城市/区域/经纬度/官方信息。
 type Destination struct {
 	City      string  `json:"city"`                // 城市(如 "深圳" / "澳门")
@@ -85,9 +105,31 @@ type Trip struct {
 	Tags        []string  `json:"tags,omitempty"`
 	CoverCities []string  `json:"cover_cities,omitempty"` // 冗余字段,首日 / 末日方便筛选
 	NotifyEmail string    `json:"notify_email,omitempty"` // 行程级默认提醒收件人
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Days        []*DayPlan `json:"days,omitempty"`
+
+	// 预算(整程级)。金额用「分」存储避免浮点漂移,前端按 currency 渲染。
+	// BudgetTotal == 0 表示未设置预算。
+	BudgetTotal    int64  `json:"budget_total,omitempty"`    // 单位:分
+	BudgetCurrency string `json:"budget_currency,omitempty"` // 3 字母 ISO 4217,默认 "CNY"
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Days      []*DayPlan `json:"days,omitempty"`
+}
+
+// Expense 一次具体开销。与 Trip + Activity 解耦,允许一笔 expense 不挂在任何 activity 下
+// (用户随手记一笔也可),也允许一笔挂到具体 activity(把活动当作 cost bucket)。
+type Expense struct {
+	ID            string      `json:"id"`
+	TripID        string      `json:"trip_id"`
+	Date          string      `json:"date"` // YYYY-MM-DD;允许不在 Trip 日期范围内(边角账)
+	Category      ExpenseKind `json:"category"`
+	AmountCents   int64       `json:"amount_cents"`           // 单位:分
+	Currency      string      `json:"currency,omitempty"`     // 默认沿用 Trip.BudgetCurrency
+	Note          string      `json:"note,omitempty"`         // 自由文本
+	PaymentMethod string      `json:"payment_method,omitempty"` // cash / card / alipay / wechat / other
+	ActivityID    string      `json:"activity_id,omitempty"`  // 可选:关联到具体 activity
+	CreatedAt     time.Time   `json:"created_at"`
+	UpdatedAt     time.Time   `json:"updated_at"`
 }
 
 // Validate 日期合法性 + 名称非空。
@@ -105,6 +147,34 @@ func (t *Trip) Validate() error {
 	}
 	if end.Before(start) {
 		return fmt.Errorf("end_date %s is before start_date %s", t.EndDate, t.StartDate)
+	}
+	if t.BudgetTotal < 0 {
+		return errors.New("budget_total must be >= 0")
+	}
+	if t.BudgetCurrency != "" {
+		if len(t.BudgetCurrency) != 3 {
+			return fmt.Errorf("budget_currency must be ISO 4217 (3 letters), got %q", t.BudgetCurrency)
+		}
+	}
+	return nil
+}
+
+// Validate Expense 字段:日期 / 类别 / 金额。
+func (e *Expense) Validate() error {
+	if e.TripID == "" {
+		return errors.New("expense missing trip_id")
+	}
+	if _, err := time.Parse("2006-01-02", e.Date); err != nil {
+		return fmt.Errorf("invalid expense date %q: %w", e.Date, err)
+	}
+	if !ValidExpenseKinds[e.Category] {
+		return fmt.Errorf("invalid expense category %q", e.Category)
+	}
+	if e.AmountCents <= 0 {
+		return errors.New("amount_cents must be > 0")
+	}
+	if e.Currency != "" && len(e.Currency) != 3 {
+		return fmt.Errorf("currency must be ISO 4217 (3 letters), got %q", e.Currency)
 	}
 	return nil
 }

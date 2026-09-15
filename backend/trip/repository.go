@@ -29,19 +29,31 @@ type Repository interface {
 	GetTripWithDays(ctx context.Context, id string) (*Trip, error)
 	ListTrips(ctx context.Context) ([]*Trip, error)
 	UpdateTrip(ctx context.Context, t *Trip) error
+	UpdateTripBudget(ctx context.Context, tripID string, budgetTotal int64, budgetCurrency string) error
 	DeleteTrip(ctx context.Context, id string) error
 
 	// DayPlan
 	AddDay(ctx context.Context, d *DayPlan) error
 	GetDay(ctx context.Context, id string) (*DayPlan, error)
 	ListDaysByTrip(ctx context.Context, tripID string) ([]*DayPlan, error)
+	UpdateDay(ctx context.Context, d *DayPlan) error
 	DeleteDay(ctx context.Context, id string) error
 
 	// Activity
 	AddActivity(ctx context.Context, a *Activity) error
+	GetActivity(ctx context.Context, id string) (*Activity, error)
 	ListActivitiesByDay(ctx context.Context, dayID string) ([]*Activity, error)
 	UpdateActivityReminder(ctx context.Context, activityID string, remindBeforeMinutes int, remindEmails []string) error
+	// UpdateActivity 用于「出行中临时调整」(改标题 / 时间 / 时长 / 地点 / 备注)。
+	UpdateActivity(ctx context.Context, a *Activity) error
 	DeleteActivity(ctx context.Context, id string) error
+
+	// Expense
+	AddExpense(ctx context.Context, e *Expense) error
+	GetExpense(ctx context.Context, id string) (*Expense, error)
+	UpdateExpense(ctx context.Context, e *Expense) error
+	DeleteExpense(ctx context.Context, id string) error
+	ListExpensesByTrip(ctx context.Context, tripID string) ([]*Expense, error)
 
 	// Reminder scheduling:扫所有 remind_before_minutes > 0 的活动,
 	// 返回触发时刻在 [from, to) 区间内、且尚未发送过提醒的活动。
@@ -72,6 +84,9 @@ func NewSQLiteRepository(db *sql.DB) *SQLiteRepository {
 }
 
 // EnsureSchema 幂等建表;启动期调用一次即可。
+//   - CREATE TABLE IF NOT EXISTS 处理全新部署。
+//   - ALTER TABLE ADD COLUMN 处理已部署库的列扩展:
+//     "duplicate column name" 错误吞掉,表示该列已存在,无需重复加。
 func (r *SQLiteRepository) EnsureSchema(ctx context.Context) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS trip_trips (
@@ -115,13 +130,49 @@ func (r *SQLiteRepository) EnsureSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_trip_activities_reminder
 			ON trip_activities(remind_before_minutes)
 			WHERE remind_before_minutes > 0`,
+		// 费用账本:每条 expense 独立行,允许不挂活动。
+		`CREATE TABLE IF NOT EXISTS trip_expenses (
+			id TEXT PRIMARY KEY,
+			trip_id TEXT NOT NULL,
+			date TEXT NOT NULL,
+			category TEXT NOT NULL,
+			amount_cents INTEGER NOT NULL,
+			currency TEXT NOT NULL DEFAULT '',
+			note TEXT NOT NULL DEFAULT '',
+			payment_method TEXT NOT NULL DEFAULT '',
+			activity_id TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			FOREIGN KEY (trip_id) REFERENCES trip_trips(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_trip_expenses_trip ON trip_expenses(trip_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_trip_expenses_date ON trip_expenses(trip_id, date)`,
 	}
 	for _, s := range stmts {
 		if _, err := r.db.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("trip: ensure schema (%s): %w", firstLine(s), err)
 		}
 	}
+	// 列扩展:已存在的库补上预算字段;duplicate column name 表示已加过,吞掉。
+	for _, s := range []string{
+		`ALTER TABLE trip_trips ADD COLUMN budget_total INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE trip_trips ADD COLUMN budget_currency TEXT NOT NULL DEFAULT 'CNY'`,
+	} {
+		if _, err := r.db.ExecContext(ctx, s); err != nil {
+			if !isDuplicateColumnErr(err) {
+				return fmt.Errorf("trip: alter schema (%s): %w", firstLine(s), err)
+			}
+		}
+	}
 	return nil
+}
+
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "duplicate column name") || strings.Contains(msg, "already exists")
 }
 
 func firstLine(s string) string {
@@ -142,13 +193,17 @@ func (r *SQLiteRepository) CreateTrip(ctx context.Context, t *Trip) error {
 	t.UpdatedAt = now
 	tags := mustJSON(t.Tags)
 	cities := mustJSON(t.CoverCities)
+	if t.BudgetCurrency == "" {
+		t.BudgetCurrency = "CNY"
+	}
 	// go-sqlite3 在 _parse_time=true 下只解析 "2006-01-02 15:04:05.999999999-07:00" 格式,
 	// 不接受 RFC3339 的 T 分隔符。复刻 go-sqlite3 内部解析格式以保证 Scan 成功。
 	createdAt := formatSQLiteTime(t.CreatedAt)
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO trip_trips (id, name, description, start_date, end_date, tags, cover_cities, notify_email, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO trip_trips (id, name, description, start_date, end_date, tags, cover_cities, notify_email, budget_total, budget_currency, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.Name, t.Description, t.StartDate, t.EndDate, tags, cities, t.NotifyEmail,
+		t.BudgetTotal, t.BudgetCurrency,
 		createdAt, createdAt,
 	)
 	return err
@@ -156,7 +211,8 @@ func (r *SQLiteRepository) CreateTrip(ctx context.Context, t *Trip) error {
 
 func (r *SQLiteRepository) GetTrip(ctx context.Context, id string) (*Trip, error) {
 	row := r.db.QueryRowContext(ctx,
-		`SELECT id, name, description, start_date, end_date, tags, cover_cities, notify_email, created_at, updated_at
+		`SELECT id, name, description, start_date, end_date, tags, cover_cities, notify_email,
+		        budget_total, budget_currency, created_at, updated_at
 		 FROM trip_trips WHERE id = ?`, id)
 	return scanTrip(row)
 }
@@ -183,7 +239,8 @@ func (r *SQLiteRepository) GetTripWithDays(ctx context.Context, id string) (*Tri
 
 func (r *SQLiteRepository) ListTrips(ctx context.Context) ([]*Trip, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, name, description, start_date, end_date, tags, cover_cities, notify_email, created_at, updated_at
+		`SELECT id, name, description, start_date, end_date, tags, cover_cities, notify_email,
+		        budget_total, budget_currency, created_at, updated_at
 		 FROM trip_trips ORDER BY start_date DESC, created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -202,13 +259,18 @@ func (r *SQLiteRepository) ListTrips(ctx context.Context) ([]*Trip, error) {
 
 func (r *SQLiteRepository) UpdateTrip(ctx context.Context, t *Trip) error {
 	t.UpdatedAt = time.Now()
+	if t.BudgetCurrency == "" {
+		t.BudgetCurrency = "CNY"
+	}
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE trip_trips
 		 SET name = ?, description = ?, start_date = ?, end_date = ?,
-		     tags = ?, cover_cities = ?, notify_email = ?, updated_at = ?
+		     tags = ?, cover_cities = ?, notify_email = ?,
+		     budget_total = ?, budget_currency = ?, updated_at = ?
 		 WHERE id = ?`,
 		t.Name, t.Description, t.StartDate, t.EndDate,
 		mustJSON(t.Tags), mustJSON(t.CoverCities), t.NotifyEmail,
+		t.BudgetTotal, t.BudgetCurrency,
 		formatSQLiteTime(t.UpdatedAt), t.ID,
 	)
 	if err != nil {
@@ -221,8 +283,28 @@ func (r *SQLiteRepository) UpdateTrip(ctx context.Context, t *Trip) error {
 	return nil
 }
 
+// UpdateTripBudget 只改预算相关字段,不动 name / dates。
+// 适用于"出行中临时改预算"按钮或设默认预算时单独 PATCH。
+func (r *SQLiteRepository) UpdateTripBudget(ctx context.Context, tripID string, budgetTotal int64, budgetCurrency string) error {
+	if budgetCurrency == "" {
+		budgetCurrency = "CNY"
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE trip_trips SET budget_total = ?, budget_currency = ?, updated_at = ? WHERE id = ?`,
+		budgetTotal, budgetCurrency, formatSQLiteTime(time.Now()), tripID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *SQLiteRepository) DeleteTrip(ctx context.Context, id string) error {
-	// ON DELETE CASCADE 处理 days + activities;先禁掉外键检查防御性提升。
+	// ON DELETE CASCADE 处理 days + activities + expenses;先禁掉外键检查防御性提升。
 	_, err := r.db.ExecContext(ctx, `DELETE FROM trip_trips WHERE id = ?`, id)
 	return err
 }
@@ -270,6 +352,24 @@ func (r *SQLiteRepository) ListDaysByTrip(ctx context.Context, tripID string) ([
 func (r *SQLiteRepository) DeleteDay(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM trip_days WHERE id = ?`, id)
 	return err
+}
+
+// UpdateDay 用于"出行中临时调整"某天的日期 / 目的地。
+// 注意:只改 DayPlan 自身的字段,不动其下的 Activity。
+func (r *SQLiteRepository) UpdateDay(ctx context.Context, d *DayPlan) error {
+	destJSON, _ := json.Marshal(d.Destination)
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE trip_days SET date = ?, destination = ? WHERE id = ?`,
+		d.Date, string(destJSON), d.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ---- Activity CRUD ----
@@ -331,6 +431,133 @@ func (r *SQLiteRepository) UpdateActivityReminder(ctx context.Context, activityI
 func (r *SQLiteRepository) DeleteActivity(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM trip_activities WHERE id = ?`, id)
 	return err
+}
+
+// GetActivity 单独读一条活动,UpdateActivity 前必须先读到当前完整记录。
+func (r *SQLiteRepository) GetActivity(ctx context.Context, id string) (*Activity, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, day_id, kind, title, location, destination, start_time, duration_min, note, "order",
+		        remind_before_minutes, remind_emails
+		 FROM trip_activities WHERE id = ?`, id)
+	return scanActivity(row)
+}
+
+// UpdateActivity 改活动主字段:title / location / start_time / duration_min / note。
+// 不动 remind_before_minutes / remind_emails(由 UpdateActivityReminder 单独维护),
+// 也不动 order(避免误改排序)。
+// 这是"出行中临时调整"按钮背后用的接口。
+func (r *SQLiteRepository) UpdateActivity(ctx context.Context, a *Activity) error {
+	destJSON, _ := json.Marshal(a.Destination)
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE trip_activities
+		 SET kind = ?, title = ?, location = ?, destination = ?,
+		     start_time = ?, duration_min = ?, note = ?
+		 WHERE id = ?`,
+		string(a.Kind), a.Title, a.Location, string(destJSON),
+		a.StartTime, a.DurationMin, a.Note, a.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ---- Expense CRUD ----
+
+func (r *SQLiteRepository) AddExpense(ctx context.Context, e *Expense) error {
+	if e.ID == "" {
+		e.ID = uuid.NewString()
+	}
+	now := time.Now()
+	e.CreatedAt = now
+	e.UpdatedAt = now
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO trip_expenses
+		 (id, trip_id, date, category, amount_cents, currency, note, payment_method, activity_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.TripID, e.Date, string(e.Category), e.AmountCents, e.Currency,
+		e.Note, e.PaymentMethod, e.ActivityID,
+		formatSQLiteTime(e.CreatedAt), formatSQLiteTime(e.UpdatedAt),
+	)
+	return err
+}
+
+func (r *SQLiteRepository) GetExpense(ctx context.Context, id string) (*Expense, error) {
+	row := r.db.QueryRowContext(ctx,
+		`SELECT id, trip_id, date, category, amount_cents, currency, note, payment_method, activity_id, created_at, updated_at
+		 FROM trip_expenses WHERE id = ?`, id)
+	return scanExpense(row)
+}
+
+func (r *SQLiteRepository) UpdateExpense(ctx context.Context, e *Expense) error {
+	e.UpdatedAt = time.Now()
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE trip_expenses
+		 SET date = ?, category = ?, amount_cents = ?, currency = ?, note = ?, payment_method = ?,
+		     activity_id = ?, updated_at = ?
+		 WHERE id = ?`,
+		e.Date, string(e.Category), e.AmountCents, e.Currency,
+		e.Note, e.PaymentMethod, e.ActivityID,
+		formatSQLiteTime(e.UpdatedAt), e.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteRepository) DeleteExpense(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM trip_expenses WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *SQLiteRepository) ListExpensesByTrip(ctx context.Context, tripID string) ([]*Expense, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, trip_id, date, category, amount_cents, currency, note, payment_method, activity_id, created_at, updated_at
+		 FROM trip_expenses WHERE trip_id = ? ORDER BY date ASC, created_at ASC`, tripID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Expense
+	for rows.Next() {
+		e, err := scanExpense(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func scanExpense(s rowScanner) (*Expense, error) {
+	var e Expense
+	var cat string
+	err := s.Scan(&e.ID, &e.TripID, &e.Date, &cat, &e.AmountCents, &e.Currency,
+		&e.Note, &e.PaymentMethod, &e.ActivityID, &e.CreatedAt, &e.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.Category = ExpenseKind(cat)
+	return &e, nil
 }
 
 // ---- Reminder scheduling ----
@@ -427,12 +654,15 @@ type rowScanner interface {
 
 func scanTrip(s rowScanner) (*Trip, error) {
 	var (
-		t      Trip
-		tags   string
-		cities string
+		t        Trip
+		tags     string
+		cities   string
+		currency string
 	)
 	err := s.Scan(&t.ID, &t.Name, &t.Description, &t.StartDate, &t.EndDate,
-		&tags, &cities, &t.NotifyEmail, &t.CreatedAt, &t.UpdatedAt)
+		&tags, &cities, &t.NotifyEmail,
+		&t.BudgetTotal, &currency,
+		&t.CreatedAt, &t.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -441,6 +671,12 @@ func scanTrip(s rowScanner) (*Trip, error) {
 	}
 	_ = json.Unmarshal([]byte(tags), &t.Tags)
 	_ = json.Unmarshal([]byte(cities), &t.CoverCities)
+	// 老库可能没有 budget_currency 列(返回空字符串),兜底默认 CNY
+	if currency != "" {
+		t.BudgetCurrency = currency
+	} else {
+		t.BudgetCurrency = "CNY"
+	}
 	return &t, nil
 }
 

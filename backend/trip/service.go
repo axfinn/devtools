@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -32,6 +33,9 @@ func (s *Service) CreateTrip(ctx context.Context, t *Trip) error {
 	}
 	t.CoverCities = dedupNonEmpty(t.CoverCities)
 	t.Tags = dedupNonEmpty(t.Tags)
+	if t.BudgetCurrency == "" {
+		t.BudgetCurrency = "CNY"
+	}
 	return s.repo.CreateTrip(ctx, t)
 }
 
@@ -51,6 +55,24 @@ func (s *Service) UpdateTrip(ctx context.Context, t *Trip) error {
 		return err
 	}
 	return s.repo.UpdateTrip(ctx, t)
+}
+
+// UpdateBudget 单独接口:前端"预算"Tab 只动这两个字段,
+// 不会把 name / dates 重置(避免误操作)。
+func (s *Service) UpdateBudget(ctx context.Context, tripID string, total int64, currency string) error {
+	if tripID == "" {
+		return errors.New("trip: trip_id is required")
+	}
+	if total < 0 {
+		return errors.New("budget_total must be >= 0")
+	}
+	if currency == "" {
+		currency = "CNY"
+	}
+	if len(currency) != 3 {
+		return fmt.Errorf("currency must be ISO 4217 (3 letters), got %q", currency)
+	}
+	return s.repo.UpdateTripBudget(ctx, tripID, total, currency)
 }
 
 func (s *Service) DeleteTrip(ctx context.Context, id string) error {
@@ -77,6 +99,14 @@ func (s *Service) AddDay(ctx context.Context, d *DayPlan) error {
 	return s.repo.AddDay(ctx, d)
 }
 
+// UpdateDay 服务层包装:校验后调仓储。
+func (s *Service) UpdateDay(ctx context.Context, d *DayPlan) error {
+	if err := d.Validate(); err != nil {
+		return err
+	}
+	return s.repo.UpdateDay(ctx, d)
+}
+
 // ---- Activity ----
 
 func (s *Service) AddActivity(ctx context.Context, a *Activity) error {
@@ -94,6 +124,23 @@ func (s *Service) AddActivity(ctx context.Context, a *Activity) error {
 	return s.repo.AddActivity(ctx, a)
 }
 
+// UpdateActivity 用于"出行中临时调整"按钮:改 title / location / start_time /
+// duration_min / note(以及 kind)。先 GetActivity 拿到当前完整记录再调仓储,
+// 这样 remind_* 字段不会被覆盖。
+func (s *Service) UpdateActivity(ctx context.Context, a *Activity) error {
+	if a.ID == "" {
+		return errors.New("trip: activity_id is required")
+	}
+	if err := a.Validate(); err != nil {
+		return err
+	}
+	// 校验 ID 真实存在,避免 ErrNotFound 漂到仓储层时丢上下文
+	if _, err := s.repo.GetActivity(ctx, a.ID); err != nil {
+		return err
+	}
+	return s.repo.UpdateActivity(ctx, a)
+}
+
 // SetReminder 单独接口,前端 UI 改提醒时间不必重发整个 Activity。
 func (s *Service) SetReminder(ctx context.Context, activityID string, remindBeforeMinutes int, remindEmails []string) error {
 	if activityID == "" {
@@ -103,6 +150,320 @@ func (s *Service) SetReminder(ctx context.Context, activityID string, remindBefo
 		return errors.New("trip: remind_before_minutes must be >= 0")
 	}
 	return s.repo.UpdateActivityReminder(ctx, activityID, remindBeforeMinutes, dedupNonEmpty(remindEmails))
+}
+
+// ---- Expense ----
+
+func (s *Service) AddExpense(ctx context.Context, e *Expense) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	// 货币缺省沿用 trip 的预算货币,保证汇总时口径一致
+	if e.Currency == "" {
+		t, err := s.repo.GetTrip(ctx, e.TripID)
+		if err == nil && t != nil && t.BudgetCurrency != "" {
+			e.Currency = t.BudgetCurrency
+		} else {
+			e.Currency = "CNY"
+		}
+	}
+	return s.repo.AddExpense(ctx, e)
+}
+
+// UpdateExpense 编辑支出:校验后调仓储。
+// 注意:必须先 GetExpense 拿到原始记录,再覆盖待改字段(避免漏写)。
+func (s *Service) UpdateExpense(ctx context.Context, e *Expense) error {
+	if e.ID == "" {
+		return errors.New("trip: expense_id is required")
+	}
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	orig, err := s.repo.GetExpense(ctx, e.ID)
+	if err != nil {
+		return err
+	}
+	e.TripID = orig.TripID
+	e.CreatedAt = orig.CreatedAt
+	return s.repo.UpdateExpense(ctx, e)
+}
+
+func (s *Service) DeleteExpense(ctx context.Context, id string) error {
+	if id == "" {
+		return errors.New("trip: expense_id is required")
+	}
+	return s.repo.DeleteExpense(ctx, id)
+}
+
+func (s *Service) ListExpenses(ctx context.Context, tripID string) ([]*Expense, error) {
+	if tripID == "" {
+		return nil, errors.New("trip: trip_id is required")
+	}
+	return s.repo.ListExpensesByTrip(ctx, tripID)
+}
+
+// ---- Summary ----
+
+// Summary 行程级汇总,前端"总结 Tab"和 Markdown 都从这里取数。
+// 多币种情况下,不同 currency 的金额直接相加不做汇率折算
+// (汇总期用户可一眼看出"哪几天用的是别的币种")。
+type Summary struct {
+	Trip              *Trip                       `json:"trip"`
+	TotalSpentCents   int64                       `json:"total_spent_cents"`
+	Currency          string                      `json:"currency"` // 默认用 trip 的预算币种
+	ByCategory        map[ExpenseKind]int64       `json:"by_category_cents"`
+	ByDay             map[string]int64            `json:"by_day_cents"` // date -> cents
+	TopCategories     []CategorySpend             `json:"top_categories"`
+	ExpenseCount      int                         `json:"expense_count"`
+	OtherCurrencies   []string                    `json:"other_currencies,omitempty"`
+	RemainingCents    int64                       `json:"remaining_cents,omitempty"` // BudgetTotal - TotalSpentCents;无预算则为 0
+	OverBudget        bool                        `json:"over_budget"`
+	DaysCovered       int                         `json:"days_covered"`
+	AveragePerDayCents int64                      `json:"average_per_day_cents,omitempty"`
+}
+
+type CategorySpend struct {
+	Category ExpenseKind `json:"category"`
+	Cents    int64       `json:"cents"`
+	Percent  float64     `json:"percent"`
+}
+
+// TripSummary 计算一份 trip 的所有费用汇总。
+func (s *Service) TripSummary(ctx context.Context, tripID string) (*Summary, error) {
+	if tripID == "" {
+		return nil, errors.New("trip: trip_id is required")
+	}
+	t, err := s.repo.GetTrip(ctx, tripID)
+	if err != nil {
+		return nil, err
+	}
+	expenses, err := s.repo.ListExpensesByTrip(ctx, tripID)
+	if err != nil {
+		return nil, err
+	}
+
+	currency := t.BudgetCurrency
+	if currency == "" {
+		currency = "CNY"
+	}
+	out := &Summary{
+		Trip:       t,
+		Currency:   currency,
+		ByCategory: make(map[ExpenseKind]int64, 6),
+		ByDay:      make(map[string]int64),
+	}
+	otherCurrencies := make(map[string]struct{})
+
+	for _, e := range expenses {
+		if e.Currency == currency {
+			out.TotalSpentCents += e.AmountCents
+		} else if e.Currency != "" {
+			otherCurrencies[e.Currency] = struct{}{}
+		} else {
+			// 老数据兜底:等同 trip currency
+			out.TotalSpentCents += e.AmountCents
+		}
+		out.ByCategory[e.Category] += e.AmountCents
+		out.ByDay[e.Date] += e.AmountCents
+	}
+	out.ExpenseCount = len(expenses)
+
+	for c := range otherCurrencies {
+		out.OtherCurrencies = append(out.OtherCurrencies, c)
+	}
+	sort.Strings(out.OtherCurrencies)
+
+	// 排序:TopCategories 按金额降序
+	for cat, c := range out.ByCategory {
+		pct := 0.0
+		if out.TotalSpentCents > 0 {
+			pct = float64(c) / float64(out.TotalSpentCents) * 100
+		}
+		out.TopCategories = append(out.TopCategories, CategorySpend{
+			Category: cat, Cents: c, Percent: pct,
+		})
+	}
+	sort.Slice(out.TopCategories, func(i, j int) bool {
+		return out.TopCategories[i].Cents > out.TopCategories[j].Cents
+	})
+
+	if t.BudgetTotal > 0 {
+		out.RemainingCents = t.BudgetTotal - out.TotalSpentCents
+		out.OverBudget = out.TotalSpentCents > t.BudgetTotal
+	}
+	// 已发生的日期(在 trip 日期范围内)
+	start, _ := time.Parse("2006-01-02", t.StartDate)
+	end, _ := time.Parse("2006-01-02", t.EndDate)
+	daysCount := 0
+	if !start.IsZero() && !end.IsZero() {
+		daysCount = int(end.Sub(start).Hours()/24) + 1
+		if daysCount < 0 {
+			daysCount = 0
+		}
+	}
+	out.DaysCovered = daysCount
+	if daysCount > 0 && out.TotalSpentCents > 0 {
+		out.AveragePerDayCents = out.TotalSpentCents / int64(daysCount)
+	}
+	return out, nil
+}
+
+// RenderSummaryMarkdown 把 TripSummary 渲染成可贴 Notion 的总结 Markdown。
+// 给"回来后我可以帮你整个做一个总结"那个按钮用。
+func (s *Service) RenderSummaryMarkdown(ctx context.Context, tripID string) (string, error) {
+	sum, err := s.TripSummary(ctx, tripID)
+	if err != nil {
+		return "", err
+	}
+	t := sum.Trip
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "# %s — 行程总结\n\n", t.Name)
+	fmt.Fprintf(&b, "> %s → %s", t.StartDate, t.EndDate)
+	if len(t.CoverCities) > 0 {
+		fmt.Fprintf(&b, " · %s", strings.Join(t.CoverCities, " / "))
+	}
+	b.WriteString("\n\n")
+
+	// 预算概要
+	b.WriteString("## 预算概要\n\n")
+	b.WriteString("| 项目 | 数值 |\n|------|------|\n")
+	fmt.Fprintf(&b, "| 预算 | %s |\n", formatMoney(t.BudgetTotal, t.BudgetCurrency))
+	fmt.Fprintf(&b, "| 实际花费 | **%s** |\n", formatMoney(sum.TotalSpentCents, sum.Currency))
+	if t.BudgetTotal > 0 {
+		fmt.Fprintf(&b, "| 剩余/超支 | %s |\n", formatMoney(sum.RemainingCents, t.BudgetCurrency))
+		if sum.OverBudget {
+			fmt.Fprintf(&b, "> ⚠️ 实际花费超过预算 %.1f%%\n", float64(sum.TotalSpentCents-t.BudgetTotal)/float64(t.BudgetTotal)*100)
+		}
+	}
+	fmt.Fprintf(&b, "| 笔数 | %d 笔 |\n", sum.ExpenseCount)
+	if sum.DaysCovered > 0 {
+		fmt.Fprintf(&b, "| 日均 | %s |\n", formatMoney(sum.AveragePerDayCents, sum.Currency))
+	}
+	if len(sum.OtherCurrencies) > 0 {
+		fmt.Fprintf(&b, "> ⚠️ 检测到其他币种的支出 (%s),未折算入总花费(避免汇率漂移)。\n",
+			strings.Join(sum.OtherCurrencies, ", "))
+	}
+	b.WriteString("\n")
+
+	// 按类别
+	if len(sum.ByCategory) > 0 {
+		b.WriteString("## 按类别\n\n")
+		b.WriteString("| 类别 | 金额 | 占比 |\n|------|------|------|\n")
+		for _, c := range sum.TopCategories {
+			fmt.Fprintf(&b, "| %s | %s | %.1f%% |\n",
+				expenseKindCN(c.Category), formatMoney(c.Cents, sum.Currency), c.Percent)
+		}
+		b.WriteString("\n")
+	}
+
+	// 按天(列出每天花费,有则按降序)
+	if len(sum.ByDay) > 0 {
+		b.WriteString("## 按天\n\n")
+		dates := make([]string, 0, len(sum.ByDay))
+		for d := range sum.ByDay {
+			dates = append(dates, d)
+		}
+		sort.Strings(dates)
+		b.WriteString("| 日期 | 花费 | 星期 |\n|------|------|------|\n")
+		for _, d := range dates {
+			fmt.Fprintf(&b, "| %s | %s | %s |\n", d, formatMoney(sum.ByDay[d], sum.Currency), weekdayCN(d))
+		}
+		b.WriteString("\n")
+	}
+
+	// 明细列表
+	if sum.ExpenseCount > 0 {
+		expenses, err := s.repo.ListExpensesByTrip(ctx, tripID)
+		if err == nil {
+			b.WriteString("## 明细\n\n")
+			b.WriteString("| 日期 | 类别 | 金额 | 备注 |\n|------|------|------|------|\n")
+			for _, e := range expenses {
+				note := strings.TrimSpace(e.Note)
+				if len(note) > 40 {
+					note = note[:39] + "…"
+				}
+				fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
+					e.Date, expenseKindCN(e.Category),
+					formatMoney(e.AmountCents, firstOrDefault(e.Currency, sum.Currency)),
+					note)
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("---\n\n")
+	b.WriteString("_本总结由 DevTools / Trip 工具自动生成,可贴 Notion / Markdown 阅读器。_\n")
+	return b.String(), nil
+}
+
+func firstOrDefault(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func formatMoney(cents int64, currency string) string {
+	if currency == "" {
+		currency = "CNY"
+	}
+	// CNY 用 ¥,其它 ISO 4217 走 "¥1,234.56" 仍可读,只前缀货币代码
+	sign := ""
+	if cents < 0 {
+		sign = "-"
+		cents = -cents
+	}
+	whole := cents / 100
+	frac := cents % 100
+	wholeStr := groupThousands(whole)
+	switch currency {
+	case "CNY":
+		return fmt.Sprintf("%s¥%s.%02d", sign, wholeStr, frac)
+	default:
+		return fmt.Sprintf("%s%s %s.%02d", sign, currency, wholeStr, frac)
+	}
+}
+
+func groupThousands(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	neg := false
+	if strings.HasPrefix(s, "-") {
+		neg = true
+		s = s[1:]
+	}
+	out := make([]byte, 0, len(s)+len(s)/3)
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, byte(c))
+	}
+	if neg {
+		return "-" + string(out)
+	}
+	return string(out)
+}
+
+func expenseKindCN(k ExpenseKind) string {
+	switch k {
+	case ExpenseTransport:
+		return "交通"
+	case ExpenseLodging:
+		return "住宿"
+	case ExpenseFood:
+		return "餐饮"
+	case ExpenseSight:
+		return "门票"
+	case ExpenseShopping:
+		return "购物"
+	case ExpenseMisc:
+		return "杂项"
+	default:
+		return string(k)
+	}
 }
 
 // ---- Markdown 渲染 ----
