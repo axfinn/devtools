@@ -565,6 +565,58 @@ describe('useCounterSession · 存储健壮性', () => {
     }
   })
 
+  it('#26 落盘的 null 可空时间戳还原后仍是 null（绝不归一成 0）', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      active: {
+        startedAt: DAY1,
+        countAtStart: 0,
+        goal: { mode: 'count', value: 0 },
+        activeMs: 0,
+        pausedMs: 0,
+        backgroundMs: 0,
+        activeSinceMs: null,
+        pausedSinceMs: null,
+        hiddenSinceMs: null,
+        lastHitAtMs: null,
+        taps: []
+      },
+      sessions: []
+    })
+    const fixture = makeSession({ seed: { [TRAINING_STORAGE_KEY]: raw } })
+    fixture.session.init()
+
+    const active = fixture.session.active.value
+    expect(active.activeSinceMs).toBeNull()
+    expect(active.pausedSinceMs).toBeNull()
+    expect(active.hiddenSinceMs).toBeNull()
+    expect(active.lastHitAtMs).toBeNull()
+    expect(fixture.session.isPaused()).toBe(false)
+  })
+
+  it('#26b 已落盘的有效可空时间戳原样恢复（修复只动 null 分支，不收紧为 typeof 判据）', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      active: {
+        startedAt: DAY1,
+        activeSinceMs: DAY1 + 1000,
+        pausedSinceMs: DAY1 + 2000,
+        hiddenSinceMs: DAY1 + 3000,
+        lastHitAtMs: DAY1 + 4000
+      },
+      sessions: []
+    })
+    const fixture = makeSession({ seed: { [TRAINING_STORAGE_KEY]: raw } })
+    fixture.session.init()
+
+    const active = fixture.session.active.value
+    expect(active.activeSinceMs).toBe(DAY1 + 1000)
+    expect(active.pausedSinceMs).toBe(DAY1 + 2000)
+    expect(active.hiddenSinceMs).toBe(DAY1 + 3000)
+    expect(active.lastHitAtMs).toBe(DAY1 + 4000)
+    expect(fixture.session.isPaused()).toBe(true)
+  })
+
   it('归一化会剔除非法 taps 条目并把 active 的 taps 补成数组', () => {
     const raw = JSON.stringify({
       version: 1,

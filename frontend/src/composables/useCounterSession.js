@@ -71,6 +71,21 @@ function toNonNegativeInt(value, fallback = 0) {
   return Math.max(0, Math.floor(numeric))
 }
 
+/**
+ * 可空毫秒时间戳归一化：`null` / `undefined` **必须还原成 `null`**，不能变成 `0`。
+ *
+ * 为什么必须先判空：`Number(null) === 0` 且 `Number.isFinite(0) === true`，
+ * 直接写 `Number.isFinite(Number(raw.x)) ? Number(raw.x) : null` 会把落盘的 `null`
+ * 归一成 `0`。全模块的哨兵判断一律是 `x == null` / `x != null`，
+ * 一旦被写成 `0`，「未暂停」会被读成「已暂停（0ms 起）」、
+ * 「未开始累加」会被读成一个从 epoch 起算的天文数字时长。
+ */
+function toNullableMs(value) {
+  if (value == null) return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
 function clampInt(value, min, max, fallback) {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return fallback
@@ -123,7 +138,6 @@ export function createCounterSession({
   const pendingSplitFrom = ref(null)
 
   const trainingMode = computed(() => prefs.value.trainingMode === true)
-  const hasActive = computed(() => active.value !== null)
 
   // ───────────────────────── 归一化（任何异常输入都回退到合法结构） ─────────────────────────
 
@@ -188,10 +202,10 @@ export function createCounterSession({
       activeMs: Math.max(0, Number(raw.activeMs) || 0),
       pausedMs: Math.max(0, Number(raw.pausedMs) || 0),
       backgroundMs: Math.max(0, Number(raw.backgroundMs) || 0),
-      activeSinceMs: Number.isFinite(Number(raw.activeSinceMs)) ? Number(raw.activeSinceMs) : null,
-      pausedSinceMs: Number.isFinite(Number(raw.pausedSinceMs)) ? Number(raw.pausedSinceMs) : null,
-      hiddenSinceMs: Number.isFinite(Number(raw.hiddenSinceMs)) ? Number(raw.hiddenSinceMs) : null,
-      lastHitAtMs: Number.isFinite(Number(raw.lastHitAtMs)) ? Number(raw.lastHitAtMs) : null,
+      activeSinceMs: toNullableMs(raw.activeSinceMs),
+      pausedSinceMs: toNullableMs(raw.pausedSinceMs),
+      hiddenSinceMs: toNullableMs(raw.hiddenSinceMs),
+      lastHitAtMs: toNullableMs(raw.lastHitAtMs),
       speedPeak: Math.max(0, Number(raw.speedPeak) || 0),
       splitFrom: typeof raw.splitFrom === 'string' ? raw.splitFrom : null,
       endReason: null,
@@ -721,14 +735,10 @@ export function createCounterSession({
     prefs,
     active,
     sessions,
-    lastHiddenAtMs,
     pendingSplitFrom,
     trainingMode,
-    hasActive,
     // 常量（供 UI 展示上限说明）
-    idleMs,
     maxTaps,
-    maxSessions,
     // lifecycle
     init,
     flush,

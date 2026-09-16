@@ -1072,11 +1072,16 @@ const sessionReached = computed(() =>
   isSessionReached(session.active.value?.goal, sessionCount.value, sessionActiveMs.value)
 )
 
+/** 本次会话可选目标预设：前三项为固定次数，末位 `0` = 不设目标（自由训练） */
+const GOAL_PRESET_VALUES = Object.freeze([100, 200, 500, 0])
+/** 「上次目标」的插入位置：紧跟 500 之后、`0` 哨兵之前 */
+const GOAL_PRESET_LAST_INDEX = GOAL_PRESET_VALUES.length - 1
+
 /** 本次可选目标：预设 + 「上次目标」一键选项；0 = 不设目标 */
 const goalPresets = computed(() => {
-  const presets = [100, 200, 500, 0]
+  const presets = [...GOAL_PRESET_VALUES]
   const last = sessionLastGoal.value
-  if (last > 0 && !presets.includes(last)) presets.splice(3, 0, last)
+  if (last > 0 && !presets.includes(last)) presets.splice(GOAL_PRESET_LAST_INDEX, 0, last)
   return presets
 })
 

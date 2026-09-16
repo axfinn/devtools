@@ -30,7 +30,6 @@ const DEGRADE_FAIL_THRESHOLD = 2
  * @param {{
  *   ctxFactory?: () => any,
  *   createBuffers?: (ctx: any) => Map<string, any>,
- *   now?: () => number,
  *   resumeTimeoutMs?: number,
  *   setTimer?: typeof setTimeout,
  *   clearTimer?: typeof clearTimeout
@@ -39,7 +38,6 @@ const DEGRADE_FAIL_THRESHOLD = 2
 export function createCounterAudio({
   ctxFactory = () => new (window.AudioContext || window.webkitAudioContext)(),
   createBuffers = () => new Map(),
-  now = () => performance.now(),
   resumeTimeoutMs = DEFAULT_RESUME_TIMEOUT_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout
@@ -49,7 +47,6 @@ export function createCounterAudio({
   let silentPrimed = false
   let needsUnlock = false
   let failCount = 0
-  let lastFailAtMs = 0
 
   const isDegraded = ref(false)
 
@@ -135,7 +132,6 @@ export function createCounterAudio({
 
   function registerFailure() {
     failCount += 1
-    lastFailAtMs = now()
     if (failCount >= DEGRADE_FAIL_THRESHOLD) {
       isDegraded.value = true
     }
@@ -284,9 +280,6 @@ export function createCounterAudio({
     // 只读诊断信息，供组件 / QA 观察状态，不参与任何音频决策
     get neededUnlock() {
       return needsUnlock
-    },
-    get lastFailAtMs() {
-      return lastFailAtMs
     },
     get resumeTimeoutMs() {
       return resumeTimeoutMs
