@@ -1,11 +1,25 @@
-# 敲击计数器：移动端适配 / 息屏音频恢复 / 运动会话与目标 / 防误触 — 技术方案（v3 修订版）
+# 敲击计数器：移动端适配 / 息屏音频恢复 / 运动会话与目标 / 防误触 — 技术方案（v4 修订版）
 
-- 原 issue：FINN-10（父 FINN-9）；v2 修订：FINN-16（Stage 2 评审 FINN-11 判 FAIL，7 条阻塞项）；**v3 修订：FINN-18（Stage 1 复查新增 B8 / B9 两条阻塞项 + 非阻塞 1–7 + 未定义边界 1–3）**
+- 原 issue：FINN-10（父 FINN-9）；v2 修订：FINN-16（Stage 2 评审 FINN-11 判 FAIL，7 条阻塞项）；**v3 修订：FINN-18（Stage 1 复查新增 B8 / B9 两条阻塞项 + 非阻塞 1–7 + 未定义边界 1–3）**；**v4 修订：FINN-20（Stage 1 复查唯一剩余阻塞项 B10 —— 训练层存活时 `undoLast()` 经 `document` 级快捷键可达）**
 - 模块：`frontend/src/views/life/CounterTool.vue`（纯前端，无后端）
 - 状态：设计稿，**不含任何代码改动**；实现由 frontend-writer 执行，验收由 devtools-qa 执行
 - 勘察方式：全部结论来自本仓库实际 grep / 逐段 Read；**未起 dev server、未跑 go build、未在真机验证**。凡属推算的数值均在文中显式标注「推算」
 
 > **v3 的边界（写给下游）**：B1–B7 已由 FINN-17 复查判定**全部闭合**，本版**不推翻方案骨架、不重开 B1–B7**。v3 只做三类改动：① 修 B8（训练层层级）/ B9（`overflow` 自相矛盾）两条新阻塞项；② 收口非阻塞 1–7 与未定义边界 1–3；③ 补 v2 遗漏的两个副作用（EP 全局弹层在训练层下的取舍、`active.taps` 写入时机）。
+
+---
+
+## v4 修订记录（对照 FINN-20 / B10）
+
+> **v4 的范围（写给下游）**：FINN-19 复查判定 B1–B9、非阻塞 1–7、未定义边界 1–3 **全部闭合**，**唯一剩余阻塞项 = B10**。v4 因此**只改 B10 这一处事实错误 + 由它引出的同口径自查**：不推翻骨架、不重开任何已闭合条目。v3 的所有结论在 v4 中原样有效。
+
+| 项 | 改了什么 | 主要落点 |
+|----|---------|---------|
+| **B10** | **删除未实证前提**「训练层内撤销本就不可达」→ 更正为「训练层存活时 `undoLast()` **可**经 `document` 级 `onKeyDown` 的 `Cmd/Ctrl+Z` 分支到达」，后果是「训练中静默改数 + `ElMessage` 反馈不可见」；给出**训练层存活期的撤销门限**（**屏蔽该快捷键**，理由见 §D2⑦-b.1）；补可自动化判据与静态 grep 判据；同步风险表 | §D2⑦、§D2⑦-b（新增）、§测试要点 L1 #6b/#6c、§测试要点 L2 #42c、风险表第 10 / 12 行 |
+| **B10 同口径自查** | 新增 §D2⑦-b：**逐条实证**训练层存活期全部 `document` / `window` 级入口（键盘快捷键、`visibilitychange`、`pageshow`、`resize`、`beforeunload`/`pagehide`、全局错误处理、跨模块 keep-alive 监听残留），每条给出**可达性结论 + 处置**；不再出现任何「某入口不可达」的未实证表述 | §D2⑦-b、风险表第 12–15 行、§测试要点 L1 #6b/#6c、L2 #42c、L3 #81b/#81c |
+| **B10 顺带实证的 2 条新入口** | ① 键盘 `ArrowDown`/`Minus`/`Backspace` → `decrement()` 在训练层存活时可改计数；② 其它 keep-alive 视图（`/games`、`/planner`）注册的 `window` keydown 未在 `onDeactivated` 摘除，训练中按 `Cmd/Ctrl+K` / `Enter` 会打开**训练层下方**的 EP 弹层并抢占焦点（键盘计数静默失效） | §D2⑦-b.3 第 2 / 12 行、风险表第 14 行 |
+
+> **本版新增的闸门**：§测试要点 **L1 #6b / #6c**、**L2 #42c** 是 B10 的防回归判据（自动化主判据是 L1，L2 只作路径核实，不做假自动化）；**L3 新增前置条件观察项**：先访问 `/games` 与 `/planner`，再进 `/counter` 训练，按 `Cmd/Ctrl+K` / `Enter` 记录后果。
 
 ---
 
@@ -652,7 +666,7 @@ counter_v4_training     新增 ← 本方案唯一新增键，旧版本代码完
    - **模型**：`active.taps: [{ at, delta, kind }]`，`MAX_SESSION_TAPS = 500`（常量）。`kind ∈ 'tap' | 'minus' | 'auto' | 'undo'`（**v3 新增字段**）。
    - **写入时机（【v3 / 边界 1 修正】必须下移）**：v2 把 `taps` 的写入挂在 `registerHit()` 里（`CounterTool.vue:1181-1186`），而 `registerHit` **只在 `actualDelta > 0 && shouldFeedback` 时被调用**（`applyDelta`，`:1148-1150`）→ 减号、键盘 ↓、自动连点都不进 `taps`，于是 `taps` 与 `lastActionDelta` 会脱节。v3 定稿：**把写入点下移到 `applyDelta()` 里 `actualDelta !== 0` 的分支**（`CounterTool.vue:1144-1152`），并带上 `kind`。
      **由此得到一条可断言的不变量**：**`active.taps` 的末条 `delta` 恒等于 `lastActionDelta`**（`CounterTool.vue:1157`）。`undoLast()`（`:1168-1175`）撤销的正是 `lastActionDelta`，所以「撤销 = 弹出末条」在**所有**路径上都精确成立。L1 #25b 断言这条不变量。
-   - **`kind` 的用途**：时间轴按 `kind` 渲染（`tap` 正常条目；`minus`/`auto` 标注来源；`undo` 视实现决定是否展示）。训练层内 `minus` / `auto` 不可达（§D2③ 清单），所以训练时间轴正常只会出现 `tap`——带 `kind` 只是为了**日间模式会话**与**键盘操作**下日志仍然自洽。
+   - **`kind` 的用途**：时间轴按 `kind` 渲染（`tap` 正常条目；`minus`/`auto` 标注来源；`undo` 视实现决定是否展示）。训练层内 `minus` / `auto` 不可达（③ 清单不渲染入口，**【v4 / B10】且二者的键盘入口已由 `resolveShortcut` 在 `trainingMode` 下屏蔽** —— 原有的「不可达」结论在 v4 前**只对 UI 入口成立**，见 §D2⑦-b），所以训练时间轴正常只会出现 `tap`——带 `kind` 只是为了**日间模式会话**与**键盘操作**下日志仍然自洽。
    - **溢出策略**：FIFO，丢弃最旧的；`tapsDropped++`，`tapsTotal++`。时间轴 UI 在列表底部显示「仅显示最近 500 次，更早的 N 次未列出」（`tapsDropped > 0` 时）。
    - **为什么是 500**：30 分钟高强度训练（4 次/秒）= 7200 条；每条 `{at,delta,kind}` 序列化约 30 字节 → 7200 条约 216KB，单键整写会拖慢敲击路径并逼近 5MB 配额。500 条约 15KB，配合 200 条会话（每条**不内嵌** taps）总占用 < 250KB。
    - **落盘策略**：`active.taps` **不落盘**（内存态）；`counter_v4_training` 只写 `tapsTotal` / `tapsDropped`。理由：① 时间轴只在会话结束后需要；② 避免 5s 节流落盘时序列化 15KB 数组。
@@ -848,14 +862,134 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
 
 **层级事实（v3 定稿）**：训练层 `z-index: 10050` **高于** Element Plus 弹层（popup manager 从 `2000` 起递增）与全部常驻浮层（最大 `10000`）。→ 训练层在时，**任何 EP 浮层都会被压在下层，用户看不见**。
 
-- **定义（保留 v2 的一半）**：进入训练层时**同步关闭所有 EP 浮层**——`showSettings = false; showCalendar = false; showHistory = false; goalReached = false`；且训练层内**不渲染**任何打开它们的入口（③ 清单已禁用）。因此训练中**不存在合法触发路径**。
+- **定义（保留 v2 的一半）**：进入训练层时**同步关闭所有 EP 浮层**——`showSettings = false; showCalendar = false; showHistory = false; goalReached = false`；且训练层内**不渲染**任何打开它们的入口（③ 清单已禁用）。~~因此训练中**不存在合法触发路径**~~ —— **【v4 / B10 更正】这句「不存在合法触发路径」只对 UI 入口成立**：`document` / `window` 上的监听**不受 `v-if` 影响**，必须逐条实证，见 **§D2⑦-b**（正是这句话让 v3 免掉了 `undoLast()` 的处理）。
 - **定义（v3 新增的硬约束）**：**训练层存活期间（`prefs.trainingMode === true`），组件内不得调用任何 EP 全局弹层 API** —— `ElMessage` / `ElMessageBox` / `ElNotification` / `el-dialog` / `el-drawer`。原因不是「会被遮挡后仍能点到」，而是**它们会渲染在用户看不见的地方**：用户会觉得「按了没反应」，这在训练中比报错更糟。
   - **具体受影响点（实现时逐条改）**：
     - 「结束训练」的二次确认 → **层内自绘确认条**（③ 清单已写）。
-    - `undoLast()` 的 `ElMessage.success('已撤销上一步')`（`CounterTool.vue:1174`）→ 训练层内撤销本就不可达（③ 清单），无需处理；但**日间模式下会话仍可能 active**，那时没有训练层，`ElMessage` 正常。
-    - `resetToday()` / `clearHistory()` / `resetAll()` 的 `ElMessageBox.confirm` → 它们的入口在设置面板里，进训练层时 `showSettings` 已被关闭，训练中不可达。**但 D3 的「训练中点清除全部数据」路径仍需注意**：该路径会先关训练层（`prefs.trainingMode = false`）**再**弹确认框，顺序不能反。
-  - **判据**：L2 负向 grep —— `CounterTrainingOverlay.vue` 内 `grep -n "ElMessage\|ElMessageBox\|ElNotification\|el-dialog"` → **无命中**。
+    - `undoLast()` 的 `ElMessage.success('已撤销上一步')`（`CounterTool.vue:1174`）→ **【v4 / B10 更正：原「训练层内撤销本就不可达」是错的，必须处理】** 训练层存活时该函数**可以**经 `document` 级键盘快捷键到达：
+      - **实证**：`document.addEventListener('keydown', onKeyDown)`（`CounterTool.vue:1549`）→ `onKeyDown` 的 `if (event.code === 'KeyZ' && (event.ctrlKey || event.metaKey))` 分支（`CounterTool.vue:1461-1464`）**直接**调 `undoLast()`。监听挂在 `document` 上，**训练层存不存活与它无关**；`onKeyDown` 现有的两个前置守卫（`:1444-1447` 的 `isActive` 与 `target.closest('input, textarea, [contenteditable="true"]')`）在训练层存活时**都不成立**（组件处于 active，且训练层按 ③ 清单**不含任何可编辑元素**）。
+      - **为什么 v3 会写错**：③ 清单约束的是「层内**不渲染**撤销入口」（UI 层），它**管不到** `document` 级快捷键。用「某入口不可达」的假设替代逐入口实证，正是 B8 要消灭的形态。
+      - **后果**：`todayCount`（以及边界 1 定下的 `active.taps` 末条）在**没有任何可见反馈**的情况下被静默修改 —— `ElMessage` 被 `z-index: 10050` 的训练层盖住。用户看到的是「数莫名其妙少了」，训练结束后时间轴上也少了对应条目。这是 v3 自己新写的硬口径（「训练层存活期禁止调用任何 EP 全局弹层 API」）在同一份文档里被自己豁免掉的唯一一处。
+    - `resetToday()` / `clearHistory()` / `resetAll()` 的 `ElMessageBox.confirm` → 它们的入口在设置面板里，进训练层时 `showSettings` 已被关闭，**且 ③ 清单规定层内不渲染这些入口**（这一条是逐入口实证过的：调用点只有 `CounterTool.vue:370-372` 三处，均在 `v-if="showSettings"` 的面板内）。**但 D3 的「训练中点清除全部数据」路径仍需注意**：该路径会先关训练层（`prefs.trainingMode = false`）**再**弹确认框，顺序不能反。
+  - **判据**：L2 负向 grep —— `CounterTrainingOverlay.vue` 内 `grep -n "ElMessage\|ElMessageBox\|ElNotification\|el-dialog"` → **无命中**；**新增 L2 #42c**（训练层存活路径的负向判据，覆盖 `CounterTool.vue`）与 **L1 #6b/#6c**（`resolveShortcut` 的纯函数断言）。
 - 万一出现意外浮层（实现缺陷），**不在计数面加守卫**（那会吞计数）——记录为实现缺陷，由 code-reviewer / QA 按 ③ 清单核查。
+
+**⑦-b 训练层存活期的 `document` / `window` 级入口清单（【v4 / B10 新增，逐条实证】）**
+
+> **为什么单列这一节**：⑦ 的 v3 版本靠「进层时关闭全部 EP 浮层 + 层内不渲染入口」推出「训练中不存在合法触发路径」。这个推理**只在 UI 入口这一层成立** —— `document` / `window` 上的监听**不受 `v-if` 影响**，训练层存活时它们照样触发。本节把这类入口**逐条枚举并实证**（grep / 逐段 Read，命令与行号见下），每条给出**可达性结论 + 处置**。**此后本方案不得再出现「某个入口不可达」这类未实证的前提**（B10 的成因就是这一句）。
+
+**⑦-b.1 训练层存活期的撤销门限（B10 核心 —— 二选一：**选「屏蔽」**）**
+
+**门限**：`onKeyDown` 的 `Cmd/Ctrl+Z` 分支在**训练层存活时（`prefs.trainingMode === true`）不得调用 `undoLast()`**，因而**不产生任何 EP 全局弹层调用**。
+
+**决策：训练层存活期整体屏蔽 `Cmd/Ctrl+Z`（不派发、不做层内提示）**，而非「层内自绘反馈」。理由逐条：
+
+1. **与 ③ 清单的口径统一**：③ 已定「撤销」在训练层内**整体禁用**。键盘是同一功能的**第二个入口**；只屏蔽 UI 不屏蔽键盘，「训练期不可撤销」就不是无例外的硬口径，也无法被断言。屏蔽后这条规则才是**可判定的全称命题**。
+2. **撤销有更强的替代路径，不存在不可替代性**：⑥ 已定训练结束后在总结面板按**时间轴逐条修正**，且**可删任意一条**（强于 `undoLast()` 只能撤最后一次）。
+3. **不做「层内自绘反馈」，因为这里的反馈本身有害**：训练层是全屏敲击面，其设计前提是「锁 UI、除敲击面外无可交互物」。为一个**被明确禁用的操作**新增提示条，等于在锁定 UI 上给被禁操作做正反馈，会诱导用户继续按；且它会与 ⑤ 的目标达成横幅**争同一块层内位置**，需要新增状态 + 自动消失定时器，与 ⑦ 的「层内不新增浮层」自相矛盾。
+4. **「按了没反应」在这里不构成缺陷**：⑦ 禁止 `ElMessage` 的核心理由是「用户点了一个**看得见的按钮**却没有反馈」。`Cmd/Ctrl+Z` 在训练层内**没有任何对应的可见控件**（③ 已移除），用户没有可归因的点击对象；层内「结束训练 / 暂停」的长按反馈仍然存在。
+5. **成本收益**：屏蔽是 `onKeyDown` 一个分支的返回值；层内自绘要新增组件元素 + 状态 + 定时器 + 新断言，收益为负。
+
+**实现契约（门限做成纯函数，而不是内联 `if`）**
+
+```js
+// frontend/src/utils/counterTapGuard.js —— 定位由「长按判定」扩为「破坏性输入门限」：
+//   ① 破坏性操作的长按判定（v2 起，不变）；② 训练层存活期的快捷键门限（v4 / B10 新增）
+export const SHORTCUT_INCREMENT = 'increment'   // Space / ArrowUp / Equal
+export const SHORTCUT_DECREMENT = 'decrement'   // ArrowDown / Minus / Backspace
+export const SHORTCUT_UNDO      = 'undo'        // Cmd/Ctrl + Z
+export const SHORTCUT_BLOCKED   = 'blocked'     // 本模块认识的键，但当前状态下不派发动作
+
+// 纯函数，可单测（L1 #6b / #6c）。
+//   返回 null      = 不是本模块处理的键（既不派发动作，也不 preventDefault）
+//   返回 'blocked' = 是本模块处理的键但当前状态禁用（**仍要 preventDefault**，只是不派发任何动作）
+export function resolveShortcut({ code, ctrlKey, metaKey }, { trainingMode = false } = {}) {
+  if ((ctrlKey || metaKey) && code === 'KeyZ') {
+    return trainingMode ? SHORTCUT_BLOCKED : SHORTCUT_UNDO       // ← B10：训练层存活 → 屏蔽
+  }
+  if (code === 'Space' || code === 'ArrowUp' || code === 'Equal') {
+    return SHORTCUT_INCREMENT                                    // ← 保留：计数面（B1「锁 UI，不锁计数」）
+  }
+  if (code === 'ArrowDown' || code === 'Minus' || code === 'Backspace') {
+    return trainingMode ? SHORTCUT_BLOCKED : SHORTCUT_DECREMENT  // ← 训练层存活 → 屏蔽（= ③「减号禁用」的键盘入口）
+  }
+  return null
+}
+```
+
+> **为什么区分 `null` 与 `'blocked'`（不是设计洁癖，是防一个真实回归）**：`Backspace` / `ArrowDown` / `ArrowUp` 在浏览器里有默认行为（历史后退 / 页面滚动）。今天的 `onKeyDown` 对它们**一律 `preventDefault()`**。若屏蔽时直接 `return`（等价于 `null`），这三个键在训练层存活时就会**漏出浏览器默认行为** —— 训练中误按 `Backspace` 可能触发历史后退、按方向键可能滚动被锁定的页面，属于把「静默改数」换成「静默跳页」，同样是 B10 要消灭的形态。因此：**认识的键一律 `preventDefault`，`'blocked'` 只是不派发动作。**
+
+`onKeyDown` 据此改写为**唯一派发点**（三个守卫的先后顺序是硬性的）：
+
+```js
+// CounterTool.vue 顶部新增（相对路径，禁止 @/xxx —— 见 §硬约束）
+import { resolveShortcut, SHORTCUT_INCREMENT, SHORTCUT_DECREMENT, SHORTCUT_UNDO, SHORTCUT_BLOCKED } from '../../utils/counterTapGuard'
+
+function onKeyDown(event) {
+  if (!isActive.value) return                    // §C4 既有守卫（路由离开），不动
+  const target = event.target
+  if (target && typeof target.closest === 'function' &&
+      target.closest('input, textarea, [contenteditable="true"]')) return    // 既有守卫，不动
+
+  const action = resolveShortcut(event, { trainingMode: prefs.trainingMode })
+  if (!action) return                            // 不是本模块的键 → 不吞默认行为
+
+  event.preventDefault()                         // 本模块的键一律吞默认（含 'blocked'，见上面的理由）
+  if (action === SHORTCUT_INCREMENT) increment()
+  else if (action === SHORTCUT_DECREMENT) decrement()
+  else if (action === SHORTCUT_UNDO) undoLast()
+  // action === SHORTCUT_BLOCKED → 到此为止：不派发任何动作、不调用任何 EP API
+}
+```
+
+- **硬性约束**：`onKeyDown` 内对 `undoLast()` / `decrement()` / `increment()` 的调用必须**全部经 `resolveShortcut` 的返回值派发**，**不得**存在绕过 `resolveShortcut` 的直达分支；且 `SHORTCUT_BLOCKED` **不得**出现在任何派发分支里（它只能落到函数末尾什么都不做）。这是 L2 #42c-i 的检查对象 —— 它保证 L1 #6b 的断言（`trainingMode === true` 时返回 `'blocked'`）**是负载的**：若实现另开一条直达 `undoLast()` 的路径，L1 全绿也拦不住 B10 复发。
+- **不新增文件**：`resolveShortcut` 放进 `counterTapGuard.js`（定位由「只服务长按判定」扩为「破坏性输入门限」），避免为一次门限再拆一个模块。`§实施拆分` 步骤 1 的产物描述随之更新。
+- **不改 §C4 的守卫**：`§C4:711` 的 `if (!isActive.value) return` 保留且仍在首行 —— 两个守卫**正交**（`isActive` 管「组件是否被当前路由激活」，`trainingMode` 管「是否处于训练层」），互不替代。
+- **日间模式零变化**：`trainingMode === false` 时 `resolveShortcut` 的返回值与今天 `onKeyDown` 的行为**逐键等价**（`Space`/`ArrowUp`/`Equal` → `increment`；`ArrowDown`/`Minus`/`Backspace` → `decrement`；`Ctrl/Meta+Z` → `undoLast`）。
+
+**⑦-b.2 顺带实证：`increment()` 路径上的目标达成 `el-dialog`（v4 新发现，必须与 ⑤ 对齐）**
+
+同一条 `onKeyDown` 上还有一条**保留**的计数入口：`Space` / `ArrowUp` / `Equal` → `increment()` → `applyDelta()`。它**保留**（B1 硬口径：计数面不加任何门限、不吞有效敲击；键盘与触摸是同一个计数语义）。但 `applyDelta()` 越过日目标时会置 `goalReached = true`（`CounterTool.vue:1160-1165`），而 `goalReached` 绑定的正是 `el-dialog`（`CounterTool.vue:279-293`）—— 这是一条**绕过 UI 入口、直达 EP 弹层**的触发路径（触屏不可达；桌面键盘可达；`handleFigureTap()` 走同一条 `applyDelta`，那才是主路径）。
+
+**处置：把 ⑤ 从「层内不渲染 `el-dialog`」升级为「`applyDelta` 在 `trainingMode` 时必须走层内分支」** —— 分支位置写在 `applyDelta()` 的目标达成处，横幅本身仍渲染在 `CounterTrainingOverlay.vue` 内（⑤ 已定），`applyDelta` 只负责**不置 `goalReached`** 并把「本层已达成目标」的信号交给训练层（prop / 共享 ref 均可，实现自定；本方案只约束**分支位置**这一件事）：
+
+```js
+if (dailyGoal.value > 0 && todayCount.value >= dailyGoal.value && !goalFired) {
+  goalFired = true
+  if (prefs.trainingMode) {
+    /* ← 训练层存活：不置 goalReached，改由层内横幅 + 震动脉冲（⑤） */
+  } else {
+    nextTick(() => { goalReached.value = true })     // 日间模式：保持既有模态不变
+  }
+}
+```
+
+**为什么必须落在这一层**：若只把 `el-dialog` 从模板里挪走而 `goalReached.value = true` 照旧执行，则「训练层存活期不调用 EP 弹层」这条硬口径**仍被 `applyDelta` 绕过**（弹层被 `v-if` 干掉，等价于把 EP 弹层换成一次无反馈的状态写入）。判据 = **L2 #42c-ii**。
+
+**⑦-b.3 训练层存活期的全部 `document` / `window` 级入口（逐条实证）**
+
+> 枚举方式：`grep -rn "document.addEventListener\|window.addEventListener" frontend/src`（全仓库 55 条命中，去除 `.tsx`/其它 view 后与本模块相关者如下）+ 对 `CounterTool.vue`、`App.vue`、`main.js`、`GlobalPet.vue` 的逐段 Read。
+
+| # | 入口（事件 → 处理器） | 注册点 | 训练层存活时的可达性（**实证**） | 处置 |
+|---|---|---|---|---|
+| 1 | `document` `keydown` → `Space` / `ArrowUp` / `Equal` → `increment()` | `CounterTool.vue:1549` / `:1449-1453` | **可达**。走完整计数路径（`applyDelta` → `registerHit` → `active.taps`）；越过日目标时置 `goalReached = true` → `el-dialog` | **保留计数**（B1 硬口径「锁 UI，不锁计数」）；**目标达成弹层必须走 ⑦-b.2 的层内分支** |
+| 2 | 同上 → `ArrowDown` / `Minus` / `Backspace` → `decrement()` | `CounterTool.vue:1455-1459` | **可达**（v4 新记录）。`applyDelta(-step, false)` → 负向改 `todayCount`（`shouldFeedback=false`，不进 `taps`，也不触发目标弹层） | **训练层存活时屏蔽**（`resolveShortcut` 返回 `'blocked'`：不派发动作，但**仍 `preventDefault`**，避免 `Backspace` 触发历史后退 / 方向键滚动页面）—— ③ 已把「减号」在层内禁用，键盘是同一功能的第二个入口 |
+| 3 | 同上 → `Cmd/Ctrl+Z` → `undoLast()` → `ElMessage.success` | `CounterTool.vue:1461-1464` / `:1168-1175` | **可达**（v3 写错的那条，B10） | **训练层存活时屏蔽**（⑦-b.1） |
+| 4 | `document` `visibilitychange`（hidden）→ `persistAll()` | `CounterTool.vue:1550` / `:1533-1537` | 可达 | **保留**：无 EP、不改计数，只落盘 |
+| 5 | `document` `visibilitychange`（visible）/ `window` `pageshow` → `session.handleForeground()`（v3 §B4 `:516-517`） | v3 新增路径 | **可达**。`away > SESSION_IDLE_MS`（30 min）时以 `endReason='idle'` 收尾 → `active = null`（§C1.4(a)）；未超阈值时续跑 | **不得弹任何 EP 弹层、不得自动关闭训练层**。`active === null` 是本方案已允许的状态（§C1.7 `:662`、§C1.8 `:684`）：此后敲击照常进 `todayCount`，只是不再记入会话。**不新增状态机**（残留口径见风险表第 13 行） |
+| 6 | `window` `beforeunload` / `pagehide` → `persistAll()` | `CounterTool.vue:1551-1552` / `:1539-1541` | 可达 | **保留**：无 EP、只落盘 |
+| 7 | 1s `setInterval` → `checkDayRollover()` + `refreshSpeed()` | `CounterTool.vue:1545-1548` | **可达，且后台仍在跑**（`setInterval` 不受 `document.hidden` 影响）。跨零点时清 `todayCount` / `lastActionDelta` / `tapEvents` | 已由 §C1.8 的「①取快照 → ②会话拆分 → ③归档清零」顺序 + 前台守卫覆盖（L1 #12 / #25a）。训练层**不**因此关闭 —— 跨零点时人还在练属正常路径，与 D3 `reset` 的「当天清零故关层」语义不同 |
+| 8 | `autoTimer` `setInterval` → `increment()` | `CounterTool.vue:1206-1211` | **门限已定（不是假设）**：③ 强制「进层时若开着自动连点则 `stopAuto()` + 提示」；§C4 的 `onDeactivated` 再调一次 `stopAuto()` 兜底；`applyDelta` 首行的 `isActive` 守卫是第三道 | 无需额外处理。**但进层时的「已强制停止自动连点」提示必须层内自绘**（同 ⑦，不得 `ElMessage`） |
+| 9 | `window` `resize` → `App.vue` 的 `checkMobile()`、`GlobalPet.vue` 的 `onResize()` | `App.vue:507` / `GlobalPet.vue:315` | 可达 | **不处理**：均无 EP 调用、不改计数。训练层为 `position: fixed; inset: 0` + `dvh`，旋转/缩放时自适应重算 |
+| 10 | `window` `focus` / `pageshow(persisted)` / `visibilitychange` → `refreshCurrentViewAfterIdle()` → `viewRefreshKey += 1` → `keep-alive` 按新 key **重建** `CounterTool` | `App.vue:469-487` / `:507-510`，`App.vue:323` | **可达**（后台 ≥5 min 回前台，或 bfcache 恢复 —— 正是训练场景）。组件被销毁 ⇒ **训练层随之消失** | **接受**（硬约束「不改 `App.vue`」）。重建后 `prefs.trainingMode` 与 `active` 均已落盘 → `onMounted` 的 `loadAll()` 读回，**训练层自动恢复**；**唯一损失 = `active.taps`（不落盘，L1 #20）⇒ 当前会话的时间轴条目丢失**。§C4 覆盖「监听摘除」，本条补齐「重建 ⇒ 层消失」的后果口径（见风险表第 15 行） |
+| 11 | `window` `error` / `unhandledrejection` / `app.config.errorHandler` → `showFatalError()` 建 `#__fatal_error__` | `main.js:107` / `:115` / `:125`，`z-index: 99999`（`main.js:55`） | **可达**，且它是**唯一高于训练层**（10050）的浮层 | **有意为之**：故障态兜底必须可见（否则白屏无解释），训练层**不得**为此调整 z-index。它不是 EP 弹层、不改计数；`top:0` + `max-height:50vh` 只占顶部，不影响敲击面。补记进「覆盖清单」（§现状 5 / L2 #45b 已提及 `main.js:55`） |
+| 12 | **跨模块 keep-alive 残留（v4 新实证）**：其它视图注册的 `window` keydown 在离开路由后**未摘除** —— `views/life/GameHall.vue:1071`（`onGlobalKeydown`，全文件 `onDeactivated` 命中 **0**）、`views/life/PlannerTool.vue:9962`（`globalKeydownHandler`，`onDeactivated` 命中 **0**） | `App.vue:190-193` 的 `<keep-alive :exclude="[]">` + `:key="currentViewKey"` | **可达**：① `/planner` 的 `Cmd/Ctrl+K` → `openGlobalQuickAdd()`（`PlannerTool.vue:7463-7470`）打开 `el-dialog`（`PlannerTool.vue:3060-3067`）并 `nextTick` 聚焦其输入框（`:4875-4879`）→ 该弹层在训练层**下方**，且**焦点被抢进 `<input>`** ⇒ `onKeyDown` 首段守卫（`:1444-1447`）直接 return ⇒ **键盘计数静默失效**；② `/games` 的 `Enter` → `joinRoom()` / `createRoom()`（`GameHall.vue:1023-1031`，仅在 `!session.active` 时）。`Space` 已被本模块的 `preventDefault()` 挡下（`GameHall` 首行查 `event.defaultPrevented`，`:1009-1011`；且 `document` 冒泡先于 `window`），**`Enter` 无人拦** | **不在本方案范围内修**（硬约束：不改 `App.vue`、不越权改其它 view）；训练层**不为此做任何让步**（不加计数守卫、不降 z-index）。L3 新增人工观察项：**先访问 `/games` 与 `/planner`，再进 `/counter` 训练，按 `Cmd/Ctrl+K` / `Enter`** 并记录后果。**若 jaxiu 判定必须修 → 单开「keep-alive 全局监听摘除」子 issue**，本方案不扩范围（残留口径见风险表第 14 行） |
+
+**⑦-b.4 本节的口径总结（写给实现方与 reviewer）**
+
+1. 训练层存活期**唯一可改计数**的键是 `Space` / `ArrowUp` / `Equal`（= 计数面，**保留**）；`Cmd/Ctrl+Z` 与 `ArrowDown` / `Minus` / `Backspace` 一律 `resolveShortcut` 返回 `'blocked'`（**屏蔽动作，但仍 `preventDefault`**）。
+2. 训练层存活期**不得**出现任何 EP 全局弹层调用；可达的 EP 弹层路径只有两条（⑦-b.1 的 `undoLast`、⑦-b.2 的 `goalReached`），两条都必须在**分支位置**上被拦掉，而不是靠「入口不可达」。
+3. 其余入口（4 / 6 / 7 / 9 / 10 / 11 / 12）**均不改动本模块行为**，其中 10 / 12 是**已实证的残留**，口径已写明并交给 L3 观察。
 
 **⑧【v3 新增】常驻浮层的「进层快照 / 出层恢复」不需要做**
 
@@ -927,13 +1061,13 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
 
 | 步骤 | 负责 | 产物 |
 |------|------|------|
-| 1 | frontend-writer | `frontend/src/utils/counterTapGuard.js` + `.test.js`（纯函数，先写测试；**只含长按守卫**，无计数门限） |
+| 1 | frontend-writer | `frontend/src/utils/counterTapGuard.js` + `.test.js`（纯函数，先写测试；**长按守卫 + 【v4 / B10】`resolveShortcut` 快捷键门限**，无计数门限） |
 | 2 | frontend-writer | `frontend/src/composables/useCounterAudio.js` + `.test.js`（注入 fake ctx） |
 | 3 | frontend-writer | `frontend/src/composables/useCounterSession.js` + `.test.js`（注入 now/storage） |
 | 4 | frontend-writer | `frontend/src/components/CounterTrainingOverlay.vue` |
-| 5 | frontend-writer | `CounterTool.vue` 接线（模板/脚本/样式）；**移动端样式改动严格按 §A2/§A3 的算式** |
+| 5 | frontend-writer | `CounterTool.vue` 接线（模板/脚本/样式）；**【v4 / B10】`onKeyDown` 按 §D2⑦-b.1 改为经 `resolveShortcut` 派发；`applyDelta` 的目标达成分支按 §D2⑦-b.2 按 `trainingMode` 分流**；**移动端样式改动严格按 §A2/§A3 的算式** |
 | 6 | lint-runner | 对改动文件跑 `npx eslint` / `node --check`（按该 agent 现有流程） |
-| 7 | code-reviewer | R3（模板无 `.value`）/ R4（裸下标）/ 相对路径引用 / **§测试要点 L2 的 5 条负向 grep** |
+| 7 | code-reviewer | R3（模板无 `.value`）/ R4（裸下标）/ 相对路径引用 / **§测试要点 L2 的 5 条负向 grep** / **【v4 / B10】L2 #42c-i / #42c-ii（训练层存活路径判据，需人工判定并写 review 记录）** |
 | 8 | api-contract | **跳过**：本次无 API 契约变更（无后端、无新增请求），该 agent 无输入 |
 | 9 | devtools-qa | 按「测试要点」执行；L1/L2 可自动化，L3 需真机 |
 
@@ -979,8 +1113,12 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
 | 7 | localStorage 配额 | 写入失败 | try/catch + 丢弃最旧 50 条重试一次 + 静默放弃；`active.taps` 不落盘（11KB 只在内存），绝不影响计数 |
 | 8 | keep-alive 下 `onActivated`/`onDeactivated` 未覆盖所有路径（`currentViewKey` 变化导致重建） | 守卫失效 / 监听累积 | C4：`onMounted` 也置 `isActive=true`；`addGlobalListeners()` 幂等；`applyDelta` + `onKeyDown` 双重守卫；QA 用例覆盖「切走→切回→再切走」 |
 | 9 | Wake Lock 被拒绝 / 不支持 | 屏幕仍会熄灭 | D4 的静默降级路径；B2 的音频恢复是主要保障，Wake Lock 只是降低触发概率 |
-| 10 | **训练层抬到 10050 后，EP 全局弹层（`ElMessageBox` / `ElMessage`）被训练层自己盖住** | 点「结束训练」看不到确认框 → 用户以为无响应；训练中任何 `ElMessage` 反馈不可见 | D2⑦ 硬约束：层内二次确认改**层内自绘**；D3 明令「先置 `trainingMode = false` 关掉训练层，**再**弹确认框」；L2 #42b 负向 grep 断言 `CounterTrainingOverlay.vue` 无 EP 弹层调用 |
+| 10 | **训练层抬到 10050 后，EP 全局弹层（`ElMessageBox` / `ElMessage`）被训练层自己盖住** | 点「结束训练」看不到确认框 → 用户以为无响应；训练中任何 `ElMessage` 反馈不可见 | D2⑦ 硬约束：层内二次确认改**层内自绘**；D3 明令「先置 `trainingMode = false` 关掉训练层，**再**弹确认框」；L2 #42b 负向 grep 断言 `CounterTrainingOverlay.vue` 无 EP 弹层调用。**【v4 / B10 补强】仅靠「层内不渲染入口」推不出「训练中不存在合法触发路径」** —— `document` / `window` 级监听不受 `v-if` 影响，必须逐个入口实证（**§D2⑦-b.3 的 12 行清单**），并把两条实际可达的 EP 路径（`undoLast`、`goalReached`）在**分支位置**上拦掉（⑦-b.1 / ⑦-b.2）；判据 L1 #6b/#6c + L2 #42c |
 | 11 | **B9 撤回 `overflow: visible` 后，将来若有人给 `.ambient-layer` 加纵向大尺寸装饰** | 装饰被 `overflow: hidden` 裁掉（视觉降级，非功能问题） | 有意为之：`hidden` 是**唯一**能同时满足「光斑裁剪」与「无横向滚动条」的选择；新增装饰须自行保持在 `.counter-app` 盒内（§A2(5)） |
+| 12 | **【v4 / B10】训练层存活期，全局输入入口绕过 UI 门限直达 EP 弹层 / 改计数**（B10 本身：`Cmd/Ctrl+Z` → `undoLast()` → `ElMessage` + 静默改数；同类的键盘 `decrement`；`applyDelta` → `goalReached` → `el-dialog`） | 训练中计数被静默修改、反馈不可见；训练结束后时间轴条目莫名缺失 | **结构性缓解**：把门限做成纯函数 `resolveShortcut`（`counterTapGuard.js`）并令 `onKeyDown` 成为**唯一派发点**（⑦-b.1）；`applyDelta` 的目标达成分支按 `trainingMode` 分流（⑦-b.2）；**按 §D2⑦-b.3 的 12 行清单逐个入口实证**，不留「某入口不可达」的假设。判据：**L1 #6b / #6c（自动化主判据）+ L2 #42c-i（路径核实）+ L2 #42c-ii（负向判定）**，另 L3 #81b 四条键逐个真机确认。回滚：`resolveShortcut` 独立成文件、`onKeyDown` 改动集中在 20 行内，恢复原 `onKeyDown` 即可（但会同时恢复 B10） |
+| 13 | **【v4 / B10 顺带】训练层存活期，回前台 `handleForeground()` 以 `idle` 收尾会话（后台 > 30 min）后 `active === null`，而训练层仍在** | 用户继续敲击时**计数照常**（`todayCount` 不受会话影响），但这段训练**不再记入会话**（会话记录里少一段） | **有意接受，不新增状态机**：`active === null` 是 §C1.7（`:662`）与 §C1.8（`:684`）**已允许**的状态；会话是「记账」、训练层是「UI」，D3 的 `reset` 之所以关层是因为**当天计数被清零**（语义不同，不构成类比）。硬约束只有两条：该路径**不得弹任何 EP 弹层**、**不得自动关闭训练层**。不新增判据（沿用 L1 #10 / #25d 对 `handleForeground()` 的既有断言） |
+| 14 | **【v4 / B10 顺带】keep-alive 下其它视图的 `window` keydown 未摘除**（`/games` `GameHall.vue:1071`、`/planner` `PlannerTool.vue:9962`，两者 `onDeactivated` 命中均为 0） | 训练中按 `Cmd/Ctrl+K` → `/planner` 的 `el-dialog` 在训练层**下方**打开并**抢焦点** → 键盘计数**静默失效**；按 `Enter` → `/games` 建房/入房 | **不在本方案范围内修**：硬约束「不改 `App.vue`」+ 不越权改其它 view；训练层**不为此做任何让步**（不加计数守卫、不降 z-index）。**取证**：L3 #81c（`/games` → `/planner` → `/counter` 前置条件下按 `Cmd+K` / `Enter`，只记录不判 FAIL）。**升级路径**：若 jaxiu 判定必须修 → 单开「keep-alive 全局监听摘除」子 issue（与 §C4 同型修复，但作用于其它 view），本方案不扩范围 |
+| 15 | **【v4 / B10 顺带】后台 ≥5 min 回前台 / bfcache 恢复 → `refreshCurrentViewAfterIdle()` 递增 `viewRefreshKey` → `CounterTool` 被重建**（`App.vue:469-487 / 507-510`） | **训练层随组件销毁而消失**（随后按落盘的 `prefs.trainingMode` 自动恢复）；当前会话的**时间轴条目丢失**（`active.taps` 不落盘） | **接受**（硬约束「不改 `App.vue`」）。缓解来自既有设计：`prefs.trainingMode` 与 `active` 均已落盘 → 重建时 `loadAll()` 读回，**训练层自动恢复、会话不丢**；唯一损失是 `active.taps`（L1 #20 已明确不落盘）。§C4 已覆盖「监听摘除」这一面（风险表第 8 行），本行补齐「重建 ⇒ 层消失」的后果口径。不新增判据 |
 
 ---
 
@@ -991,7 +1129,7 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
 
 ### L1 纯函数单测（必须全绿）
 
-**`counterTapGuard.test.js`**（v2 重写：只测长按守卫）
+**`counterTapGuard.test.js`**（v2 重写：只测长按守卫；【v4 / B10】增加 `resolveShortcut` 组）
 
 1. `isLongPressCommit({ startAt: 0, endAt: 599, thresholdMs: 600 })` → `false`
 2. `isLongPressCommit({ startAt: 0, endAt: 600, thresholdMs: 600 })` → `true`（边界含等号）
@@ -999,6 +1137,15 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
 4. `createLongPressGuard`：`start(1)` → 时间推进 700ms → `takeCommit(1)` 返回 `true`
 5. `cancel()` 对未知 pointerId 不抛异常（防御性）
 6. **负向断言（B1 闸门）**：模块**不得**导出 `shouldCommitTap` / `TAP_MOVE_TOLERANCE_PX` / `TAP_MAX_DURATION_MS` / `TAP_DEBOUNCE_MS`（`expect(mod.shouldCommitTap).toBeUndefined()` 等 4 条）
+6b. **`resolveShortcut` 训练层撤销门限（【v4 / B10 新增 —— 本条是 B10 的自动化主判据】）**：
+    - `resolveShortcut({ code: 'KeyZ', metaKey: true }, { trainingMode: true })` → **`'blocked'`**（等价断言：训练层存活时 `onKeyDown` **不派发** `undo` ⇒ `undoLast()` 不可达 ⇒ 其内部的 `ElMessage.success`（`CounterTool.vue:1174`）**不可能被调用**）
+    - `metaKey: true` 与 `ctrlKey: true` 各断言一条（macOS / Windows 两种修饰键都必须屏蔽）
+    - 同一入参 + `{ trainingMode: false }` → **`'undo'`**（日间模式零回归）
+6c. **`resolveShortcut` 其余键的训练层门限（【v4 / B10 新增】）**：
+    - `{ code: 'ArrowDown' }` / `{ code: 'Minus' }` / `{ code: 'Backspace' }` + `{ trainingMode: true }` → **`'blocked'`**（三条都跑）；同一入参 + `{ trainingMode: false }` → **`'decrement'`**
+    - `{ code: 'Space' }` / `{ code: 'ArrowUp' }` / `{ code: 'Equal' }` + `{ trainingMode: true }` → **`'increment'`**（**必须保留** —— 断言「训练层不吞计数」，B1 硬口径；这三条是**反向闸门**，防止实现「一刀切屏蔽所有快捷键」）
+    - **缺省参数**：`resolveShortcut({ code: 'KeyZ', metaKey: true })`（不传第二参）→ **`'undo'`**（`trainingMode` 默认必须是 `false`；防实现把默认值写成 `true` 导致日间模式撤销整体失效）
+    - 未涉及的键一律 **`null`**（**不是 `'blocked'`** —— 这条区分很重要，见 §D2⑦-b.1 的说明）：`{ code: 'KeyA', metaKey: true }` / `{ code: 'Escape' }` / `{ code: 'Enter' }`
 
 **`useCounterSession.test.js`**（注入 `now` / 假 storage；`vi.useFakeTimers` + `vi.setSystemTime`）
 
@@ -1062,6 +1209,26 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
     **判定标准**：② 的命中集合全部落在 `unlock()` ∪ `play()` 的行区间内 → PASS；任意一条落在 `handleForeground()` / `pageshow` 相关路径 / 模块顶层 → FAIL。
     > **自动化主判据是 L1 #32 / #33 / #34**（fake ctx 断言 `handleForeground()` 对 `resume()`/`close()`/`ctxFactory()` 的调用次数为 0）。L2 #42 只作辅助，不要把它写成一条 `grep ... && echo PASS` 的假自动化。
 42b. **负向 grep（B8 / D2⑦，v3 新增）**：`grep -n "ElMessage\|ElMessageBox\|ElNotification\|el-dialog\|el-drawer" frontend/src/components/CounterTrainingOverlay.vue` → **无命中**（训练层存活期间不得调用任何 EP 全局弹层 API；「结束训练」的二次确认必须层内自绘）
+42c. **训练层存活路径的负向判据（【v4 / B10 新增 —— 两部分都要过】）**：
+    - **(i) 派发路径核实（保证 L1 #6b 是负载的）**：取出 `onKeyDown` 的函数行区间（`grep -n "^function " frontend/src/views/life/CounterTool.vue` 定位首尾），在该区间内核对三条：
+      1. `resolveShortcut` 命中**恰 1 处**；
+      2. 承接其返回值的变量（`action`）**赋值恰 1 处**，且唯一来源就是这次 `resolveShortcut(...)` 调用（不得有第二条赋值路径）；
+      3. 在 `event.preventDefault()` 与三个派发调用（`undoLast(` / `decrement(` / `increment(`）**之前**，存在一处 `if (!action) return` 形式的早退；
+      4. `SHORTCUT_BLOCKED` **不得**出现在任何派发分支的条件里（`grep -n "SHORTCUT_BLOCKED" ` 在 `onKeyDown` 区间内只允许出现 ≤1 次，且只允许在末尾注释中 —— 一旦它进了 `if/else if`，就意味着屏蔽分支被接上了某个动作）。
+      判定标准：四条缺一 → **FAIL**（缺任一条都意味着门限可能被绕过，此时 L1 全绿也拦不住 B10 复发）。这条不是形式主义：B10 的成因就是「门限写在 A 处、实际入口在 B 处」。
+    - **(ii) 训练层存活路径的 EP 弹层 API 负向判据（三步人工判定，判定人 code-reviewer；写法同 #42，不做假自动化）**：
+      ```bash
+      # ① 取函数边界
+      grep -n "^function " frontend/src/views/life/CounterTool.vue
+      # ② 取 EP 命中（模板段与脚本段都算）
+      grep -n "ElMessage\|ElMessageBox\|ElNotification\|el-dialog\|el-drawer" frontend/src/views/life/CounterTool.vue
+      # ③ 人工比对：对 ② 的每条命中，判定「训练层存活时是否有前置门限拦住」
+      ```
+      **判定标准**：② 的每条命中必须落进下列**已有门限**之一，否则 **FAIL** ——
+      - `:1174`（`undoLast()` 内的 `ElMessage.success`）→ 由 `resolveShortcut` 在 `trainingMode === true` 时返回 `'blocked'` 拦住（门限**在路径上**，由 (i) 保证）
+      - `:279-293`（`el-dialog`，`goalReached`）→ 由 ⑦-b.2 的 `applyDelta` 分支拦住（`trainingMode` 时不置 `goalReached`）
+      - `:1479 / :1494 / :1499 / :1506 / :1511 / :1529`（`resetToday` / `clearHistory` / `resetAll`）→ 调用点只有 `:370-372` 三处，全部在 `v-if="showSettings"` 面板内；进层时 `showSettings = false` 且层内不渲染这些入口（③）；D3 的「训练中清除全部数据」路径**先**置 `prefs.trainingMode = false` **再**弹确认框
+      判定完成后，把「命中行 → 门限 → PASS/FAIL」表写进 review 记录。
 43. **负向 grep（B6）**：`grep -n "dailyGoal" frontend/src/composables/useCounterSession.js` → **无命中**（会话模块不得读日目标）
 44. **负向 grep（B5）**：`grep -n "tapEvents" frontend/src/composables/useCounterSession.js` → **无命中**；`grep -n "tapEvents" frontend/src/views/life/CounterTool.vue` 的命中只允许在 `refreshSpeed` / `registerHit` / `checkDayRollover` 的既有逻辑里，**不得出现在会话快照代码中**
 45. **负向 grep（D2 挂载点约束）**：`grep -n "transform\|will-change\|perspective\|contain:" frontend/src/App.vue` 中 `.app-container` / `.main-content` / `.mobile-main` 选择器下**无命中**（否则 `position: fixed` 训练层会被裁剪）
@@ -1159,6 +1326,15 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
 
 80. `todayCount` / 累计总数 / 连续达标 / 本周节奏 / 日历达标标记 / 历史记录的数值与改动前**完全一致**（同样的敲击序列，同样的结果）
 81. 多标签页：两个标签页同开 `/counter`，各自敲击后刷新 → 后写的标签页数据生效（符合「不支持多标签」的既定口径，不作为缺陷）
+81b. **【v4 / B10 新增：训练层存活期的全局快捷键，桌面端必跑】** 进入全屏训练层后依次按：
+    - `Cmd/Ctrl+Z` → **计数不变、时间轴条目不变、屏幕上无任何 EP 弹层**（屏蔽生效；`ElMessage` 不得被调用 —— 即便被调用也看不见，所以判据取「计数与 `active.taps` 长度不变」这一**可观察量**，不取「有没有看到提示」）
+    - `ArrowDown` / `Minus` / `Backspace` → 同上（计数不变），**且页面不滚动、不触发浏览器历史后退**（`'blocked'` 仍 `preventDefault`；这条是 v4 的第二个断言点，防止实现把「屏蔽」写成裸 `return`）
+    - `Space` / `ArrowUp` / `Equal` → **计数 +step**（**必须仍然生效** —— 反向判据：训练层不得吞掉计数面）。在**未达日目标**时重复敲到跨越日目标 → 断言出现的是**层内横幅**（⑤），而不是被盖住的 `el-dialog`；退出训练层后日间模式的模态行为不变
+    - 退出训练层 → 重复以上四条 → 与改动前的既有行为**逐条一致**（日间模式零回归）
+81c. **【v4 / B10 新增：前置条件观察项（残留，非阻塞）】** 按顺序访问 `/games` → `/planner` → `/counter` 并进入训练层，然后按 `Cmd/Ctrl+K` 与 `Enter`，**记录**（不作为本方案的验收判据，只作残留取证）：
+    - `Cmd/Ctrl+K` 是否打开了 `el-dialog`（应被训练层盖住）、**焦点是否被抢进其输入框**、此后 `Space` 是否还能计数；
+    - `Enter` 是否触发了 `/games` 的房间创建 / 加入；
+    - 观察结论写进 QA 报告，供 jaxiu 决定是否单开「keep-alive 全局监听摘除」子 issue（见风险表第 14 行）。
 
 ---
 
@@ -1226,5 +1402,6 @@ export function createLongPressGuard({ thresholdMs, now = () => performance.now(
 - **🆕 音频恢复收敛（B2 硬口径）**：`ctx.resume()` / `ctx.close()` / `new AudioContext()` 只允许出现在 `unlock()` 与 `play()` 内；`visibilitychange → visible` 与 `pageshow` 只置 `needsUnlock` 标志
 - **🆕 会话目标独立（B6 硬口径）**：`dailyGoal` 不得出现在任何 `goal.value` 的赋值路径上，也不得作为默认值
 - **🆕 训练层层级与 EP 弹层（B8 硬口径）**：训练层根元素 `z-index` 固定 **`10050`**（不得低于 `10000`，也不得回退到 `900`）；**训练层存活期间（`prefs.trainingMode === true`）组件内不得调用任何 Element Plus 全局弹层 API**——`ElMessage` / `ElMessageBox` / `ElNotification` / `el-dialog` / `el-drawer`；「结束训练」的二次确认必须由 `CounterTrainingOverlay.vue` **层内自绘**；任何「先关训练层再弹确认框」的路径必须**先**置 `prefs.trainingMode = false`
+- **🆕 训练层存活期的全局快捷键（B10 硬口径 —— v4 新增）**：`onKeyDown` 必须是**唯一派发点** —— 三个动作只能经 `counterTapGuard.js` 的纯函数 `resolveShortcut(event, { trainingMode: prefs.trainingMode })` 的返回值触达，**不得**存在绕过它的直达分支；`prefs.trainingMode === true` 时 **`Cmd/Ctrl+Z` 与 `ArrowDown` / `Minus` / `Backspace` 必须返回 `SHORTCUT_BLOCKED`（不派发动作，但**仍要 `preventDefault`**，不得漏出浏览器默认行为）**，而 **`Space` / `ArrowUp` / `Equal` 必须仍返回 `SHORTCUT_INCREMENT`**（计数面不得被训练层吞掉）；`resolveShortcut` 的 `trainingMode` **默认值必须是 `false`**。同口径：`applyDelta()` 的目标达成分支在 `trainingMode === true` 时**不得置 `goalReached = true`**（改走 ⑤ 的层内横幅 —— 该分支位置是硬性的，只改模板不叫修好）
 - **🆕 移动端 `overflow`（B9 硬口径）**：移动断点内**不得**为 `.counter-app` 声明 `overflow`（继承基类 `hidden`）；`overscroll-behavior` 在本文件内**不得出现**
 - **🆕 `active.taps` 写入时机（边界 1 硬口径）**：只在 `applyDelta()` 的 `actualDelta !== 0` 分支写入，**不得**在 `registerHit()` 写入；`undoLast()` 必须同步弹出末条，保证不变量 `active.taps.at(-1).delta === lastActionDelta` 恒成立
