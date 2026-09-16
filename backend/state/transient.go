@@ -37,6 +37,16 @@ type ChunkUploadInfo struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
+// Backend 标识当前实际生效的瞬时存储后端。
+// 用途：Redis 是软依赖，state.New 在 Ping 失败时会静默降级到内存，
+// 此前调用方无从区分「配置没启用 Redis」与「启用过但已降级」。
+type Backend string
+
+const (
+	BackendRedis  Backend = "redis"
+	BackendMemory Backend = "memory"
+)
+
 type TransientStore interface {
 	AllowRateLimit(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
 	SaveImageTask(ctx context.Context, task *ImageTask, ttl time.Duration) error
@@ -46,6 +56,11 @@ type TransientStore interface {
 	MarkChunkUploaded(ctx context.Context, fileID string, chunkIndex int, ttl time.Duration) (int, error)
 	GetChunkUpload(ctx context.Context, fileID string) (*ChunkUploadInfo, error)
 	DeleteChunkUpload(ctx context.Context, fileID string) error
+
+	// Backend 返回当前实际生效的后端；降级状态的唯一真相来源。
+	Backend() Backend
+	// Ping 实时探测后端连通性；MemoryStore 恒返回 nil。
+	Ping(ctx context.Context) error
 }
 
 type MemoryStore struct {
@@ -217,6 +232,12 @@ func (s *MemoryStore) DeleteChunkUpload(_ context.Context, fileID string) error 
 	return nil
 }
 
+// Backend 恒为 memory。
+func (s *MemoryStore) Backend() Backend { return BackendMemory }
+
+// Ping 对 MemoryStore 而言恒成功（内存存储没有远端可探）。
+func (s *MemoryStore) Ping(context.Context) error { return nil }
+
 func (s *RedisStore) AllowRateLimit(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
 	fullKey := s.key("ratelimit:" + key)
 	count, err := s.client.Incr(ctx, fullKey).Result()
@@ -331,6 +352,12 @@ func (s *RedisStore) GetChunkUpload(ctx context.Context, fileID string) (*ChunkU
 func (s *RedisStore) DeleteChunkUpload(ctx context.Context, fileID string) error {
 	return s.client.Del(ctx, s.chunkUploadMetaKey(fileID), s.chunkUploadSetKey(fileID)).Err()
 }
+
+// Backend 恒为 redis：能走到这里说明 state.New 启动时 Ping 成功。
+func (s *RedisStore) Backend() Backend { return BackendRedis }
+
+// Ping 实时探测 Redis 连通性，调用方自行控制 ctx 超时。
+func (s *RedisStore) Ping(ctx context.Context) error { return s.client.Ping(ctx).Err() }
 
 func (s *RedisStore) key(suffix string) string {
 	return s.keyPrefix + suffix
