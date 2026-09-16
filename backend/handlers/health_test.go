@@ -1,13 +1,19 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,6 +58,27 @@ func newHealthEngine(h *HealthHandler) *gin.Engine {
 	r := gin.New()
 	r.GET("/api/health", h.Handle)
 	return r
+}
+
+// newOKStub 起一个恒 200 的依赖桩服务（ocr/asr/tts 探测的「可用」形态）。
+func newOKStub(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// stubAllSoftDeps 把三个软依赖（ocr/asr/tts）都指向同一个桩服务，
+// 并返回可直接喂给 NewHealthHandler 的配置。
+func stubAllSoftDeps(t *testing.T, stub *httptest.Server) *config.Config {
+	t.Helper()
+	t.Setenv("OCR_SERVICE_URL", stub.URL)
+	t.Setenv("ASR_SERVICE_URL", stub.URL)
+	cfg := newHealthTestConfig()
+	cfg.Chat.TTSServiceURL = stub.URL
+	return cfg
 }
 
 func doHealthRequest(r *gin.Engine, target string, headers map[string]string) *httptest.ResponseRecorder {
@@ -147,15 +174,8 @@ func TestHealth_DefaultForm_BackwardCompatible(t *testing.T) {
 
 func TestHealth_DetailForm_Authorized_OK(t *testing.T) {
 	db := newMemDB(t)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-	t.Setenv("OCR_SERVICE_URL", upstream.URL)
-	t.Setenv("ASR_SERVICE_URL", upstream.URL)
-
-	cfg := newHealthTestConfig()
-	cfg.Chat.TTSServiceURL = upstream.URL
+	upstream := newOKStub(t)
+	cfg := stubAllSoftDeps(t, upstream)
 	h := NewHealthHandler(db, cfg, state.NewMemoryStore())
 	r := newHealthEngine(h)
 
@@ -210,15 +230,8 @@ func TestHealth_DetailForm_Authorized_OK(t *testing.T) {
 // ============================================================
 
 func TestHealth_DetailFlagParsing(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer upstream.Close()
-	t.Setenv("OCR_SERVICE_URL", upstream.URL)
-	t.Setenv("ASR_SERVICE_URL", upstream.URL)
-
-	cfg := newHealthTestConfig()
-	cfg.Chat.TTSServiceURL = upstream.URL
+	upstream := newOKStub(t)
+	cfg := stubAllSoftDeps(t, upstream)
 	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
 	r := newHealthEngine(h)
 
@@ -250,16 +263,8 @@ func TestHealth_DetailFlagParsing(t *testing.T) {
 // ============================================================
 
 func TestHealth_RedisDisabled(t *testing.T) {
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer stub.Close()
-	t.Setenv("OCR_SERVICE_URL", stub.URL)
-	t.Setenv("ASR_SERVICE_URL", stub.URL)
-
-	cfg := newHealthTestConfig()
+	cfg := stubAllSoftDeps(t, newOKStub(t))
 	cfg.Redis.Enabled = false
-	cfg.Chat.TTSServiceURL = stub.URL
 	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
 
 	w := doHealthRequest(newHealthEngine(h), "/api/health?detail=1", healthAdminHeader())
@@ -282,17 +287,9 @@ func TestHealth_RedisDisabled(t *testing.T) {
 // ============================================================
 
 func TestHealth_RedisDegraded(t *testing.T) {
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer stub.Close()
-	t.Setenv("OCR_SERVICE_URL", stub.URL)
-	t.Setenv("ASR_SERVICE_URL", stub.URL)
-
-	cfg := newHealthTestConfig()
+	cfg := stubAllSoftDeps(t, newOKStub(t))
 	cfg.Redis.Enabled = true
 	cfg.Redis.Addr = "127.0.0.1:1"
-	cfg.Chat.TTSServiceURL = stub.URL
 	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
 
 	w := doHealthRequest(newHealthEngine(h), "/api/health?detail=1", healthAdminHeader())
@@ -329,10 +326,7 @@ func TestHealth_ProbeTimeout(t *testing.T) {
 	defer slow.Close()
 	t.Setenv("ASR_SERVICE_URL", slow.URL)
 
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
+	ok := newOKStub(t)
 	t.Setenv("OCR_SERVICE_URL", ok.URL)
 
 	cfg := newHealthTestConfig()
@@ -369,10 +363,7 @@ func TestHealth_WarmingUp(t *testing.T) {
 	defer warm.Close()
 	t.Setenv("OCR_SERVICE_URL", warm.URL)
 
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
+	ok := newOKStub(t)
 	t.Setenv("ASR_SERVICE_URL", ok.URL)
 
 	cfg := newHealthTestConfig()
@@ -403,10 +394,7 @@ func TestHealth_UnexpectedStatus(t *testing.T) {
 	defer bad.Close()
 	t.Setenv("OCR_SERVICE_URL", bad.URL)
 
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
+	ok := newOKStub(t)
 	t.Setenv("ASR_SERVICE_URL", ok.URL)
 
 	cfg := newHealthTestConfig()
@@ -430,16 +418,8 @@ func TestHealth_UnexpectedStatus(t *testing.T) {
 // ============================================================
 
 func TestHealth_SQLiteDown(t *testing.T) {
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer stub.Close()
-	t.Setenv("OCR_SERVICE_URL", stub.URL)
-	t.Setenv("ASR_SERVICE_URL", stub.URL)
-
 	db := newMemDB(t)
-	cfg := newHealthTestConfig()
-	cfg.Chat.TTSServiceURL = stub.URL
+	cfg := stubAllSoftDeps(t, newOKStub(t))
 	h := NewHealthHandler(db, cfg, state.NewMemoryStore())
 
 	if err := db.Close(); err != nil {
@@ -466,15 +446,8 @@ func TestHealth_SQLiteDown(t *testing.T) {
 // ============================================================
 
 func TestHealth_Cache(t *testing.T) {
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer stub.Close()
-	t.Setenv("OCR_SERVICE_URL", stub.URL)
-	t.Setenv("ASR_SERVICE_URL", stub.URL)
-
-	cfg := newHealthTestConfig()
-	cfg.Chat.TTSServiceURL = stub.URL
+	stub := newOKStub(t)
+	cfg := stubAllSoftDeps(t, stub)
 	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
 	r := newHealthEngine(h)
 
@@ -516,10 +489,7 @@ func TestHealth_ProbePanicIsContained(t *testing.T) {
 	defer boom.Close()
 	t.Setenv("OCR_SERVICE_URL", boom.URL)
 
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
+	ok := newOKStub(t)
 	t.Setenv("ASR_SERVICE_URL", ok.URL)
 
 	cfg := newHealthTestConfig()
@@ -543,15 +513,8 @@ func TestHealth_ProbePanicIsContained(t *testing.T) {
 // ============================================================
 
 func TestHealth_VersionFallback(t *testing.T) {
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer stub.Close()
-	t.Setenv("OCR_SERVICE_URL", stub.URL)
-	t.Setenv("ASR_SERVICE_URL", stub.URL)
-
-	cfg := newHealthTestConfig()
-	cfg.Chat.TTSServiceURL = stub.URL
+	stub := newOKStub(t)
+	cfg := stubAllSoftDeps(t, stub)
 	db := newMemDB(t)
 
 	t.Setenv("DEVTOOLS_VERSION", "")
@@ -618,15 +581,8 @@ func TestHealth_DetailForm_Unauthorized_NoLeak(t *testing.T) {
 // ============================================================
 
 func TestHealth_DetailForm_Authorized_Parses(t *testing.T) {
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer stub.Close()
-	t.Setenv("OCR_SERVICE_URL", stub.URL)
-	t.Setenv("ASR_SERVICE_URL", stub.URL)
-
-	cfg := newHealthTestConfig()
-	cfg.Chat.TTSServiceURL = stub.URL
+	stub := newOKStub(t)
+	cfg := stubAllSoftDeps(t, stub)
 	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
 
 	w := doHealthRequest(newHealthEngine(h), "/api/health?detail=1", healthAdminHeader())
@@ -775,10 +731,7 @@ func TestHealth_SourceField(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
+	ok := newOKStub(t)
 	t.Setenv("ASR_SERVICE_URL", ok.URL)
 
 	cfg := newHealthTestConfig()
@@ -814,15 +767,8 @@ func TestHealth_SourceField(t *testing.T) {
 // ============================================================
 
 func TestHealth_ResponseHeaders(t *testing.T) {
-	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer stub.Close()
-	t.Setenv("OCR_SERVICE_URL", stub.URL)
-	t.Setenv("ASR_SERVICE_URL", stub.URL)
-
-	cfg := newHealthTestConfig()
-	cfg.Chat.TTSServiceURL = stub.URL
+	stub := newOKStub(t)
+	cfg := stubAllSoftDeps(t, stub)
 	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
 	r := newHealthEngine(h)
 
@@ -867,10 +813,7 @@ func TestHealth_DNSFailureMessage(t *testing.T) {
 	// .invalid 是 RFC 2606 保留 TLD，保证解析不了。
 	t.Setenv("ASR_SERVICE_URL", "http://asr-service.invalid:9000")
 
-	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ok.Close()
+	ok := newOKStub(t)
 	t.Setenv("OCR_SERVICE_URL", ok.URL)
 
 	cfg := newHealthTestConfig()
@@ -888,5 +831,296 @@ func TestHealth_DNSFailureMessage(t *testing.T) {
 	}
 	if asr.Message != healthMsgDNSFailure {
 		t.Errorf("asr.message = %q, 期望 %q", asr.Message, healthMsgDNSFailure)
+	}
+}
+
+// ============================================================
+// 以下为 FINN-8 补齐：T2/T5 未覆盖的两条真实分支
+//   - 「5 个依赖全部 up」的正常路径（T2 里 redis 是 disabled，不是 up）
+//   - Redis 运行期掉线（T5 只覆盖「启动即降级」，store 是 Memory 的形态）
+// ============================================================
+
+// fakeRedis 是最小 RESP 服务端：只回答 PING，握手命令（HELLO / CLIENT）按
+// go-redis 的协议回落要求回应，其余命令一律回 Redis 错误。
+// 目的：让 state.New() 走通「Redis 可用」分支 —— 本岗位授权范围内起不了真
+// redis-server，而 RedisStore 的字段不可导出、无法在包外直接构造。
+type fakeRedis struct {
+	ln     net.Listener
+	mu     sync.Mutex
+	conns  []net.Conn
+	closed bool
+}
+
+func newFakeRedis(t *testing.T) *fakeRedis {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("fake redis 监听失败: %v", err)
+	}
+	f := &fakeRedis{ln: ln}
+	go f.accept()
+	t.Cleanup(f.close)
+	return f
+}
+
+func (f *fakeRedis) addr() string { return f.ln.Addr().String() }
+
+func (f *fakeRedis) accept() {
+	for {
+		c, err := f.ln.Accept()
+		if err != nil {
+			return
+		}
+		f.mu.Lock()
+		if f.closed {
+			f.mu.Unlock()
+			_ = c.Close()
+			return
+		}
+		f.conns = append(f.conns, c)
+		f.mu.Unlock()
+		go serveFakeRedis(c)
+	}
+}
+
+// close 模拟 Redis 运行期掉线：关监听 + 关掉所有已建连接，幂等。
+func (f *fakeRedis) close() {
+	f.mu.Lock()
+	if f.closed {
+		f.mu.Unlock()
+		return
+	}
+	f.closed = true
+	conns := f.conns
+	f.conns = nil
+	f.mu.Unlock()
+
+	_ = f.ln.Close()
+	for _, c := range conns {
+		_ = c.Close()
+	}
+}
+
+func serveFakeRedis(c net.Conn) {
+	defer func() { _ = c.Close() }()
+	br := bufio.NewReader(c)
+	for {
+		cmd, err := readRESPCommand(br)
+		if err != nil {
+			return
+		}
+		reply := "-ERR unknown command\r\n"
+		switch strings.ToUpper(cmd) {
+		case "PING":
+			reply = "+PONG\r\n"
+		case "CLIENT":
+			// go-redis 初始化时的 CLIENT SETINFO 是流水线里的命令，
+			// 回错误会让 initConn 整体失败，必须像真 Redis 一样回 +OK。
+			reply = "+OK\r\n"
+		}
+		if _, err := c.Write([]byte(reply)); err != nil {
+			return
+		}
+	}
+}
+
+// readRESPCommand 只解析 RESP 数组形式的命令，返回命令名（首个 bulk）。
+func readRESPCommand(br *bufio.Reader) (string, error) {
+	line, err := br.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if !strings.HasPrefix(line, "*") {
+		return "", fmt.Errorf("非预期命令头: %q", line)
+	}
+	n, err := strconv.Atoi(line[1:])
+	if err != nil || n <= 0 {
+		return "", fmt.Errorf("非预期数组长度: %q", line)
+	}
+
+	var cmd string
+	for i := 0; i < n; i++ {
+		hdr, err := br.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		hdr = strings.TrimRight(hdr, "\r\n")
+		if !strings.HasPrefix(hdr, "$") {
+			return "", fmt.Errorf("非预期 bulk 头: %q", hdr)
+		}
+		size, err := strconv.Atoi(hdr[1:])
+		if err != nil || size < 0 {
+			return "", fmt.Errorf("非预期 bulk 长度: %q", hdr)
+		}
+		buf := make([]byte, size+2)
+		if _, err := io.ReadFull(br, buf); err != nil {
+			return "", err
+		}
+		if i == 0 {
+			cmd = string(buf[:size])
+		}
+	}
+	return cmd, nil
+}
+
+// newRedisBackedHealthHandler 造一个「Redis 真实可用」的 handler。
+// 返回的 handler 与 store 共用同一个 fake redis，便于测试后段把它打掉。
+func newRedisBackedHealthHandler(t *testing.T) (*HealthHandler, *fakeRedis) {
+	t.Helper()
+	redisSrv := newFakeRedis(t)
+
+	cfg := stubAllSoftDeps(t, newOKStub(t))
+	cfg.Redis.Enabled = true
+	cfg.Redis.Addr = redisSrv.addr()
+
+	store, err := state.New(cfg.Redis)
+	if err != nil {
+		t.Fatalf("state.New 失败: %v", err)
+	}
+	if store.Backend() != state.BackendRedis {
+		t.Fatalf("store.Backend() = %q, 期望 redis（fake redis 未生效，后续断言无意义）", store.Backend())
+	}
+	return NewHealthHandler(newMemDB(t), cfg, store), redisSrv
+}
+
+// ============================================================
+// T23 正常路径：5 个依赖全部 up → 整体 ok
+// （父 issue 验收标准 3-1：所有依赖可用时，详细模式返回各依赖 up）
+// ============================================================
+
+func TestHealth_AllDependenciesUp(t *testing.T) {
+	h, _ := newRedisBackedHealthHandler(t)
+
+	w := doHealthRequest(newHealthEngine(h), "/api/health?detail=1", healthAdminHeader())
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d, 期望 200; body=%s", w.Code, w.Body.String())
+	}
+	p := decodeHealthPayload(t, w.Body.String())
+
+	for _, name := range healthDepNames {
+		d := depByName(t, p, name)
+		if d.Status != healthStatusUp {
+			t.Errorf("%s.status = %q, 期望 up; dep=%+v", name, d.Status, d)
+		}
+		if d.Message != "" {
+			t.Errorf("%s 为 up 时 message 应为空, 实际 %q", name, d.Message)
+		}
+	}
+	if p.Status != healthOverallOK {
+		t.Errorf("整体 status = %q, 期望 ok; deps=%+v", p.Status, p.Dependencies)
+	}
+	if redis := depByName(t, p, depRedis); redis.Backend != string(state.BackendRedis) {
+		t.Errorf("redis.backend = %q, 期望 redis", redis.Backend)
+	}
+}
+
+// ============================================================
+// T24 Redis 运行期掉线：已建连的 RedisStore 探测失败 → down，
+// 但不影响 HTTP 出口（仍 200 + degraded，不是 500）
+// ============================================================
+
+func TestHealth_RedisRuntimeDisconnect(t *testing.T) {
+	h, redisSrv := newRedisBackedHealthHandler(t)
+
+	first := decodeHealthPayload(t, doHealthRequest(newHealthEngine(h), "/api/health?detail=1", healthAdminHeader()).Body.String())
+	if redis := depByName(t, first, depRedis); redis.Status != healthStatusUp {
+		t.Fatalf("前置条件不成立: redis.status = %q, 期望 up", redis.Status)
+	}
+
+	redisSrv.close()
+
+	// 新 handler = 空缓存，下一次请求必须真探测（避免等 2s 缓存过期）。
+	h2 := NewHealthHandler(h.db, h.cfg, h.store)
+
+	w := doHealthRequest(newHealthEngine(h2), "/api/health?detail=1", healthAdminHeader())
+	if w.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d, 期望 200（Redis 掉线不得变成 500）; body=%s", w.Code, w.Body.String())
+	}
+	p := decodeHealthPayload(t, w.Body.String())
+	redis := depByName(t, p, depRedis)
+	if redis.Status != healthStatusDown {
+		t.Errorf("redis.status = %q, 期望 down", redis.Status)
+	}
+	if redis.Backend != string(state.BackendRedis) {
+		t.Errorf("redis.backend = %q, 期望 redis（进程实际后端未变）", redis.Backend)
+	}
+	assertMessageInWhitelist(t, redis)
+	if redis.Message == "" {
+		t.Error("redis.message 不应为空")
+	}
+	if p.Status != healthOverallDegraded {
+		t.Errorf("整体 status = %q, 期望 degraded（redis 是 soft）", p.Status)
+	}
+}
+
+// ============================================================
+// T25 时间字段自洽：server_time - started_at == uptime_seconds
+// ============================================================
+
+func TestHealth_TimeFieldsConsistent(t *testing.T) {
+	stub := newOKStub(t)
+	cfg := stubAllSoftDeps(t, stub)
+
+	before := time.Now().UTC()
+	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
+
+	sent := time.Now().UTC()
+	p := decodeHealthPayload(t, doHealthRequest(newHealthEngine(h), "/api/health?detail=1", healthAdminHeader()).Body.String())
+	received := time.Now().UTC()
+
+	serverTime, err := time.Parse(time.RFC3339, p.ServerTime)
+	if err != nil {
+		t.Fatalf("server_time 不可解析: %v (%q)", err, p.ServerTime)
+	}
+	startedAt, err := time.Parse(time.RFC3339, p.StartedAt)
+	if err != nil {
+		t.Fatalf("started_at 不可解析: %v (%q)", err, p.StartedAt)
+	}
+
+	if startedAt.Before(before.Add(-time.Second)) {
+		t.Errorf("started_at = %v 早于 handler 构造时间 %v", startedAt, before)
+	}
+	if startedAt.After(serverTime) {
+		t.Errorf("started_at = %v 晚于 server_time = %v", startedAt, serverTime)
+	}
+	if diff := int64(serverTime.Sub(startedAt).Seconds()); diff != p.UptimeSeconds {
+		t.Errorf("server_time - started_at = %ds, uptime_seconds = %d, 两者应相等", diff, p.UptimeSeconds)
+	}
+	// server_time 是本次请求的实时时间（不参与 2s 缓存）。
+	if serverTime.Before(sent.Add(-2*time.Second)) || serverTime.After(received.Add(2*time.Second)) {
+		t.Errorf("server_time = %v 不在本次请求窗口 [%v, %v] 内", serverTime, sent, received)
+	}
+}
+
+// ============================================================
+// T26 query 密码回落（与 monitoring.go requireAdmin 对齐的既有行为）
+// ============================================================
+
+func TestHealth_DetailForm_QueryPasswordFallback(t *testing.T) {
+	stub := newOKStub(t)
+	cfg := stubAllSoftDeps(t, stub)
+	h := NewHealthHandler(newMemDB(t), cfg, state.NewMemoryStore())
+	r := newHealthEngine(h)
+
+	// header 为空时回落 query（既有契约，已知残余风险，见设计文档）
+	w := doHealthRequest(r, "/api/health?detail=1&super_admin_password="+url.QueryEscape(healthTestPassword), nil)
+	if w.Code != http.StatusOK {
+		t.Errorf("query 携带正确密码: 状态码 = %d, 期望 200", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "dependencies") {
+		t.Errorf("query 携带正确密码未走详细形态: %s", w.Body.String())
+	}
+
+	// query 密码错误 → 401
+	bad := doHealthRequest(r, "/api/health?detail=1&super_admin_password=wrong", nil)
+	if bad.Code != http.StatusUnauthorized {
+		t.Errorf("query 密码错误: 状态码 = %d, 期望 401", bad.Code)
+	}
+
+	// header 优先级高于 query：header 正确时必须 200
+	mixed := doHealthRequest(r, "/api/health?detail=1&super_admin_password=wrong", healthAdminHeader())
+	if mixed.Code != http.StatusOK {
+		t.Errorf("header 正确 + query 错误: 状态码 = %d, 期望 200", mixed.Code)
 	}
 }
