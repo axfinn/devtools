@@ -1,10 +1,15 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import * as tapGuard from './counterTapGuard'
 import {
   LONG_PRESS_MS,
   EXIT_LONG_PRESS_MS,
+  SHORTCUT_BLOCKED,
+  SHORTCUT_DECREMENT,
+  SHORTCUT_INCREMENT,
+  SHORTCUT_UNDO,
   isLongPressCommit,
-  createLongPressGuard
+  createLongPressGuard,
+  resolveShortcut
 } from './counterTapGuard'
 
 describe('counterTapGuard · isLongPressCommit', () => {
@@ -79,6 +84,56 @@ describe('counterTapGuard · createLongPressGuard', () => {
   })
 })
 
+describe('counterTapGuard · resolveShortcut', () => {
+  // L1 #6b —— 训练层撤销门限（B10 的自动化主判据）
+  describe('#6b 训练层存活期的撤销门限', () => {
+    it('Meta+Z 训练中 → blocked', () => {
+      expect(resolveShortcut({ code: 'KeyZ', metaKey: true }, { trainingMode: true })).toBe(SHORTCUT_BLOCKED)
+    })
+
+    it('Ctrl+Z 训练中 → blocked（Windows 修饰键同样屏蔽）', () => {
+      expect(resolveShortcut({ code: 'KeyZ', ctrlKey: true }, { trainingMode: true })).toBe(SHORTCUT_BLOCKED)
+    })
+
+    it('Meta+Z 日间模式 → undo（零回归）', () => {
+      expect(resolveShortcut({ code: 'KeyZ', metaKey: true }, { trainingMode: false })).toBe(SHORTCUT_UNDO)
+    })
+
+    it('Ctrl+Z 日间模式 → undo（零回归）', () => {
+      expect(resolveShortcut({ code: 'KeyZ', ctrlKey: true }, { trainingMode: false })).toBe(SHORTCUT_UNDO)
+    })
+  })
+
+  // L1 #6c —— 其余键的训练层门限
+  describe('#6c 其余键的训练层门限', () => {
+    it.each(['ArrowDown', 'Minus', 'Backspace'])('%s 训练中 → blocked', (code) => {
+      expect(resolveShortcut({ code }, { trainingMode: true })).toBe(SHORTCUT_BLOCKED)
+    })
+
+    it.each(['ArrowDown', 'Minus', 'Backspace'])('%s 日间模式 → decrement（零回归）', (code) => {
+      expect(resolveShortcut({ code }, { trainingMode: false })).toBe(SHORTCUT_DECREMENT)
+    })
+
+    // 反向闸门：防止实现「一刀切屏蔽所有快捷键」把训练中的计数也吞掉（B1 硬口径）
+    it.each(['Space', 'ArrowUp', 'Equal'])('%s 训练中 → increment（训练层不吞计数）', (code) => {
+      expect(resolveShortcut({ code }, { trainingMode: true })).toBe(SHORTCUT_INCREMENT)
+    })
+
+    it('不传第二参时 trainingMode 默认为 false → undo', () => {
+      expect(resolveShortcut({ code: 'KeyZ', metaKey: true })).toBe(SHORTCUT_UNDO)
+    })
+
+    it.each([
+      ['KeyA', { code: 'KeyA', metaKey: true }],
+      ['Escape', { code: 'Escape' }],
+      ['Enter', { code: 'Enter' }]
+    ])('未涉及的键 %s → null（不是 blocked）', (_label, event) => {
+      expect(resolveShortcut(event, { trainingMode: true })).toBeNull()
+      expect(resolveShortcut(event, { trainingMode: false })).toBeNull()
+    })
+  })
+})
+
 describe('counterTapGuard · 负向断言（B1 闸门：计数面不得有任何门限）', () => {
   it('不得导出 shouldCommitTap', () => {
     expect(tapGuard.shouldCommitTap).toBeUndefined()
@@ -96,13 +151,18 @@ describe('counterTapGuard · 负向断言（B1 闸门：计数面不得有任何
     expect(tapGuard.TAP_DEBOUNCE_MS).toBeUndefined()
   })
 
-  it('模块只导出长按守卫相关的 6 个符号', () => {
+  it('模块只导出长按守卫 + 快捷键门限相关的 10 个符号', () => {
     expect(Object.keys(tapGuard).sort()).toEqual([
       'EXIT_LONG_PRESS_MS',
       'LONG_PRESS_MS',
       'LONG_PRESS_MOVE_TOLERANCE_PX',
+      'SHORTCUT_BLOCKED',
+      'SHORTCUT_DECREMENT',
+      'SHORTCUT_INCREMENT',
+      'SHORTCUT_UNDO',
       'createLongPressGuard',
-      'isLongPressCommit'
+      'isLongPressCommit',
+      'resolveShortcut'
     ].sort())
   })
 })

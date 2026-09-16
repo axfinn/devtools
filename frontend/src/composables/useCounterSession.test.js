@@ -108,6 +108,54 @@ describe('useCounterSession · 时长双口径', () => {
     expect(finished.durationMs).toBe(330000)
   })
 
+  it('#9b 一次「后台 → 前台」只结算一次：重复回前台不重复累加 backgroundMs', () => {
+    const { session, advance } = makeSession()
+    session.startSession({ todayCount: 0 })
+
+    advance(10000)
+    session.handleBackground()
+    advance(300000)
+    const first = session.handleForeground(undefined, { todayCount: 0 })
+    expect(first.resumed).toBe(true)
+
+    // 同一次回前台的第二个信号源（visibilitychange / pageshow / keep-alive 的 onActivated）
+    const second = session.handleForeground(undefined, { todayCount: 0 })
+    expect(second.away).toBe(null)
+    expect(second.resumed).toBe(false)
+
+    advance(20000)
+    const finished = session.endSession({ todayCount: 7 })
+
+    expect(finished.backgroundMs).toBe(300000)
+    expect(finished.activeMs).toBe(30000)
+  })
+
+  it('#9c 暂停中切后台：回到前台仍是暂停态，后台区间不重复计入 backgroundMs', () => {
+    const { session, advance } = makeSession()
+    session.startSession({ todayCount: 0 })
+
+    advance(10000)
+    session.pauseSession()
+    advance(60000)
+    session.handleBackground()
+    expect(session.isPaused()).toBe(true)
+
+    advance(300000)
+    const result = session.handleForeground(undefined, { todayCount: 0 })
+    expect(result.resumed).toBe(true)
+    expect(session.isPaused()).toBe(true)
+    expect(session.active.value.backgroundMs).toBe(0)
+
+    advance(30000)
+    session.resumeSession()
+    advance(20000)
+    const finished = session.endSession({ todayCount: 5 })
+
+    // 有效时长 = 暂停前 10s + 继续后 20s；暂停区间（含后台那 5 分钟）全部落进 pausedMs
+    expect(finished.activeMs).toBe(30000)
+    expect(finished.pausedMs).toBe(390000)
+  })
+
   it('#10 后台超过 SESSION_IDLE_MS：自动收尾，endReason=idle，endedAt=max(lastHitAtMs,hiddenSinceMs)', () => {
     const { session, advance } = makeSession()
     session.startSession({ todayCount: 0 })

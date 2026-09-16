@@ -498,7 +498,15 @@ export function createCounterSession({
       flush()
       return
     }
-    settleActiveSegment(at)
+    // 暂停中切后台：暂停区间继续累计，且**保持暂停态**（不清 `pausedSinceMs`）——
+    // 否则回前台时 `handleForeground()` 的 resumed 分支会把会话当成「未暂停」续跑，
+    // 层内「长按暂停 / 长按继续」的文案会跟着变，且有效时长重新开始累加。
+    if (current.pausedSinceMs != null) {
+      current.pausedMs += Math.max(0, at - current.pausedSinceMs)
+      current.pausedSinceMs = at
+    } else {
+      settleActiveSegment(at)
+    }
     current.hiddenSinceMs = at
     flush()
   }
@@ -515,6 +523,10 @@ export function createCounterSession({
    *
    * 为什么必须先 (a)：`checkDayRollover` 的前台守卫只能看到「现在是 visible」，
    * 区分不了「跨零点时人在前台」与「跨零点后人才回前台」。先结算 idle 就不会产出假连续训练。
+   *
+   * **重复调用幂等**：`lastHiddenAtMs` 在 (a) 里被消费（置 null），一次「后台 → 前台」只结算一次 ——
+   * 前台信号有多个来源（`visibilitychange` / `pageshow` / keep-alive 的 `onActivated` / 冷启动），
+   * 它们都在同一次回前台里触发。
    */
   function handleForeground(at = now(), { todayCount = 0, runRollover = null } = {}) {
     const result = { away: null, idleEnded: false, resumed: false, continued: false }
@@ -532,11 +544,21 @@ export function createCounterSession({
         }
         pendingSplitFrom.value = null
       } else if (active.value) {
-        active.value.backgroundMs += away
-        active.value.activeSinceMs = at
+        // 暂停中回前台：维持暂停态（`pausedSinceMs` 由 `handleBackground()` 续着），
+        // 该区间已全部记进 `pausedMs`，不再重复计入 `backgroundMs`。
+        if (active.value.pausedSinceMs == null) {
+          active.value.backgroundMs += away
+          active.value.activeSinceMs = at
+        }
         active.value.hiddenSinceMs = null
         result.resumed = true
       }
+
+      // 消费掉这次后台标记（结算之后才清，`idleEndAtMs()` 仍要拿它兜底）：
+      // 同一次「后台 → 前台」只结算一次。不清的话，多个前台信号
+      // （`visibilitychange` / `pageshow` / keep-alive 的 `onActivated` / 冷启动）
+      // 会各自拿同一个 `hiddenAt` 重算 `away`，把 `backgroundMs` 重复累加。
+      lastHiddenAtMs.value = null
     }
 
     // (b) 跨零点检查（组件注入，内部会调 handleRollover）

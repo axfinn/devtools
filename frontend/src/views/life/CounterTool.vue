@@ -617,6 +617,12 @@ import { createCounterAudio } from '../../composables/useCounterAudio'
 import { createCounterSession, isSessionReached } from '../../composables/useCounterSession'
 import { createCounterWakeLock } from '../../composables/useCounterWakeLock'
 import CounterTrainingOverlay from '../../components/CounterTrainingOverlay.vue'
+import {
+  SHORTCUT_DECREMENT,
+  SHORTCUT_INCREMENT,
+  SHORTCUT_UNDO,
+  resolveShortcut
+} from '../../utils/counterTapGuard'
 
 const STORAGE_KEY = 'counter_v4'
 const LEGACY_KEY = 'counter_v3'
@@ -629,6 +635,8 @@ const weekHeaders = ['一', '二', '三', '四', '五', '六', '日']
 const DEFAULT_SESSION_GOAL = 100
 /** 会话落盘节流（方案 §C2：禁止每次敲击写盘） */
 const SESSION_FLUSH_INTERVAL_MS = 5000
+/** 后台超时收尾、训练层仍存活时的一次性层内横幅（B2；训练层内禁止 EP 弹层，只能自绘横幅） */
+const IDLE_LAYER_NOTICE = '上次会话已超时收尾 · 本次仅累计今日次数'
 
 const figurePresets = [
   {
@@ -1015,8 +1023,23 @@ const sessionLastGoal = computed(() => Number(session.prefs.value.lastGoalValue)
 const sessionWakeLockEnabled = computed(() => session.prefs.value.wakeLockEnabled !== false)
 const sessionList = computed(() => session.sessions.value)
 
-/** 会话计数 = todayCount − countAtStart（撤销 / 重置自动同步，下限 0） */
-const sessionCount = computed(() => session.countOf(todayCount.value))
+/**
+ * 层内计数基线（B2）：训练层打开 / 刷新恢复时对齐到当前会话的 `countAtStart`，
+ * 无会话时对齐到当时的今日计数；跨零点后归 0。
+ */
+const layerBaselineCount = ref(0)
+
+/**
+ * 层内计数 = todayCount − 基线（撤销 / 重置自动同步，下限 0）。
+ * 有会话时基线就是该会话的 `countAtStart`，与 `session.countOf()` 等价；
+ * `active === null` 但训练层仍存活（后台超时被 idle 收尾、跨零点未续开 —— 方案 §D2⑦-b.3
+ * 第 5 行已定这是允许状态）时 `countOf()` 恒返回 0，层内「本次训练」会一动不动 ——
+ * 改用基线增量，敲击照常让层内计数增长（B2）。
+ */
+const sessionCount = computed(() => {
+  if (session.active.value) return session.countOf(todayCount.value)
+  return Math.max(0, todayCount.value - layerBaselineCount.value)
+})
 const sessionGoalValue = computed(() => Number(session.active.value?.goal?.value) || 0)
 
 /** 实际时长 = 墙钟（主口径）；有效时长 = 扣掉暂停与后台（次要口径），两者同时展示 */
@@ -1381,12 +1404,17 @@ function loadAll() {
     dailyRecords.value = dailyRecords.value.filter((record) => record.date !== todayKey)
   }
 
+  // B2：先按落盘恢复出来的会话对齐层内计数基线（= 该会话 `countAtStart`），再走回前台结算 ——
+  // 这样「会话被 idle 收尾」后层内计数从会话已有进度继续涨，而不是跳回 0。
+  alignLayerCountBaseline()
+
   // 冷启动等价于一次「回前台」：先按 idle 结算 → 再补跑跨零点 → 最后消费 pendingSplitFrom。
   // 直接调 checkDayRollover() 会把「昨天 23:50 离开、今天 07:50 打开」当成前台跨零点而假续开（方案 §C1.4）。
   session.handleForeground(Date.now(), {
     todayCount: todayCount.value,
     runRollover: checkDayRollover
   })
+  noticeLayerWithoutSession()
   refreshSpeed()
   nowTick.value = Date.now()
   persistAll()
@@ -1444,6 +1472,9 @@ function checkDayRollover() {
   lastActionDelta.value = 0
   tapEvents = []
   goalFired = false
+  // B2：跨零点后层内计数基线归 0（今日计数已清零）—— 训练层不因跨零点关闭，
+  // 此时层内「本次训练」= 新一天已累计的次数；续开的新段 `countAtStart` 同样是 0，两种口径一致。
+  layerBaselineCount.value = 0
 }
 
 function bumpFigure() {
@@ -1752,6 +1783,13 @@ function vibrate() {
   }
 }
 
+/**
+ * 键盘入口的**唯一派发点**（方案 §D2⑦-b.1 / L2 #42c-i）。
+ * 三个守卫的先后顺序是硬性的：`isActive` → 可编辑目标 → `resolveShortcut`。
+ * 训练层存活时 `resolveShortcut` 对 `Cmd/Ctrl+Z` 与 `ArrowDown` / `Minus` / `Backspace`
+ * 返回 `blocked` —— 本函数据此**不派发任何动作**（因而 `undoLast()` 里的 EP 弹层不可达），
+ * 但仍 `preventDefault()`：`Backspace` 的浏览器历史后退 / 方向键的页面滚动不得漏出去。
+ */
 function onKeyDown(event) {
   // keep-alive 守卫（方案 §C4）：切走之后残留监听不得再改计数
   if (!isActive.value) return
@@ -1761,27 +1799,20 @@ function onKeyDown(event) {
     return
   }
 
-  if (event.code === 'Space' || event.code === 'ArrowUp' || event.code === 'Equal') {
-    event.preventDefault()
+  const action = resolveShortcut(event, { trainingMode: session.trainingMode.value })
+  if (!action) return
+
+  event.preventDefault()
+
+  if (action === SHORTCUT_INCREMENT) {
     increment()
     unlockAudio()
-    return
-  }
-
-  // 训练层存活期间：减号 / 撤销 一律不可达（方案 §D2③ 清单），
-  // 且不得走 ElMessage —— 训练层 z-index 10050 会把它盖住
-  if (session.trainingMode.value) return
-
-  if (event.code === 'ArrowDown' || event.code === 'Minus' || event.code === 'Backspace') {
-    event.preventDefault()
+  } else if (action === SHORTCUT_DECREMENT) {
     decrement()
-    return
-  }
-
-  if (event.code === 'KeyZ' && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault()
+  } else if (action === SHORTCUT_UNDO) {
     undoLast()
   }
+  // action === SHORTCUT_BLOCKED（训练层存活期）→ 到此为止：只吞默认行为，不派发任何动作
 }
 
 function shiftCalendar(delta) {
@@ -1928,12 +1959,37 @@ function beginTraining() {
   enterTrainingLayer()
 }
 
+/**
+ * 把层内计数基线对齐到「现在」（B2）：有会话 → 该会话的 `countAtStart`（无缝接续已有进度）；
+ * 无会话 → 当前今日计数（层内从 0 起重新累计）。
+ * 只在「打开训练层」与「刷新恢复到训练层」两个时机对齐 —— 会话被 idle 收尾时**不**重设
+ * （基线本来就是那一段的 `countAtStart`，重设会让层内数字跳回 0）；跨零点由
+ * `checkDayRollover()` 单独归零（那是真的换了一天）。
+ */
+function alignLayerCountBaseline() {
+  layerBaselineCount.value = session.active.value
+    ? session.active.value.countAtStart
+    : todayCount.value
+}
+
 function enterTrainingLayer() {
   closeAllPanels()
   session.setTrainingMode(true)
+  alignLayerCountBaseline()
   // ⚠️ 屏幕常亮的首次申请必须在用户手势内；失败静默降级，不阻塞训练
   if (session.prefs.value.wakeLockEnabled) wakeLock.request()
   syncWakeLock()
+}
+
+/**
+ * B2：训练层仍存活但会话已不在（后台超时被 idle 收尾 / 跨零点未续开 / 刷新后只剩 prefs）——
+ * 给一次性层内说明横幅；**不自动关闭训练层**（`active === null` 是方案 §D2⑦-b.3 第 5 行允许的状态）。
+ * 训练层内禁止 EP 弹层，横幅只能自绘；同一文案重复赋值不会再次触发横幅（层内只 watch 文案变化），
+ * 因此每个训练层最多出现一次。
+ */
+function noticeLayerWithoutSession() {
+  if (!session.trainingMode.value || session.active.value) return
+  trainingNotice.value = IDLE_LAYER_NOTICE
 }
 
 function pauseTraining() {
@@ -2078,6 +2134,7 @@ function handleReturnToForeground() {
     todayCount: todayCount.value,
     runRollover: checkDayRollover
   })
+  noticeLayerWithoutSession()
   nowTick.value = Date.now()
   syncWakeLock()
   persistAll()
@@ -2151,12 +2208,14 @@ onMounted(() => {
 onActivated(() => {
   isActive.value = true
   addGlobalListeners()
-  checkDayRollover()
+  // keep-alive 切回 = 一次「回前台」（B3）：必须补跑会话结算。`onDeactivated` 里的
+  // `handleBackground()` 会结算活跃段并把 `activeSinceMs` 置 null，而只有 `handleForeground()`
+  // 的 resumed 分支会把它重新打开 —— 不补这一步，`sessionActiveMs` 在离开过一次路由之后**永久冻结**，
+  // 落盘的 `activeMs` 系统性偏小。`handleReturnToForeground()` 内部已含
+  // `checkDayRollover` / `nowTick` / `syncWakeLock` / `persistAll`。
+  // 音频恢复仍只走用户手势路径（`handleForeground()` 只置 needsUnlock，绝不 resume）。
+  handleReturnToForeground()
   refreshSpeed()
-  nowTick.value = Date.now()
-  // 训练层若仍存活（keep-alive 切回），把 onDeactivated 释放掉的屏幕常亮补回来
-  syncWakeLock()
-  persistAll()
 })
 
 onDeactivated(() => {
