@@ -31,6 +31,47 @@
 
     <!-- 主体 -->
     <div v-else class="main-content">
+      <!-- 依赖健康：放在 tabs 之上，任何 tab（含默认落地「总览」）都能一眼看到 -->
+      <el-card class="dep-health-card" v-loading="healthLoading">
+        <template #header>
+          <div class="card-header">
+            <span>依赖健康</span>
+            <span class="small-text">
+              <span class="health-status" :class="healthStatusClass">{{ healthStatusLabel }}</span>
+              · 版本 {{ health?.version || '未知' }}
+              · 上次探测 {{ health?.probed_at ? formatProbeAgo(health.probed_at) : '—' }}
+            </span>
+          </div>
+        </template>
+
+        <el-alert
+          v-if="healthError"
+          class="hint-alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="`依赖状态读取失败：${healthError}（下方为上一次结果，可能已过期）`"
+        />
+
+        <div v-if="health?.dependencies?.length" class="status-grid">
+          <div
+            v-for="dep in health.dependencies"
+            :key="dep.name"
+            class="status-cell"
+            :class="depClass(dep.status)"
+          >
+            <div class="status-num">{{ depStatusLabel(dep.status) }}</div>
+            <div class="status-label">{{ DEP_LABELS[dep.name] || dep.name }}</div>
+            <div class="kpi-sub">{{ dep.latency_ms ? `${dep.latency_ms} ms` : (dep.message || '—') }}</div>
+          </div>
+        </div>
+        <el-empty v-else-if="!healthLoading" description="未获取到依赖数据" :image-size="60" />
+
+        <div v-if="usingDefaultAddr" class="small-text dep-addr-hint">
+          部分依赖使用内建默认地址（仅适用于容器形态）。本地开发请设置 OCR_SERVICE_URL / ASR_SERVICE_URL / REDIS_ADDR。
+        </div>
+      </el-card>
+
       <el-card class="filter-card">
         <template #header>
           <div class="card-header">
@@ -582,6 +623,19 @@ const logs = ref([])
 const logsTotal = ref(0)
 const service = ref(null)
 
+// 依赖健康（GET /api/health?detail=1，详细模式需管理员鉴权）
+const health = ref(null)
+const healthError = ref('')
+const healthLoading = ref(false)
+
+const DEP_LABELS = {
+  sqlite: 'SQLite',
+  redis: 'Redis',
+  ocr: 'OCR · 8000',
+  asr: 'ASR · 9000',
+  tts: 'TTS · 8083',
+}
+
 const filters = ref({
   status: '',
   keyword: '',
@@ -609,12 +663,14 @@ function logout() {
   aiLogs.value = []
   logs.value = []
   service.value = null
+  health.value = null
+  healthError.value = ''
 }
 
 async function loadAll() {
   loadingAll.value = true
   try {
-    await Promise.all([loadOverview(), loadAI(), loadService(), loadSessions()])
+    await Promise.all([loadOverview(), loadAI(), loadService(), loadSessions(), loadHealth()])
   } finally {
     loadingAll.value = false
   }
@@ -699,7 +755,74 @@ async function loadService() {
   } catch (err) {
     ElMessage.error('服务状态读取失败：' + err.message)
   }
+  // 健康卡片在 tabs 之上，跟着服务状态一起刷新；loadHealth 自己吞异常，不阻断 service 渲染
+  await loadHealth()
 }
+
+// 详细模式（?detail=1）需要管理员鉴权：必须带 authHeader()。
+// 注意 /api/health 不属于 /api/monitor 前缀，不要拼 API_BASE。
+async function loadHealth() {
+  healthLoading.value = true
+  healthError.value = ''
+  try {
+    const res = await fetch('/api/health?detail=1', { headers: authHeader() })
+    const data = await res.json().catch(() => ({}))
+    if (res.status === 401 || res.status === 403) {
+      // 不弹 ElMessage：避免与 tryStored() 的失效回滚抢；也不触发登出，
+      // 一张只读的依赖健康卡不应把用户踢出整个页面。保留上一次快照，就地提示。
+      healthError.value = '鉴权失效，请重新登录'
+      return
+    }
+    if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`)
+    health.value = data
+  } catch (err) {
+    // 保留上一次 health，由 healthError 提示「可能已过期」
+    healthError.value = err.message
+  } finally {
+    healthLoading.value = false
+  }
+}
+
+function depClass(status) {
+  if (status === 'up') return 'ok'
+  if (status === 'down') return 'danger'
+  if (status === 'warming') return 'warn'
+  return ''
+}
+
+function depStatusLabel(status) {
+  return { up: '正常', down: '不可用', warming: '预热中', disabled: '未启用' }[status] || '未知'
+}
+
+function formatProbeAgo(value) {
+  if (!value) return '—'
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000))
+  if (seconds < 5) return '刚刚'
+  if (seconds < 60) return `${seconds} 秒前`
+  return `${Math.floor(seconds / 60)} 分钟前`
+}
+
+// degraded 不等于故障，文案上与 error 区分，避免把「部分依赖不可用」渲染成红色事故
+const healthStatusLabel = computed(() => {
+  const status = health.value?.status
+  if (status === 'error') return '核心依赖异常'
+  if (status === 'degraded') return '部分依赖不可用'
+  if (status === 'ok') return '依赖健康正常'
+  return '状态未知'
+})
+
+const healthStatusClass = computed(() => {
+  const status = health.value?.status
+  if (status === 'error') return 'danger'
+  if (status === 'degraded') return 'warn'
+  if (status === 'ok') return 'ok'
+  return ''
+})
+
+// 「地址来自默认值」提示（仅适用于容器形态的内建默认地址）—— 只在 down 且 source=default 时提示
+const usingDefaultAddr = computed(() =>
+  (health.value?.dependencies || []).some((d) => d.status === 'down' && d.source === 'default')
+)
 
 async function loadLogs() {
   loadingLogs.value = true
@@ -969,6 +1092,8 @@ onMounted(async () => {
   if (ok) {
     await loadAll()
     pollTimer = setInterval(() => {
+      // 健康卡片在 tabs 之上，切任何 tab 都要跟着刷新 —— 放在 mainTab 判断之外
+      loadHealth()
       if (mainTab.value === 'overview') loadOverview()
       else if (mainTab.value === 'ai') loadAI()
       else if (mainTab.value === 'logs') loadLogs()
@@ -1030,6 +1155,18 @@ onBeforeUnmount(() => {
 .filter-card {
   margin-bottom: 16px;
 }
+
+.dep-health-card {
+  margin-bottom: 16px;
+}
+
+.dep-addr-hint {
+  margin-top: 12px;
+}
+
+.health-status.ok { color: #67c23a; }
+.health-status.warn { color: #e6a23c; }
+.health-status.danger { color: #f56c6c; }
 
 .main-tabs {
   margin-bottom: 24px;
