@@ -3312,6 +3312,17 @@ onBeforeUnmount(() => {
     gap: 8px;
   }
 
+  /* 次因兜底：装饰光晕的横向出血必须在本层收敛。
+     `.ambient-layer::after` 是 right:-60px 的绝对定位伪元素，它的 border box 会进入
+     .counter-app 的 scrollable overflow —— 基类的 overflow: hidden 只裁剪「看得见」的部分，
+     不减 scrollWidth，于是「.counter-app 无内层横向滚动」这条判据在移动端恒不成立
+     （实测 scrollWidth 390 / clientWidth 330，差 60px 正好等于出血量）。
+     让光晕在自己的层里成为 scroll container，溢出即不再向祖先传播。
+     视觉代价：裁剪边界由 .counter-app 的 border box 内移到它的 padding box（横向 8px），可忽略。 */
+  .ambient-layer {
+    overflow: hidden;
+  }
+
   .hero-card,
   .preset-grid {
     display: none;
@@ -3340,7 +3351,10 @@ onBeforeUnmount(() => {
 
   .work-grid,
   .mini-stats {
-    grid-template-columns: 1fr;
+    /* ⚠️ 必须带 minmax(0, …) 下限：裸 `1fr` == minmax(auto, 1fr)，自动下限是 min-content，
+       单列轨道会被内容（.tap-panel 内的按钮行）撑到 498px 并把横向溢出冒泡到 .counter-app。
+       本文件其余所有网格都已写 minmax(0, …)，唯独这条移动端单列漏了。 */
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .tap-panel {
@@ -3642,6 +3656,11 @@ onBeforeUnmount(() => {
     border-radius: 13px;
     gap: 4px;
     min-height: 44px;
+    /* 兜底：基类的 aspect-ratio: 1 会把这里的 44px 高度反推成 44px 宽度，而 7 列热力表格在
+       窄屏下一列只有 29~37px，格子横向撑爆轨道并溢出到 .work-grid（实测 375 宽：轨道 36.85px、
+       格子 44px、溢出 7px；320 宽：轨道 29px、溢出 15px）。加上限后格子宽度跟随轨道、
+       高度保持 44px，轨道不再被内容顶开。轨道本身 ≥44px 时该声明不生效（如 500~767 宽），无视觉变化。 */
+    max-width: 100%;
   }
 
   .heat-count {
