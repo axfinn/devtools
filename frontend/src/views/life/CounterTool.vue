@@ -108,8 +108,8 @@
               @click="sceneId = scene.id"
             >
               <span class="scene-swatches">
-                <i :style="{ background: scene.swatches[0] }"></i>
-                <i :style="{ background: scene.swatches[1] }"></i>
+                <i :style="{ background: scene.swatches?.[0] || '' }"></i>
+                <i :style="{ background: scene.swatches?.[1] || '' }"></i>
               </span>
               <span class="preset-name">{{ scene.name }}</span>
               <span class="preset-desc">{{ scene.summary }}</span>
@@ -153,6 +153,12 @@
             </button>
           </div>
 
+          <div v-if="audioDegraded" class="audio-notice">
+            <button type="button" class="audio-notice-btn" @click="restoreAudio">
+              音效已暂停 · 点我恢复
+            </button>
+          </div>
+
           <div class="tap-stage">
             <el-button
               class="side-round"
@@ -186,6 +192,15 @@
               size="large"
               @pointerdown.prevent="increment"
             />
+          </div>
+
+          <div class="training-entry">
+            <button type="button" class="training-start" @click="openStartPanel">
+              {{ hasActiveSession ? '返回训练' : '开始训练' }}
+            </button>
+            <button type="button" class="training-records" @click="openSessionSummary()">
+              训练记录
+            </button>
           </div>
 
           <div class="mobile-main-actions">
@@ -327,6 +342,13 @@
             <el-slider v-model="volume" :min="0" :max="100" :step="5" show-input />
           </el-form-item>
 
+          <el-form-item label="训练时保持屏幕常亮（耗电）">
+            <el-switch :model-value="sessionWakeLockEnabled" @update:model-value="setWakeLockEnabled" />
+            <span class="field-note">
+              不支持或被系统拒绝的设备会自动忽略。训练数据只存本机，不支持多标签页同时使用（后保存的标签页会覆盖另一个）。
+            </span>
+          </el-form-item>
+
           <el-form-item label="当前形象">
             <div class="setting-pills">
               <button
@@ -436,11 +458,149 @@
         <div v-else class="empty-state">还没有历史记录。</div>
       </section>
     </div>
+
+    <div v-if="showStartPanel" class="panel-overlay" @click.self="showStartPanel = false">
+      <section class="panel-card">
+        <div class="panel-card-head">
+          <h3>开始训练</h3>
+          <button type="button" class="panel-close" @click="showStartPanel = false">关闭</button>
+        </div>
+
+        <div class="start-block">
+          <span class="section-caption">本次目标</span>
+          <div class="setting-pills">
+            <button
+              v-for="preset in goalPresets"
+              :key="`goal-${preset}`"
+              type="button"
+              class="setting-pill"
+              :class="{ active: startGoal === preset }"
+              @click="startGoal = preset"
+            >
+              {{ preset > 0 ? `${preset} 次` : '不设目标' }}
+            </button>
+          </div>
+          <p class="field-note">
+            每次训练单独设目标，与每日目标无关。
+            <template v-if="sessionLastGoal > 0">上次：{{ sessionLastGoal }} 次。</template>
+          </p>
+        </div>
+
+        <el-form label-position="top" size="small" class="settings-form">
+          <el-form-item label="自定义目标（0 = 自由训练）">
+            <el-input-number v-model="startGoal" :min="0" :max="99999" :step="10" controls-position="right" />
+          </el-form-item>
+
+          <el-form-item label="参考（只读）">
+            <span class="field-note">{{ dailyGoalReference }}</span>
+          </el-form-item>
+
+          <el-form-item label="训练时保持屏幕常亮">
+            <el-switch :model-value="sessionWakeLockEnabled" @update:model-value="setWakeLockEnabled" />
+            <span class="field-note">不支持或被系统拒绝的设备会自动忽略（开启会略增耗电）。</span>
+          </el-form-item>
+        </el-form>
+
+        <div class="danger-actions">
+          <el-button type="primary" @click="beginTraining">进入训练</el-button>
+          <el-button @click="showStartPanel = false">取消</el-button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="showSessionSummary" class="panel-overlay" @click.self="showSessionSummary = false">
+      <section class="panel-card">
+        <div class="panel-card-head">
+          <h3>训练记录</h3>
+          <button type="button" class="panel-close" @click="showSessionSummary = false">关闭</button>
+        </div>
+
+        <div v-if="sessionList.length > 0" class="session-list">
+          <article
+            v-for="item in sessionList"
+            :key="item.id"
+            class="session-item"
+            :class="{ active: item.id === selectedSessionId }"
+            @click="selectedSessionId = item.id"
+          >
+            <div class="session-item-head">
+              <strong class="session-range">{{ formatSessionRange(item) }}</strong>
+              <el-tag v-if="item.reached" type="success" effect="plain" size="small">达标</el-tag>
+            </div>
+            <div class="session-item-meta">
+              <span>{{ item.count }} 次</span>
+              <span>实际 {{ formatDuration(item.durationMs) }}</span>
+              <span>有效 {{ formatDuration(item.activeMs) }}</span>
+              <span>{{ endReasonLabel(item.endReason) }}</span>
+            </div>
+          </article>
+        </div>
+        <div v-else class="empty-state">还没有训练记录。训练结束后会自动保存。</div>
+
+        <div v-if="selectedSession" class="session-timeline">
+          <div class="session-timeline-head">
+            <span>敲击时间轴</span>
+            <span v-if="selectedTimeline.dropped > 0" class="session-timeline-note">
+              仅显示最近 {{ sessionMaxTaps }} 次，更早的 {{ selectedTimeline.dropped }} 次未列出
+            </span>
+          </div>
+
+          <div v-if="selectedTimeline.taps.length > 0" class="timeline-list">
+            <div
+              v-for="(entry, index) in selectedTimeline.taps"
+              :key="`${entry.at}-${index}`"
+              class="timeline-row"
+            >
+              <span class="timeline-time">{{ formatClock(entry.at) }}</span>
+              <span class="timeline-delta" :class="{ minus: entry.delta < 0 }">
+                {{ entry.delta > 0 ? `+${entry.delta}` : entry.delta }}
+              </span>
+              <span class="timeline-kind">{{ kindLabel(entry.kind) }}</span>
+              <button
+                v-if="canEditSelectedTimeline"
+                type="button"
+                class="timeline-delete"
+                @click="deleteTimelineEntry(index)"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+          <div v-else class="empty-state">这次训练没有可回溯的敲击记录（早于本版本，或已被截断）。</div>
+
+          <p v-if="!canEditSelectedTimeline" class="field-note">
+            跨天会话不可回溯修改（改动会落到当天计数上）。
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <!-- 训练层：挂在 .counter-app 内作为最后一个子节点（不用 Teleport，否则丢失 themeVars 变量继承） -->
+    <CounterTrainingOverlay
+      v-if="trainingMode"
+      :count="sessionCount"
+      :goal-value="sessionGoalValue"
+      :elapsed-ms="sessionElapsedMs"
+      :active-ms="sessionActiveMs"
+      :speed="sessionSpeed"
+      :step="step"
+      :paused="sessionPaused"
+      :degraded="audioDegraded"
+      :reached="sessionReached"
+      :notice="trainingNotice"
+      :figure-symbol="activeFigure.symbol"
+      :figure-name="activeFigure.name"
+      @tap="handleFigureTap"
+      @pause="pauseTraining"
+      @resume="resumeTraining"
+      @end="finishTraining('manual')"
+      @restore-audio="restoreAudio"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Calendar,
@@ -453,6 +613,16 @@ import {
   VideoPlay
 } from '@element-plus/icons-vue'
 import { useTheme } from '../../composables/useTheme'
+import { createCounterAudio } from '../../composables/useCounterAudio'
+import { createCounterSession, isSessionReached } from '../../composables/useCounterSession'
+import { createCounterWakeLock } from '../../composables/useCounterWakeLock'
+import CounterTrainingOverlay from '../../components/CounterTrainingOverlay.vue'
+import {
+  SHORTCUT_DECREMENT,
+  SHORTCUT_INCREMENT,
+  SHORTCUT_UNDO,
+  resolveShortcut
+} from '../../utils/counterTapGuard'
 
 const STORAGE_KEY = 'counter_v4'
 const LEGACY_KEY = 'counter_v3'
@@ -460,6 +630,13 @@ const MAX_HISTORY_DAYS = 365
 const SPEED_WINDOW_MS = 15000
 const stepOptions = [1, 3, 5, 10, 20]
 const weekHeaders = ['一', '二', '三', '四', '五', '六', '日']
+
+/** 首次训练的默认目标（jaxiu 2026-09-16 裁决：独立按次目标，首次默认 100；此后默认取「上次」） */
+const DEFAULT_SESSION_GOAL = 100
+/** 会话落盘节流（方案 §C2：禁止每次敲击写盘） */
+const SESSION_FLUSH_INTERVAL_MS = 5000
+/** 后台超时收尾、训练层仍存活时的一次性层内横幅（B2；训练层内禁止 EP 弹层，只能自绘横幅） */
+const IDLE_LAYER_NOTICE = '上次会话已超时收尾 · 本次仅累计今日次数'
 
 const figurePresets = [
   {
@@ -723,12 +900,52 @@ const dailyRecords = ref([])
 const calYear = ref(currentTime.value.getFullYear())
 const calMonth = ref(currentTime.value.getMonth() + 1)
 
+// ── 训练（运动会话）相关状态 ────────────────────────────────────────────────
+const showStartPanel = ref(false)
+const showSessionSummary = ref(false)
+const selectedSessionId = ref('')
+const startGoal = ref(DEFAULT_SESSION_GOAL)
+/** 训练层内的一次性提示（层内不能用 EP Toast，改由 CounterTrainingOverlay 自绘横幅） */
+const trainingNotice = ref('')
+/** 1s 时钟推进的时间戳，供「实际时长 / 有效时长」实时刷新（不额外起定时器） */
+const nowTick = ref(Date.now())
+/**
+ * keep-alive 守卫（方案 §C4）：本组件在 keep-alive 下常驻，
+ * 切走后 `isActive === false`，键盘 / 自动连点 / 1s 时钟都不得再改计数。
+ */
+const isActive = ref(true)
+
+/**
+ * 音频生命周期交给 useCounterAudio（方案 §B2 硬口径：`resume()` / `close()` /
+ * `new AudioContext()` 只允许出现在它的 `unlock()` / `play()` / `rebuild()` / `dispose()` 内）。
+ */
+const counterAudio = createCounterAudio({
+  ctxFactory: () => new (window.AudioContext || window.webkitAudioContext)(),
+  createBuffers: (ctx) => {
+    const map = new Map()
+    const sr = ctx.sampleRate
+    map.set('mokugyo', buildMokugyo(ctx, sr))
+    map.set('bell', buildBell(ctx, sr))
+    map.set('drum', buildDrum(ctx, sr))
+    map.set('chime', buildChime(ctx, sr))
+    return map
+  }
+})
+
+/** 会话状态（独立键 counter_v4_training；本模块不读 dailyGoal，见方案 §C1.5） */
+const session = createCounterSession()
+
+/** 训练期屏幕常亮（jaxiu 裁决第 5 条）；不支持 / 被拒绝一律静默降级 */
+const wakeLock = createCounterWakeLock()
+
 let goalFired = false
 let tapEvents = []
 let autoTimer = null
 let bumpTimer = null
 let clockTimer = null
-let audioContext = null
+let listenersBound = false
+let lastSessionFlushAt = 0
+let lastSessionFlushCount = -1
 
 const activeFigure = computed(() => {
   return figurePresets.find((item) => item.id === figureId.value) || figurePresets[0]
@@ -797,6 +1014,104 @@ const goalPercent = computed(() => {
   if (dailyGoal.value <= 0) return 0
   return Math.min(100, Math.round((todayCount.value / dailyGoal.value) * 100))
 })
+
+// ── 训练 / 会话视图模型 ────────────────────────────────────────────────────
+const trainingMode = computed(() => session.trainingMode.value)
+const audioDegraded = computed(() => counterAudio.isDegraded.value)
+const hasActiveSession = computed(() => session.active.value !== null)
+const sessionLastGoal = computed(() => Number(session.prefs.value.lastGoalValue) || 0)
+const sessionWakeLockEnabled = computed(() => session.prefs.value.wakeLockEnabled !== false)
+const sessionList = computed(() => session.sessions.value)
+
+/**
+ * 层内计数基线（B2）：训练层打开 / 刷新恢复时对齐到当前会话的 `countAtStart`，
+ * 无会话时对齐到当时的今日计数；跨零点后归 0。
+ */
+const layerBaselineCount = ref(0)
+
+/**
+ * 层内计数 = todayCount − 基线（撤销 / 重置自动同步，下限 0）。
+ * 有会话时基线就是该会话的 `countAtStart`，与 `session.countOf()` 等价；
+ * `active === null` 但训练层仍存活（后台超时被 idle 收尾、跨零点未续开 —— 方案 §D2⑦-b.3
+ * 第 5 行已定这是允许状态）时 `countOf()` 恒返回 0，层内「本次训练」会一动不动 ——
+ * 改用基线增量，敲击照常让层内计数增长（B2）。
+ */
+const sessionCount = computed(() => {
+  if (session.active.value) return session.countOf(todayCount.value)
+  return Math.max(0, todayCount.value - layerBaselineCount.value)
+})
+const sessionGoalValue = computed(() => Number(session.active.value?.goal?.value) || 0)
+
+/** 实际时长 = 墙钟（主口径）；有效时长 = 扣掉暂停与后台（次要口径），两者同时展示 */
+const sessionElapsedMs = computed(() => {
+  const current = session.active.value
+  if (!current) return 0
+  return Math.max(0, nowTick.value - current.startedAt)
+})
+
+const sessionActiveMs = computed(() => {
+  const current = session.active.value
+  if (!current) return 0
+  let total = Number(current.activeMs) || 0
+  if (current.activeSinceMs != null) {
+    total += Math.max(0, nowTick.value - current.activeSinceMs)
+  }
+  return Math.round(total)
+})
+
+/** 会话节奏（方案 §C1.6：count / (activeMs/60000)，与 15s 窗口的 speed 不同口径） */
+const sessionSpeed = computed(() => {
+  const minutes = sessionActiveMs.value / 60000
+  if (minutes <= 0) return 0
+  return Math.round(sessionCount.value / minutes)
+})
+
+const sessionPaused = computed(() => session.isPaused())
+
+const sessionReached = computed(() =>
+  isSessionReached(session.active.value?.goal, sessionCount.value, sessionActiveMs.value)
+)
+
+/** 本次会话可选目标预设：前三项为固定次数，末位 `0` = 不设目标（自由训练） */
+const GOAL_PRESET_VALUES = Object.freeze([100, 200, 500, 0])
+/** 「上次目标」的插入位置：紧跟 500 之后、`0` 哨兵之前 */
+const GOAL_PRESET_LAST_INDEX = GOAL_PRESET_VALUES.length - 1
+
+/** 本次可选目标：预设 + 「上次目标」一键选项；0 = 不设目标 */
+const goalPresets = computed(() => {
+  const presets = [...GOAL_PRESET_VALUES]
+  const last = sessionLastGoal.value
+  if (last > 0 && !presets.includes(last)) presets.splice(GOAL_PRESET_LAST_INDEX, 0, last)
+  return presets
+})
+
+/** 只读参考行 —— 绝不参与会话目标的默认值或计算（jaxiu 裁决第 2 条） */
+const dailyGoalReference = computed(() => {
+  if (dailyGoal.value <= 0) return '未设每日目标'
+  return `每日目标 ${dailyGoal.value} 次 · 今日已完成 ${todayCount.value} 次`
+})
+
+const selectedSession = computed(() => {
+  const list = session.sessions.value
+  if (!list.length) return null
+  return list.find((item) => item.id === selectedSessionId.value) || list[0]
+})
+
+const selectedTimeline = computed(() => {
+  const target = selectedSession.value
+  if (!target) return { taps: [], total: 0, dropped: 0 }
+  return session.tapsForSession(target.id) || { taps: [], total: 0, dropped: 0 }
+})
+
+/** 回溯修改只对「进行中的会话」或「今天的会话」开放（改的是今天的计数） */
+const canEditSelectedTimeline = computed(() => {
+  const target = selectedSession.value
+  if (!target) return false
+  if (session.active.value?.id === target.id) return true
+  return target.startDate === currentDate.value
+})
+
+const sessionMaxTaps = computed(() => session.maxTaps)
 
 const streak = computed(() => {
   if (dailyGoal.value <= 0) return 0
@@ -923,6 +1238,20 @@ watch([calYear, calMonth], ([year, month]) => {
   if (month > 12) {
     calYear.value = year + 1
     calMonth.value = 1
+  }
+})
+
+/**
+ * 会话目标达成：训练层内用横幅 + 震动脉冲（不弹模态，避免挡住敲击面）。
+ * 日间模式的「每日目标达成」模态保持不变（见 applyDelta）。
+ */
+watch(sessionReached, (reached) => {
+  if (!reached || !session.trainingMode.value) return
+  if (!vibeOn.value || !navigator.vibrate) return
+  try {
+    navigator.vibrate([30, 60, 30])
+  } catch (_) {
+    // 忽略震动失败
   }
 })
 
@@ -1056,6 +1385,9 @@ function loadAll() {
 
   dailyRecords.value = records
 
+  // 会话数据走独立键；旧数据不存在时等价于「无会话、无偏好」，功能与今天一致
+  session.init()
+
   if (state && typeof state === 'object') {
     currentDate.value = state.currentDate || currentDate.value
     todayCount.value = Number(state.todayCount) || 0
@@ -1077,9 +1409,23 @@ function loadAll() {
     dailyRecords.value = dailyRecords.value.filter((record) => record.date !== todayKey)
   }
 
-  checkDayRollover()
+  // B2：先按落盘恢复出来的会话对齐层内计数基线（= 该会话 `countAtStart`），再走回前台结算 ——
+  // 这样「会话被 idle 收尾」后层内计数从会话已有进度继续涨，而不是跳回 0。
+  alignLayerCountBaseline()
+
+  // 冷启动等价于一次「回前台」：先按 idle 结算 → 再补跑跨零点 → 最后消费 pendingSplitFrom。
+  // 直接调 checkDayRollover() 会把「昨天 23:50 离开、今天 07:50 打开」当成前台跨零点而假续开（方案 §C1.4）。
+  session.handleForeground(Date.now(), {
+    todayCount: todayCount.value,
+    runRollover: checkDayRollover
+  })
+  noticeLayerWithoutSession()
   refreshSpeed()
+  nowTick.value = Date.now()
   persistAll()
+  // 刷新 / 冷启动时若会话仍 active（会直接进入训练层），补一次屏幕常亮申请。
+  // Wake Lock 的重新申请不需要用户手势；失败照常静默降级（方案 §D4 第 4 条）。
+  syncWakeLock()
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -1112,6 +1458,17 @@ function checkDayRollover() {
 
   if (currentDate.value === todayKey) return
 
+  // ① 会话收尾 / 拆分必须发生在 todayCount 清零【之前】（方案 §C1.8）：
+  //    此处 todayCount.value 仍是「昨天」的值，就是会话计数需要的快照；
+  //    顺序写反（先清零再取快照）会让跨零点后的会话计数恒为 0。
+  //    只在前台看到翻转时才自动续开 —— 1s 时钟在后台仍在跑（setInterval 不受后台影响）。
+  const autoContinue = isActive.value && document.visibilityState === 'visible'
+  session.handleRollover(now.getTime(), {
+    todayCount: todayCount.value,
+    autoContinue
+  })
+
+  // ② 现有日归档 + 清零，语义与改动前完全一致
   archiveDay(currentDate.value, todayCount.value, bestSpeed.value)
   currentDate.value = todayKey
   todayCount.value = 0
@@ -1120,6 +1477,9 @@ function checkDayRollover() {
   lastActionDelta.value = 0
   tapEvents = []
   goalFired = false
+  // B2：跨零点后层内计数基线归 0（今日计数已清零）—— 训练层不因跨零点关闭，
+  // 此时层内「本次训练」= 新一天已累计的次数；续开的新段 `countAtStart` 同样是 0，两种口径一致。
+  layerBaselineCount.value = 0
 }
 
 function bumpFigure() {
@@ -1130,20 +1490,27 @@ function bumpFigure() {
   }, 150)
 }
 
+/**
+ * 主敲击面：**一击即计**（方案 §D2① 硬口径）。
+ * 顺序必须是 `increment()` → `unlockAudio()`：先计数（同步、瞬时），再唤醒音频，且不 await。
+ * 计数面不得施加位移 / 时长 / 主指针标志 / 去抖 / 长按任何门槛 —— 那会吞掉真实敲击。
+ */
 function handleFigureTap() {
-  primeAudio()
   increment()
+  unlockAudio()
 }
 
 function increment() {
-  applyDelta(step.value, true)
+  applyDelta(step.value, true, 'tap')
 }
 
 function decrement() {
-  applyDelta(-step.value, false)
+  applyDelta(-step.value, false, 'minus')
 }
 
-function applyDelta(delta, shouldFeedback) {
+function applyDelta(delta, shouldFeedback, kind = 'tap') {
+  if (!isActive.value) return
+
   checkDayRollover()
   const nextValue = Math.max(0, todayCount.value + delta)
   const actualDelta = nextValue - todayCount.value
@@ -1153,15 +1520,23 @@ function applyDelta(delta, shouldFeedback) {
   todayCount.value = nextValue
   lastActionDelta.value = actualDelta
 
+  // 会话敲击日志的唯一写入点（方案 §C1.7 边界 1）：写在 actualDelta !== 0 的分支里，
+  // 因此「末条 delta === lastActionDelta」恒成立，undoLast() 弹出末条永远精确。
+  session.recordTap({ at: Date.now(), delta: actualDelta, kind })
+
   if (actualDelta > 0 && shouldFeedback) {
     registerHit(actualDelta)
   }
 
   if (dailyGoal.value > 0 && todayCount.value >= dailyGoal.value && !goalFired) {
     goalFired = true
-    nextTick(() => {
-      goalReached.value = true
-    })
+    // 训练层存活期间禁止任何 EP 全局弹层（会被 z-index 10050 盖住 → 用户以为「按了没反应」），
+    // 训练中的达标反馈改为层内横幅 + 震动（见 CounterTrainingOverlay 与 sessionReached 监听）。
+    if (!session.trainingMode.value) {
+      nextTick(() => {
+        goalReached.value = true
+      })
+    }
   }
 }
 
@@ -1171,6 +1546,8 @@ function undoLast() {
   todayCount.value = Math.max(0, todayCount.value - lastActionDelta.value)
   lastActionDelta.value = 0
   goalFired = dailyGoal.value > 0 && todayCount.value >= dailyGoal.value
+  // 会话侧同步弹出末条；session.count 是派生值（todayCount − countAtStart）会自动跟随
+  session.popLastTap()
   ElMessage.success('已撤销上一步')
 }
 
@@ -1180,6 +1557,7 @@ function registerHit(delta) {
   vibrate()
   tapEvents.push({ time: Date.now(), delta })
   refreshSpeed()
+  session.noteSpeedPeak(speed.value)
 }
 
 function refreshSpeed() {
@@ -1206,7 +1584,7 @@ function toggleAuto() {
 function startAuto() {
   stopAuto()
   autoTimer = window.setInterval(() => {
-    increment()
+    applyDelta(step.value, true, 'auto')
   }, autoInterval.value)
 }
 
@@ -1217,36 +1595,21 @@ function stopAuto() {
   }
 }
 
-function primeAudio() {
+/**
+ * 音频解锁（方案 §B4）：必须在**用户手势内同步调用**，且不 await、不阻塞计数。
+ * `counterAudio.unlock()` 内部把 ctxFactory / resume 都放在手势调用栈里，返回的 Promise 不予等待。
+ */
+function unlockAudio() {
   if (!soundOn.value) return
-  try {
-    const ctx = getAudioContext()
-    // Pre-generate all sound buffers on first interaction
-    if (!soundBuffers.size) buildAllSoundBuffers(ctx)
-  } catch (_) {
-    // ignore
-  }
+  counterAudio.unlock()
 }
 
-function getAudioContext() {
-  if (!audioContext) {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)()
-  }
-  if (audioContext.state === 'suspended') {
-    audioContext.resume()
-  }
-  return audioContext
-}
-
-// Pre-generated sound buffers
-const soundBuffers = new Map()
-
-function buildAllSoundBuffers(ctx) {
-  const sr = ctx.sampleRate
-  soundBuffers.set('mokugyo', buildMokugyo(ctx, sr))
-  soundBuffers.set('bell', buildBell(ctx, sr))
-  soundBuffers.set('drum', buildDrum(ctx, sr))
-  soundBuffers.set('chime', buildChime(ctx, sr))
+/**
+ * 「音效已暂停 · 点我恢复」胶囊：脱离降级态的唯一入口。
+ * ⚠️ 该按钮可出现在训练层内，而训练层存活期间禁止任何 EP 全局弹层 → 这里不做 Toast 反馈。
+ */
+function restoreAudio() {
+  counterAudio.rebuild()
 }
 
 // Create a buffer from a generator function that fills sample data
@@ -1406,28 +1769,13 @@ function buildChime(ctx, sr) {
   return buf
 }
 
+/**
+ * 播放当前形象的音色。**永不抛异常**（`play()` 内部吞掉全部失败），
+ * 音频失败绝不冒泡到 applyDelta 这条计数路径。
+ */
 function playFigureSound() {
   if (!soundOn.value || volume.value <= 0) return
-
-  try {
-    const ctx = getAudioContext()
-    if (soundBuffers.size === 0) buildAllSoundBuffers(ctx)
-
-    const buf = soundBuffers.get(activeFigure.value.sound)
-    if (!buf) return
-
-    const source = ctx.createBufferSource()
-    source.buffer = buf
-
-    const gain = ctx.createGain()
-    gain.gain.setValueAtTime(volume.value / 100, ctx.currentTime)
-
-    source.connect(gain)
-    gain.connect(ctx.destination)
-    source.start(ctx.currentTime)
-  } catch (_) {
-    // ignore audio failures
-  }
+  counterAudio.play(activeFigure.value.sound, volume.value / 100)
 }
 
 function vibrate() {
@@ -1440,28 +1788,36 @@ function vibrate() {
   }
 }
 
+/**
+ * 键盘入口的**唯一派发点**（方案 §D2⑦-b.1 / L2 #42c-i）。
+ * 三个守卫的先后顺序是硬性的：`isActive` → 可编辑目标 → `resolveShortcut`。
+ * 训练层存活时 `resolveShortcut` 对 `Cmd/Ctrl+Z` 与 `ArrowDown` / `Minus` / `Backspace`
+ * 返回 `blocked` —— 本函数据此**不派发任何动作**（因而 `undoLast()` 里的 EP 弹层不可达），
+ * 但仍 `preventDefault()`：`Backspace` 的浏览器历史后退 / 方向键的页面滚动不得漏出去。
+ */
 function onKeyDown(event) {
+  // keep-alive 守卫（方案 §C4）：切走之后残留监听不得再改计数
+  if (!isActive.value) return
+
   const target = event.target
   if (target && typeof target.closest === 'function' && target.closest('input, textarea, [contenteditable="true"]')) {
     return
   }
 
-  if (event.code === 'Space' || event.code === 'ArrowUp' || event.code === 'Equal') {
-    event.preventDefault()
+  const action = resolveShortcut(event, { trainingMode: session.trainingMode.value })
+  if (!action) return
+
+  event.preventDefault()
+
+  if (action === SHORTCUT_INCREMENT) {
     increment()
-    return
-  }
-
-  if (event.code === 'ArrowDown' || event.code === 'Minus' || event.code === 'Backspace') {
-    event.preventDefault()
+    unlockAudio()
+  } else if (action === SHORTCUT_DECREMENT) {
     decrement()
-    return
-  }
-
-  if (event.code === 'KeyZ' && (event.ctrlKey || event.metaKey)) {
-    event.preventDefault()
+  } else if (action === SHORTCUT_UNDO) {
     undoLast()
   }
+  // action === SHORTCUT_BLOCKED（训练层存活期）→ 到此为止：只吞默认行为，不派发任何动作
 }
 
 function shiftCalendar(delta) {
@@ -1476,13 +1832,18 @@ function openCalendarPanel() {
 }
 
 function resetToday() {
-  ElMessageBox.confirm('重置今日计数、节奏和撤销状态？', '确认', {
+  // ⚠️ 顺序硬约束（方案 §D3 / §D2⑦）：必须先关训练层再弹确认框 ——
+  // 否则确认框会被 z-index 10050 的训练层盖住，用户看不到任何反馈。
+  leaveTrainingLayerForDialog()
+  ElMessageBox.confirm('重置今日计数将结束当前训练会话，确认？', '确认', {
     type: 'warning',
     confirmButtonText: '确认',
     cancelButtonText: '取消'
   }).then(() => {
     stopAuto()
     autoMode.value = false
+    // 先结会话再清零：会话记录保留真实次数（endReason='reset'）
+    endSessionForReset()
     todayCount.value = 0
     speed.value = 0
     bestSpeed.value = 0
@@ -1496,19 +1857,22 @@ function resetToday() {
 }
 
 function clearHistory() {
-  ElMessageBox.confirm('清空全部历史记录，但保留今天的计数？', '确认', {
+  ElMessageBox.confirm('清空全部历史记录（含训练会话），但保留今天的计数与进行中的训练？', '确认', {
     type: 'warning',
     confirmButtonText: '确认',
     cancelButtonText: '取消'
   }).then(() => {
     dailyRecords.value = []
     saveRecords()
+    // 会话历史与 dailyRecords 同属「历史数据」；不动进行中的 active（方案 §D3）
+    session.clearSessions()
     ElMessage.success('历史记录已清空')
   }).catch(() => {})
 }
 
 function resetAll() {
-  ElMessageBox.confirm('清除今日计数和所有历史数据？此操作不可恢复。', '确认', {
+  leaveTrainingLayerForDialog()
+  ElMessageBox.confirm('清除今日计数、全部历史记录和训练记录（含训练设置）？此操作不可恢复。', '确认', {
     type: 'warning',
     confirmButtonText: '确认',
     cancelButtonText: '取消',
@@ -1516,6 +1880,7 @@ function resetAll() {
   }).then(() => {
     stopAuto()
     autoMode.value = false
+    endSessionForReset()
     todayCount.value = 0
     speed.value = 0
     bestSpeed.value = 0
@@ -1526,53 +1891,384 @@ function resetAll() {
     goalReached.value = false
     localStorage.removeItem(`${STORAGE_KEY}_state`)
     localStorage.removeItem(`${STORAGE_KEY}_records`)
+    // 训练数据：内存态回到默认（prefs 一并重置，与「全部数据」语义一致）
+    session.resetAll()
+    // 显式抹掉训练键字面量（与 session.resetAll() 同一语义；保留字面量便于静态断言，方案 L2 #47）
+    localStorage.removeItem('counter_v4_training')
+    showSessionSummary.value = false
     ElMessage.success('计数器数据已清除')
   }).catch(() => {})
 }
 
-function handleVisibilityChange() {
-  if (document.visibilityState === 'hidden') {
-    persistAll()
+// ───────────────────────── 训练 / 运动会话 ─────────────────────────
+
+/** 任何「先关训练层再弹确认框」的路径都必须走这里（方案 §D3 硬约束） */
+function leaveTrainingLayerForDialog() {
+  if (!session.trainingMode.value) return
+  session.setTrainingMode(false)
+  wakeLock.release()
+}
+
+/** 会话因重置而中断：endReason='reset'，先结会话再清零以便保留真实次数 */
+function endSessionForReset() {
+  if (session.active.value) {
+    session.endSession({ todayCount: todayCount.value, reason: 'reset' })
+  } else {
+    session.setTrainingMode(false)
+  }
+  wakeLock.release()
+}
+
+function closeAllPanels() {
+  showSettings.value = false
+  showCalendar.value = false
+  showHistory.value = false
+  showSessionSummary.value = false
+  showStartPanel.value = false
+  goalReached.value = false
+}
+
+function openStartPanel() {
+  // 会话还在（例如刷新后训练层被关掉）→ 直接回到训练层，不重开一段
+  if (session.active.value) {
+    trainingNotice.value = ''
+    enterTrainingLayer()
+    return
+  }
+  // 默认 = 上一次的目标；首次默认 100（jaxiu 裁决第 2 条：独立按次目标，绝不由 dailyGoal 派生）
+  const last = sessionLastGoal.value
+  startGoal.value = last > 0 ? last : DEFAULT_SESSION_GOAL
+  closeAllPanels()
+  showStartPanel.value = true
+}
+
+function setWakeLockEnabled(value) {
+  session.updatePrefs({ wakeLockEnabled: value === true })
+  syncWakeLock()
+}
+
+function beginTraining() {
+  if (session.active.value) return
+
+  // 自动连点不是真实敲击，进训练前强制关掉（方案 §D2③）；层内不能弹 Toast，改横幅提示
+  const autoWasOn = autoMode.value
+  stopAuto()
+  autoMode.value = false
+  trainingNotice.value = autoWasOn ? '自动连点已关闭 · 训练只计真实敲击' : ''
+
+  session.startSession({
+    todayCount: todayCount.value,
+    goalValue: startGoal.value
+  })
+  nowTick.value = Date.now()
+  enterTrainingLayer()
+}
+
+/**
+ * 把层内计数基线对齐到「现在」（B2）：有会话 → 该会话的 `countAtStart`（无缝接续已有进度）；
+ * 无会话 → 当前今日计数（层内从 0 起重新累计）。
+ * 只在「打开训练层」与「刷新恢复到训练层」两个时机对齐 —— 会话被 idle 收尾时**不**重设
+ * （基线本来就是那一段的 `countAtStart`，重设会让层内数字跳回 0）；跨零点由
+ * `checkDayRollover()` 单独归零（那是真的换了一天）。
+ */
+function alignLayerCountBaseline() {
+  layerBaselineCount.value = session.active.value
+    ? session.active.value.countAtStart
+    : todayCount.value
+}
+
+function enterTrainingLayer() {
+  closeAllPanels()
+  session.setTrainingMode(true)
+  alignLayerCountBaseline()
+  // ⚠️ 屏幕常亮的首次申请必须在用户手势内；失败静默降级，不阻塞训练
+  if (session.prefs.value.wakeLockEnabled) wakeLock.request()
+  syncWakeLock()
+}
+
+/**
+ * B2：训练层仍存活但会话已不在（后台超时被 idle 收尾 / 跨零点未续开 / 刷新后只剩 prefs）——
+ * 给一次性层内说明横幅；**不自动关闭训练层**（`active === null` 是方案 §D2⑦-b.3 第 5 行允许的状态）。
+ * 训练层内禁止 EP 弹层，横幅只能自绘；同一文案重复赋值不会再次触发横幅（层内只 watch 文案变化），
+ * 因此每个训练层最多出现一次。
+ */
+function noticeLayerWithoutSession() {
+  if (!session.trainingMode.value || session.active.value) return
+  trainingNotice.value = IDLE_LAYER_NOTICE
+}
+
+function pauseTraining() {
+  if (session.pauseSession()) syncWakeLock()
+}
+
+function resumeTraining() {
+  if (session.resumeSession()) syncWakeLock()
+}
+
+/** 结束训练：手动 / 空闲 / 跨零点 / 重置四种原因之一（方案 §C1.9） */
+function finishTraining(reason = 'manual') {
+  if (!session.active.value) {
+    session.setTrainingMode(false)
+    return
+  }
+
+  const finished = session.endSession({
+    todayCount: todayCount.value,
+    reason
+  })
+
+  wakeLock.release()
+  nowTick.value = Date.now()
+  trainingNotice.value = ''
+  persistAll()
+
+  // 训练层已随 trainingMode 关闭 → 在日间模式用现有面板样式展示总结 + 时间轴
+  if (finished) {
+    selectedSessionId.value = finished.id
+    showSessionSummary.value = true
   }
 }
 
-function handlePageHide() {
+function openSessionSummary(sessionId = '') {
+  if (sessionId) {
+    selectedSessionId.value = sessionId
+  } else if (!session.sessions.value.some((item) => item.id === selectedSessionId.value)) {
+    selectedSessionId.value = session.sessions.value?.[0]?.id || ''
+  }
+  showSessionSummary.value = true
+}
+
+/**
+ * 时间轴回溯删除单条：`todayCount` 同步扣减（delta 带符号，minus/auto 条目为负）。
+ * 与 `undoLast()` 是两条独立路径（方案 §D2⑥）：撤销只弹末条，这里可删任意一条。
+ */
+function deleteTimelineEntry(index) {
+  const target = selectedSession.value
+  if (!target) return
+
+  const live = session.active.value?.id === target.id
+  const removed = live
+    ? session.removeTapAt(index)
+    : session.removeSessionTap(target.id, index)
+  if (!removed) return
+
+  todayCount.value = Math.max(0, todayCount.value - (Number(removed.delta) || 0))
+  // 删完之后「末条 delta === lastActionDelta」不再保证 → 关掉撤销入口，避免撤销金额错位
+  lastActionDelta.value = 0
+  goalFired = dailyGoal.value > 0 && todayCount.value >= dailyGoal.value
   persistAll()
 }
 
-onMounted(() => {
-  loadAll()
-  clockTimer = window.setInterval(() => {
+/** 屏幕常亮：只在「训练层存活 且 会话进行中 且 未暂停」时持有 */
+function syncWakeLock() {
+  if (!session.trainingMode.value || !session.active.value || session.isPaused()) {
+    wakeLock.release()
+    return
+  }
+  if (session.prefs.value.wakeLockEnabled) wakeLock.reacquire()
+}
+
+/** 会话落盘节流（方案 §C2：禁止每次敲击写 counter_v4_training） */
+function flushSessionThrottled() {
+  if (!session.active.value) return
+  const stamp = Date.now()
+  const count = sessionCount.value
+  if (stamp - lastSessionFlushAt < SESSION_FLUSH_INTERVAL_MS) return
+  if (count === lastSessionFlushCount) return
+  lastSessionFlushAt = stamp
+  lastSessionFlushCount = count
+  session.flush()
+}
+
+function formatDuration(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatClock(ms) {
+  const date = new Date(Number(ms) || 0)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
+}
+
+function formatSessionRange(item) {
+  if (!item) return ''
+  const start = new Date(Number(item.startedAt) || 0)
+  const day = `${start.getMonth() + 1}/${start.getDate()}`
+  return `${day} ${formatClock(item.startedAt).slice(0, 5)} - ${formatClock(item.endedAt).slice(0, 5)}`
+}
+
+const END_REASON_LABELS = {
+  manual: '手动结束',
+  idle: '超时未归',
+  midnight: '跨零点拆分',
+  reset: '被重置打断'
+}
+
+function endReasonLabel(reason) {
+  return END_REASON_LABELS[reason] || '手动结束'
+}
+
+const TAP_KIND_LABELS = {
+  tap: '敲击',
+  minus: '减号',
+  auto: '自动',
+  undo: '撤销'
+}
+
+function kindLabel(kind) {
+  return TAP_KIND_LABELS[kind] || '敲击'
+}
+
+/**
+ * 回前台 / bfcache 恢复。
+ * 音频侧**只置 needsUnlock**（方案 §B2 硬口径：绝不在 visibilitychange / pageshow 里 resume / close / new ctx），
+ * 真正的恢复只发生在下一次用户手势的 `unlock()` / `play()` 里。
+ * 会话侧走严格三步：先结算 idle → 再补跨零点 → 最后消费 pendingSplitFrom（由模块内部保证顺序）。
+ */
+function handleReturnToForeground() {
+  if (!isActive.value) return
+
+  counterAudio.handleForeground()
+  session.handleForeground(Date.now(), {
+    todayCount: todayCount.value,
+    runRollover: checkDayRollover
+  })
+  noticeLayerWithoutSession()
+  nowTick.value = Date.now()
+  syncWakeLock()
+  persistAll()
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    // 只结算活跃段 + 落盘；不结束会话、不关闭 AudioContext（下次前台还要用）
+    session.handleBackground(Date.now())
+    persistAll()
+    return
+  }
+  handleReturnToForeground()
+}
+
+/** bfcache 恢复：休眠期间可能已跨零点，补跑一次 1s 时钟逻辑（幂等） */
+function handlePageShow() {
+  if (!isActive.value) return
+  handleReturnToForeground()
+  counterAudio.handleForegroundClock(() => {
+    if (!isActive.value) return
     checkDayRollover()
     refreshSpeed()
-  }, 1000)
+    nowTick.value = Date.now()
+  })
+}
+
+function handlePageHide() {
+  session.handleBackground(Date.now())
+  persistAll()
+}
+
+/**
+ * keep-alive 下 `currentViewKey` 变化会重建实例，而旧实例的 document 监听不会自动摘除
+ * （方案 §C4）：注册 / 摘除都做成幂等的，`onMounted` + `onActivated` 各注册一次。
+ */
+function addGlobalListeners() {
+  if (listenersBound) return
+  listenersBound = true
   document.addEventListener('keydown', onKeyDown)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   window.addEventListener('beforeunload', handlePageHide)
   window.addEventListener('pagehide', handlePageHide)
-})
+  window.addEventListener('pageshow', handlePageShow)
+}
 
-onUnmounted(() => {
-  stopAuto()
-  window.clearTimeout(bumpTimer)
-  window.clearInterval(clockTimer)
+function removeGlobalListeners() {
+  if (!listenersBound) return
+  listenersBound = false
   document.removeEventListener('keydown', onKeyDown)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   window.removeEventListener('beforeunload', handlePageHide)
   window.removeEventListener('pagehide', handlePageHide)
+  window.removeEventListener('pageshow', handlePageShow)
+}
+
+onMounted(() => {
+  isActive.value = true
+  addGlobalListeners()
+  loadAll()
+  nowTick.value = Date.now()
+  clockTimer = window.setInterval(() => {
+    if (!isActive.value) return
+    checkDayRollover()
+    refreshSpeed()
+    nowTick.value = Date.now()
+    flushSessionThrottled()
+  }, 1000)
+})
+
+onActivated(() => {
+  isActive.value = true
+  addGlobalListeners()
+  // keep-alive 切回 = 一次「回前台」（B3）：必须补跑会话结算。`onDeactivated` 里的
+  // `handleBackground()` 会结算活跃段并把 `activeSinceMs` 置 null，而只有 `handleForeground()`
+  // 的 resumed 分支会把它重新打开 —— 不补这一步，`sessionActiveMs` 在离开过一次路由之后**永久冻结**，
+  // 落盘的 `activeMs` 系统性偏小。`handleReturnToForeground()` 内部已含
+  // `checkDayRollover` / `nowTick` / `syncWakeLock` / `persistAll`。
+  // 音频恢复仍只走用户手势路径（`handleForeground()` 只置 needsUnlock，绝不 resume）。
+  handleReturnToForeground()
+  refreshSpeed()
+})
+
+onDeactivated(() => {
+  isActive.value = false
+  stopAuto()
+  // 路由离开与切后台同一套规则（方案 §C1.4）：不结束会话，只结算活跃段并记下时间点
+  session.handleBackground(Date.now())
+  removeGlobalListeners()
+  wakeLock.release()
   persistAll()
+})
+
+onBeforeUnmount(() => {
+  stopAuto()
+  window.clearTimeout(bumpTimer)
+  window.clearInterval(clockTimer)
+  removeGlobalListeners()
+  wakeLock.release()
+  persistAll()
+  counterAudio.dispose()
 })
 </script>
 
 <style scoped>
 .counter-app {
   position: relative;
-  min-height: 100vh;
-  min-height: 100dvh;
+  /* 方案 §A2：桌面下父容器（.main-content）显式定高，百分比可依赖；
+     移动端父容器高度由内容决定（indefinite）→ 百分比 min-height 按 CSS 2.1 §10.7 当 0 处理，
+     所以那个断点里改用 calc(100dvh - var(--ct-chrome-top)) 的显式算式。 */
+  min-height: 100%;
   padding: 24px 16px 40px;
   background: var(--counter-bg);
   color: var(--counter-text);
+  /* 全断点保留：只为裁剪 .ambient-layer 向右出血 60px 的光斑（方案 §A2(5)，移动端同样生效） */
   overflow: hidden;
+}
+
+/* 方案 §A7：safe-area 内边距只在桌面 / 横屏分支生效。
+   ⚠️ 必须包在 min-width: 768px 里 —— 裸写会与基类同选择器同特异性，
+   把移动端 §A2 的 padding（顶部固定 8px 不含 safe-area-inset-top）一起覆盖掉。 */
+@media (min-width: 768px) {
+  .counter-app {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      calc(16px + env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
 }
 
 .ambient-layer {
@@ -1937,6 +2633,27 @@ onUnmounted(() => {
   color: var(--counter-accent-contrast);
 }
 
+/* 音频降级胶囊：日间模式与训练层共用的「脱离降级态」入口（方案 §B1 层 4） */
+.audio-notice {
+  display: flex;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.audio-notice-btn {
+  min-height: 48px;
+  padding: 0 18px;
+  border: 1px solid var(--counter-border);
+  border-radius: 999px;
+  background: var(--counter-card-strong);
+  color: var(--counter-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .tap-stage {
   display: grid;
   grid-template-columns: 68px minmax(0, 1fr) 68px;
@@ -1964,6 +2681,41 @@ onUnmounted(() => {
   background: var(--counter-accent) !important;
   border-color: var(--counter-accent) !important;
   color: var(--counter-accent-contrast) !important;
+}
+
+/* 训练入口：日间模式进入全屏训练层 / 查看训练记录（方案 §D2②） */
+.training-entry {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.training-start,
+.training-records {
+  flex: 1 1 0;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid var(--counter-border);
+  border-radius: 16px;
+  background: var(--counter-card-strong);
+  color: var(--counter-text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.training-start {
+  border-color: var(--counter-accent);
+  background: var(--counter-accent);
+  color: var(--counter-accent-contrast);
+}
+
+.training-records {
+  flex: 0 0 auto;
+  min-width: 104px;
+  color: var(--counter-muted);
 }
 
 .figure-button {
@@ -2391,13 +3143,143 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+/* ── 训练会话：开始面板 / 总结面板 / 敲击时间轴（方案 §D2⑥） ── */
+.start-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--counter-border);
+  border-radius: 16px;
+  background: var(--counter-card-strong);
+  cursor: pointer;
+}
+
+.session-item.active {
+  border-color: var(--counter-accent);
+}
+
+.session-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.session-range {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--counter-muted);
+  font-size: 12px;
+}
+
+.session-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.session-timeline-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.session-timeline-note {
+  color: var(--counter-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 40vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--counter-border);
+  font-size: 13px;
+}
+
+.timeline-time {
+  color: var(--counter-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-delta {
+  min-width: 46px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-delta.minus {
+  color: #f59e0b;
+}
+
+.timeline-kind {
+  flex: 1 1 auto;
+  color: var(--counter-muted);
+  font-size: 12px;
+}
+
+.timeline-delete {
+  min-width: 48px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--counter-border);
+  border-radius: 10px;
+  background: transparent;
+  color: #f59e0b;
+  font-size: 12px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .empty-state {
   padding: 42px 16px;
   text-align: center;
   color: var(--counter-muted);
 }
 
-@media (max-width: 980px) {
+/* 方案 §A1：断点表唯一口径 —— 1024 / 767.98 / 420 + 横屏（文件末尾）。
+   767.98 而非 768：外壳 isMobile 判定是 width < 768（App.vue:464），
+   写成 768 会在「恰好 768px」出现 CSS 按移动端渲染、JS 不套 .mobile-main 的裂缝。 */
+@media (max-width: 1024px) {
   .stats-grid,
   .preset-grid,
   .work-grid,
@@ -2406,11 +3288,24 @@ onUnmounted(() => {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 767.98px) {
   .counter-app {
-    padding: max(8px, env(safe-area-inset-top)) 8px calc(14px + env(safe-area-inset-bottom));
-    overflow: auto;
-    overscroll-behavior-y: contain;
+    /* 71 = 56(.mobile-header 固定高, App.vue:567-580) + 15(.mobile-main padding-top, App.vue:1044-1047)。
+       不再叠加 safe-area-inset-top：56px 固定 header 自身已经覆盖顶部刘海区，再叠一次会白吃最多 47px。 */
+    --ct-chrome-top: 71px;
+
+    padding: 8px max(8px, env(safe-area-inset-right))
+      calc(14px + env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
+
+    /* 移动端父容器高度不定（App.vue:1152-1160 把 .main-content 改成 height:auto），
+       百分比 min-height 会按 CSS 2.1 §10.7 解析成 0 → 改用显式算式。 */
+    min-height: calc(100vh - var(--ct-chrome-top)); /* 兜底：不支持 dvh 的旧 WebView */
+    min-height: calc(100dvh - var(--ct-chrome-top));
+
+    /* ⚠️ 本区块【不声明 overflow】：继承基类的 hidden（方案 §A2(5)）。
+       删掉 v1 那对「可滚 + 主动截断滚动链」的组合 —— 正是它造成了内层容器阻断滚动链的病灶
+       （L2 #46b 要求本文件不再出现滚动链截断属性）。 */
   }
 
   .counter-shell {
@@ -2449,7 +3344,9 @@ onUnmounted(() => {
   }
 
   .tap-panel {
-    min-height: calc(100dvh - 26px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    /* 方案 §A3 首屏预算：100dvh − 外壳上偏移(71) − .counter-app 上下 padding(8+14) − 底部安全区。
+       原 `calc(100dvh - 26px - …)` 没减掉外壳 71px 偏移 → 面板底边被推出首屏。 */
+    min-height: calc(100dvh - var(--ct-chrome-top) - 22px - env(safe-area-inset-bottom));
     display: flex;
     flex-direction: column;
     padding: 14px 12px 12px;
@@ -2546,9 +3443,11 @@ onUnmounted(() => {
 
   .tap-stage {
     position: relative;
-    display: block;
-    flex: 1;
-    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    /* 200px 是敲击面下限：极矮视口下主按钮仍是一整块面而不是细条（方案 §A4） */
+    min-height: 200px;
     margin-top: 10px;
   }
 
@@ -2569,9 +3468,12 @@ onUnmounted(() => {
   }
 
   .figure-button {
+    /* 吃掉 .tap-stage 的剩余高度；min-height: 0 是关键 —— 原来的 360/330px 固定下限
+       会在空间不足时把面板【撑破】而不是收缩，把主按钮推出首屏（方案 §A3）。 */
+    flex: 1 1 auto;
     width: 100%;
-    height: 100%;
-    min-height: 360px;
+    height: auto;
+    min-height: 0;
     border-radius: 26px;
   }
 
@@ -2632,6 +3534,43 @@ onUnmounted(() => {
     -webkit-overflow-scrolling: touch;
   }
 
+  /* 训练入口在移动端必须紧凑 —— §A3 的 228px 首屏预算里没有它这一行，
+     压到 44 + 8 = 52px 才能让 320×568 的敲击面仍 ≥ 200px 下限。 */
+  .training-entry {
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .training-start,
+  .training-records {
+    min-height: 44px;
+    font-size: 13px;
+  }
+
+  .training-records {
+    min-width: 88px;
+  }
+
+  .audio-notice {
+    margin-top: 8px;
+  }
+
+  .session-list {
+    max-height: 40vh;
+  }
+
+  .timeline-list {
+    max-height: 34vh;
+  }
+
+  .timeline-row {
+    min-height: 48px;
+  }
+
+  .timeline-delete {
+    min-height: 40px;
+  }
+
   .mobile-main-actions::-webkit-scrollbar {
     display: none;
   }
@@ -2679,7 +3618,9 @@ onUnmounted(() => {
     max-height: min(88dvh, 760px);
     border-radius: 24px 24px 0 0;
     padding: 12px 16px calc(18px + env(safe-area-inset-bottom));
-    overscroll-behavior: contain;
+    /* 原滚动链截断属性已删除（方案 L2 #46b 要求该属性在本文件无命中）。
+       代价：把面板内列表滚到底后继续拖拽会带动背后文档层滚动 —— 影响可忽略，
+       因为面板是 fixed 全屏遮罩、背后内容本来就看不见。 */
   }
 
   .panel-card::before {
@@ -2750,8 +3691,9 @@ onUnmounted(() => {
 
 @media (max-width: 420px) {
   .counter-app {
-    padding-left: 6px;
-    padding-right: 6px;
+    /* 方案 §A2：不能写死 6px，否则横向安全区（刘海横屏 / 圆角屏）失效 */
+    padding-left: max(8px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
   }
 
   .tap-panel {
@@ -2771,9 +3713,8 @@ onUnmounted(() => {
     padding: 0 8px;
   }
 
-  .figure-button {
-    min-height: 330px;
-  }
+  /* 原 `.figure-button { min-height: 330px }` 已删除（方案 §A3）：
+     固定下限会在空间不足时把面板撑破，改由 767.98 区块的 min-height: 0 统一覆盖。 */
 
   .figure-shell {
     inset: 44px;
@@ -2801,6 +3742,26 @@ onUnmounted(() => {
 
   .mobile-main-actions :deep(.el-button) {
     flex-basis: 78px;
+  }
+}
+
+/* 方案 §A6 横屏：放在文件末尾且【不嵌套】在移动断点内 ——
+   844×390 这类机型宽度 > 768（走桌面分支），667×390 这类宽度 ≤ 768（走移动分支），两者都要命中。
+   验收放宽为「主按钮 + 加减号 + 结束训练按钮可达（允许滚动一屏内）」，不要求首屏完整可见。 */
+@media (orientation: landscape) and (max-height: 480px) {
+  .work-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 8px;
+  }
+
+  .tap-panel {
+    /* 横屏由宽度而非高度承载，复位移动端的首屏算式 */
+    min-height: auto;
+  }
+
+  .step-strip,
+  .mobile-focus-meta {
+    display: none;
   }
 }
 </style>
