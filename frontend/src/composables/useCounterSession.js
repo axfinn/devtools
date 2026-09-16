@@ -327,9 +327,7 @@ export function createCounterSession({
     prefs.value = normalizePrefs(parsed.prefs)
     active.value = normalizeActive(parsed.active)
     sessions.value = normalizeSessions(parsed.sessions)
-    lastHiddenAtMs.value = Number.isFinite(Number(parsed.lastHiddenAtMs))
-      ? Number(parsed.lastHiddenAtMs)
-      : null
+    lastHiddenAtMs.value = toNullableMs(parsed.lastHiddenAtMs)
     pendingSplitFrom.value = typeof parsed.pendingSplitFrom === 'string'
       ? parsed.pendingSplitFrom
       : null
