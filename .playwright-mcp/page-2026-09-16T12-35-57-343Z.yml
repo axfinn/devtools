@@ -1,0 +1,374 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6] [cursor=pointer]: DevTools
+      - generic [ref=e11] [cursor=pointer]
+    - textbox "搜索工具..." [ref=e21]
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - generic [ref=e24] [cursor=pointer]:
+          - generic [ref=e28]: 开发调试
+          - generic [ref=e29]: "9"
+        - generic [ref=e30]:
+          - generic [ref=e31] [cursor=pointer]: JSON 格式化
+          - generic [ref=e36] [cursor=pointer]: Diff 对比
+          - generic [ref=e41] [cursor=pointer]: Mock API
+          - generic [ref=e47] [cursor=pointer]: 正则测试
+          - generic [ref=e52] [cursor=pointer]: SSH 终端
+          - generic [ref=e57] [cursor=pointer]: AutoDev AI
+          - generic [ref=e62] [cursor=pointer]: Hermes Agent
+          - generic [ref=e68] [cursor=pointer]: Edge TTS
+          - generic [ref=e73] [cursor=pointer]: 虚拟形象
+      - generic [ref=e78]:
+        - generic [ref=e79] [cursor=pointer]:
+          - generic [ref=e83]: 文本转换
+          - generic [ref=e84]: "7"
+        - generic [ref=e85]:
+          - generic [ref=e86] [cursor=pointer]: Base64
+          - generic [ref=e91] [cursor=pointer]: URL 编解码
+          - generic [ref=e96] [cursor=pointer]: 时间戳
+          - generic [ref=e103] [cursor=pointer]: 文本转换
+          - generic [ref=e109] [cursor=pointer]: 批量替换
+          - generic [ref=e114] [cursor=pointer]: IP/DNS
+          - generic [ref=e119] [cursor=pointer]: 二维码
+      - generic [ref=e125]:
+        - generic [ref=e126] [cursor=pointer]:
+          - generic [ref=e130]: 创作图表
+          - generic [ref=e131]: "4"
+        - generic [ref=e132]:
+          - generic [ref=e133] [cursor=pointer]: Markdown
+          - generic [ref=e138] [cursor=pointer]: Mermaid 图表
+          - generic [ref=e143] [cursor=pointer]: 思维导图
+          - generic [ref=e148] [cursor=pointer]: Excalidraw 画图
+      - generic [ref=e154]:
+        - generic [ref=e155] [cursor=pointer]:
+          - generic [ref=e159]: 协作分享
+          - generic [ref=e160]: "5"
+        - generic [ref=e161]:
+          - generic [ref=e162] [cursor=pointer]: 粘贴板
+          - generic [ref=e167] [cursor=pointer]: NFS 文件分享
+          - generic [ref=e172] [cursor=pointer]: 短链生成
+          - generic [ref=e177] [cursor=pointer]: 聊天室
+          - generic [ref=e183] [cursor=pointer]: 屏幕共享
+      - generic [ref=e186]:
+        - generic [ref=e187] [cursor=pointer]:
+          - generic [ref=e191]: AI 工作台
+          - generic [ref=e192]: "7"
+        - generic [ref=e193]:
+          - generic [ref=e194] [cursor=pointer]: 图像理解
+          - generic [ref=e200] [cursor=pointer]: AI Chat
+          - generic [ref=e206] [cursor=pointer]: AI Gateway
+          - generic [ref=e211] [cursor=pointer]: AI 学英语
+          - generic [ref=e217] [cursor=pointer]: MiniMax Studio
+          - generic [ref=e222] [cursor=pointer]: 魔法宠物
+          - generic [ref=e227] [cursor=pointer]: 媒体画廊
+      - generic [ref=e232]:
+        - generic [ref=e233] [cursor=pointer]:
+          - generic [ref=e237]: 生活记录
+          - generic [ref=e238]: "12"
+        - generic [ref=e239]:
+          - generic [ref=e240] [cursor=pointer]: 孕期管理
+          - generic [ref=e245] [cursor=pointer]: 每日菜谱
+          - generic [ref=e250] [cursor=pointer]: 旅游行程
+          - generic [ref=e253] [cursor=pointer]: 生活记账
+          - generic [ref=e260] [cursor=pointer]: 事项管理
+          - generic [ref=e265] [cursor=pointer]: 整理模块
+          - generic [ref=e272] [cursor=pointer]: 整理空间3D
+          - generic [ref=e278] [cursor=pointer]: 档案照片墙
+          - generic [ref=e283] [cursor=pointer]: 血糖记录
+          - generic [ref=e289] [cursor=pointer]: 小游戏
+          - generic [ref=e295] [cursor=pointer]: 语音收件箱
+          - generic [ref=e300] [cursor=pointer]: 敲击计数器
+      - generic [ref=e307]:
+        - generic [ref=e308] [cursor=pointer]:
+          - generic [ref=e312]: 系统管理
+          - generic [ref=e313]: "9"
+        - generic [ref=e314]:
+          - generic [ref=e315] [cursor=pointer]: 科学上网
+          - generic [ref=e321] [cursor=pointer]: NPS 端口映射
+          - generic [ref=e326] [cursor=pointer]: AskIt 邀请码
+          - generic [ref=e329] [cursor=pointer]: 我的同步数据
+          - generic [ref=e334] [cursor=pointer]: 背景图库
+          - generic [ref=e339] [cursor=pointer]: 批量看图
+          - generic [ref=e345] [cursor=pointer]: 控制台
+          - generic [ref=e350] [cursor=pointer]: 监控分析
+          - generic [ref=e353] [cursor=pointer]: Skills 工具入口
+  - main [ref=e359]:
+    - generic [ref=e360]:
+      - generic [ref=e361]:
+        - generic [ref=e362]:
+          - generic [ref=e363]: DevTools Workbench
+          - heading "今天要处理什么？" [level=1] [ref=e364]
+          - paragraph [ref=e365]: 把高频工具、生活记录和 AI 工作流放在更短的路径里，移动端优先进入常用动作。
+        - textbox "搜索 JSON、记账、短链、AI..." [ref=e371]
+      - generic [ref=e372]:
+        - generic [ref=e373]:
+          - heading "常用入口" [level=2] [ref=e374]
+          - generic [ref=e375]: 一触即达
+        - generic [ref=e376]:
+          - button "收藏工具 语音收件箱 语音备忘录，自动转写为文字" [ref=e377] [cursor=pointer]:
+            - button "收藏工具" [ref=e382]
+            - generic [ref=e386]: 语音收件箱
+            - generic [ref=e387]: 语音备忘录，自动转写为文字
+          - button "收藏工具 AI Chat 多模型智能对话 + AskIt 浏览器扩展" [ref=e388] [cursor=pointer]:
+            - button "收藏工具" [ref=e394]
+            - generic [ref=e398]: AI Chat
+            - generic [ref=e399]: 多模型智能对话 + AskIt 浏览器扩展
+          - button "收藏工具 JSON 格式化 JSON 格式化、校验、压缩" [ref=e400] [cursor=pointer]:
+            - button "收藏工具" [ref=e405]
+            - generic [ref=e409]: JSON 格式化
+            - generic [ref=e410]: JSON 格式化、校验、压缩
+          - button "收藏工具 Diff 对比 文本对比、差异高亮" [ref=e411] [cursor=pointer]:
+            - button "收藏工具" [ref=e416]
+            - generic [ref=e420]: Diff 对比
+            - generic [ref=e421]: 文本对比、差异高亮
+          - button "收藏工具 Base64 Base64 编码解码" [ref=e422] [cursor=pointer]:
+            - button "收藏工具" [ref=e427]
+            - generic [ref=e431]: Base64
+            - generic [ref=e432]: Base64 编码解码
+          - button "收藏工具 URL 编解码 URL 编码解码" [ref=e433] [cursor=pointer]:
+            - button "收藏工具" [ref=e438]
+            - generic [ref=e442]: URL 编解码
+            - generic [ref=e443]: URL 编码解码
+          - button "收藏工具 Markdown Markdown 编辑预览" [ref=e444] [cursor=pointer]:
+            - button "收藏工具" [ref=e449]
+            - generic [ref=e453]: Markdown
+            - generic [ref=e454]: Markdown 编辑预览
+          - button "收藏工具 思维导图 思维导图，支持 AI 生成、云端保存、分享" [ref=e455] [cursor=pointer]:
+            - button "收藏工具" [ref=e460]
+            - generic [ref=e464]: 思维导图
+            - generic [ref=e465]: 思维导图，支持 AI 生成、云端保存、分享
+      - generic [ref=e466]:
+        - generic [ref=e467]:
+          - heading "按场景进入" [level=2] [ref=e468]
+          - generic [ref=e469]: 53 个工具
+        - generic [ref=e470]:
+          - article [ref=e471]:
+            - button "开发调试 编码、接口、终端与调试 9" [ref=e472] [cursor=pointer]:
+              - generic [ref=e477]:
+                - strong [ref=e478]: 开发调试
+                - generic [ref=e479]: 编码、接口、终端与调试
+              - generic [ref=e480]: "9"
+            - generic [ref=e481]:
+              - button "JSON 格式化 收藏工具" [ref=e482] [cursor=pointer]:
+                - generic [ref=e486]: JSON 格式化
+                - button "收藏工具" [ref=e487]
+              - button "Diff 对比 收藏工具" [ref=e491] [cursor=pointer]:
+                - generic [ref=e495]: Diff 对比
+                - button "收藏工具" [ref=e496]
+              - button "Mock API 收藏工具" [ref=e500] [cursor=pointer]:
+                - generic [ref=e505]: Mock API
+                - button "收藏工具" [ref=e506]
+              - button "正则测试 收藏工具" [ref=e510] [cursor=pointer]:
+                - generic [ref=e514]: 正则测试
+                - button "收藏工具" [ref=e515]
+              - button "SSH 终端 收藏工具" [ref=e519] [cursor=pointer]:
+                - generic [ref=e523]: SSH 终端
+                - button "收藏工具" [ref=e524]
+              - button "AutoDev AI 收藏工具" [ref=e528] [cursor=pointer]:
+                - generic [ref=e532]: AutoDev AI
+                - button "收藏工具" [ref=e533]
+              - button "Hermes Agent 收藏工具" [ref=e537] [cursor=pointer]:
+                - generic [ref=e542]: Hermes Agent
+                - button "收藏工具" [ref=e543]
+              - button "Edge TTS 收藏工具" [ref=e547] [cursor=pointer]:
+                - generic [ref=e551]: Edge TTS
+                - button "收藏工具" [ref=e552]
+              - button "虚拟形象 收藏工具" [ref=e556] [cursor=pointer]:
+                - generic [ref=e560]: 虚拟形象
+                - button "收藏工具" [ref=e561]
+          - article [ref=e565]:
+            - button "文本转换 编码、解析、文本处理 7" [ref=e566] [cursor=pointer]:
+              - generic [ref=e571]:
+                - strong [ref=e572]: 文本转换
+                - generic [ref=e573]: 编码、解析、文本处理
+              - generic [ref=e574]: "7"
+            - generic:
+              - button "Base64 收藏工具" [ref=e575] [cursor=pointer]:
+                - generic [ref=e579]: Base64
+                - button "收藏工具" [ref=e580]
+              - button "URL 编解码 收藏工具" [ref=e584] [cursor=pointer]:
+                - generic [ref=e588]: URL 编解码
+                - button "收藏工具" [ref=e589]
+              - button "时间戳 收藏工具" [ref=e593] [cursor=pointer]:
+                - generic [ref=e599]: 时间戳
+                - button "收藏工具" [ref=e600]
+              - button "文本转换 收藏工具" [ref=e604] [cursor=pointer]:
+                - generic [ref=e609]: 文本转换
+                - button "收藏工具" [ref=e610]
+              - button "批量替换 收藏工具" [ref=e614] [cursor=pointer]:
+                - generic [ref=e618]: 批量替换
+                - button "收藏工具" [ref=e619]
+              - button "IP/DNS 收藏工具" [ref=e623] [cursor=pointer]:
+                - generic [ref=e627]: IP/DNS
+                - button "收藏工具" [ref=e628]
+              - button "二维码 收藏工具" [ref=e632] [cursor=pointer]:
+                - generic [ref=e637]: 二维码
+                - button "收藏工具" [ref=e638]
+          - article [ref=e642]:
+            - button "创作图表 文档、图表、白板与导图 4" [ref=e643] [cursor=pointer]:
+              - generic [ref=e649]:
+                - strong [ref=e650]: 创作图表
+                - generic [ref=e651]: 文档、图表、白板与导图
+              - generic [ref=e652]: "4"
+            - generic:
+              - button "Markdown 收藏工具" [ref=e653] [cursor=pointer]:
+                - generic [ref=e657]: Markdown
+                - button "收藏工具" [ref=e658]
+              - button "Mermaid 图表 收藏工具" [ref=e662] [cursor=pointer]:
+                - generic [ref=e666]: Mermaid 图表
+                - button "收藏工具" [ref=e667]
+              - button "思维导图 收藏工具" [ref=e671] [cursor=pointer]:
+                - generic [ref=e675]: 思维导图
+                - button "收藏工具" [ref=e676]
+              - button "Excalidraw 画图 收藏工具" [ref=e680] [cursor=pointer]:
+                - generic [ref=e685]: Excalidraw 画图
+                - button "收藏工具" [ref=e686]
+          - article [ref=e690]:
+            - button "协作分享 粘贴、短链、文件与聊天 5" [ref=e691] [cursor=pointer]:
+              - generic [ref=e697]:
+                - strong [ref=e698]: 协作分享
+                - generic [ref=e699]: 粘贴、短链、文件与聊天
+              - generic [ref=e700]: "5"
+            - generic:
+              - button "粘贴板 收藏工具" [ref=e701] [cursor=pointer]:
+                - generic [ref=e705]: 粘贴板
+                - button "收藏工具" [ref=e706]
+              - button "NFS 文件分享 收藏工具" [ref=e710] [cursor=pointer]:
+                - generic [ref=e714]: NFS 文件分享
+                - button "收藏工具" [ref=e715]
+              - button "短链生成 收藏工具" [ref=e719] [cursor=pointer]:
+                - generic [ref=e723]: 短链生成
+                - button "收藏工具" [ref=e724]
+              - button "聊天室 收藏工具" [ref=e728] [cursor=pointer]:
+                - generic [ref=e733]: 聊天室
+                - button "收藏工具" [ref=e734]
+              - button "屏幕共享 收藏工具" [ref=e738] [cursor=pointer]:
+                - generic [ref=e740]: 屏幕共享
+                - button "收藏工具" [ref=e741]
+          - article [ref=e745]:
+            - button "AI 工作台 模型、媒体生成与网关管理 7" [ref=e746] [cursor=pointer]:
+              - generic [ref=e751]:
+                - strong [ref=e752]: AI 工作台
+                - generic [ref=e753]: 模型、媒体生成与网关管理
+              - generic [ref=e754]: "7"
+            - generic:
+              - button "图像理解 收藏工具" [ref=e755] [cursor=pointer]:
+                - generic [ref=e760]: 图像理解
+                - button "收藏工具" [ref=e761]
+              - button "AI Chat 收藏工具" [ref=e765] [cursor=pointer]:
+                - generic [ref=e770]: AI Chat
+                - button "收藏工具" [ref=e771]
+              - button "AI Gateway 收藏工具" [ref=e775] [cursor=pointer]:
+                - generic [ref=e779]: AI Gateway
+                - button "收藏工具" [ref=e780]
+              - button "AI 学英语 收藏工具" [ref=e784] [cursor=pointer]:
+                - generic [ref=e789]: AI 学英语
+                - button "收藏工具" [ref=e790]
+              - button "MiniMax Studio 收藏工具" [ref=e794] [cursor=pointer]:
+                - generic [ref=e798]: MiniMax Studio
+                - button "收藏工具" [ref=e799]
+              - button "魔法宠物 收藏工具" [ref=e803] [cursor=pointer]:
+                - generic [ref=e807]: 魔法宠物
+                - button "收藏工具" [ref=e808]
+              - button "媒体画廊 收藏工具" [ref=e812] [cursor=pointer]:
+                - generic [ref=e816]: 媒体画廊
+                - button "收藏工具" [ref=e817]
+          - article [ref=e821]:
+            - button "生活记录 记账、事项、健康与家庭 12" [ref=e822] [cursor=pointer]:
+              - generic [ref=e827]:
+                - strong [ref=e828]: 生活记录
+                - generic [ref=e829]: 记账、事项、健康与家庭
+              - generic [ref=e830]: "12"
+            - generic:
+              - button "孕期管理 收藏工具" [ref=e831] [cursor=pointer]:
+                - generic [ref=e835]: 孕期管理
+                - button "收藏工具" [ref=e836]
+              - button "每日菜谱 收藏工具" [ref=e840] [cursor=pointer]:
+                - generic [ref=e844]: 每日菜谱
+                - button "收藏工具" [ref=e845]
+              - button "旅游行程 收藏工具" [ref=e849] [cursor=pointer]:
+                - generic [ref=e851]: 旅游行程
+                - button "收藏工具" [ref=e852]
+              - button "生活记账 收藏工具" [ref=e856] [cursor=pointer]:
+                - generic [ref=e862]: 生活记账
+                - button "收藏工具" [ref=e863]
+              - button "事项管理 收藏工具" [ref=e867] [cursor=pointer]:
+                - generic [ref=e871]: 事项管理
+                - button "收藏工具" [ref=e872]
+              - button "整理模块 收藏工具" [ref=e876] [cursor=pointer]:
+                - generic [ref=e882]: 整理模块
+                - button "收藏工具" [ref=e883]
+              - button "整理空间3D 收藏工具" [ref=e887] [cursor=pointer]:
+                - generic [ref=e892]: 整理空间3D
+                - button "收藏工具" [ref=e893]
+              - button "档案照片墙 收藏工具" [ref=e897] [cursor=pointer]:
+                - generic [ref=e901]: 档案照片墙
+                - button "收藏工具" [ref=e902]
+              - button "血糖记录 收藏工具" [ref=e906] [cursor=pointer]:
+                - generic [ref=e911]: 血糖记录
+                - button "收藏工具" [ref=e912]
+              - button "小游戏 收藏工具" [ref=e916] [cursor=pointer]:
+                - generic [ref=e921]: 小游戏
+                - button "收藏工具" [ref=e922]
+              - button "语音收件箱 收藏工具" [ref=e926] [cursor=pointer]:
+                - generic [ref=e930]: 语音收件箱
+                - button "收藏工具" [ref=e931]
+              - button "敲击计数器 收藏工具" [ref=e935] [cursor=pointer]:
+                - generic [ref=e941]: 敲击计数器
+                - button "收藏工具" [ref=e942]
+          - article [ref=e946]:
+            - button "系统管理 代理、控制台与辅助工具 9" [ref=e947] [cursor=pointer]:
+              - generic [ref=e952]:
+                - strong [ref=e953]: 系统管理
+                - generic [ref=e954]: 代理、控制台与辅助工具
+              - generic [ref=e955]: "9"
+            - generic:
+              - button "科学上网 收藏工具" [ref=e956] [cursor=pointer]:
+                - generic [ref=e961]: 科学上网
+                - button "收藏工具" [ref=e962]
+              - button "NPS 端口映射 收藏工具" [ref=e966] [cursor=pointer]:
+                - generic [ref=e970]: NPS 端口映射
+                - button "收藏工具" [ref=e971]
+              - button "AskIt 邀请码 收藏工具" [ref=e975] [cursor=pointer]:
+                - generic [ref=e977]: AskIt 邀请码
+                - button "收藏工具" [ref=e978]
+              - button "我的同步数据 收藏工具" [ref=e982] [cursor=pointer]:
+                - generic [ref=e986]: 我的同步数据
+                - button "收藏工具" [ref=e987]
+              - button "背景图库 收藏工具" [ref=e991] [cursor=pointer]:
+                - generic [ref=e995]: 背景图库
+                - button "收藏工具" [ref=e996]
+              - button "批量看图 收藏工具" [ref=e1000] [cursor=pointer]:
+                - generic [ref=e1005]: 批量看图
+                - button "收藏工具" [ref=e1006]
+              - button "控制台 收藏工具" [ref=e1010] [cursor=pointer]:
+                - generic [ref=e1014]: 控制台
+                - button "收藏工具" [ref=e1015]
+              - button "监控分析 收藏工具" [ref=e1019] [cursor=pointer]:
+                - generic [ref=e1021]: 监控分析
+                - button "收藏工具" [ref=e1022]
+              - button "Skills 工具入口 收藏工具" [ref=e1026] [cursor=pointer]:
+                - generic [ref=e1031]: Skills 工具入口
+                - button "收藏工具" [ref=e1032]
+    - generic [ref=e1037]:
+      - link "GitHub" [ref=e1038] [cursor=pointer]:
+        - /url: https://github.com/axfinn/devtools
+      - generic [ref=e1042]: •
+      - generic [ref=e1043] [cursor=pointer]: 支持项目
+  - generic [ref=e1048]:
+    - generic "拖动" [ref=e1049]:
+      - generic [ref=e1050]: ⋮⋮
+      - generic [ref=e1051]: 魔法宠物
+      - generic [ref=e1052]: 棱镜 · 默认
+    - generic [ref=e1053]:
+      - button "🔊" [ref=e1054] [cursor=pointer]
+      - button "🎨" [ref=e1055] [cursor=pointer]
+      - button "💪" [ref=e1056] [cursor=pointer]
+      - button "×" [ref=e1057] [cursor=pointer]
+    - generic [ref=e1058]:
+      - button "🔵" [ref=e1059] [cursor=pointer]
+      - button "🐱" [ref=e1060] [cursor=pointer]
+      - button "🤖" [ref=e1061] [cursor=pointer]
+      - button "👻" [ref=e1062] [cursor=pointer]
+      - button "⭐" [ref=e1063] [cursor=pointer]
