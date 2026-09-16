@@ -87,6 +87,10 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	screenHandler := handlers.NewScreenHandler(db, *cfg)
 	avatarHandler := handlers.NewAvatarHandler(db)
 
+	// 健康检查:构造期解析 5 个依赖的探测地址(source 同步落定),
+	// 详细形态 ?detail=1 复用 monitoring 的三级管理员密码鉴权语义。
+	healthHandler := handlers.NewHealthHandler(db, cfg, rt.transientStore)
+
 	// Skills 模块:对外工具入口,默认未启用(cfg.Skills.Enabled = false),
 	// 由管理员在 config.yaml 显式打开后才对外暴露。
 	// Guard 在 db 初始化后单独构造,AttachGuard 给 SkillsHandler 注入写库专项限流。
@@ -133,6 +137,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		skillsGuard:               skillsGuard,
 		avatarHandler:             avatarHandler,
 		tripHandler:               tripHandler,
+		healthHandler:             healthHandler,
 	}, nil
 }
 

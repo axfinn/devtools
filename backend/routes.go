@@ -46,6 +46,7 @@ type routeHandlers struct {
 	skillsGuard              *middleware.SkillsGuard
 	avatarHandler            *handlers.AvatarHandler
 	tripHandler              *handlers.TripHandler
+	healthHandler            *handlers.HealthHandler
 }
 
 func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter, h *routeHandlers) {
@@ -87,6 +88,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		SkillsGuard:              h.skillsGuard,
 		AvatarHandler:            h.avatarHandler,
 		TripHandler:              h.tripHandler,
+		HealthHandler:            h.healthHandler,
 	}
 	routes.RegisterAllRoutes(api, rh, createRateLimiter)
 }
