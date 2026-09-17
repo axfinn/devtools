@@ -301,14 +301,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tools, VideoPlay, VideoPause, ArrowLeftBold, ArrowRightBold, RefreshRight, Rank, Close } from '@element-plus/icons-vue'
 import { useTheme } from './composables/useTheme'
 import { useMediaPlayer } from './composables/useMediaPlayer'
 import { useToolPreferences } from './composables/useToolPreferences'
 import { useToolRegistry } from './composables/useToolRegistry'
-import GlobalPet from './components/GlobalPet.vue'
+// FINN-29 A5 · GlobalPet 改为异步组件，首屏 chunk 不再包含它
+const GlobalPet = defineAsyncComponent(() => import('./components/GlobalPet.vue'))
 
 const router = useRouter()
 const route = useRoute()

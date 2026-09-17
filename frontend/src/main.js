@@ -1,6 +1,16 @@
 import { createApp } from 'vue'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
+// FINN-29 A2 · EP 按需：main.js 不再全量 import ElementPlus，也不再 app.use(ElementPlus)。
+// 模板里用到的 EP 组件由 unplugin-vue-components 在编译期按 view 注入。
+// FINN-29 A3 · 命令式 API（ElMessage / ElMessageBox / ElNotification / ElLoading）的 CSS
+// 不在模板里显式出现，模板扫描不会覆盖它们。这里手动 import 对应的 theme-chalk/*.css，
+// 体积约 ~14 KB，远小于全量 340 KB CSS。
+import 'element-plus/theme-chalk/base.css'
+import 'element-plus/theme-chalk/el-message.css'
+import 'element-plus/theme-chalk/el-message-box.css'
+import 'element-plus/theme-chalk/el-notification.css'
+import 'element-plus/theme-chalk/el-loading.css'
+import 'element-plus/theme-chalk/el-overlay.css'
+
 import {
   Box,
   Calendar,
@@ -10,6 +20,8 @@ import {
   Close,
   Collection,
   Connection,
+  // FINN-29 A4 · 补齐 4 个 pre-existing 缺口（独立 commit，便于回滚）
+  DataAnalysis,
   Delete,
   Document,
   DocumentCopy,
@@ -18,6 +30,8 @@ import {
   FirstAidKit,
   FolderOpened,
   Food,
+  // FINN-29 A4
+  Guide,
   Headset,
   HomeFilled,
   Key,
@@ -36,8 +50,12 @@ import {
   Setting,
   Share,
   Switch,
+  // FINN-29 A4
+  Ticket,
   Timer,
   Tools,
+  // FINN-29 A4
+  VideoCamera,
   VideoPause,
   VideoPlay
 } from '@element-plus/icons-vue'
@@ -135,6 +153,8 @@ const globalIcons = {
   Close,
   Collection,
   Connection,
+  // FINN-29 A4 · pre-existing 缺口补齐
+  DataAnalysis,
   Delete,
   Document,
   DocumentCopy,
@@ -143,6 +163,7 @@ const globalIcons = {
   FirstAidKit,
   FolderOpened,
   Food,
+  Guide,
   Headset,
   Home: HomeFilled,
   Key,
@@ -161,8 +182,10 @@ const globalIcons = {
   Setting,
   Share,
   Switch,
+  Ticket,
   Timer,
   Tools,
+  VideoCamera,
   VideoPause,
   VideoPlay
 }
@@ -171,9 +194,54 @@ for (const [key, component] of Object.entries(globalIcons)) {
   app.component(key, component)
 }
 
-app.use(ElementPlus)
+// FINN-29 A1 · 骨架已在 index.html 内联；mount 时不要清空 #app 里的内容，
+// 让 Vue 接管后自然替换；如果担心闪烁，可在 mounted 后清。
+// 这里保留清空动作，避免后续 hydration 异常。
+
 app.use(router)
 app.mount('#app')
+
+// FINN-29 A8 · 首屏之后空闲预热高频路由的 chunk（不抢首屏带宽）
+function shouldPrefetch() {
+  const c = typeof navigator !== 'undefined' ? navigator.connection : null
+  if (!c) return true
+  if (c.saveData) return false
+  const e = c.effectiveType || ''
+  return !(e === 'slow-2g' || e === '2g' || e === '3g')
+}
+
+function warmRoutes() {
+  if (!shouldPrefetch()) return
+  // PM 拍板：保持 architect 选定的三个（高频 + 高重要性）；不扩也不缩。
+  for (const path of ['/json', '/planner', '/expense']) {
+    try {
+      const resolved = router.resolve(path)
+      const matched = resolved.matched || []
+      matched.forEach((m) => {
+        const comps = m.components || {}
+        const c = comps.default || Object.values(comps)[0]
+        if (typeof c === 'function') {
+          try { c() } catch { /* ignore prefetch errors */ }
+        }
+      })
+    } catch { /* ignore route resolve errors */ }
+  }
+}
+
+function scheduleWarm() {
+  if (typeof window === 'undefined') return
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => warmRoutes(), { timeout: 4000 })
+  } else {
+    setTimeout(warmRoutes, 2000)
+  }
+}
+
+if (typeof document !== 'undefined' && document.readyState === 'complete') {
+  scheduleWarm()
+} else if (typeof window !== 'undefined') {
+  window.addEventListener('load', scheduleWarm, { once: true })
+}
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {

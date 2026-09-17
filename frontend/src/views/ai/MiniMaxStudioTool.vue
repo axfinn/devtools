@@ -51,7 +51,9 @@
         />
 
         <div v-if="hasCredential" class="pet-inline">
+          <!-- FINN-29 A6 · pet-widget 异步注入：未 upgrade 时显示占位 -->
           <pet-widget
+            v-if="petReady"
             ref="petInline"
             :theme="petTheme"
             :width="240"
@@ -59,6 +61,10 @@
             voice
             no-shell
           />
+          <div v-else class="pet-inline-placeholder">
+            <div class="pet-inline-placeholder-emoji">🐾</div>
+            <div class="pet-inline-placeholder-text">宠物加载中…</div>
+          </div>
           <div class="pet-inline-tip">
             <div style="font-weight: 600; margin-bottom: 4px;">🐾 魔法宠物驻场</div>
             <div style="font-size: 12px; color: #a4abc4; line-height: 1.6;">
@@ -906,6 +912,8 @@ import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, 
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AIGatewaySpeechPanel from '../../components/AIGatewaySpeechPanel.vue'
+// FINN-29 A6 · pet-widget 异步注入工具
+import { ensurePetWidget } from '../../utils/petWidgetLoader'
 
 const OFFICIAL_DOCS_URL = 'https://platform.minimaxi.com/docs/api-reference/api-overview'
 const SUPER_ADMIN_KEY = 'minimax_studio_super_admin_password'
@@ -927,6 +935,8 @@ const PET_THEMES = [
 ]
 const petTheme = ref('prism')
 const petInline = ref(null)
+// FINN-29 A6 · pet-widget 是否已升级
+const petReady = ref(false)
 function petSpeak() {
   // 预录 MP3 模式下没有任意说，触发主题欢迎语
   document.querySelectorAll('pet-widget').forEach((el) => {
@@ -1232,6 +1242,10 @@ onMounted(() => {
   if (adminReady.value) {
     void loadAdminShares()
   }
+  // FINN-29 A6 · 用户进入工作台才异步注入 pet-widget.js
+  ensurePetWidget()
+    .then(() => { petReady.value = true })
+    .catch(() => { /* 保留占位 */ })
 })
 
 onBeforeUnmount(() => {
@@ -2766,8 +2780,35 @@ async function safeJson(res) {
   flex: 1;
   min-width: 0;
 }
+/* FINN-29 A6 · pet-widget 未 upgrade 时的占位 */
+.pet-inline-placeholder {
+  width: 240px;
+  height: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(92, 242, 255, 0.06), rgba(184, 141, 255, 0.06));
+  color: #a4abc4;
+}
+.pet-inline-placeholder-emoji {
+  font-size: 40px;
+  animation: pet-inline-placeholder-bounce 1.2s ease-in-out infinite;
+}
+.pet-inline-placeholder-text {
+  font-size: 12px;
+  opacity: 0.85;
+}
+@keyframes pet-inline-placeholder-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
 @media (max-width: 600px) {
   .pet-inline { flex-direction: column; }
+  .pet-inline-placeholder { width: 100%; max-width: 280px; }
 }
 
 .hero-copy {
