@@ -151,13 +151,15 @@ func TestCompress_ExtensionExcluded(t *testing.T) {
 }
 
 // TestCompress_SSEPathExcluded：SSE 路径不压缩（即使客户端未声明 Upgrade）。
+// 路径必须与 backend/routes/{ai_gateway,image_understanding}.go 的 Group() 注册字符串完全一致。
 func TestCompress_SSEPathExcluded(t *testing.T) {
 	cases := []string{
 		"/api/internal/chat/stream",
-		"/api/aigw/v1/image/understanding/sse",
-		"/api/aigw/v1/image/understanding/sse/file",
-		"/api/aigw/v1/image/understanding/stream/abc-123",
-		"/api/image/sse/stream/xyz",
+		"/api/ai-gateway/v1/image/understanding/sse",
+		"/api/ai-gateway/v1/image/understanding/sse/file",
+		"/api/ai-gateway/v1/image/understanding/stream/abc-123",
+		"/api/image-understanding/sse/stream/xyz",
+		"/api/api-gateway/cpa/v1/some-cpa-stream",
 		"/api/autodev/init/stream",
 		"/api/autodev/claude/update/stream",
 		"/api/autodev/codex/update/stream",
@@ -174,6 +176,38 @@ func TestCompress_SSEPathExcluded(t *testing.T) {
 
 			if got := w.Header().Get("Content-Encoding"); got != "" {
 				t.Fatalf("Content-Encoding: got %q, want empty (SSE path %s must not be compressed)", got, p)
+			}
+		})
+	}
+}
+
+// TestCompress_StreamSseTaskRealRoute：回归保护 —— 真实生产路由路径必须不被压缩，
+// 且响应体字节级与 handler 写出内容完全一致（未走 gin-contrib/gzip WrapWriter）。
+// 路径必须与 backend/routes/{ai_gateway,image_understanding}.go 的 Group() 注册字符串完全一致。
+func TestCompress_StreamSseTaskRealRoute(t *testing.T) {
+	cases := []struct {
+		path string
+		body string
+	}{
+		{"/api/ai-gateway/v1/image/understanding/sse", "data: {\"delta\":\"hi\"}\n\n"},
+		{"/api/image-understanding/sse/stream/abc-123", "data: {\"progress\":0.42}\n\n"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.TrimPrefix(tc.path, "/"), func(t *testing.T) {
+			r := newTestRouter(5)
+			registerText(r, tc.path, tc.body)
+
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.Header.Set("Accept-Encoding", "gzip")
+			w := doRequest(t, r, req)
+
+			// 1. 响应未压缩
+			if got := w.Header().Get("Content-Encoding"); got != "" {
+				t.Fatalf("Content-Encoding: got %q, want empty (real SSE route %s must bypass gzip WrapWriter)", got, tc.path)
+			}
+			// 2. 响应体字节级不变（与 handler 写出内容完全一致）
+			if got := w.Body.String(); got != tc.body {
+				t.Fatalf("body mismatch: got %q, want %q (response must not be gzip-wrapped)", got, tc.body)
 			}
 		})
 	}

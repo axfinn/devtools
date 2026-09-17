@@ -32,9 +32,10 @@ import (
 //   - /s/                                          短链 302 重定向
 //   - /sub/proxy, /mock/                           公共非 API 下载与 Mock
 //   - /api/internal/chat/stream                    SSE AI 网关聊天
-//   - /api/aigw/v1/image/understanding/sse         SSE 图片理解
-//   - /api/aigw/v1/image/understanding/stream/     SSE 图片理解进度
-//   - /api/image/sse/stream/                       SSE 图片理解
+//   - /api/ai-gateway/v1/image/understanding/sse   SSE 图片理解
+//   - /api/ai-gateway/v1/image/understanding/stream/  SSE 图片理解进度
+//   - /api/image-understanding/sse/stream/          SSE 图片理解
+//   - /api/api-gateway/cpa/                         SSE CPA 反代（兜底）
 //   - /api/autodev/                                SSE 项目初始化与 CLI 更新流
 //   - /api/terminal/                               WebSocket SSH
 //   - /api/screen/                                 WebSocket 屏幕共享信令
@@ -64,10 +65,12 @@ func ResponseCompression(level int) gin.HandlerFunc {
 			"/s/",
 			"/sub/proxy",
 			"/mock/",
+			// SSE 排除路径必须与 backend/routes/{ai_gateway,image_understanding}.go 的 Group() 注册字符串完全一致；不要凭记忆或缩写。详见 FINN-49。
 			"/api/internal/chat/stream",
-			"/api/aigw/v1/image/understanding/sse",
-			"/api/aigw/v1/image/understanding/stream/",
-			"/api/image/sse/stream/",
+			"/api/ai-gateway/v1/image/understanding/sse",
+			"/api/ai-gateway/v1/image/understanding/stream/",
+			"/api/image-understanding/sse/stream/",
+			"/api/api-gateway/cpa/",
 			"/api/autodev/",
 			"/api/terminal/",
 			"/api/screen/",
