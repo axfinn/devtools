@@ -20,6 +20,11 @@ func newHTTPRouter(rt *appRuntime, handlers *routeHandlers) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
+	// 响应压缩（gzip level 5，平衡压缩比与 CPU）。
+	// 见 docs/plans/finn-29-first-paint-perf.md §C 与 FINN-41 评审结论。
+	// 排除规则在 middleware.ResponseCompression 内集中维护。
+	router.Use(middleware.ResponseCompression(5))
+
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:  []string{"*"},
 		AllowMethods:  []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
