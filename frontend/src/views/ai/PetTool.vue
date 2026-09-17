@@ -18,7 +18,9 @@
 
       <el-card class="stage" shadow="never">
         <div class="stage-wrap">
+          <!-- FINN-29 A6 · pet-widget 异步注入：未 upgrade 时显示占位 -->
           <pet-widget
+            v-if="petReady"
             ref="widget"
             :theme="theme"
             :form="form"
@@ -26,6 +28,10 @@
             :height="stageHeight"
             voice
           />
+          <div v-else class="stage-placeholder">
+            <div class="stage-placeholder-emoji">🐾</div>
+            <div class="stage-placeholder-text">魔法宠物加载中…</div>
+          </div>
         </div>
         <div class="stage-controls">
           <div class="control-row">
@@ -96,6 +102,8 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+// FINN-29 A6 · pet-widget 异步注入工具
+import { ensurePetWidget } from '../../utils/petWidgetLoader'
 
 // 内联主题常量（与 pet-widget 包保持一致）
 const THEMES = [
@@ -127,6 +135,8 @@ const FORMS = [
 const theme = ref('prism')
 const form = ref('default')
 const widget = ref(null)
+// FINN-29 A6 · pet-widget 是否已升级（customElement upgrade 完成）
+const petReady = ref(false)
 
 const STAGE_W = 320
 const STAGE_H = 360
@@ -151,7 +161,12 @@ watch(form, (val) => {
   })
 })
 
-onMounted(() => {})
+onMounted(() => {
+  // FINN-29 A6 · 异步注入；用户主动进入此页才拉取，不抢首屏带宽
+  ensurePetWidget()
+    .then(() => { petReady.value = true })
+    .catch(() => { /* 保留占位 */ })
+})
 onUnmounted(() => {})
 </script>
 
@@ -214,6 +229,32 @@ onUnmounted(() => {})
   display: flex;
   justify-content: center;
   padding: 8px 0;
+}
+
+/* FINN-29 A6 · pet-widget 未 upgrade 时的占位 */
+.stage-placeholder {
+  width: 320px;
+  height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(92, 242, 255, 0.06), rgba(184, 141, 255, 0.06));
+  color: #a4abc4;
+}
+.stage-placeholder-emoji {
+  font-size: 48px;
+  animation: stage-placeholder-bounce 1.2s ease-in-out infinite;
+}
+.stage-placeholder-text {
+  font-size: 13px;
+  opacity: 0.85;
+}
+@keyframes stage-placeholder-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
 }
 .stage-controls {
   width: 100%;

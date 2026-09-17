@@ -57,7 +57,10 @@
       </div>
 
       <div class="pet-canvas">
+        <!-- FINN-29 A6 · pet-widget 异步注入：元素未 upgrade 时浏览器把它当 HTMLUnknownElement，
+             不报错；v-else 占位保证窗口尺寸仍可见，避免用户感觉"白屏" -->
         <pet-widget
+          v-if="petReady"
           ref="petRef"
           :theme="themeId"
           :form="formId"
@@ -66,6 +69,10 @@
           :voice="voiceOn ? '' : null"
           no-shell
         />
+        <div v-else class="pet-placeholder">
+          <div class="pet-placeholder-spinner" aria-hidden="true">🐾</div>
+          <div class="pet-placeholder-text">宠物加载中…</div>
+        </div>
       </div>
     </div>
 
@@ -83,6 +90,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { THEMES, THEME_ORDER } from '../constants/pet-themes'
+import { ensurePetWidget } from '../utils/petWidgetLoader'
 
 const STORAGE_KEY = 'pet-widget.global'
 const POS_KEY = 'pet-widget.position'
@@ -124,6 +132,8 @@ const formId = ref('default')
 const voiceOn = ref(true)
 const rootEl = ref(null)
 const petRef = ref(null)
+// FINN-29 A6 · pet-widget custom element 是否已 upgrade
+const petReady = ref(false)
 
 const FORMS = [
   { id: 'default', icon: '🔵', label: '默认' },
@@ -175,6 +185,12 @@ function savePos() {
 function show() {
   visible.value = true
   try { localStorage.setItem(STORAGE_KEY, '1') } catch { /* ignore */ }
+  // FINN-29 A6 · 回头访客点 🐾 唤出时才真正加载 pet-widget.js
+  if (!petReady.value) {
+    ensurePetWidget()
+      .then(() => { petReady.value = true })
+      .catch(() => { /* ignore */ })
+  }
 }
 
 function hide() {
@@ -297,6 +313,14 @@ onMounted(() => {
     if (enabled !== null) cheerEnabled.value = enabled === '1'
   } catch { /* ignore */ }
   startCheerTimer()
+  // FINN-29 A6 · 异步注入 pet-widget.js（首屏之后；用户首次可见窗口才真正用到）
+  // 回头访客场景：localStorage['pet-widget.global'] === '0' 时 visible 保持 false，
+  // 不调用 ensurePetWidget，用户点 🐾 时再 show() 也会自然加载（见 show 方法）。
+  if (visible.value) {
+    ensurePetWidget()
+      .then(() => { petReady.value = true })
+      .catch(() => { /* 失败保留占位，让用户重试 */ })
+  }
 })
 
 onUnmounted(() => {
@@ -520,5 +544,33 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/* FINN-29 A6 · pet-widget 未 upgrade 时的占位（首屏异步加载期间） */
+.pet-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 13px;
+  background: linear-gradient(135deg, rgba(92, 242, 255, 0.08), rgba(184, 141, 255, 0.08));
+  border-radius: 12px;
+  user-select: none;
+}
+.pet-placeholder-spinner {
+  font-size: 32px;
+  animation: pet-placeholder-bounce 1.2s ease-in-out infinite;
+}
+.pet-placeholder-text {
+  font-size: 12px;
+  opacity: 0.85;
+}
+@keyframes pet-placeholder-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
 }
 </style>

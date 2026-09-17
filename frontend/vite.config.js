@@ -2,6 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+// FINN-29 A2 · Element Plus 按需引入
+import Components from 'unplugin-vue-components/vite'
+import AutoImport from 'unplugin-auto-import/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 // simple-peer 链路里 readable-stream 等 CJS 模块用 process.nextTick / process.stdout
 // 这些在浏览器不存在,需要替换成 shim。dev 时 vite 的 optimizeDeps 通过 esbuild 预构建
@@ -35,6 +39,32 @@ const processShim = () => ({
   },
 })
 
+// FINN-29 A9 · 把 index-*.css 改成异步加载的钩子
+// Vite 默认会发出 <link rel="stylesheet" href="/assets/index-*.css">，
+// 同步 CSS 阻塞首屏渲染。这里把所有指向 /assets/*.css 的 <link> 改写为
+// 媒体查询为 print 的非阻塞形式，加载完切到 all，避免 FOUC（关键 CSS 已
+// 在 index.html 内联，async CSS 只是剩下的工具/视图样式）。
+const asyncIndexCssPlugin = () => ({
+  name: 'finn-29-async-index-css',
+  enforce: 'post',
+  transformIndexHtml(html) {
+    // Vite 实际产出的 link 形如:
+    //   <link rel="stylesheet" crossorigin href="/assets/index-XXXX.css">
+    // 我们把所有指向 /assets/*.css 的 link 改成 media=print 的非阻塞形式,
+    // onload 后切回 all —— 不阻塞首屏渲染,关键 CSS 已内联进 index.html。
+    return html.replace(
+      /<link([^>]*?)href="(\/assets\/[^"]+\.css)"([^>]*)>/g,
+      (_, before, href, after) => {
+        // 已经手工处理过的不重复;只处理首次出现的。
+        if (/media=/.test(before) || /media=/.test(after)) {
+          return `<link${before}href="${href}"${after}>`
+        }
+        return `<link${before}href="${href}"${after} media="print" onload="this.media='all'">`
+      }
+    )
+  },
+})
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -48,6 +78,14 @@ export default defineConfig({
     }),
     react(),
     processShim(),
+    // FINN-29 A2 · EP 按需 — 仅当组件真的被模板使用时才 import 它的 CSS/JS
+    AutoImport({
+      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
+    }),
+    Components({
+      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
+    }),
+    asyncIndexCssPlugin(),
   ],
   resolve: {
     alias: {
@@ -125,10 +163,11 @@ export default defineConfig({
             return
           }
 
+          // FINN-29 A2 · EP 按需后不再单独把 element-plus 打成一个 chunk
+          // ——各 view 的懒加载 chunk 自己 import 自己用到的 EP 组件即可。
           const groups = [
             { name: 'vue-vendor', patterns: ['node_modules/vue/', 'node_modules/vue-router/'] },
             { name: 'react-vendor', patterns: ['node_modules/react/', 'node_modules/react-dom/', 'node_modules/react-router-dom/', 'node_modules/react-i18next/', 'node_modules/i18next/', 'node_modules/zustand/'] },
-            { name: 'element-plus', patterns: ['node_modules/element-plus/', 'node_modules/@element-plus/'] },
             { name: 'katex', patterns: ['node_modules/katex/', 'node_modules/markdown-it-texmath/'] },
             { name: 'markdown', patterns: ['node_modules/markdown-it/', 'node_modules/markdown-it-footnote/', 'node_modules/markdown-it-mark/', 'node_modules/markdown-it-sub/', 'node_modules/markdown-it-sup/', 'node_modules/markdown-it-task-lists/'] },
             { name: 'highlight', patterns: ['node_modules/highlight.js/'] },

@@ -21,6 +21,10 @@
         -webkit-touch-callout: none;
         -webkit-user-select: none;
         user-select: none;
+        margin: 0;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
       }
       /* 允许输入框、代码编辑器和聊天消息选择 */
       input, textarea, .code-editor, pre, code,
@@ -28,11 +32,76 @@
         -webkit-user-select: text;
         user-select: text;
       }
+      /* ===== FINN-29 A1 首屏骨架（禁 JS 不白屏） ===== */
+      /* 与 App.vue .mobile-header 一致的高度(56px)；颜色与 HomeView.vue 一致 */
+      .sk-header {
+        display: flex;
+        align-items: center;
+        padding: 0 15px;
+        height: 56px;
+        background: #ffffff;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 15px;
+      }
+      .sk-brand { font-weight: 700; color: #2563eb; font-size: 18px; }
+      .sk-tagline { margin-left: auto; font-size: 13px; color: #64748b; }
+      .sk-main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px 15px 100px;
+      }
+      .sk-bar {
+        height: 14px;
+        background: linear-gradient(90deg, #e2e8f0, #f1f5f9);
+        border-radius: 7px;
+        margin-bottom: 12px;
+        animation: sk-pulse 1.4s ease-in-out infinite;
+      }
+      .sk-hero { width: 60%; margin-top: 8px; margin-bottom: 24px; height: 24px; }
+      .sk-search { width: 100%; height: 48px; border-radius: 12px; margin-bottom: 32px; }
+      .sk-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      @media (min-width: 768px) {
+        .sk-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+      }
+      .sk-card {
+        height: 96px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #e2e8f0, #f1f5f9);
+        animation: sk-pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes sk-pulse {
+        0%, 100% { opacity: 0.85; }
+        50% { opacity: 0.55; }
+      }
     </style>
   </head>
   <body>
-    <div id="app"></div>
-    <script src="/widgets/pet-widget.js"></script>
+    <div id="app">
+      <!-- 骨架 DOM（与 HomeView.vue 几何对齐；mount 后由 main.js 摘除，见 A6.2 注释） -->
+      <header class="sk-header">
+        <span class="sk-brand">DevTools</span>
+        <span class="sk-tagline">开发者工具集合</span>
+      </header>
+      <div class="sk-main">
+        <div class="sk-bar sk-hero"></div>
+        <div class="sk-bar sk-search"></div>
+        <div class="sk-grid">
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+          <div class="sk-card"></div>
+        </div>
+      </div>
+    </div>
+    <!-- pet-widget.js 已退出首屏链路：见 utils/petWidgetLoader.js（A6） -->
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
