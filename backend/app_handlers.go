@@ -91,6 +91,10 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	// 详细形态 ?detail=1 复用 monitoring 的三级管理员密码鉴权语义。
 	healthHandler := handlers.NewHealthHandler(db, cfg, rt.transientStore)
 
+	// Shadowsocks 规则文件:全站单份,页面填域名列表生成 ACL 正文,
+	// 公开链接(/ss/:token/:filename)供客户端直接拉取。
+	ssRuleHandler := handlers.NewSSRuleHandler(db, cfg.SSRules.AdminPassword)
+
 	// Skills 模块:对外工具入口,默认未启用(cfg.Skills.Enabled = false),
 	// 由管理员在 config.yaml 显式打开后才对外暴露。
 	// Guard 在 db 初始化后单独构造,AttachGuard 给 SkillsHandler 注入写库专项限流。
@@ -138,6 +142,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		avatarHandler:             avatarHandler,
 		tripHandler:               tripHandler,
 		healthHandler:             healthHandler,
+		ssRuleHandler:             ssRuleHandler,
 	}, nil
 }
 
