@@ -18,8 +18,11 @@ ENV HTTP_PROXY= \
 WORKDIR /app
 
 # 安装系统依赖（PIL 和 pyzbar 需要）
-RUN sed -i 's|deb\.debian\.org|mirrors.aliyun.com|g; s|security\.debian\.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || true && \
-    printf 'Acquire::http::Proxy "false";\nAcquire::https::Proxy "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99local-no-proxy && \
+# 用 Debian 官方源，不改写 /etc/apt/sources.list.d/*.sources。
+# 之前改写到 mirrors.aliyun.com，在 python:3.11-slim(现为 Debian 13 trixie)
+# 上偶发 `Err:4 ... trixie/main arm64 Packages` 导致构建中断；官方源更稳。
+# 若国内拉取太慢，可自行换回镜像站（清华/中科大对 trixie 覆盖更完整）。
+RUN printf 'Acquire::http::Proxy "false";\nAcquire::https::Proxy "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99local-no-proxy && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates \
