@@ -91,7 +91,11 @@ frontend-dev:
 # =====================================================================
 
 ## docker-build: Build Docker image
+## Dockerfile 里 `COPY askit-extension.zip` 需要构建上下文先有这个文件（Askit 是
+## 私有仓库，镜像内无法 clone），所以先跑宿主机构建。失败时 deploy.sh 会写占位 zip
+## 并继续，不会阻断镜像构建。
 docker-build:
+	./deploy.sh build-askit
 	docker compose build
 
 ## docker-up: Start all services

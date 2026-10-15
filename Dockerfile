@@ -12,15 +12,18 @@ COPY frontend/ ./
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm build
 
-# Build AskIt Chrome extension
-FROM node:20-alpine AS askit-builder
-
-RUN apk add --no-cache git zip
-WORKDIR /app/askit
-RUN git clone --depth 1 https://github.com/axfinn/Askit.git .
-RUN npm install
-RUN npm run build
-RUN cd dist && zip -r /app/askit-extension.zip .
+# AskIt Chrome 扩展不再在镜像里构建。
+#
+# 原因：Askit 是私有仓库，容器内既没有凭据也没有 ssh-agent，`git clone` 会以
+# "could not read Username for 'https://github.com'" (exit 128) 直接打断发布。
+# 改为在宿主机上构建（宿主 git 用 ~/.ssh/id_ed25519，已注册到 GitHub），产物由
+# deploy.sh build_askit 写到构建上下文根目录，这里只负责 COPY。
+#
+# 注意：askit-extension.zip 不进版本库（见 .gitignore），所以 **直接 `docker compose
+# build` 会因为缺少这个文件而失败**。请走 `./deploy.sh docker`（它会先跑 build_askit），
+# 或先单独执行 `./deploy.sh build-askit`。
+# 确实要临时跳过时：SKIP_ASKIT=1 ./deploy.sh docker —— 会写一个占位 zip
+# 保证 COPY 成立，扩展改由运行时 SSH 拉取（handlers/askit_extension.go:128）。
 
 FROM golang:1.25.5-alpine AS backend-builder
 
@@ -101,7 +104,7 @@ RUN addgroup -g 1001 autodev && \
 COPY --from=backend-builder /app/backend/server ./server
 COPY --from=proxy-client-builder /app/proxy-client/dist ./proxy-client-bins/
 COPY --from=frontend-builder /app/frontend/dist ./dist
-COPY --from=askit-builder /app/askit-extension.zip ./askit-extension.zip
+COPY askit-extension.zip ./askit-extension.zip
 COPY entrypoint.sh ./entrypoint.sh
 COPY tts-service/server.py ./tts_server.py
 RUN chmod +x ./entrypoint.sh
