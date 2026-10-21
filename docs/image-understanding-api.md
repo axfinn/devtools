@@ -180,6 +180,7 @@ minimax_mcp:
   command: "uvx"
   args:
     - "minimax-coding-plan-mcp"
+    - "-y"
   timeout_seconds: 300
   transport: "line"
 ```

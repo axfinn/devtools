@@ -689,15 +689,92 @@ type mcpProcess struct {
 	mode   string
 }
 
+const (
+	// minimaxMCPPackage MiniMax MCP Server 的 uvx 包名（与供应商文档一致）
+	minimaxMCPPackage = "minimax-coding-plan-mcp"
+	// minimaxMCPYesFlag MiniMax MCP 包自身的「跳过确认」标志，须紧跟包名
+	minimaxMCPYesFlag = "-y"
+	// minimaxMCPPackageSeps 包名后允许出现的分隔符（PEP 440 版本约束 / extras 变体）
+	minimaxMCPPackageSeps = "=@><~!"
+)
+
+// normalizeMCPArgs 归一化 MCP Server 启动参数（纯函数，不修改入参底层数组）：
+//  1. args 为空                          → 官方默认调用 ["minimax-coding-plan-mcp", "-y"]
+//  2. args 未命中 minimax 包名            → 原样返回（用户自定义 MCP Server，绝不注入）
+//  3. args 命中 minimax 包名，且**包名之后**已含 "-y" → 原样返回（不重复注入）
+//  4. args 命中 minimax 包名，但**包名之后**没有 "-y" → 末尾追加 "-y"（兜住存量 config.yaml）
+//
+// 注意规则 3/4 的「包名之后」：包名之前的 "-y" / "--yes" 是 uv 层的开关，
+// 会被 uv 消费掉，MiniMax MCP 进程收不到 —— 不能算「已含」。
+func normalizeMCPArgs(args []string) []string {
+	if len(args) == 0 {
+		return []string{minimaxMCPPackage, minimaxMCPYesFlag}
+	}
+	idx := indexOfMinimaxMCPPackage(args)
+	if idx < 0 {
+		return args
+	}
+	// 只有包名之后的 "-y" 才算「已含」
+	for _, a := range args[idx+1:] {
+		if a == minimaxMCPYesFlag {
+			return args
+		}
+	}
+	out := make([]string, 0, len(args)+1)
+	out = append(out, args...)
+	out = append(out, minimaxMCPYesFlag)
+	return out
+}
+
+// indexOfMinimaxMCPPackage 返回 args 中第一个指向 MiniMax MCP 包的元素下标；未命中返回 -1。
+// 命中路径：
+//  1. 任意位置直接出现包名 spec（元素自身命中）；
+//  2. uvx 的 "--from" / "--with" 之后紧跟的元素即「包名 spec」。
+func indexOfMinimaxMCPPackage(args []string) int {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if (a == "--from" || a == "--with") && i+1 < len(args) {
+			if isMinimaxMCPPackageSpec(args[i+1]) {
+				return i + 1
+			}
+			i++ // 该 flag 的值已被消费，不再当普通位置参数扫
+			continue
+		}
+		if isMinimaxMCPPackageSpec(a) {
+			return i
+		}
+	}
+	return -1
+}
+
+// isMinimaxMCPPackageSpec 判断单个元素是否指向 MiniMax MCP 包。
+// 命中口径：
+//  1. 精确等于 "minimax-coding-plan-mcp"；
+//  2. 以 "minimax-coding-plan-mcp" + ∈{=, @, >, <, ~, !} 开头（PEP 440 版本约束 / extras 变体）。
+//
+// 禁止无脑 strings.HasPrefix("minimax-coding-plan-mcp")：会误命中
+// "minimax-coding-plan-mcp-fork" 这类同名第三方包。
+func isMinimaxMCPPackageSpec(s string) bool {
+	if s == minimaxMCPPackage {
+		return true
+	}
+	if len(s) <= len(minimaxMCPPackage) {
+		return false
+	}
+	if s[:len(minimaxMCPPackage)] != minimaxMCPPackage {
+		return false
+	}
+	// 包名之后紧跟的必须是允许的分隔符，否则视为同名第三方包
+	return strings.IndexByte(minimaxMCPPackageSeps, s[len(minimaxMCPPackage)]) >= 0
+}
+
 func startMCPProcess(cfg config.MiniMaxMCPConfig) (*mcpProcess, error) {
 	command := cfg.Command
 	args := cfg.Args
 	if strings.TrimSpace(command) == "" {
 		command = "uvx"
 	}
-	if len(args) == 0 {
-		args = []string{"minimax-coding-plan-mcp", "-y"}
-	}
+	args = normalizeMCPArgs(args)
 	resolved, err := resolveCommandPath(command)
 	if err != nil {
 		return nil, err
