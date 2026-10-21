@@ -5,7 +5,7 @@
 - 基线：`origin/main` @ `9992ac652553752cef5c73f6c43012e9b69a7e33`
 - **行号口径（本次修订补充，N-1）**：本文的行号**分两套口径**，引用前必须看清：
   - **改动点行号**（§3.1 变更清单、§6 静态判据）→ 以 **`origin/main` @ `9992ac6`** 为准。
-  - **勘察取证行号**（§2 的引用）→ 取自 **architect 工作树**（`origin/main` + 9 行偏移，涉及 `backend/config/config.go`、`backend/handlers/image_understanding.go`）。下游引用前请用 `git show origin/main:<file> | grep -n` 复核。
+  - **勘察取证行号**（§2 的引用）→ 取自 **architect 工作树**（`origin/main` + 9 行偏移，**仅涉及 `backend/config/config.go`**（839 vs 848 行）；`backend/handlers/image_understanding.go` 与 `origin/main` **逐字一致、偏移 = 0**）。下游引用前请用 `git show origin/main:<file> | grep -n` 复核。
   - **Stage 3 / 4 / 5 一律以 `origin/main` 口径为准**。
 - 状态：**设计稿，不含任何代码改动**；实现由 devtools-backend 执行，验收由 devtools-qa 执行
 - 勘察方式：全仓 grep + 逐段 Read + `git show origin/main` 逐行核对 + 供应商公开文档检索；**未起 dev server、未跑 go build / go test、未部署、未碰部署机 `192.168.31.201`（R1）**
@@ -336,7 +336,7 @@ func isMinimaxMCPPackageSpec(s string) bool {
 | `backend/handlers/image_understanding_test.go`（**新建**） | `normalizeMCPArgs` 表驱动单测 | 新建 | 测试 |
 | `backend/handlers/minimax_mcp_args_regression_test.go`（**新建**） | 默认配置回归护栏（照抄 `singbox_default_config_regression_test.go` 的既有范式） | 新建 | 测试 |
 
-> 测试文件放 `backend/handlers/`（`package handlers`，与该目录既有 40 个 `_test.go` 一致），**不要**新建 `backend/config` 测试包 —— 该目录当前**只有 `config.go`，无任何 `_test.go`**（已核实）。
+> 测试文件放 `backend/handlers/`（`package handlers`，与该目录既有 **38** 个 `_test.go` 一致（`origin/main` 口径；勘察时 architect 树为 40，差异来自 architect 分支自带的 2 个测试文件 `ssrule_test.go` / `ssrule_rules_test.go`）），**不要**新建 `backend/config` 测试包 —— 该目录当前**只有 `config.go`，无任何 `_test.go`**（已核实）。
 
 ### 3.7 前端改动清单
 
@@ -355,6 +355,7 @@ func isMinimaxMCPPackageSpec(s string) bool {
 | 显式 `args: []` 的用户 | 行为与现在一致（走默认调用 `["minimax-coding-plan-mcp","-y"]`） |
 | **args 为空、且 `command` 不是 `uvx`** | **走官方默认调用 `["minimax-coding-plan-mcp","-y"]`** —— 这是**既有行为**（原 `len(args)==0` 分支同款），**本次不改**（PM 拍板 U-1，见 §9.2）。**不要**为此另开分支逻辑 |
 | **自定义 MCP Server（args 非空且不含 minimax 包名）** | **字节级不变**（门控 B4）。注意：只有 **args 非空** 时才成立；args 为空时按上一行走官方默认调用（与现状一致） |
+| **args 非空 + `command` == `uvx` + 不含 minimax 包名** | **原样不变**（B4 门控不命中） |
 | 迁移脚本 | **不需要** |
 | 回滚 | 见 §5 |
 
@@ -402,7 +403,7 @@ grep -n -A2 '^  args:$' docs/image-understanding-api.md
 #    期望：两处都命中，且 -A2 命中的 3 行里同时出现 "minimax-coding-plan-mcp" 与 "-y"
 
 # 3) 全仓无第 8 处遗漏：所有含 "minimax-coding-plan-mcp" 的 args 都要带 -y
-grep -rn "minimax-coding-plan-mcp" --include='*.go' --include='*.yaml' --include='*.sh' --include='Dockerfile' . | grep -v '^\./\.git/'
+grep -rn "minimax-coding-plan-mcp" --include='*.go' --include='*.yaml' --include='*.sh' --include='Dockerfile' --include='*.md' . | grep -v '^\./\.git/'
 #    期望：config.go / config.example.yaml / docs / entrypoint.sh / Dockerfile / image_understanding.go —— 每一处的 args 元素集合均含 "-y"
 
 # 4) entrypoint.sh / Dockerfile 未被改动
@@ -436,6 +437,7 @@ cd backend && go test ./handlers/ -run TestNormalizeMCPArgs -v
 | T13 | `[]string{"--from","minimax-coding-plan-mcp"}` | `["--from","minimax-coding-plan-mcp","-y"]` | U-2 门控（包名在 `--from` 的值里 → 注入）+ B1 位置化 ← 本次修订新增 |
 | T14 | `[]string{"--with","minimax-coding-plan-mcp"}` | `["--with","minimax-coding-plan-mcp","-y"]` | U-2 门控（`--with` 同款） ← 本次修订新增 |
 | T15 | `[]string{"minimax-coding-plan-mcp-fork"}` | **原样不变** | N-4 禁止无脑 `HasPrefix`（不误命中同名第三方包） ← 本次修订新增 |
+| T17 | `[]string{"-y","--from","minimax-coding-plan-mcp"}` | `["-y","--from","minimax-coding-plan-mcp","-y"]` | U-2 门控（包名在 `--from` 的值里 → 末尾补 `-y`）+ B1 位置化（包名**之前**的 uv 层 `-y` 原样保留、不上提也不删除） ← 本次勘误新增（PM 拍板边界 3） |
 
 > **T4 与 T12 共用同一输入、同一期望，但锁定两条不重叠的性质**：T4 锁「不重复注入（幂等）」，T12 锁「B1 位置化命中分支（包名**之后**的 `-y` 才算已含）」；T5 锁「包名**之前**的 `-y` **不算**已含」。三者合起来才构成 B1 的完整判据。
 
@@ -484,7 +486,7 @@ cd backend && go build ./... && go vet ./...
 | 2 | `config.example.yaml` 与 `docs/image-understanding-api.md` 的示例 args 与之逐字一致 | L1-2、L2 护栏 3 |
 | 3 | 三处与 `entrypoint.sh:55` 完全一致（4 处对齐） | L1-3、L5 |
 | 4 | `go build ./... && go vet ./...` 通过 | L3 |
-| 5 | `startMCPProcess` 对「args 为空 / 缺 `-y` / 已含 `-y`」三种输入行为确定且不重复注入 | L2 T1–T4、T12（+T5–T11、T13–T16 边界） |
+| 5 | `startMCPProcess` 对「args 为空 / 缺 `-y` / 已含 `-y`」三种输入行为确定且不重复注入 | L2 T1–T4、T12（+T5–T11、T13–T15、T17 边界；T16 为补充断言） |
 | 6 | 存量单测不回归 | L4（只 `-run` 限定范围；`handlers` 包既有 FAIL 属历史遗留） |
 
 ---
@@ -500,7 +502,7 @@ cd backend && go build ./... && go vet ./...
 - **R9**：不涉及 MCP 协议版本。
 - **R10**：不涉及 Planner。
 - **R5**：不涉及 SQLite（`:memory:` 连接池陷阱无需处理）。
-- **位置约束（本次修订新增）**：判定「已含 `-y`」一律以 **minimax 包名元素下标** 为基准，**只认包名之后**的 `-y`；**禁止**「全切片任意位置命中即返回」。`-y` 只允许出现在包名之后（§2.5 / §3.3 B1）。
+- **位置约束（本次修订新增）**：判定「已含 `-y`」一律以 **minimax 包名元素下标** 为基准，**只认包名之后**的 `-y`；**禁止**「全切片任意位置命中即返回」。**本方案注入的** `-y` 只允许追加在包名之后；**用户已有的 uv 层 `-y` 原样保留、不上提也不删除**（§2.5 / §3.3 B1 / §6 T5）。
 - **PM 拍板纪律**：不碰 `feature/minimax-share-all` 分支的任何内容；不扩展到 FINN-55 的 (A)(B)。
 - **代码清真（S1–S10）**：见 §8 的自查表，命中即返工。
 
@@ -583,7 +585,7 @@ Stage 2 评审（FINN-58）提出的 3 条未定义边界，PM 已拍板，**本
 
 | 来源 | 条目 | 落点 |
 |---|---|---|
-| FINN-58 **B-1**（blocking） | `-y` 判定改为**位置化**（以包名元素下标为基准） | §2.5 新增推论段、§3.2 规则 3/4 + 实现约束「位置判定硬约束」+ `indexOfMinimaxMCPPackage` 草图、§3.3 B1 重写 / B2 降为示例 / B5 措辞、§6 L2 T5 改写 + T11–T16 新增、§7 新增「位置约束」 |
+| FINN-58 **B-1**（blocking） | `-y` 判定改为**位置化**（以包名元素下标为基准） | §2.5 新增推论段、§3.2 规则 3/4 + 实现约束「位置判定硬约束」+ `indexOfMinimaxMCPPackage` 草图、§3.3 B1 重写 / B2 降为示例 / B5 措辞、§6 L2 T5 改写 + T11–T15 新增 + T16 补充断言、§7 新增「位置约束」 |
 | FINN-58 **B-2**（blocking） | L1 静态判据改工作树口径；`args:` 用 2 空格缩进模式 | 头部「行号口径」、§6 L1 基线口径纪律、L1-1、L1-2 |
 | N-1 | 行号口径声明（改动点 = origin/main；§2 取证 = architect 树，+9） | 头部「行号口径」、§2.2 / §2.4 / §2.6 / §3.4 标注双口径 |
 | N-2 | §0「未决 2 条」与 §9「3 条」统一 | §0 末行、§9.1 标题与结语 |
