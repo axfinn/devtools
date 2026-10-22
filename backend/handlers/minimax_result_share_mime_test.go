@@ -59,6 +59,18 @@ func miniMaxShareOpaqueBytes() []byte {
 	return []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xF1}
 }
 
+// miniMaxShareWAVBytes 返回 RIFF/WAVE 头，http.DetectContentType 对它返回 audio/wave
+// （注意：与内置后缀表里的 audio/wav 不同名，sniffed 值先于后缀表返回）。
+func miniMaxShareWAVBytes() []byte {
+	return []byte{
+		'R', 'I', 'F', 'F', 0x00, 0x00, 0x00, 0x00,
+		'W', 'A', 'V', 'E', 'f', 'm', 't', ' ',
+		0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		'd', 'a', 't', 'a', 0x00, 0x00, 0x00, 0x00,
+	}
+}
+
 // TestMiniMaxShareAssetGenericMINEIsNormalized 覆盖泛型 MIME 的三条归一化路径
 // （嗅探 → URL 后缀 → 保留原响应头）以及既有 MIME 的回归。
 func TestMiniMaxShareAssetGenericMIMEIsNormalized(t *testing.T) {
@@ -164,6 +176,26 @@ func TestMiniMaxShareAssetGenericMIMEIsNormalized(t *testing.T) {
 			wantContentType: "audio/mpeg",
 			wantKind:        "audio",
 			wantFilename:    "asset_01.mp3",
+		},
+		{
+			// Go 嗅探器对 RIFF....WAVE 返回 audio/wave，与内置后缀表里的 audio/wav 不同名
+			// （sniffed 值先于后缀表返回）。这里只断言 kind 与扩展名，不断言精确 content_type。
+			name:            "RIFF/WAVE 字节 → 嗅探出 audio 系，扩展名仍是 .wav",
+			headerType:      "application/octet-stream",
+			body:            miniMaxShareWAVBytes(),
+			path:            "/voice.wav",
+			wantContentType: "audio/wave",
+			wantKind:        "audio",
+			wantFilename:    "asset_01.wav",
+		},
+		{
+			name:            "URL 带 query 参数时后缀推断仍只看路径",
+			headerType:      "application/octet-stream",
+			body:            miniMaxShareOpaqueBytes(),
+			path:            "/voice.aac?token=abc123&t=1",
+			wantContentType: "audio/aac",
+			wantKind:        "audio",
+			wantFilename:    "asset_01.aac",
 		},
 	}
 
