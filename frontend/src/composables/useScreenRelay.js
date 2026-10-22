@@ -295,6 +295,12 @@ export function useScreenRelayUpload() {
     }
     canvas.value = null
     ctx.value = null
+    // 必须停掉采集轨,只置 null 引用不够:track 还活着浏览器会继续采集屏幕
+    // (系统录屏指示灯常亮、CPU/带宽持续占用),用户以为已停止其实还在共享。
+    // 对照 useScreenRTC.js:251 的做法。
+    if (screenStream) {
+      try { screenStream.getTracks().forEach(t => t.stop()) } catch {}
+    }
     screenStream = null
     lastSentAt = 0
     rvfcFireCount = 0

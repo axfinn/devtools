@@ -8,7 +8,13 @@ const currentTheme = ref('dark')
 export function useTheme() {
   // 从 localStorage 加载主题设置
   const loadThemeFromStorage = () => {
-    const saved = localStorage.getItem('theme-mode')
+    // 无痕模式/禁用存储时 localStorage 会抛,不能让它打断主题初始化
+    let saved = null
+    try {
+      saved = localStorage.getItem('theme-mode')
+    } catch {
+      saved = null
+    }
     if (saved && ['light', 'dark', 'auto'].includes(saved)) {
       themeMode.value = saved
     }
@@ -16,7 +22,11 @@ export function useTheme() {
 
   // 保存主题设置到 localStorage
   const saveThemeToStorage = (mode) => {
-    localStorage.setItem('theme-mode', mode)
+    try {
+      localStorage.setItem('theme-mode', mode)
+    } catch {
+      // 无痕模式下 setItem 会抛 QuotaExceededError
+    }
   }
 
   // 检测系统主题

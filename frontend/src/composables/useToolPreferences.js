@@ -17,7 +17,11 @@ function readList(key) {
 }
 
 function writeList(key, value) {
-  localStorage.setItem(key, JSON.stringify(value))
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // 无痕模式下 setItem 会抛 QuotaExceededError,不能让它冒到调用栈
+  }
 }
 
 function rememberTool(path) {
