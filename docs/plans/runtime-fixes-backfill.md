@@ -56,6 +56,78 @@ c3119bd fix(ai-gateway): SSE 心跳 goroutine 与主循环共用 sseWriter 串�
 
 这是**平台建 worktree 时的起点**（本地主检出当时停在 `feat/ssrules-and-streaming-fixes`），不是本方案造成的。**这意味着 Stage 3 绝不能在本 worktree 分支上做 cherry-pick**（会变成空提交 / already applied），必须**从 `origin/main` 新开分支**。见 §D1。
 
+### 0.3 ⚠️ 基线已过期（2026-10-22 复查）：6 条里只剩 1 条要回填
+
+**§0 写的是 `origin/main` = `81199bd`。执行本方案前 `origin/main` 已前进到 `d4f4755`，
+且 6 条 commit 里的 5 条 + ssrule 模块已经合入 main。**
+
+```
+$ git fetch origin main && git rev-parse origin/main
+d4f47550e055c0580696fd68103efc9f3aac1674
+
+$ git log --oneline 81199bd..origin/main
+d4f4755 docs(plans): 补合 FINN-2 / FINN-29 Stage1 技术方案归档
+304ff94 merge: feat/ssrules-and-streaming-fixes — Shadowsocks 规则生成器 + SSE/compress 修复 + ocr-service 源修复
+687f483 merge: 同步 origin/main（并发合并后 rebase 保持 fast-forward 可推）
+…（其余为 minimax-share / useAdminAuth 等前端单测与修复）
+
+$ for c in 3b402ea c3119bd 30b2079 57d03e9 f5c6f32 0968289 e7f37da; do
+    git merge-base --is-ancestor $c origin/main && echo "$c 已在 main" || echo "$c 未在 main"; done
+3b402ea 已在 main      c3119bd 已在 main      30b2079 已在 main
+57d03e9 已在 main      f5c6f32 已在 main      e7f37da 已在 main
+0968289 未在 main      ← 只剩这一条
+```
+
+**对 Stage 3 的直接影响（必读）**
+
+| 项 | 原方案（基线 81199bd） | 现在（基线 d4f4755） |
+|---|---|---|
+| 需要 cherry-pick 的 commit | **6 条**（两种顺序，D5.5 裁决 Order B） | **只 1 条：`0968289`** |
+| 另 5 条 | 由 Stage 3 逐条 cherry-pick | **已在 main** → 再 cherry-pick 会是**空提交 / already applied**，**不要做** |
+| 冲突 | `0968289` × `c3119bd` 二选一顺序 | `c3119bd` 已在 main → 只需 cherry-pick `0968289`，冲突形态见下 |
+| `ssrule` 模块 | 不在 main，`"/ss/"` 是死条目 | **已在 main**（`304ff94`）→ `"/ss/"` 现在是**活条目**，不再是死条目 |
+
+**冲突结论仍然成立（已用只读合并模拟复验）**：
+
+```
+$ git merge-tree --write-tree --merge-base=0968289^ origin/main 0968289
+CONFLICT (content): Merge conflict in backend/handlers/ai_gateway_anthropic.go
+→ 恰好 1 个冲突文件、1 个冲突块（行 647-660），与 §D2 / §D5 的预测一致
+```
+
+冲突块是 §D5.1 里 **Order A 的镜像形态**（因为 `c3119bd` 已在 main，现在是 HEAD 侧）：
+
+```
+647 <<<<<<< origin/main
+648 	// 使用 streamClient（body 无超时），避免 http.Client.Timeout 在长流时强制断开；
+650 	resp, err := doStreamRequest(h.streamClient, req)
+652 	stopPreHeartbeat()
+653 =======
+654 	// 使用按 provider 派生的 streamClient（body 无 Timeout），避免 http.Client.Timeout 在长流时强制断开；
+657 	resp, err := doStreamRequest(h.pickStreamClient(provider), req)
+659 	close(preUpstreamHeartbeatDone)
+660 >>>>>>> 0968289
+```
+
+**⇒ §D5.4 的解法逐字适用、且解法不变**：取 `h.pickStreamClient(provider)`（0968289 侧）
++ `stopPreHeartbeat()`（main 侧），**丢掉裸 `close(preUpstreamHeartbeatDone)`**。
+**§D5.5 的「Order B 优先」结论已失效**（不再有两条要排），但**结论解法（最终文件内容）不变**。
+
+**§L1 验收清单的期望计数在新基线上依然精确成立**（复验当前 main）：
+
+```
+$ grep -c "close(preUpstreamHeartbeatDone)" origin/main:backend/handlers/ai_gateway_anthropic.go  → 1
+$ grep -c "stopPreHeartbeat()"          origin/main:backend/handlers/ai_gateway_anthropic.go  → 3
+$ grep -c "pickStreamClient(provider)"  origin/main:backend/handlers/ai_gateway_anthropic.go  → 0
+$ grep -cE '^(<<<<<<<|=======|>>>>>>>)' origin/main:backend/handlers/ai_gateway_anthropic.go  → 0
+```
+
+解冲突后：`pickStreamClient(provider)` = **1** ✓ / `stopPreHeartbeat()` = **3** ✓ /
+裸 `close(preUpstreamHeartbeatDone)` = **1** ✓ / 冲突残留 = **0** ✓ → **L1 ①②③④ 的期望值全部对得上，无需改动。**
+
+> ⚠️ **§D1 / §D2 / §D5.5 涉及「6 条的 cherry-pick 顺序」的表述已按本节作废**，其余设计结论（D3–D13、L1–L10）**不受影响**。
+> ⚠️ **§「边界裁决」第 1 条（ssrule）的事实前提也已变**（ssrule 已随 `304ff94` 合入 main）。
+
 ---
 
 ## 目标与非目标
@@ -1119,6 +1191,11 @@ grep -c '"name": "devtools"' package-lock.json
      实测 `'/ss/foo'.startswith('/s/')` → **`False`**（`"/s/"` 不会前缀匹配 `"/ss/"`）。
      它只是**当前无路由命中的死条目**。**结论不变（不回填、无影响），但理由按此改写**，
      不要把「冗余前缀」当作理由 —— 两者性质不同（冗余条目会意外生效，死条目只是不生效）。
+   - **⚠️ 事实前提已变（2026-10-22 复查，见 §0.3）**：`ssrule` 模块已随 `304ff94`
+     合入 `origin/main`（`backend/handlers/ssrule.go` 等 7 个文件均在 main 上）
+     → `"/ss/"` **不再是死条目，而是活条目**。
+     **裁决本身（不回填）已无对象**（没有「要不要一起回填」这个选择了），**不影响本轮动作**；
+     上面那句「死条目」的描述**只对基线 81199bd 成立**，现予更正。
 
 2. **前端是否补 `header_timeout_sec` 输入框 → ✅ 裁决：本轮不补。**
    `*int` 语义保证「不传 = 不修改」，向后兼容已核实（见 D10）。
@@ -1206,6 +1283,15 @@ FINN-84（devtools-design-reviewer）判 **FAIL**，3 条阻塞项全部落在**
 | N7 | L8 把 `deploy.sh build-askit` 列为 QA 可执行命令 | **L8** | 从 QA 范围删除 → 改为「由 Stage 3 执行者跑；QA 只查产物存在性」，并注明缺产物**不判 FAIL** |
 | N8 | D11 的 `Content-Length` → chunked 缺下游判定口径 | **L10** | 补一条人工确认口径（前端零改动，进度条场景由 jaxiu 上线后看一眼），**不新增可执行命令** |
 | 裁决 1–6 | ssrule / 前端输入框 / 注释 / 迁移窗口 / 回滚 C4 / gofmt 口径 | **「边界裁决」章节** | 全部按 PM 拍板写定；`"/ss/"` 的理由改写为「无路由命中的死条目」并纠正「不是 `"/s/"` 冗余前缀」 |
+
+**另：复查时发现基线已过期（不在 PM 的 3 条 P0 内，本轮一并更正）**
+
+`origin/main` 在本单执行期间从 `81199bd` 前进到 **`d4f4755`**，
+且 6 条 commit 里的 **5 条 + ssrule 模块已经合入 main**（`304ff94`）→ **只剩 `0968289` 要回填**。
+已用只读 `git merge-tree` 复验：cherry-pick `0968289` 到新 main 仍是**恰好 1 个冲突文件 / 1 个冲突块**（行 647-660），
+形态是 §D5.1 **Order A 的镜像**，**§D5.4 的解法逐字适用、结论不变**；
+§L1 ①②③④ 的期望计数在新基线上**全部依然精确成立**（已逐条复验）。
+详见 **§0.3**。本次只**新增事实说明**，**未改 D1–D13 的设计结论**。
 
 **本轮修订的实测取证（本次亲自跑过）**
 
