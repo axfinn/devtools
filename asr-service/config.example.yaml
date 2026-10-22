@@ -1,7 +1,12 @@
 # ASR 服务配置
-# 复制为 config.yaml 后修改;所有字段都支持环境变量覆盖(以 ASR_ 为前缀,见下表)
+# 复制为 config.yaml(挂载到 /app/config.yaml)后修改。
 #
-# 字段              覆盖变量                  说明
+# 取值顺序:config.yaml(若存在) → 环境变量(ASR_ 前缀) → 内置默认值。
+# 也就是说 **文件存在时以文件为准**,环境变量不覆盖文件里的同名字段。
+# 镜像里只带这份示例(config.example.yaml),不安装成生效的 config.yaml,
+# 所以默认走环境变量 —— docker-compose.yml 里的 ASR_* 才是实际生效的那一套。
+#
+# 字段              环境变量                  说明
 # model             ASR_MODEL                 faster-whisper 模型
 # device            ASR_DEVICE                cpu | cuda
 # compute_type      ASR_COMPUTE_TYPE          int8
