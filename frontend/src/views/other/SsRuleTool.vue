@@ -137,7 +137,8 @@ const {
   verifyEndpoint: `${API_BASE}/api/ssrules/verify`,
   credentialMode: 'header',
   // header 模式读的是 headerName；credentialField 是 body/query 模式的字段名。
-  // 之前误传 credentialField，密码其实没走 header 路径。
+  // 原先误传 credentialField：值恰好等于 headerName 的默认值，所以请求头碰巧是对的，
+  // 但语义是错的（一旦默认头名变化就会失效）。这里按 useAdminAuth 的实际语义传。
   headerName: 'X-Super-Admin-Password',
 })
 
