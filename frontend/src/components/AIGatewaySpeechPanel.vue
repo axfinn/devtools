@@ -80,6 +80,7 @@
             <div v-if="syncAudioUrl" class="audio-result">
               <div class="result-title">音频预览</div>
               <audio :src="syncAudioUrl" controls style="width: 100%;" />
+              <el-button v-if="shareEnabled" type="primary" size="small" :loading="sharingSync" @click="shareSyncResult">保存分享</el-button>
             </div>
             <div class="result-title">最近响应</div>
             <pre class="speech-json">{{ syncResponsePretty }}</pre>
@@ -126,6 +127,7 @@
             <div v-if="asyncAudioUrl" class="audio-result">
               <div class="result-title">任务音频</div>
               <audio :src="asyncAudioUrl" controls style="width: 100%;" />
+              <el-button v-if="shareEnabled" type="primary" size="small" :loading="sharingAsync" @click="shareAsyncResult">保存分享</el-button>
             </div>
             <div class="result-title">当前任务</div>
             <pre class="speech-json">{{ currentTaskPretty }}</pre>
@@ -296,8 +298,14 @@ const props = defineProps({
   prefillApiKey: {
     type: String,
     default: ''
+  },
+  shareEnabled: {
+    type: Boolean,
+    default: false
   }
 })
+
+const emit = defineEmits(['share'])
 
 const activeTab = ref('sync')
 const debugApiKey = ref('')
@@ -339,6 +347,8 @@ const pollingTask = ref(false)
 const uploadingFile = ref(false)
 const designingVoice = ref(false)
 const cloningVoice = ref(false)
+const sharingSync = ref(false)
+const sharingAsync = ref(false)
 
 const syncResponse = ref(null)
 const syncAudioUrl = ref('')
@@ -1053,6 +1063,174 @@ function hexToBlob(hex, mime) {
   const pairs = normalized.match(/.{1,2}/g) || []
   const bytes = new Uint8Array(pairs.map(item => parseInt(item, 16)))
   return new Blob([bytes], { type: mime })
+}
+
+// ---- 保存分享（FINN-66 Stage3） ----
+const SHARE_TITLE_MAX = 120
+const SHARE_SUMMARY_MAX = 240
+const SHARE_AUDIO_MAX_BYTES = 20 * 1024 * 1024
+
+// 上游 MiniMax 响应里的音频直链：只有它才是资产 url 分支的合法来源
+function upstreamAudioUrl(resp) {
+  if (!resp || typeof resp !== 'object') return ''
+  const data = resp.data && typeof resp.data === 'object' ? resp.data : null
+  return String((data && data.audio_url) || resp.audio_url || '')
+}
+
+function isHttpsUrl(value) {
+  return /^https:\/\//i.test(String(value || ''))
+}
+
+// blob URL → data URL；重包 MIME 保证后端落库/回放的 content_type 正确。
+// http(s) 直链返回 null，交由调用方走资产 url 分支（后端服务端下载）。
+async function blobUrlToDataUrl(blobUrl, mime) {
+  const source = String(blobUrl || '')
+  if (!source.startsWith('blob:')) return null
+  const res = await fetch(source)
+  if (!res.ok) throw new Error('读取音频失败')
+  const raw = await res.blob()
+  if (raw.size > SHARE_AUDIO_MAX_BYTES) {
+    throw new Error('音频过大，无法直接保存分享')
+  }
+  return blobToDataUrl(raw, mime)
+}
+
+function blobToDataUrl(blob, mime) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('读取音频失败'))
+    reader.readAsDataURL(new Blob([blob], { type: mime }))
+  })
+}
+
+// 剔除上游响应里的内联音频（hex），其余元信息原样保留
+function stripInlineAudio(resp) {
+  if (!resp || typeof resp !== 'object') return resp
+  const out = { ...resp }
+  delete out.audio
+  delete out.audio_file
+  if (out.data && typeof out.data === 'object') {
+    const data = { ...out.data }
+    delete data.audio
+    delete data.audio_file
+    out.data = data
+  }
+  return out
+}
+
+function buildShareTitle(prefix, raw) {
+  const text = String(raw || '').trim()
+  if (!text) return prefix
+  return `${prefix} · ${text.slice(0, 36)}`.slice(0, SHARE_TITLE_MAX)
+}
+
+async function shareSyncResult() {
+  if (!syncAudioUrl.value) {
+    ElMessage.error('当前没有可分享的音频结果')
+    return
+  }
+  if (!hasAnyCredential()) {
+    ElMessage.error('请先填写调试 API Key，或在父页面输入超级管理员密码')
+    return
+  }
+  sharingSync.value = true
+  try {
+    const filename = `tts-${syncForm.model}.${syncForm.format}`
+    const assets = []
+    const upstreamUrl = upstreamAudioUrl(syncResponse.value)
+    if (isHttpsUrl(upstreamUrl) && upstreamUrl === syncAudioUrl.value) {
+      // 上游给了 https 直链：走资产 url 分支，由后端下载，不受体积闸门约束
+      assets.push({
+        url: upstreamUrl,
+        filename,
+        content_type: guessAudioMime(syncForm.format),
+        kind: 'audio'
+      })
+    } else {
+      const dataUrl = await blobUrlToDataUrl(syncAudioUrl.value, guessAudioMime(syncForm.format))
+      if (dataUrl) {
+        assets.push({
+          data_url: dataUrl,
+          filename,
+          content_type: guessAudioMime(syncForm.format),
+          kind: 'audio'
+        })
+      } else {
+        ElMessage.warning('该音频不是可保存的 https 直链，未包含音频资产')
+      }
+    }
+    emit('share', {
+      sourceLabel: '语音合成',
+      title: buildShareTitle('TTS', syncForm.text),
+      summary: `${syncForm.model} 同步合成 · 音色 ${syncForm.voiceId}`.slice(0, SHARE_SUMMARY_MAX),
+      resultType: 'speech',
+      model: syncForm.model,
+      payload: {
+        text: syncForm.text,
+        voice_id: syncForm.voiceId,
+        speed: syncForm.speed,
+        format: syncForm.format,
+        sample_rate: syncForm.sampleRate,
+        mode: 'sync',
+        raw: stripInlineAudio(syncResponse.value)
+      },
+      assets
+    })
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingSync.value = false
+  }
+}
+
+async function shareAsyncResult() {
+  if (!asyncAudioUrl.value) {
+    ElMessage.error('当前没有可分享的音频结果')
+    return
+  }
+  if (!hasAnyCredential()) {
+    ElMessage.error('请先填写调试 API Key，或在父页面输入超级管理员密码')
+    return
+  }
+  sharingAsync.value = true
+  try {
+    const filename = `tts-${asyncForm.model}.mp3`
+    const assets = []
+    const dataUrl = await blobUrlToDataUrl(asyncAudioUrl.value, 'audio/mpeg')
+    if (dataUrl) {
+      assets.push({
+        data_url: dataUrl,
+        filename,
+        content_type: 'audio/mpeg',
+        kind: 'audio'
+      })
+    } else {
+      ElMessage.warning('该音频不是可保存的本地音频，未包含音频资产')
+    }
+    const inputText = asyncForm.mode === 'text' ? asyncForm.text : asyncForm.textFileId
+    const taskId = extractTaskId(currentTask.value)
+    emit('share', {
+      sourceLabel: '语音合成',
+      title: buildShareTitle('TTS', inputText),
+      summary: `${asyncForm.model} 异步合成 · 音色 ${asyncForm.voiceId} · 任务 ${taskId}`.slice(0, SHARE_SUMMARY_MAX),
+      resultType: 'speech',
+      model: asyncForm.model,
+      payload: {
+        text: inputText,
+        voice_id: asyncForm.voiceId,
+        mode: asyncForm.mode,
+        ...(asyncForm.mode === 'file' ? { text_file_id: asyncForm.textFileId } : {}),
+        task_id: taskId,
+        raw: currentTask.value
+      },
+      assets
+    })
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingAsync.value = false
+  }
 }
 
 async function copyText(text) {

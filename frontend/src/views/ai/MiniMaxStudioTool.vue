@@ -162,7 +162,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="语音 / 音色" name="speech">
-        <AIGatewaySpeechPanel :super-admin-password="superAdminPassword" :prefill-api-key="apiKey" />
+        <AIGatewaySpeechPanel :super-admin-password="superAdminPassword" :prefill-api-key="apiKey" share-enabled @share="handleShareFromChild" />
       </el-tab-pane>
 
       <el-tab-pane label="媒体生成" name="media">
@@ -2143,14 +2143,22 @@ async function loadResultShareDocs() {
 function openShareDialog(source) {
   if (!requireCredential()) return
   try {
-    const draft = buildShareDraft(source)
-    shareDraft.value = draft
-    shareForm.value.title = draft.title
-    shareForm.value.summary = draft.summary
-    createShareVisible.value = true
+    openShareWithDraft(buildShareDraft(source))
   } catch (err) {
     ElMessage.error(err.message || '当前结果还不能保存分享')
   }
+}
+
+function openShareWithDraft(draft) {
+  shareDraft.value = draft
+  shareForm.value.title = draft.title
+  shareForm.value.summary = draft.summary
+  createShareVisible.value = true
+}
+
+function handleShareFromChild(draft) {
+  if (!requireCredential()) return
+  openShareWithDraft(draft)
 }
 
 function buildShareDraft(source) {
@@ -2461,7 +2469,8 @@ function shareTypeLabel(type) {
     media: '媒体',
     text: '文本',
     lyrics: '歌词',
-    cover_feature: '翻唱前处理'
+    cover_feature: '翻唱前处理',
+    image_understanding: '图像理解'
   }
   return map[type] || type || '-'
 }

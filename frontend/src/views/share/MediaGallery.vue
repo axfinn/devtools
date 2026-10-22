@@ -424,7 +424,7 @@ function fmtDate(val) {
 }
 
 function typeLabel(type) {
-  const map = { audio: '音乐', speech: '语音', video: '视频', image: '图片', media: '媒体', text: '文本' }
+  const map = { audio: '音乐', speech: '语音', video: '视频', image: '图片', media: '媒体', text: '文本', image_understanding: '图像理解' }
   return map[type] || type || '作品'
 }
 
