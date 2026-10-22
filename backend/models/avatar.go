@@ -29,9 +29,9 @@ type AvatarModel struct {
 	ID           string     `json:"id"`
 	OwnerID      string     `json:"owner_id,omitempty"` // creator_key(轻量 owner_id);空表示共享模型
 	Title        string     `json:"title"`
-	Filename     string     `json:"filename"`     // data/avatar/models/<id>.glb
-	Original     string     `json:"original"`     // 用户上传时的原始文件名
-	Format       string     `json:"format"`       // glb / gltf
+	Filename     string     `json:"filename"` // data/avatar/models/<id>.glb
+	Original     string     `json:"original"` // 用户上传时的原始文件名
+	Format       string     `json:"format"`   // glb / gltf
 	Size         int64      `json:"size"`
 	BoneCount    int        `json:"bone_count"`   // 骨骼数(前端解析时填,后端只存)
 	PolyCount    int        `json:"poly_count"`   // 三角面数
@@ -61,14 +61,14 @@ type AvatarClip struct {
 // 通过 GET /api/avatar/share/:code 取到 target_type + target_id,前端再决定要不要拿内容。
 // code 是 8 字节 hex(16 chars) —— 64-bit 空间,实际可注册数量远小于短链池,够用。
 type AvatarShare struct {
-	Code        string     `json:"code"`
-	TargetType  string     `json:"target_type"`  // "model" / "clip"
-	TargetID    string     `json:"target_id"`
-	OwnerID     string     `json:"-"`             // 创建者;json 不返回
-	PasswordHash string    `json:"-"`             // 访问密码(可选);空表示无密码
-	HitCount    int        `json:"hit_count"`     // 已访问次数
-	CreatedAt   time.Time  `json:"created_at"`
-	ExpiresAt   *time.Time `json:"expires_at"`
+	Code         string     `json:"code"`
+	TargetType   string     `json:"target_type"` // "model" / "clip"
+	TargetID     string     `json:"target_id"`
+	OwnerID      string     `json:"-"`         // 创建者;json 不返回
+	PasswordHash string     `json:"-"`         // 访问密码(可选);空表示无密码
+	HitCount     int        `json:"hit_count"` // 已访问次数
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at"`
 }
 
 // AvatarMeAsset 我的资产 —— 用户在调试时标记"我用过的模型",跨设备复用。
@@ -227,8 +227,9 @@ func (db *DB) GetAvatarModel(id string) (*AvatarModel, error) {
 // ListAvatarModels 分页列出 —— 三种模式:
 //   - ownerID == "": 全库(共享 + 所有用户的),系统共享放前面
 //   - ownerID == "alice": 共享 + alice 自己的
-//   - 共享 = owner_id IS NULL OR owner_id = ''
-// 系统共享(owner_id=NULL 或 owner_id='')放前面;同 owner 内按时间倒序。
+//   - 共享 = owner_id IS NULL OR owner_id = ”
+//
+// 系统共享(owner_id=NULL 或 owner_id=”)放前面;同 owner 内按时间倒序。
 func (db *DB) ListAvatarModels(ownerID string, limit, offset int) ([]*AvatarModel, error) {
 	var (
 		rows *sql.Rows

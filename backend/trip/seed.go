@@ -48,14 +48,14 @@ func (s *Service) SeedRealTrip(ctx context.Context, force bool) (string, bool, e
 	}
 
 	type seedActivity struct {
-		Kind       ActivityKind
-		Title      string
-		Location   string
-		Note       string
-		StartTime  string
-		City       string
-		Region     string
-		Country    string
+		Kind      ActivityKind
+		Title     string
+		Location  string
+		Note      string
+		StartTime string
+		City      string
+		Region    string
+		Country   string
 	}
 
 	type seedDay struct {

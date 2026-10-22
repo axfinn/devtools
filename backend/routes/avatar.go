@@ -9,10 +9,11 @@ import (
 // RegisterAvatarRoutes 注册虚拟形象模块路由
 //
 // 路由分组(P1 完整 §1.2 + 分享):
-//   /api/avatar/models            —— 模型库 CRUD(5)
-//   /api/avatar/me/assets         —— 我的资产(3)
-//   /api/avatar/clips             —— 姿态片段 CRUD(3)
-//   /api/avatar/share             —— 分享短链(3)
+//
+//	/api/avatar/models            —— 模型库 CRUD(5)
+//	/api/avatar/me/assets         —— 我的资产(3)
+//	/api/avatar/clips             —— 姿态片段 CRUD(3)
+//	/api/avatar/share             —— 分享短链(3)
 //
 // POST 端点接 createRateLimiter 中间件(10/min);GET / DELETE 不限流。
 // me/assets 端点要求 X-Creator-Key(R6/R7);share 端点创建可匿名(匿名 share 不可删)。

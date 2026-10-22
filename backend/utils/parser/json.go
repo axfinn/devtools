@@ -19,17 +19,17 @@ func NewJSONParser() *JSONParser {
 
 // JSONParseResult JSON 解析结果
 type JSONParseResult struct {
-	Original     string      `json:"original"`      // 原始内容
-	Formatted    string      `json:"formatted"`    // 格式化后的内容
-	Minified     string      `json:"minified"`     // 压缩后的内容
-	IsValid      bool        `json:"is_valid"`     // 是否为有效 JSON
-	ParseError   string      `json:"parse_error"`  // 解析错误信息
-	Type         string      `json:"type"`         // JSON 类型 (object, array, string, number, boolean, null)
-	Keys         []string    `json:"keys"`         // 顶层键名列表
-	ArrayLength  int         `json:"array_length"` // 数组长度（如果是数组）
-	Depth        int         `json:"depth"`        // 嵌套深度
-	ByteSize     int         `json:"byte_size"`    // 字节大小
-	LineCount    int         `json:"line_count"`   // 行数
+	Original    string   `json:"original"`     // 原始内容
+	Formatted   string   `json:"formatted"`    // 格式化后的内容
+	Minified    string   `json:"minified"`     // 压缩后的内容
+	IsValid     bool     `json:"is_valid"`     // 是否为有效 JSON
+	ParseError  string   `json:"parse_error"`  // 解析错误信息
+	Type        string   `json:"type"`         // JSON 类型 (object, array, string, number, boolean, null)
+	Keys        []string `json:"keys"`         // 顶层键名列表
+	ArrayLength int      `json:"array_length"` // 数组长度（如果是数组）
+	Depth       int      `json:"depth"`        // 嵌套深度
+	ByteSize    int      `json:"byte_size"`    // 字节大小
+	LineCount   int      `json:"line_count"`   // 行数
 }
 
 // Parse 解析 JSON 内容

@@ -21,25 +21,25 @@ func NewMarkdownParser() *MarkdownParser {
 
 // MarkdownParseResult Markdown 解析结果
 type MarkdownParseResult struct {
-	HTML        string   `json:"html"`         // 转换后的 HTML
-	TOC         string   `json:"toc"`          // 目录结构
-	WordCount   int      `json:"word_count"`  // 字数统计
-	LineCount   int      `json:"line_count"`  // 行数统计
-	HasCode     bool     `json:"has_code"`    // 是否包含代码块
-	HasImage    bool     `json:"has_image"`   // 是否包含图片
-	HasTable    bool     `json:"has_table"`   // 是否包含表格
-	CodeLangs   []string `json:"code_langs"`  // 代码语言列表
-	IsValid     bool     `json:"is_valid"`    // 是否为有效的 Markdown
-	ParseError  string   `json:"parse_error"` // 解析错误信息
+	HTML       string   `json:"html"`        // 转换后的 HTML
+	TOC        string   `json:"toc"`         // 目录结构
+	WordCount  int      `json:"word_count"`  // 字数统计
+	LineCount  int      `json:"line_count"`  // 行数统计
+	HasCode    bool     `json:"has_code"`    // 是否包含代码块
+	HasImage   bool     `json:"has_image"`   // 是否包含图片
+	HasTable   bool     `json:"has_table"`   // 是否包含表格
+	CodeLangs  []string `json:"code_langs"`  // 代码语言列表
+	IsValid    bool     `json:"is_valid"`    // 是否为有效的 Markdown
+	ParseError string   `json:"parse_error"` // 解析错误信息
 }
 
 // Parse 解析 Markdown 内容
 func (p *MarkdownParser) Parse(content string) *MarkdownParseResult {
 	if content == "" {
 		return &MarkdownParseResult{
-			IsValid:    true,
-			WordCount:  0,
-			LineCount:  0,
+			IsValid:   true,
+			WordCount: 0,
+			LineCount: 0,
 		}
 	}
 

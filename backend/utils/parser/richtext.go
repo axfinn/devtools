@@ -37,8 +37,8 @@ type RichTextParseResult struct {
 // Parse 解析富文本内容
 func (p *RichTextParser) Parse(content string) *RichTextParseResult {
 	result := &RichTextParseResult{
-		Original:   content,
-		IsValid:    false,
+		Original:  content,
+		IsValid:   false,
 		LineCount: strings.Count(content, "\n") + 1,
 		ByteSize:  len(content),
 	}

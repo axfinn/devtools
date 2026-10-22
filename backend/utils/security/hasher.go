@@ -158,10 +158,10 @@ func (h *Hasher) GenerateContentID(content string) string {
 
 // ContentSignature 内容签名
 type ContentSignature struct {
-	ContentHash   string    `json:"content_hash"`   // 内容哈希
-	PreviousHash  string    `json:"previous_hash"` // 前一个哈希
-	Timestamp     time.Time `json:"timestamp"`     // 时间戳
-	Metadata      string    `json:"metadata"`       // 元数据
+	ContentHash  string    `json:"content_hash"`  // 内容哈希
+	PreviousHash string    `json:"previous_hash"` // 前一个哈希
+	Timestamp    time.Time `json:"timestamp"`     // 时间戳
+	Metadata     string    `json:"metadata"`      // 元数据
 }
 
 // CreateChain 创建内容链

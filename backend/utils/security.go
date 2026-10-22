@@ -10,28 +10,28 @@ import (
 // 用于通过文件头部字节识别真实文件类型
 // 注意：顺序很重要，需要先匹配更长的签名
 var MagicBytesSignatures = []struct {
-	fileType  string
-	magic     []byte
+	fileType   string
+	magic      []byte
 	extraCheck func([]byte) bool // 可选的额外检查函数
 }{
 	// 图片格式 - 需要更长的签名以避免冲突
-	{"avif", []byte{0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66}, nil}, // ftypavif (12 bytes)
+	{"avif", []byte{0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66}, nil},                      // ftypavif (12 bytes)
 	{"webp", []byte{0x52, 0x49, 0x46, 0x46}, func(b []byte) bool { return len(b) >= 12 && string(b[8:12]) == "WEBP" }}, // RIFF....WEBP
-	{"png", []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, nil}, // 8 bytes PNG
-	{"tiff", []byte{0x49, 0x49, 0x2A, 0x00}, nil}, // Little endian TIFF
-	{"tiff", []byte{0x4D, 0x4D, 0x00, 0x2A}, nil}, // Big endian TIFF
-	{"gif", []byte{0x47, 0x49, 0x46, 0x38}, nil}, // GIF
-	{"bmp", []byte{0x42, 0x4D}, nil}, // BM
+	{"png", []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, nil},                                               // 8 bytes PNG
+	{"tiff", []byte{0x49, 0x49, 0x2A, 0x00}, nil},                                                                      // Little endian TIFF
+	{"tiff", []byte{0x4D, 0x4D, 0x00, 0x2A}, nil},                                                                      // Big endian TIFF
+	{"gif", []byte{0x47, 0x49, 0x46, 0x38}, nil},                                                                       // GIF
+	{"bmp", []byte{0x42, 0x4D}, nil},                                                                                   // BM
 	{"ico", []byte{0x00, 0x00, 0x01, 0x00}, nil},
 	{"jpg", []byte{0xFF, 0xD8, 0xFF}, nil}, // JPEG
 	{"jpeg", []byte{0xFF, 0xD8, 0xFF}, nil},
 
 	// 视频格式
 	{"webm", []byte{0x1A, 0x45, 0xDF, 0xA3}, nil}, // WebM
-	{"mkv", []byte{0x1A, 0x45, 0xDF, 0xA3}, nil}, // Matroska (same as webm)
+	{"mkv", []byte{0x1A, 0x45, 0xDF, 0xA3}, nil},  // Matroska (same as webm)
 
 	// 音频格式
-	{"ogg", []byte{0x4F, 0x67, 0x67, 0x53}, nil}, // OggS
+	{"ogg", []byte{0x4F, 0x67, 0x67, 0x53}, nil},  // OggS
 	{"flac", []byte{0x66, 0x4C, 0x61, 0x43}, nil}, // fLaC
 	{"wav", []byte{0x52, 0x49, 0x46, 0x46}, func(b []byte) bool { return len(b) >= 12 && string(b[8:12]) == "WAVE" }}, // RIFF....WAVE
 	{"avi", []byte{0x52, 0x49, 0x46, 0x46}, func(b []byte) bool { return len(b) >= 12 && string(b[8:12]) == "AVI " }}, // RIFF....AVI
@@ -54,10 +54,10 @@ var MagicBytesSignatures = []struct {
 	// 压缩包格式
 	{"zip", []byte{0x50, 0x4B, 0x03, 0x04}, nil}, // ZIP
 	{"rar", []byte{0x52, 0x61, 0x72, 0x21}, nil}, // Rar!
-	{"7z", []byte{0x37, 0x7A, 0xBC, 0xAF}, nil}, // 7zbc
+	{"7z", []byte{0x37, 0x7A, 0xBC, 0xAF}, nil},  // 7zbc
 	{"tar", []byte{0x75, 0x73, 0x74, 0x61}, nil}, // ustar
-	{"gz", []byte{0x1F, 0x8B}, nil}, // gzip
-	{"bz2", []byte{0x42, 0x5A, 0x68}, nil}, // BZh
+	{"gz", []byte{0x1F, 0x8B}, nil},              // gzip
+	{"bz2", []byte{0x42, 0x5A, 0x68}, nil},       // BZh
 	{"xz", []byte{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, nil},
 
 	// MP4 - 需要特殊处理，因为它可能以各种大小开头
@@ -120,19 +120,19 @@ var suspiciousURLPatterns = []string{
 
 // 恶意文件特征（简化检测，不依赖外部库）
 var maliciousPatterns = []string{
-	`\x00\x00\x00`,               // 空字节头部
-	`PK\x03\x04.*\.exe`,         // 伪装成zip的可执行文件
-	`MZ.*\.pif`,                  // PIF文件
-	`\.scr\s`,                    // 屏保文件
-	`\.bat\s`,                    // 批处理文件
-	`\.cmd\s`,                    // CMD文件
-	`<script[^>]*>`,              // 脚本标签
-	`javascript:`,                // JS协议
-	`onerror=`,                   // 事件处理器
-	`onclick=`,                   // 事件处理器
-	`eval\(`,                     // eval执行
-	`document\.cookie`,           // Cookie访问
-	`window\.location`,           // 位置操作
+	`\x00\x00\x00`,      // 空字节头部
+	`PK\x03\x04.*\.exe`, // 伪装成zip的可执行文件
+	`MZ.*\.pif`,         // PIF文件
+	`\.scr\s`,           // 屏保文件
+	`\.bat\s`,           // 批处理文件
+	`\.cmd\s`,           // CMD文件
+	`<script[^>]*>`,     // 脚本标签
+	`javascript:`,       // JS协议
+	`onerror=`,          // 事件处理器
+	`onclick=`,          // 事件处理器
+	`eval\(`,            // eval执行
+	`document\.cookie`,  // Cookie访问
+	`window\.location`,  // 位置操作
 }
 
 // 可疑文件扩展名白名单
@@ -182,10 +182,10 @@ func CompileMaliciousPatterns() []MaliciousPattern {
 
 // SecurityScanResult 扫描结果
 type SecurityScanResult struct {
-	IsSafe       bool     `json:"is_safe"`
-	HasVirus     bool     `json:"has_virus"`
-	HasSuspiciousURL bool `json:"has_suspicious_url"`
-	Warnings     []string `json:"warnings"`
+	IsSafe           bool     `json:"is_safe"`
+	HasVirus         bool     `json:"has_virus"`
+	HasSuspiciousURL bool     `json:"has_suspicious_url"`
+	Warnings         []string `json:"warnings"`
 }
 
 // ScanContent 扫描文本内容

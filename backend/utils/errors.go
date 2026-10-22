@@ -9,8 +9,8 @@ import (
 
 // AppError 应用程序错误类型
 type AppError struct {
-	Code    int    `json:"code"`           // HTTP 状态码
-	Message string `json:"error"`          // 用户友好的错误信息
+	Code    int    `json:"code"`             // HTTP 状态码
+	Message string `json:"error"`            // 用户友好的错误信息
 	Detail  string `json:"detail,omitempty"` // 详细错误信息（可选）
 }
 

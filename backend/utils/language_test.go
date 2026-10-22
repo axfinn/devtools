@@ -81,15 +81,15 @@ func TestDetectLanguage(t *testing.T) {
 			expected: "text",
 		},
 		{
-			name:     "Go with package and import",
-			content:  `package main
+			name: "Go with package and import",
+			content: `package main
 import "fmt"
 func main() { fmt.Println("Hello") }`,
 			expected: "go",
 		},
 		{
-			name:     "Python with class",
-			content:  `class Hello:
+			name: "Python with class",
+			content: `class Hello:
     def __init__(self):
         pass`,
 			expected: "python",
@@ -105,21 +105,21 @@ func main() { fmt.Println("Hello") }`,
 			expected: "typescript",
 		},
 		{
-			name:     "Bash script",
-			content:  `#!/bin/bash
+			name: "Bash script",
+			content: `#!/bin/bash
 echo "Hello"`,
 			expected: "bash",
 		},
 		{
-			name:     "Ruby def",
-			content:  `def hello
+			name: "Ruby def",
+			content: `def hello
   puts "Hello"
 end`,
 			expected: "ruby",
 		},
 		{
-			name:     "PHP tag",
-			content:  `<?php
+			name: "PHP tag",
+			content: `<?php
 echo "Hello";`,
 			expected: "php",
 		},
@@ -143,34 +143,34 @@ echo "Hello";`,
 
 func TestDetectContentType(t *testing.T) {
 	tests := []struct {
-		name      string
-		content   string
-		language  string
-		expected  string
+		name     string
+		content  string
+		language string
+		expected string
 	}{
 		{
-			name:      "Markdown language",
-			content:   "# Hello",
-			language:  "markdown",
-			expected:  "markdown",
+			name:     "Markdown language",
+			content:  "# Hello",
+			language: "markdown",
+			expected: "markdown",
 		},
 		{
-			name:      "JavaScript code",
-			content:   "function hello() { console.log('Hello'); }",
-			language:  "javascript",
-			expected:  "code",
+			name:     "JavaScript code",
+			content:  "function hello() { console.log('Hello'); }",
+			language: "javascript",
+			expected: "code",
 		},
 		{
-			name:      "Plain text",
-			content:   "Hello, this is plain text.",
-			language:  "text",
-			expected:  "text",
+			name:     "Plain text",
+			content:  "Hello, this is plain text.",
+			language: "text",
+			expected: "text",
 		},
 		{
-			name:      "Empty content",
-			content:   "",
-			language:  "text",
-			expected:  "text",
+			name:     "Empty content",
+			content:  "",
+			language: "text",
+			expected: "text",
 		},
 	}
 

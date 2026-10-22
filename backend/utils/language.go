@@ -10,52 +10,52 @@ import (
 
 // commonPatterns 常用模式
 var (
-	goFuncPattern = regexp.MustCompile(`(?i)func\s+(\w+|\()`)
+	goFuncPattern    = regexp.MustCompile(`(?i)func\s+(\w+|\()`)
 	goPackagePattern = regexp.MustCompile(`(?i)package\s+\w+`)
-	goImportPattern = regexp.MustCompile(`(?i)import\s+(\(|")`)
-	goFmtPattern = regexp.MustCompile(`(?i)fmt\.`)
+	goImportPattern  = regexp.MustCompile(`(?i)import\s+(\(|")`)
+	goFmtPattern     = regexp.MustCompile(`(?i)fmt\.`)
 
-	jsFuncPattern = regexp.MustCompile(`(?i)(function\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|=>\s*\{)`)
+	jsFuncPattern    = regexp.MustCompile(`(?i)(function\s+\w+|const\s+\w+\s*=|let\s+\w+\s*=|var\s+\w+\s*=|=>\s*\{)`)
 	jsConsolePattern = regexp.MustCompile(`(?i)console\.(log|error|warn)`)
-	jsImportPattern = regexp.MustCompile(`(?i)(require\s*\(|module\.exports|import\s+.*from)`)
+	jsImportPattern  = regexp.MustCompile(`(?i)(require\s*\(|module\.exports|import\s+.*from)`)
 
-	pyDefPattern = regexp.MustCompile(`(?i)def\s+\w+\s*\(`)
-	pyClassPattern = regexp.MustCompile(`(?i)class\s+\w+\s*(:|\()`)
+	pyDefPattern    = regexp.MustCompile(`(?i)def\s+\w+\s*\(`)
+	pyClassPattern  = regexp.MustCompile(`(?i)class\s+\w+\s*(:|\()`)
 	pyImportPattern = regexp.MustCompile(`(?i)(import\s+\w+|from\s+\w+\s+import)`)
 
-	tsTypePattern = regexp.MustCompile(`:\s*(string|number|boolean|any|void|never|unknown|object)\b`)
+	tsTypePattern      = regexp.MustCompile(`:\s*(string|number|boolean|any|void|never|unknown|object)\b`)
 	tsInterfacePattern = regexp.MustCompile(`(?i)interface\s+\w+`)
 
 	javaPublicPattern = regexp.MustCompile(`(?i)public\s+(static\s+)?(void|class|interface|enum)`)
 	javaSystemPattern = regexp.MustCompile(`(?i)System\.out\.print`)
 
 	cIncludePattern = regexp.MustCompile(`(?i)#include\s+[<"]`)
-	cMainPattern = regexp.MustCompile(`(?i)int\s+main\s*\(`)
-	cPrintfPattern = regexp.MustCompile(`(?i)printf\s*\(`)
+	cMainPattern    = regexp.MustCompile(`(?i)int\s+main\s*\(`)
+	cPrintfPattern  = regexp.MustCompile(`(?i)printf\s*\(`)
 
-	cppStdPattern = regexp.MustCompile(`(?i)std::`)
+	cppStdPattern      = regexp.MustCompile(`(?i)std::`)
 	cppIostreamPattern = regexp.MustCompile(`(?i)#include\s+<iostream>`)
 
-	csUsingPattern = regexp.MustCompile(`(?i)using\s+System`)
+	csUsingPattern     = regexp.MustCompile(`(?i)using\s+System`)
 	csNamespacePattern = regexp.MustCompile(`(?i)namespace\s+\w+`)
 
 	phpTagPattern = regexp.MustCompile(`<\?php`)
 	phpVarPattern = regexp.MustCompile(`\$\w+\s*=`)
 
-	rubyDefPattern = regexp.MustCompile(`(?i)def\s+\w+`)
+	rubyDefPattern   = regexp.MustCompile(`(?i)def\s+\w+`)
 	rubyClassPattern = regexp.MustCompile(`(?i)class\s+\w+`)
 
 	swiftFuncPattern = regexp.MustCompile(`(?i)func\s+\w+`)
-	swiftVarPattern = regexp.MustCompile(`(?i)(var\s+\w+\s*:|let\s+\w+\s*:)`)
+	swiftVarPattern  = regexp.MustCompile(`(?i)(var\s+\w+\s*:|let\s+\w+\s*:)`)
 
 	ktFunPattern = regexp.MustCompile(`(?i)fun\s+\w+`)
 	ktValPattern = regexp.MustCompile(`(?i)(val\s+\w+\s*:|var\s+\w+\s*:)`)
 
-	htmlTagPattern = regexp.MustCompile(`(?i)<(html|head|body|div|span|p|a|img|script|style|link)`)
+	htmlTagPattern     = regexp.MustCompile(`(?i)<(html|head|body|div|span|p|a|img|script|style|link)`)
 	htmlDoctypePattern = regexp.MustCompile(`(?i)<!DOCTYPE\s+html`)
 
 	cssSelectorPattern = regexp.MustCompile(`(\.|#)[\w-]+\s*\{`)
-	cssPropPattern = regexp.MustCompile(`[\w-]+\s*:\s*[^;]+;`)
+	cssPropPattern     = regexp.MustCompile(`[\w-]+\s*:\s*[^;]+;`)
 
 	jsonPattern = regexp.MustCompile(`^\s*\{.*".*":\s*`)
 
@@ -64,10 +64,10 @@ var (
 	sqlSelectPattern = regexp.MustCompile(`(?i)(SELECT\s+.*FROM|INSERT\s+INTO|UPDATE\s+.*SET|DELETE\s+FROM)`)
 
 	bashShebangPattern = regexp.MustCompile(`^#!.*/(bash|sh)`)
-	bashEchoPattern = regexp.MustCompile(`(?i)(echo\s+|printf\s+|source\s+)`)
+	bashEchoPattern    = regexp.MustCompile(`(?i)(echo\s+|printf\s+|source\s+)`)
 
 	markdownHeaderPattern = regexp.MustCompile("(?mi)^#{1,6}\\s+")
-	markdownListPattern = regexp.MustCompile("(?mi)^\\s*[-*+]\\s+")
+	markdownListPattern   = regexp.MustCompile("(?mi)^\\s*[-*+]\\s+")
 
 	dockerfilePattern = regexp.MustCompile(`(?i)(FROM\s+\w+|RUN\s+|CMD\s+|ENTRYPOINT\s+|ENV\s+|COPY\s+)`)
 

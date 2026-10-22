@@ -18,18 +18,18 @@ func NewCSVParser() *CSVParser {
 
 // CSVParseResult CSV 解析结果
 type CSVParseResult struct {
-	Original      string     `json:"original"`       // 原始内容
-	Headers       []string   `json:"headers"`        // 表头
-	Rows          [][]string  `json:"rows"`           // 数据行
-	Formatted     string     `json:"formatted"`      // 格式化后的内容
-	IsValid       bool       `json:"is_valid"`       // 是否为有效 CSV
-	ParseError    string     `json:"parse_error"`    // 解析错误信息
-	RowCount      int        `json:"row_count"`      // 行数（不含表头）
-	ColumnCount   int        `json:"column_count"`   // 列数
-	HasHeader     bool       `json:"has_header"`     // 是否有表头
-	Delimiter     string     `json:"delimiter"`      // 分隔符
-	ByteSize      int        `json:"byte_size"`      // 字节大小
-	LineCount     int        `json:"line_count"`     // 行数
+	Original    string     `json:"original"`     // 原始内容
+	Headers     []string   `json:"headers"`      // 表头
+	Rows        [][]string `json:"rows"`         // 数据行
+	Formatted   string     `json:"formatted"`    // 格式化后的内容
+	IsValid     bool       `json:"is_valid"`     // 是否为有效 CSV
+	ParseError  string     `json:"parse_error"`  // 解析错误信息
+	RowCount    int        `json:"row_count"`    // 行数（不含表头）
+	ColumnCount int        `json:"column_count"` // 列数
+	HasHeader   bool       `json:"has_header"`   // 是否有表头
+	Delimiter   string     `json:"delimiter"`    // 分隔符
+	ByteSize    int        `json:"byte_size"`    // 字节大小
+	LineCount   int        `json:"line_count"`   // 行数
 }
 
 // TableData 表格数据结构
@@ -43,11 +43,11 @@ type TableData struct {
 // Parse 解析 CSV 内容
 func (p *CSVParser) Parse(content string) *CSVParseResult {
 	result := &CSVParseResult{
-		Original:   content,
-		IsValid:    false,
-		LineCount:  strings.Count(content, "\n") + 1,
-		ByteSize:   len(content),
-		Delimiter:  ",",
+		Original:  content,
+		IsValid:   false,
+		LineCount: strings.Count(content, "\n") + 1,
+		ByteSize:  len(content),
+		Delimiter: ",",
 	}
 
 	if content == "" {

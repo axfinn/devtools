@@ -584,12 +584,12 @@ func (r *SQLiteRepository) ListDueReminders(ctx context.Context, from, to time.T
 	var out []*ActivityReminderItem
 	for rows.Next() {
 		var (
-			a     Activity
-			d     DayPlan
-			t     Trip
-			destA string
-			destD string
-			tags  string
+			a      Activity
+			d      DayPlan
+			t      Trip
+			destA  string
+			destD  string
+			tags   string
 			cities string
 			emails string
 		)

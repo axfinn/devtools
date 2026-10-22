@@ -208,18 +208,18 @@ func (s *Service) ListExpenses(ctx context.Context, tripID string) ([]*Expense, 
 // 多币种情况下,不同 currency 的金额直接相加不做汇率折算
 // (汇总期用户可一眼看出"哪几天用的是别的币种")。
 type Summary struct {
-	Trip              *Trip                       `json:"trip"`
-	TotalSpentCents   int64                       `json:"total_spent_cents"`
-	Currency          string                      `json:"currency"` // 默认用 trip 的预算币种
-	ByCategory        map[ExpenseKind]int64       `json:"by_category_cents"`
-	ByDay             map[string]int64            `json:"by_day_cents"` // date -> cents
-	TopCategories     []CategorySpend             `json:"top_categories"`
-	ExpenseCount      int                         `json:"expense_count"`
-	OtherCurrencies   []string                    `json:"other_currencies,omitempty"`
-	RemainingCents    int64                       `json:"remaining_cents,omitempty"` // BudgetTotal - TotalSpentCents;无预算则为 0
-	OverBudget        bool                        `json:"over_budget"`
-	DaysCovered       int                         `json:"days_covered"`
-	AveragePerDayCents int64                      `json:"average_per_day_cents,omitempty"`
+	Trip               *Trip                 `json:"trip"`
+	TotalSpentCents    int64                 `json:"total_spent_cents"`
+	Currency           string                `json:"currency"` // 默认用 trip 的预算币种
+	ByCategory         map[ExpenseKind]int64 `json:"by_category_cents"`
+	ByDay              map[string]int64      `json:"by_day_cents"` // date -> cents
+	TopCategories      []CategorySpend       `json:"top_categories"`
+	ExpenseCount       int                   `json:"expense_count"`
+	OtherCurrencies    []string              `json:"other_currencies,omitempty"`
+	RemainingCents     int64                 `json:"remaining_cents,omitempty"` // BudgetTotal - TotalSpentCents;无预算则为 0
+	OverBudget         bool                  `json:"over_budget"`
+	DaysCovered        int                   `json:"days_covered"`
+	AveragePerDayCents int64                 `json:"average_per_day_cents,omitempty"`
 }
 
 type CategorySpend struct {

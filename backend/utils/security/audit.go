@@ -18,25 +18,25 @@ type AuditLogger struct {
 
 // AuditEvent 审计事件
 type AuditEvent struct {
-	EventID     string                 `json:"event_id"`      // 事件ID
-	EventType   string                 `json:"event_type"`    // 事件类型
-	Timestamp   string                 `json:"timestamp"`     // 时间戳
+	EventID     string                 `json:"event_id"`     // 事件ID
+	EventType   string                 `json:"event_type"`   // 事件类型
+	Timestamp   string                 `json:"timestamp"`    // 时间戳
 	SourceIP    string                 `json:"source_ip"`    // 来源IP
-	UserAgent   string                 `json:"user_agent"`    // 用户代理
-	Action      string                 `json:"action"`        // 操作
-	Resource    string                 `json:"resource"`      // 资源
-	Result      string                 `json:"result"`        // 结果: success, failure, blocked
+	UserAgent   string                 `json:"user_agent"`   // 用户代理
+	Action      string                 `json:"action"`       // 操作
+	Resource    string                 `json:"resource"`     // 资源
+	Result      string                 `json:"result"`       // 结果: success, failure, blocked
 	Details     map[string]interface{} `json:"details"`      // 详细信息
-	Severity    string                 `json:"severity"`      // 严重程度: info, warning, error, critical
+	Severity    string                 `json:"severity"`     // 严重程度: info, warning, error, critical
 	ContentHash string                 `json:"content_hash"` // 内容哈希
 }
 
 // EventType 事件类型常量
 var (
-	EventTypeCreatePaste  = "create_paste"
-	EventTypeAccessPaste  = "access_paste"
-	EventTypeDeletePaste  = "delete_paste"
-	EventTypeUploadFile   = "upload_file"
+	EventTypeCreatePaste = "create_paste"
+	EventTypeAccessPaste = "access_paste"
+	EventTypeDeletePaste = "delete_paste"
+	EventTypeUploadFile  = "upload_file"
 	EventTypeScanContent = "scan_content"
 	EventTypeSensitive   = "sensitive_detected"
 	EventTypeXSS         = "xss_detected"
@@ -249,11 +249,11 @@ func (l *AuditLogger) GetStatistics(startTime, endTime time.Time) (map[string]in
 	}
 
 	stats := map[string]interface{}{
-		"total_events":    len(events),
-		"by_type":         map[string]int{},
-		"by_result":       map[string]int{},
-		"by_severity":     map[string]int{},
-		"by_source_ip":    map[string]int{},
+		"total_events": len(events),
+		"by_type":      map[string]int{},
+		"by_result":    map[string]int{},
+		"by_severity":  map[string]int{},
+		"by_source_ip": map[string]int{},
 	}
 
 	typeCounts := stats["by_type"].(map[string]int)

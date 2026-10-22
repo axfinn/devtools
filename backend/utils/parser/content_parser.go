@@ -42,23 +42,23 @@ func NewContentParser() *ContentParser {
 
 // UnifiedParseResult 统一解析结果
 type UnifiedParseResult struct {
-	ContentType ContentType   `json:"content_type"` // 检测到的内容类型
-	IsValid     bool          `json:"is_valid"`     // 内容是否有效
-	CanParse    bool          `json:"can_parse"`    // 是否可以被解析
-	ParsedData  interface{}   `json:"parsed_data"`  // 解析后的数据
-	Error       string        `json:"error"`        // 错误信息
-	Metadata    ContentMeta   `json:"metadata"`     // 元数据
+	ContentType ContentType `json:"content_type"` // 检测到的内容类型
+	IsValid     bool        `json:"is_valid"`     // 内容是否有效
+	CanParse    bool        `json:"can_parse"`    // 是否可以被解析
+	ParsedData  interface{} `json:"parsed_data"`  // 解析后的数据
+	Error       string      `json:"error"`        // 错误信息
+	Metadata    ContentMeta `json:"metadata"`     // 元数据
 }
 
 // ContentMeta 内容元数据
 type ContentMeta struct {
-	OriginalFormat string `json:"original_format"` // 原始格式
-	Language      string `json:"language"`        // 编程语言
-	LineCount     int    `json:"line_count"`      // 行数
-	ByteSize      int    `json:"byte_size"`       // 字节大小
-	HasLineNumbers bool  `json:"has_line_numbers"` // 是否有行号
-	IsEncrypted   bool   `json:"is_encrypted"`    // 是否加密
-	DetectedFrom  string `json:"detected_from"`   // 检测来源
+	OriginalFormat string `json:"original_format"`  // 原始格式
+	Language       string `json:"language"`         // 编程语言
+	LineCount      int    `json:"line_count"`       // 行数
+	ByteSize       int    `json:"byte_size"`        // 字节大小
+	HasLineNumbers bool   `json:"has_line_numbers"` // 是否有行号
+	IsEncrypted    bool   `json:"is_encrypted"`     // 是否加密
+	DetectedFrom   string `json:"detected_from"`    // 检测来源
 }
 
 // Parse 自动检测并解析内容
@@ -69,8 +69,8 @@ func (cp *ContentParser) Parse(content string) *UnifiedParseResult {
 		CanParse:    false,
 		Metadata: ContentMeta{
 			OriginalFormat: "unknown",
-			LineCount:       strings.Count(content, "\n") + 1,
-			ByteSize:        len(content),
+			LineCount:      strings.Count(content, "\n") + 1,
+			ByteSize:       len(content),
 		},
 	}
 
@@ -296,15 +296,15 @@ func isMarkdown(content string) bool {
 
 	// 检查 Markdown 特征
 	patterns := []string{
-		`^#{1,6}\s+`,           // 标题
-		`^\*\s+`,               // 无序列表
-		`^-\s+`,                // 无序列表
-		`^\d+\.\s+`,            // 有序列表
-		`\[.+?\]\(.+?\)`,       // 链接
-		`!\[.*?\]\(.+?\)`,      // 图片
-		`\*\*.*?\*\*`,          // 加粗
-		`\*.*?\*`,              // 斜体
-		`\|.+\|`,               // 表格
+		`^#{1,6}\s+`,      // 标题
+		`^\*\s+`,          // 无序列表
+		`^-\s+`,           // 无序列表
+		`^\d+\.\s+`,       // 有序列表
+		`\[.+?\]\(.+?\)`,  // 链接
+		`!\[.*?\]\(.+?\)`, // 图片
+		`\*\*.*?\*\*`,     // 加粗
+		`\*.*?\*`,         // 斜体
+		`\|.+\|`,          // 表格
 	}
 
 	count := 0
@@ -349,25 +349,25 @@ func isCode(content string) bool {
 
 	// 检查代码特征
 	codePatterns := []string{
-		`^package\s+\w+`,                          // Go
-		`^import\s+`,                              // 导入
-		`^func\s+`,                                // 函数
-		`^class\s+\w+`,                           // 类
-		`^def\s+`,                                // Python
-		`^function\s+`,                           // JS
-		`^const\s+\w+\s*=`,                       // JS 常量
-		`^let\s+\w+\s*=`,                         // JS 变量
-		`^var\s+\w+\s*=`,                         // JS 变量
-		`^public\s+`,                             // Java/C#
-		`^private\s+`,                            // Java/C#
-		`^import\s+\w+`,                          // Java/Python
-		`^from\s+\w+\s+import`,                   // Python
-		`^#include\s*<`,                          // C/C++
-		`^using\s+namespace`,                     // C++
-		`^\$\w+\s*=\s*`,                          // PHP/Shell
-		`^\s*SELECT\s+`,                          // SQL
-		`^\s*INSERT\s+`,                          // SQL
-		`^\s*CREATE\s+TABLE`,                     // SQL
+		`^package\s+\w+`,       // Go
+		`^import\s+`,           // 导入
+		`^func\s+`,             // 函数
+		`^class\s+\w+`,         // 类
+		`^def\s+`,              // Python
+		`^function\s+`,         // JS
+		`^const\s+\w+\s*=`,     // JS 常量
+		`^let\s+\w+\s*=`,       // JS 变量
+		`^var\s+\w+\s*=`,       // JS 变量
+		`^public\s+`,           // Java/C#
+		`^private\s+`,          // Java/C#
+		`^import\s+\w+`,        // Java/Python
+		`^from\s+\w+\s+import`, // Python
+		`^#include\s*<`,        // C/C++
+		`^using\s+namespace`,   // C++
+		`^\$\w+\s*=\s*`,        // PHP/Shell
+		`^\s*SELECT\s+`,        // SQL
+		`^\s*INSERT\s+`,        // SQL
+		`^\s*CREATE\s+TABLE`,   // SQL
 	}
 
 	count := 0
@@ -402,23 +402,23 @@ func (cp *ContentParser) detectLanguage(content string) string {
 
 	// 简单语言检测
 	patterns := map[string][]string{
-		"go":       {"package ", "func ", "import (", "go func", ":="},
-		"python":   {"def ", "import ", "from ", "class ", "print("},
+		"go":         {"package ", "func ", "import (", "go func", ":="},
+		"python":     {"def ", "import ", "from ", "class ", "print("},
 		"javascript": {"function ", "const ", "let ", "var ", "=>", "require("},
 		"typescript": {"interface ", ": string", ": number", ": boolean", "<T>"},
-		"java":     {"public class", "private ", "public static", "system.out"},
-		"c":        {"#include", "int main", "printf", "scanf", "void "},
-		"cpp":      {"#include <iostream>", "std::", "cout", "cin", "namespace "},
-		"csharp":   {"using system", "namespace ", "public class", "console.writeline"},
-		"php":      {"<?php", "echo ", "$", "function ", "class "},
-		"ruby":     {"def ", "end", "require ", "class ", "puts "},
-		"rust":     {"fn ", "let mut", "impl ", "pub fn", "use "},
-		"sql":      {"select ", "insert ", "update ", "delete ", "from ", "where "},
-		"html":     {"<html", "<div", "<span", "<!doctype"},
-		"css":      {"{", "}", "margin", "padding", "color:", "background:"},
-		"shell":    {"#!/bin/bash", "echo ", "if [", "fi", "done"},
-		"yaml":     {"- ", ": ", "---"},
-		"json":     {"{", "}", ":"},
+		"java":       {"public class", "private ", "public static", "system.out"},
+		"c":          {"#include", "int main", "printf", "scanf", "void "},
+		"cpp":        {"#include <iostream>", "std::", "cout", "cin", "namespace "},
+		"csharp":     {"using system", "namespace ", "public class", "console.writeline"},
+		"php":        {"<?php", "echo ", "$", "function ", "class "},
+		"ruby":       {"def ", "end", "require ", "class ", "puts "},
+		"rust":       {"fn ", "let mut", "impl ", "pub fn", "use "},
+		"sql":        {"select ", "insert ", "update ", "delete ", "from ", "where "},
+		"html":       {"<html", "<div", "<span", "<!doctype"},
+		"css":        {"{", "}", "margin", "padding", "color:", "background:"},
+		"shell":      {"#!/bin/bash", "echo ", "if [", "fi", "done"},
+		"yaml":       {"- ", ": ", "---"},
+		"json":       {"{", "}", ":"},
 	}
 
 	for lang, patterns := range patterns {
