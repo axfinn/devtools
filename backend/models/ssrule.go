@@ -20,6 +20,9 @@ const ssRuleFileID = "default"
 //   - Content 是按 ACL 模板生成好的正文,公开链接直接吐这个。
 //
 // 若只存 Content,用户再次打开页面就得反向解析自己生成的 ACL,体验很差。
+//
+// UpdatedAt 一律写 UTC:DDL 里的 CURRENT_TIMESTAMP 本来就是 UTC,代码里显式写时间
+// 就必须跟它对齐,否则库里会出现带本地偏移的字符串,前端解析出来的时间会偏。
 type SSRuleFile struct {
 	ID        string    `json:"id"`
 	Token     string    `json:"token"`
@@ -37,6 +40,7 @@ func (db *DB) InitSSRuleFiles() error {
 		content TEXT DEFAULT '',
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_ss_rule_files_token ON ss_rule_files(token);
 	`)
 	return err
 }
@@ -57,7 +61,7 @@ func (db *DB) GetSSRuleFile() (*SSRuleFile, error) {
 	_, err = db.conn.Exec(`
 		INSERT OR IGNORE INTO ss_rule_files (id, token, source, content, updated_at)
 		VALUES (?, ?, '', '', ?)
-	`, ssRuleFileID, generateID(32), time.Now())
+	`, ssRuleFileID, generateID(32), time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +104,7 @@ func (db *DB) SaveSSRuleFile(source, content string) (*SSRuleFile, error) {
 	}
 	_, err := db.conn.Exec(`
 		UPDATE ss_rule_files SET source = ?, content = ?, updated_at = ? WHERE id = ?
-	`, source, content, time.Now(), ssRuleFileID)
+	`, source, content, time.Now().UTC(), ssRuleFileID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +119,7 @@ func (db *DB) RegenerateSSRuleToken() (*SSRuleFile, error) {
 	}
 	_, err := db.conn.Exec(`
 		UPDATE ss_rule_files SET token = ?, updated_at = ? WHERE id = ?
-	`, generateID(32), time.Now(), ssRuleFileID)
+	`, generateID(32), time.Now().UTC(), ssRuleFileID)
 	if err != nil {
 		return nil, err
 	}

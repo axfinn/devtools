@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -259,4 +260,194 @@ func mustJSON(t *testing.T, s string) string {
 		t.Fatalf("marshal 失败: %v", err)
 	}
 	return string(b)
+}
+
+// ssRuleTraversalPayloads 是路径穿越回归载荷集。
+//
+// 来源:方案 §3.4.1(c) 的 10 行载荷表展开后的 14 个具体值。
+// 这里注入的是**文件名段**本身(不经 gin 路由),目的是证明白名单函数对
+// 任何含 / 、%2f、null byte、.. 的输入都免疫 —— 即便路由层将来被改坏。
+var ssRuleTraversalPayloads = []string{
+	"../../etc/passwd",         // 相对路径穿越
+	"..%2f..%2fetc%2fpasswd",   // URL 编码的斜杠
+	"%2e%2e%2f%2e%2e%2fpasswd", // 全编码的 ..
+	"....//....//etc/passwd",   // 连续点 + 双斜杠
+	"rules.acl\x00.txt",        // null byte
+	"rules.acl\x00",            // null byte 结尾
+	"rules.acl.txt",            // 双扩展名
+	"rules.acl/",               // 尾斜杠
+	`rules.acl\..\x`,           // 反斜杠
+	"rules.pac",                // 白名单外的后缀(PAC 是 JS,故意排除)
+	"index.html",               // 白名单外
+	"rules.yaml",               // 白名单外
+	"rules",                    // 白名单外
+	"",                         // 空 filename
+}
+
+// TestSSRule_DownloadRejectsTraversalPayloads 白名单回归(handler 级)。
+//
+// 断言必须**逐字节**比 body:白名单拒绝 / token 不存在 / 模块关闭三者的响应
+// 长得一模一样,外部观察者分辨不出「文件名不对」与「链接不存在」。
+//
+// 反事实:把 ssRuleIsAllowedFile 改成 strings.HasSuffix(name, ".acl"),
+// "rules.acl.txt" 这条必须红。
+func TestSSRule_DownloadRejectsTraversalPayloads(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := newMemDB(t)
+	h := NewSSRuleHandler(db, ssRuleTestPassword)
+
+	for _, payload := range ssRuleTraversalPayloads {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Params = gin.Params{
+			{Key: "token", Value: "TOK"},
+			{Key: "filename", Value: payload},
+		}
+		h.Download(c)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("载荷 %q 想要 404,得到 %d", payload, w.Code)
+		}
+		if got := w.Body.String(); got != SSRuleNotFoundBody {
+			t.Errorf("载荷 %q 的响应体想要 %q,得到 %q", payload, SSRuleNotFoundBody, got)
+		}
+		if strings.Contains(w.Body.String(), "[proxy_list]") {
+			t.Errorf("载荷 %q 泄露了规则正文:\n%s", payload, w.Body.String())
+		}
+	}
+}
+
+// TestSSRule_ModuleDisabledBlocksDistribution 「未配密码 = 模块关闭」
+// 在分发端必须同样成立(P0-3)。
+//
+// 反事实:删掉 Download 开头的 adminPassword 判断 → 本用例必须红。
+func TestSSRule_ModuleDisabledBlocksDistribution(t *testing.T) {
+	db := newMemDB(t)
+
+	// 先用「开着模块」的 handler 存一份规则,拿到真实 token。
+	enabled := NewSSRuleHandler(db, ssRuleTestPassword)
+	saved, err := enabled.db.SaveSSRuleFile("google.com", "(^|\\.)google\\.com$")
+	if err != nil {
+		t.Fatalf("保存规则失败: %v", err)
+	}
+
+	// 模块关闭(handler 拿到的密码为空)。
+	disabled := NewSSRuleHandler(db, "")
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{
+		{Key: "token", Value: saved.Token},
+		{Key: "filename", Value: "rules.acl"},
+	}
+	disabled.Download(c)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("模块关闭时想要 404,得到 %d", w.Code)
+	}
+	if got := w.Body.String(); got != SSRuleNotFoundBody {
+		t.Fatalf("模块关闭时的响应体想要 %q,得到 %q", SSRuleNotFoundBody, got)
+	}
+
+	// 对照:同一个 token 在模块开着时是能取到的 —— 证明上面的 404 是「模块关闭」
+	// 造成的,不是「文件本来就不在」。
+	w2 := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(w2)
+	c2.Params = gin.Params{
+		{Key: "token", Value: saved.Token},
+		{Key: "filename", Value: "rules.acl"},
+	}
+	enabled.Download(c2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("模块开启时想要 200,得到 %d", w2.Code)
+	}
+}
+
+// TestSSRule_AdminPasswordOnlyViaHeader 管理端鉴权只认 header。
+//
+// query 兜底会把密码塞进 URL —— Cloudflare 访问日志、浏览器历史、Referer 头
+// 全都会留下明文,而这些都不是能随时擦掉的存储。
+//
+// 反事实:恢复 c.Query("admin_password") 兜底 → 本用例必须红。
+func TestSSRule_AdminPasswordOnlyViaHeader(t *testing.T) {
+	r := newSSRuleTestRouter(t, ssRuleTestPassword)
+
+	for _, q := range []string{
+		"?admin_password=" + ssRuleTestPassword,
+		"?super_admin_password=" + ssRuleTestPassword,
+		"?password=" + ssRuleTestPassword,
+	} {
+		w := ssRuleDo(r, http.MethodGet, "/api/ssrules"+q, nil, nil)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s 不该被当作管理凭据,得到 %d", q, w.Code)
+		}
+	}
+
+	// header 仍然要能用。
+	w := ssRuleDo(r, http.MethodGet, "/api/ssrules", ssRuleAuthHeader(ssRuleTestPassword), nil)
+	if w.Code != http.StatusOK {
+		t.Errorf("header 鉴权想要 200,得到 %d", w.Code)
+	}
+}
+
+// TestSSRule_RegenerateTokenRecomputesSkipped 换发 token 后 skipped 必须
+// 是实际重算值,而不是恒为空数组。
+//
+// 反事实:把 RegenerateToken 改回 newSSRuleView(file, nil) → 本用例必须红。
+func TestSSRule_RegenerateTokenRecomputesSkipped(t *testing.T) {
+	r := newSSRuleTestRouter(t, ssRuleTestPassword)
+
+	// 两行非法输入:一行不是合法域名,一行解析后为空。
+	w := ssRuleDo(r, http.MethodPost, "/api/ssrules", ssRuleAuthHeader(ssRuleTestPassword),
+		[]byte(`{"source":"google.com\nnot a domain\n???"}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("保存失败 %d: %s", w.Code, w.Body.String())
+	}
+
+	regen := ssRuleDecode(t, ssRuleDo(r, http.MethodPost, "/api/ssrules/regenerate-token",
+		ssRuleAuthHeader(ssRuleTestPassword), nil))
+	if len(regen.Skipped) == 0 {
+		t.Fatal("换发后 skipped 不该为空")
+	}
+
+	got := ssRuleDecode(t, ssRuleDo(r, http.MethodGet, "/api/ssrules", ssRuleAuthHeader(ssRuleTestPassword), nil))
+	if len(got.Skipped) != len(regen.Skipped) {
+		t.Fatalf("换发后 skipped 长度 %d 与 GET 的 %d 不一致", len(regen.Skipped), len(got.Skipped))
+	}
+	for i := range regen.Skipped {
+		if regen.Skipped[i] != got.Skipped[i] {
+			t.Errorf("第 %d 条 skipped 不一致:换发 %q,GET %q", i, regen.Skipped[i], got.Skipped[i])
+		}
+	}
+}
+
+// TestSSRule_DownloadSecurityHeaders 分发端的响应头。
+//
+// Content-Disposition 只拼白名单常量:filename 是外部可控的,拼进响应头
+// 就是注入面。
+//
+// 反事实:删掉 nosniff 头 / 改成拼 c.Param("filename") → 本用例必须红。
+func TestSSRule_DownloadSecurityHeaders(t *testing.T) {
+	r := newSSRuleTestRouter(t, ssRuleTestPassword)
+
+	saved := ssRuleDecode(t, ssRuleDo(r, http.MethodPost, "/api/ssrules",
+		ssRuleAuthHeader(ssRuleTestPassword), []byte(`{"source":"google.com"}`)))
+
+	w := ssRuleDo(r, http.MethodGet, "/ss/"+saved.Token+"/rules.acl", nil, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("想要 200,得到 %d", w.Code)
+	}
+
+	if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options 想要 nosniff,得到 %q", got)
+	}
+	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="rules.acl"` {
+		t.Errorf("Content-Disposition 想要白名单常量,得到 %q", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control 想要 no-store,得到 %q", got)
+	}
+	if got := w.Header().Get("Content-Type"); got != ssRuleFileContentType {
+		t.Errorf("Content-Type 想要 %q,得到 %q", ssRuleFileContentType, got)
+	}
 }
