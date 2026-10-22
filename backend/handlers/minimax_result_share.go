@@ -720,14 +720,94 @@ func (h *AIGatewayHandler) readMiniMaxShareAssetContent(input MiniMaxResultShare
 	if len(data) > maxMiniMaxShareAssetBytes {
 		return nil, "", fmt.Errorf("资产超过 %d MB 限制", maxMiniMaxShareAssetBytes/1024/1024)
 	}
-	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if idx := strings.Index(contentType, ";"); idx >= 0 {
-		contentType = strings.TrimSpace(contentType[:idx])
-	}
-	if contentType == "" {
-		contentType = http.DetectContentType(data)
-	}
+	contentType := normalizeMiniMaxShareContentType(resp.Header.Get("Content-Type"), data, input.URL)
 	return data, contentType, nil
+}
+
+// miniMaxShareGenericContentTypes 是无法反映真实媒体类型的泛型 MIME，落库前需要进一步归一化。
+var miniMaxShareGenericContentTypes = map[string]bool{
+	"application/octet-stream": true,
+	"binary/octet-stream":      true,
+	"application/binary":       true,
+}
+
+// miniMaxShareContentTypeByExt 是内置的「文件后缀 → 媒体类型」映射。
+// 不依赖系统 mime.types：容器内 /etc/mime.types 不保证存在。
+// 与 handlers.inferContentType 的区别：本表按 URL 路径后缀匹配（兼容 query 参数），
+// 且额外覆盖 m4a/aac/ogg/flac/webm 这些上游直链常见的音频后缀。
+var miniMaxShareContentTypeByExt = map[string]string{
+	".mp3":  "audio/mpeg",
+	".wav":  "audio/wav",
+	".m4a":  "audio/mp4",
+	".aac":  "audio/aac",
+	".ogg":  "audio/ogg",
+	".flac": "audio/flac",
+	".webm": "audio/webm",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".webp": "image/webp",
+	".gif":  "image/gif",
+}
+
+// miniMaxShareExtByContentType 是内置的「媒体类型 → 文件扩展名」映射，优先于 mime.ExtensionsByType，
+// 保证同一媒体类型在有无系统 mime.types 的环境里得到一致扩展名。
+var miniMaxShareExtByContentType = map[string]string{
+	"audio/mpeg":  ".mp3",
+	"audio/wav":   ".wav",
+	"audio/x-wav": ".wav",
+	"audio/mp4":   ".m4a",
+	"audio/aac":   ".aac",
+	"audio/ogg":   ".ogg",
+	"audio/flac":  ".flac",
+	"audio/webm":  ".webm",
+	"image/jpeg":  ".jpg",
+	"image/png":   ".png",
+	"image/webp":  ".webp",
+	"image/gif":   ".gif",
+}
+
+// normalizeMiniMaxShareContentType 把上游响应头里的泛型 MIME 归一化成真实媒体类型。
+// 归一化顺序：响应头去参数 → 为空或泛型则视为未知 → ① http.DetectContentType 嗅探
+// → ② 嗅探仍是泛型/空则按 URL 后缀用内置映射推断 → ③ 都判不出保留原响应头。
+func normalizeMiniMaxShareContentType(headerType string, data []byte, rawURL string) string {
+	base := stripMiniMaxShareMediaParams(headerType)
+	if base != "" && !miniMaxShareGenericContentTypes[base] {
+		return base
+	}
+	sniffed := stripMiniMaxShareMediaParams(http.DetectContentType(data))
+	if sniffed != "" && !miniMaxShareGenericContentTypes[sniffed] {
+		return sniffed
+	}
+	if byExt := miniMaxShareContentTypeByExt[miniMaxShareURLExt(rawURL)]; byExt != "" {
+		return byExt
+	}
+	if base != "" {
+		return base
+	}
+	return sniffed
+}
+
+// stripMiniMaxShareMediaParams 去掉 MIME 里的参数部分（如 charset）并统一小写。
+func stripMiniMaxShareMediaParams(contentType string) string {
+	trimmed := strings.TrimSpace(contentType)
+	if idx := strings.Index(trimmed, ";"); idx >= 0 {
+		trimmed = strings.TrimSpace(trimmed[:idx])
+	}
+	return strings.ToLower(trimmed)
+}
+
+// miniMaxShareURLExt 取出 URL 路径上的文件扩展名（小写，无扩展名时返回空串）。
+func miniMaxShareURLExt(rawURL string) string {
+	raw := strings.TrimSpace(rawURL)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(filepath.Ext(parsed.Path))
 }
 
 func (h *AIGatewayHandler) miniMaxShareAssetFilename(assetID, preferredName, rawURL, contentType string) string {
@@ -775,19 +855,16 @@ func parseMiniMaxShareDataURL(raw string) ([]byte, string, error) {
 }
 
 func miniMaxShareAssetExt(contentType, rawURL string) string {
-	if contentType != "" {
-		if extensions, err := mime.ExtensionsByType(contentType); err == nil && len(extensions) > 0 {
+	normalized := stripMiniMaxShareMediaParams(contentType)
+	if ext, ok := miniMaxShareExtByContentType[normalized]; ok {
+		return ext
+	}
+	if normalized != "" {
+		if extensions, err := mime.ExtensionsByType(normalized); err == nil && len(extensions) > 0 {
 			return extensions[0]
 		}
 	}
-	if rawURL != "" {
-		if parsed, err := neturl.Parse(rawURL); err == nil {
-			if ext := filepath.Ext(parsed.Path); ext != "" {
-				return ext
-			}
-		}
-	}
-	return ""
+	return miniMaxShareURLExt(rawURL)
 }
 
 func miniMaxShareAssetKind(contentType, filename string) string {
