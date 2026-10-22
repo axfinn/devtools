@@ -166,6 +166,11 @@ function applyView(data) {
   updatedAt.value = data.updated_at ?? ''
 }
 
+// HTTP 状态码常量：让 statusMessage 一眼能读出「哪个状态走哪条话术」。
+const HTTP_BAD_REQUEST = 400
+const HTTP_PAYLOAD_TOO_LARGE = 413
+const HTTP_TOO_MANY_REQUESTS = 429
+
 // 把 HTTP 状态码翻译成用户能看懂的话。
 // 413 / 400 / 429 必须分开说：
 //   413 = 请求体超限（重试没用，必须拆小再发）
@@ -174,9 +179,9 @@ function applyView(data) {
 // 混成一句话，用户就会对着一个必然失败的请求反复重试。
 function statusMessage(res, data, fallback) {
   const detail = typeof data?.error === 'string' ? data.error : ''
-  if (res.status === 413) return '请求体过大（超过 1MB），请分批粘贴后再试'
-  if (res.status === 429) return '请求过于频繁，请稍后再试'
-  if (res.status === 400) return detail ? `格式错误：${detail}` : '格式错误'
+  if (res.status === HTTP_PAYLOAD_TOO_LARGE) return '请求体过大（超过 1MB），请分批粘贴后再试'
+  if (res.status === HTTP_TOO_MANY_REQUESTS) return '请求过于频繁，请稍后再试'
+  if (res.status === HTTP_BAD_REQUEST) return detail ? `格式错误：${detail}` : '格式错误'
   return detail || fallback
 }
 
