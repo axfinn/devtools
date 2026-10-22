@@ -92,6 +92,13 @@ func ssRuleExtractHost(line string) (string, error) {
 			return "", fmt.Errorf("URL 里没有主机名")
 		}
 	} else {
+		// CIDR 必须**先**判定:它自带 "/",而下面按 "/?#" 截断会把
+		// "10.0.0.0/8" 截成 "10.0.0.0",掩码就静默丢了 ——
+		// 用户以为写的是整个 /8 网段,实际只分流了单个 IP。
+		if _, _, err := net.ParseCIDR(value); err == nil {
+			return value, nil
+		}
+
 		// 裸域名/IP 可能带路径、查询串,先截断。
 		if idx := strings.IndexAny(value, "/?#"); idx >= 0 {
 			value = value[:idx]
@@ -113,10 +120,8 @@ func ssRuleExtractHost(line string) (string, error) {
 		return "", fmt.Errorf("解析后为空")
 	}
 
-	// IP 与 CIDR 原样保留,ACL 原生支持这两种形态。
-	if _, _, err := net.ParseCIDR(value); err == nil {
-		return value, nil
-	}
+	// 裸 IP 原样保留,ACL 原生支持。CIDR 已在上面单独判定过了 ——
+	// 走到这里的值已经不包含 "/",不可能是 CIDR。
 	if net.ParseIP(value) != nil {
 		return value, nil
 	}
