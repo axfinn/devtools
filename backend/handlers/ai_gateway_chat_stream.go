@@ -171,7 +171,10 @@ func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatComple
 
 	// 持续心跳：每 20s 发一条 SSE 注释，防止 thinking 阶段空闲被中间层断开
 	heartbeatDone := make(chan struct{})
+	var heartbeatWG sync.WaitGroup
+	heartbeatWG.Add(1)
 	go func() {
+		defer heartbeatWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("PANIC in background goroutine: %v", r)
@@ -192,7 +195,12 @@ func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatComple
 			}
 		}
 	}()
-	defer close(heartbeatDone)
+	// close 只发信号；Wait 保证心跳 goroutine 在 handler 返回前彻底退出，
+	// 否则它可能在函数结束后仍向已完成的 ResponseWriter 写入。
+	defer func() {
+		close(heartbeatDone)
+		heartbeatWG.Wait()
+	}()
 
 	buf := make([]byte, 1024)
 	for {
@@ -277,7 +285,10 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 
 	// 心跳 goroutine（写操作与主循环通过 sseWriter 串行化）
 	heartbeatDone := make(chan struct{})
+	var heartbeatWG sync.WaitGroup
+	heartbeatWG.Add(1)
 	go func() {
+		defer heartbeatWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("PANIC in heartbeat goroutine: %v", r)
@@ -298,7 +309,12 @@ func (h *AIGatewayHandler) streamMiniMaxChat(c *gin.Context, req ChatCompletionR
 			}
 		}
 	}()
-	defer close(heartbeatDone)
+	// close 只发信号；Wait 保证心跳 goroutine 在 handler 返回前彻底退出，
+	// 否则它可能在函数结束后仍向已完成的 ResponseWriter 写入。
+	defer func() {
+		close(heartbeatDone)
+		heartbeatWG.Wait()
+	}()
 
 	// 将 Anthropic SSE 转换为 OpenAI SSE 格式。
 	// 行缓冲放宽到 1MB：单个大分片（长代码/长文本）超过 64KB 时

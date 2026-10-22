@@ -21,6 +21,12 @@ HOST_PORT="${HOST_PORT:-8082}"
 LOG_FILE="/tmp/devtools-${PORT}.log"
 PID_FILE="/tmp/devtools-${PORT}.pid"
 
+# AskIt 扩展 zip 的构建上下文路径。
+# 必须放在仓库根目录：backend/data 被 .dockerignore 整体排除，而 dockerignore
+# 不允许对已排除目录的父级做 re-include —— 把 backend/data 放回来的同时会把
+# paste.db 一起塞进镜像。
+ASKIT_ZIP="$SCRIPT_DIR/askit-extension.zip"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -356,30 +362,115 @@ build_frontend() {
     log_success "静态文件复制完成"
 }
 
+# write_askit_placeholder <目标路径>：写一个占位 zip，让 Dockerfile 的
+# `COPY askit-extension.zip` 始终能找到源文件。
+#
+# 占位包里放的是说明文件而不是空包：扩展的真正来源是运行时的 SSH clone
+# （handlers/askit_extension.go:128 复用 autodev 的 id_ed25519），占位包只在
+# 运行时拉取也失败时才会被用户下载到，那时包里的 README 能直接说明问题。
+write_askit_placeholder() {
+    local target="$1"
+    local stage
+    stage="$(mktemp -d)"
+    cat > "$stage/README.txt" <<'EOF'
+AskIt 扩展未在本次构建中预打包。
+
+Askit 是私有仓库，镜像构建阶段拿不到凭据，因此扩展改由宿主机构建后 COPY 进镜像；
+本次宿主机构建被跳过或失败，所以这里是占位包。
+
+容器启动后会通过 GET /api/askit/extension 从 GitHub 实时拉取并构建扩展（走 SSH，
+复用 autodev 的 id_ed25519），正常情况下用户不需要这个占位包。
+
+若你看到本文件，说明运行时拉取也失败了：请检查容器的 autodev SSH key 与网络出口，
+该接口会返回具体错误信息。
+EOF
+    rm -f "$target"
+    ( cd "$stage" && zip -q -r "$target" . )
+    rm -rf "$stage"
+}
+
+# askit_bailout <原因>：AskIt 是可选能力，任何一步失败都不该阻断发布。
+# 统一走这里告警 + 写占位 zip，保证 Dockerfile 的 COPY 有源文件。
+askit_bailout() {
+    log_warn "$1：写入占位 zip 继续（发布不阻断，扩展改由运行时 SSH 拉取）"
+    write_askit_placeholder "$ASKIT_ZIP"
+}
+
+# askit_pack_dist <源目录> <输出 zip>：把源目录里的 dist/ 打成 zip。
+# 失败返回非零，由调用方决定是兜底还是中断。先 rm 再 zip —— zip -r 是追加语义，
+# 不先删会把上一次的条目残留在包里。
+askit_pack_dist() {
+    local src_dir="$1" out="$2"
+    [ -d "$src_dir/dist" ] || return 1
+    rm -f "$out"
+    ( cd "$src_dir/dist" && zip -q -r "$out" . )
+}
+
+# build_askit 产出两处 zip：
+#   1. $SCRIPT_DIR/askit-extension.zip  —— Docker 构建上下文，供 Dockerfile COPY
+#   2. $BACKEND_DIR/data/askit/         —— 非 Docker 本地运行时 handler 的磁盘兜底
+#
+# 做法与运行时 handlers/askit_extension.go:128 buildZipFromGitHub **完全对齐**：
+# 浅克隆 main，直接打包仓库里**已提交的 dist/**。不跑 npm install / npm run build。
+#
+# 为什么不构建源码：
+#   - Askit 把构建产物 dist/ 提交进了版本库（.gitignore 里 dist/ 那行是注释掉的），
+#     运行时也是直接取它 —— 本地再 build 一次只会产出与运行时不一致的包。
+#   - 它给发布路径引入了 node/npm/tsc 依赖，而这条链路在本机反复出问题：npm install
+#     被 Ctrl-C 打断会留下残缺的 node_modules，且后续 npm install 不会修复它
+#     （实测 mermaid/dist 只剩 3 个文件、官方 tarball 里的 446 个 .d.ts 全丢，
+#     于是 npm run build 报 TS7016）。发布不该依赖一个能被 Ctrl-C 破坏的本地
+#     node 环境 —— 实测这两次失败全部源自 npm，与 Askit 源码无关。
+#
+# 为什么不在镜像里 clone：Askit 是私有仓库，容器内既无凭据也无 ssh-agent，
+# `git clone` 以 "could not read Username for 'https://github.com'" (exit 128) 直接
+# 打断发布。宿主机 git 用 ~/.ssh/id_ed25519（已注册到 GitHub），走 SSH 即可。
+# **不要把 URL 改回 https://** —— 宿主上的 git 同样没有 HTTPS 凭据。
+#
+# ASKIT_DIR 环境变量可指定一个本地 checkout 直接用它的 dist/（适合"我想打包自己
+# 本地改过的版本"）：**原样使用，不 fetch / 不 reset**，绝不覆盖未提交的改动。
+#
+# 本函数**不返回失败**：AskIt 是可选能力，不该阻断发布。任何一步失败都写占位 zip
+# 并告警，发布照常继续（扩展由运行时拉取兜底）。
 build_askit() {
-    local ASKIT_DIR="${ASKIT_DIR:-$SCRIPT_DIR/../Askit}"
     local ASKIT_DATA_DIR="$BACKEND_DIR/data/askit"
 
-    if [ ! -d "$ASKIT_DIR" ]; then
-        log_info "克隆 AskIt 仓库..."
-        git clone --depth 1 https://github.com/axfinn/Askit.git "$ASKIT_DIR"
+    if [ "${SKIP_ASKIT:-0}" = "1" ]; then
+        askit_bailout "SKIP_ASKIT=1"
+        return 0
     fi
 
-    if [ ! -d "$ASKIT_DIR/node_modules" ]; then
-        log_info "安装 AskIt 依赖..."
-        cd "$ASKIT_DIR"
-        npm install
+    if [ -n "${ASKIT_DIR:-}" ]; then
+        # 显式指定本地 checkout：原样使用它的 dist/，不 fetch / 不 reset。
+        if [ ! -d "$ASKIT_DIR/dist" ]; then
+            askit_bailout "ASKIT_DIR=$ASKIT_DIR 下没有 dist/（请先在该 checkout 里构建）"
+            return 0
+        fi
+        log_info "使用本地 AskIt checkout: $ASKIT_DIR"
+        if ! askit_pack_dist "$ASKIT_DIR" "$ASKIT_ZIP"; then
+            askit_bailout "本地 AskIt checkout 打包失败"
+            return 0
+        fi
+    else
+        # 默认路径：与运行时 buildZipFromGitHub 一致，浅克隆 main 到临时目录。
+        # trap EXIT 在子 shell 里生效，任何退出路径都会清掉临时目录。
+        if ! (
+            set -e
+            tmp_dir="$(mktemp -d)"
+            trap 'rm -rf "$tmp_dir"' EXIT
+            log_info "克隆 AskIt（SSH, main）..."
+            git clone --depth 1 --branch main git@github.com:axfinn/Askit.git "$tmp_dir"
+            askit_pack_dist "$tmp_dir" "$ASKIT_ZIP"
+        ); then
+            askit_bailout "AskIt 克隆或打包失败"
+            return 0
+        fi
     fi
 
-    log_info "构建 AskIt 扩展..."
-    cd "$ASKIT_DIR"
-    npm run build
-
-    log_info "打包 AskIt 扩展 zip..."
     mkdir -p "$ASKIT_DATA_DIR"
-    cd "$ASKIT_DIR/dist"
-    zip -r "$ASKIT_DATA_DIR/askit-extension.zip" .
-    log_success "AskIt 扩展打包完成: $ASKIT_DATA_DIR/askit-extension.zip"
+    cp "$ASKIT_ZIP" "$ASKIT_DATA_DIR/askit-extension.zip"
+
+    log_success "AskIt 扩展打包完成: $ASKIT_ZIP"
 }
 
 build_backend() {
@@ -542,6 +633,11 @@ docker_deploy() {
 
     cd "$SCRIPT_DIR"
 
+    # Dockerfile 里是 `COPY askit-extension.zip`，构建前上下文里必须先有它。
+    # 放在 compose build 之前，保证 docker 部署仍然是一条命令。
+    # 失败不阻断（见 build_askit 注释）。
+    build_askit
+
     local current_container_id old_image_id service_image
     current_container_id="$(docker_devtools_container_id)"
     old_image_id="$(docker_container_image_id "$current_container_id")"
@@ -686,6 +782,7 @@ help() {
     echo "  status      查看服务状态"
     echo "  logs        查看日志 (tail -f)"
     echo "  deploy      完整部署 (构建 + 启动)"
+    echo "  build-askit 单独构建 AskIt 扩展 zip (Docker 构建上下文所需)"
     echo ""
     echo "Docker 命令:"
     echo "  docker            Docker 先构建、再替换 devtools，失败时尝试回滚"
@@ -704,6 +801,8 @@ help() {
     echo "  PORT        本地服务端口 (默认: 8080)"
     echo "  HOST_PORT   Docker 映射端口 (默认: 8082)"
     echo "  NO_CACHE    Docker 构建时禁用缓存，设为 1 生效"
+    echo "  SKIP_ASKIT  设为 1 时跳过 AskIt 构建，写占位 zip 保证镜像仍可构建"
+    echo "  ASKIT_DIR   指定本地 AskIt checkout，直接打包它的 dist/（默认: 浅克隆 main）"
     echo ""
     echo "示例:"
     echo "  ./deploy.sh deploy              # 本地完整部署"
@@ -750,6 +849,9 @@ case "${1:-help}" in
         ;;
     deploy)
         deploy
+        ;;
+    build-askit|askit)
+        build_askit
         ;;
     docker)
         docker_deploy

@@ -104,6 +104,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/ssrules',
+    name: 'SSRules',
+    component: () => import('../views/other/SsRuleTool.vue'),
+    meta: {
+      title: 'SS 规则文件',
+      icon: 'Share',
+      category: 'other',
+      description: '生成 Shadowsocks 分流规则文件'
+    }
+  },
+  {
     path: '/nps',
     name: 'NPS',
     component: () => import('../views/other/NPSTool.vue'),

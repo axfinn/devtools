@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"devtools/config"
@@ -559,16 +560,33 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
-	if _, err := io.WriteString(c.Writer, ssePingFrame); err != nil {
+
+	// 从第一个字节起就统一走 sseWriter：拨号期心跳、生成期心跳、主复制循环三方
+	// 都会写同一个 ResponseWriter，必须由同一把锁串行化。
+	writer := newSSEWriter(c.Writer, flusher)
+	if err := writer.write([]byte(ssePingFrame)); err != nil {
 		return http.StatusOK, context.Canceled
 	}
-	flusher.Flush()
 
 	// 上游拨号期间的高频 ping(每 1s):Claude Code read_timeout 约 15s,即使下游要 30s+
 	// 才回首字节,持续 1s 一次的 ping event 也能让 SDK 内部反复 reset read deadline。
 	// 频率不能太高:每次 Write+Flush 都是 syscall,1s 平衡"reset 间隔"与"goroutine 开销"。
+	//
+	// 停止时必须 Wait() 而不是只 close(done)：close 只是发信号，若 goroutine 此刻
+	// 正卡在 ticker 分支里，它会与主复制循环并发写 ResponseWriter —— 表现为流内容
+	// 错乱 / "superfluous response.WriteHeader"。stopPreHeartbeat 幂等，可安全重复调用。
 	preUpstreamHeartbeatDone := make(chan struct{})
+	var preHeartbeatWG sync.WaitGroup
+	var stopPreOnce sync.Once
+	stopPreHeartbeat := func() {
+		stopPreOnce.Do(func() {
+			close(preUpstreamHeartbeatDone)
+			preHeartbeatWG.Wait()
+		})
+	}
+	preHeartbeatWG.Add(1)
 	go func() {
+		defer preHeartbeatWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("PANIC in pre-upstream heartbeat goroutine: %v", r)
@@ -579,10 +597,9 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		for {
 			select {
 			case <-ticker.C:
-				if _, err := io.WriteString(c.Writer, ssePingFrame); err != nil {
+				if err := writer.write([]byte(ssePingFrame)); err != nil {
 					return
 				}
-				flusher.Flush()
 			case <-preUpstreamHeartbeatDone:
 				return
 			case <-ctx.Done():
@@ -590,10 +607,12 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 			}
 		}
 	}()
+	// 兜底：任何提前 return（上游 4xx/5xx、读错误等）都必须先把拨号期心跳收干净。
+	defer stopPreHeartbeat()
 
 	req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		close(preUpstreamHeartbeatDone)
+		stopPreHeartbeat()
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err
 	}
@@ -627,8 +646,8 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 使用 streamClient（body 无超时），避免 http.Client.Timeout 在长流时强制断开；
 	// 连接/握手/响应头超时由 streamTransport 兜底，瞬时连接错误在拿响应前做一次重试。
 	resp, err := doStreamRequest(h.streamClient, req)
-	// 上游开始响应后停掉拨号期高频心跳,改用主循环的 20s 心跳(防止 thinking 阶段断流)
-	close(preUpstreamHeartbeatDone)
+	// 上游开始响应后停掉拨号期高频心跳(并 join)，改用生成期的 5s 心跳(防止 thinking 阶段断流)
+	stopPreHeartbeat()
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return http.StatusBadGateway, err
@@ -641,14 +660,15 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		return resp.StatusCode, fmt.Errorf("upstream error %d", resp.StatusCode)
 	}
 
-	// 心跳与主循环并发写 c.Writer，用 sseWriter 串行化 Write+Flush 避免数据竞争。
-	writer := newSSEWriter(c.Writer, flusher)
-
 	// 持续心跳 goroutine：thinking 阶段长(本地 27B 模型常 30s+)无字节输出,
 	// 中间代理(nginx/CDN)或客户端会因空闲超时断开。改 5s 一次 ping event,
 	// 与 Anthropic SDK 的 ping 频率对齐,既保证 read timeout 持续 reset 又不过度刷流量。
+	// 与主复制循环共享同一个 sseWriter（已在函数开头创建），Write+Flush 由锁串行化。
 	heartbeatDone := make(chan struct{})
+	var heartbeatWG sync.WaitGroup
+	heartbeatWG.Add(1)
 	go func() {
+		defer heartbeatWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("PANIC in background goroutine: %v", r)
@@ -669,7 +689,12 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 			}
 		}
 	}()
-	defer close(heartbeatDone)
+	// close 只发信号；Wait 保证心跳 goroutine 在本函数返回前彻底退出，
+	// 否则它可能在 handler 结束后仍向已完成的 ResponseWriter 写入。
+	defer func() {
+		close(heartbeatDone)
+		heartbeatWG.Wait()
+	}()
 
 	buf := make([]byte, 1024)
 	// DeepSeek / Ollama(qwen3 系列)等上游会返回 type="thinking" 的内容块，标准 Anthropic 客户端

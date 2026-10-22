@@ -68,6 +68,10 @@ build/
 *.so
 *.dylib
 
+# AskIt 扩展 zip：由 ./deploy.sh build-askit 在宿主机生成（Askit 是私有仓库，
+# 镜像内无法 clone），仅作为 Docker 构建上下文的输入，不进版本库。
+askit-extension.zip
+
 # Frontend assets (pre-built, downloaded at build time)
 frontend/public/neon/
 frontend/public/gallery-bg/

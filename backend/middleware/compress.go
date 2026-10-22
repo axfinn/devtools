@@ -17,28 +17,45 @@ package middleware
 //     level 5 与 level 6 压缩比差异 < 1%，CPU 多 ~10%，权衡后取 5。
 //
 // FINN-51 Stage3 修复（与 gin-contrib/gzip v1.0.1 shouldCompress 行为差异）：
-//   1. HEAD 请求不压缩（HTTP/1.1 RFC 9110 §9.3.2 HEAD 不应有 body，
-//      而 gzip.WrapWriter.Close() 会无条件写出 ~23 字节 gzip frame 头）。
+//   1. HEAD 请求不压缩（HTTP/1.1 RFC 9110 §9.3.2 HEAD 不应有 body）。
 //   2. Range 请求不压缩（请求头 Range 与压缩互斥：Content-Range / Content-Length
 //      是字节偏移语义，gzip 后偏移失效）。
 //   3. 响应 Content-Range 头已设时不压缩（206 Partial Content 字节偏移）。
 //   4. 响应 Content-Encoding 已设时不二次压缩（handler 已自压）。
 //
-// 实现策略：原 gin-contrib/gzip v1.0.1 在 c.Next() 前无条件注入 Content-Encoding
-// 并替换 c.Writer 为 gzipWriter。这不支持 #3/#4 的"handler 已设 Content-Encoding
-// 时跳过"判定（handler 设 Content-Encoding 时，c.Writer 已被替换为 gzipWriter，
-// 字节已被 gzip.Writer 吞下，事后无法撤销）。
+// FINN-52 重构（去掉全量缓冲，改响应侧判定）：
 //
-// 本实现改用 captureWriter 拦截 handler 的 headers 与 body 写入，待 handler
-// 返回后再依据捕获的响应头决定是否真正 gzip。路径/扩展名/请求头协商仍走请求侧
-// 前置判定（与 FINN-41/FINN-49 行为等价）。
+//   FINN-41/FINN-49 的实现用 captureWriter 把 handler 的全部响应字节先攒进
+//   bytes.Buffer，等 c.Next() 返回后再决定是否 gzip。两个后果：
+//
+//   a) captureWriter.Flush() 是空实现 —— SSE handler 的 `c.Writer.(http.Flusher)`
+//      断言通过（captureWriter 确有 Flush 方法），于是**静默**吞掉每一次 Flush。
+//      Anthropic 代理精心设计的 ping 心跳（拨号期 1s 一次、生成期 5s 一次，
+//      目的就是压住 Cloudflare/nginx 的空闲超时）一个字节都到不了客户端，
+//      首字节延迟 = 整段回答生成时间，且 CF 仍按空闲超时 524。
+//   b) 压不压缩只靠请求侧白名单（excludedPathPrefixes）。白名单是手工维护的，
+//      FINN-49 已经因为「白名单路径和 routes/*.go 的 Group() 对不上」翻过一次车，
+//      而 /api/anthropic/v1/messages、/api/ai-gateway/v1/chat/completions 这些
+//      主力 LLM 流式端点至今不在名单里。
+//
+//   现在改为：**在响应头真正下发的那一刻，按响应 Content-Type 判定**。
+//   Content-Type 是比「请求 URL 前缀」可靠得多的信号 —— 流式响应必然声明
+//   text/event-stream，且 handler 一定在写第一个字节前就设好它。
+//
+//   gin 的写入时序是这里的关键，必须对齐：
+//       c.Status(code)            → ResponseWriter.WriteHeader(code)，**只记录状态码**
+//       writeContentType(w, ...)  → 设置响应头 map
+//       w.Write(body)             → ResponseWriter.WriteHeaderNow() 才真正下发响应头
+//   所以判定必须放在 WriteHeaderNow/首次 Write 里，而不是 WriteHeader 里，
+//   否则读到的是「还没设 Content-Type」的空头。
+//
+//   透传路径（不压缩）直接写原始 ResponseWriter，Flush 真实转发，SSE 恢复逐帧送达。
+//   请求侧白名单保留为快路径（省掉包装开销），但不再是正确性的唯一依赖。
 //
 // 本中间件只暴露 Handler（gin 中间件），便于单测；调用方只需 router.Use(...)。
 
 import (
-	"bytes"
 	"compress/gzip"
-	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -48,60 +65,163 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// captureWriter 拦截 handler 的 headers 与 body 写入；外层中间件 flush 时
-// 再依据捕获的响应头（Content-Range / Content-Encoding）决定是否走 gzip。
-type captureWriter struct {
+// compressWriter 包装 gin.ResponseWriter，在响应头真正下发时决定是否 gzip。
+//
+// 不压缩时它是**透明**的：Write/WriteString/Flush 全部直接转发给原始 writer，
+// 不引入任何缓冲，SSE 逐帧送达语义与不用中间件时完全一致。
+type compressWriter struct {
 	gin.ResponseWriter
-	bufHead   http.Header
-	body      *bytes.Buffer
-	status    int
-	wroteHead bool
+
+	level    int
+	status   int
+	headSent bool // 响应头是否已下发（下发后状态码/响应头都不可再改）
+	compress bool // 本次响应是否走 gzip
+	gz       *gzip.Writer
+	pooled   bool // gz 是否来自 gzipWriterPool（决定归还还是丢弃）
 }
 
-func newCaptureWriter(w gin.ResponseWriter) *captureWriter {
-	return &captureWriter{
+// newCompressWriter 构造包装器。
+// level 越界时回退到 5：gzip.NewWriterLevel 对非法 level 返回 error，
+// 而那时 Content-Encoding: gzip 已经写进响应头了，无法撤销 —— 与其在 Write
+// 里踩 nil gz，不如构造期就纠正。
+func newCompressWriter(w gin.ResponseWriter, level int) *compressWriter {
+	if level < gzip.BestSpeed || level > gzip.BestCompression {
+		level = 5
+	}
+	return &compressWriter{
 		ResponseWriter: w,
-		bufHead:        make(http.Header),
-		body:           &bytes.Buffer{},
+		level:          level,
 		status:         http.StatusOK,
 	}
 }
 
-// Header 让 handler 写入的 header 落到 bufHead，不污染原始 writer。
-func (c *captureWriter) Header() http.Header { return c.bufHead }
-
-// WriteHeader / WriteHeaderNow / Flush 仅记录状态，由外层 flush 时再写原始 writer。
-// （拦截延迟：原始 writer 的 WriteHeaderNow 会立刻把 headers 推到网络/recorder，
-// 与"延迟到 flush"的策略冲突；handler 的 Flush() 多用于 SSE 流式，SSE 路径已被
-// 前置排除，不会走到本 captureWriter。）
-func (c *captureWriter) WriteHeader(code int) {
-	if !c.wroteHead {
-		c.status = code
-		c.wroteHead = true
+// WriteHeader 只记录状态码，与 gin 原生 responseWriter 语义一致：
+// 真正把响应头推给 net/http 的是 WriteHeaderNow()（由 Write/Flush 触发）。
+// 此处若直接下发，就再也读不到 render 稍后才设置的 Content-Type 了。
+func (w *compressWriter) WriteHeader(code int) {
+	if code <= 0 {
+		return
 	}
-}
-func (c *captureWriter) WriteHeaderNow() {}
-func (c *captureWriter) Flush()          {}
-
-// Write / WriteString 把 handler body 落到 buffer，不真正走网络/recorder。
-func (c *captureWriter) Write(b []byte) (int, error) {
-	if !c.wroteHead {
-		c.WriteHeader(http.StatusOK)
+	if w.headSent {
+		// 响应头已下发：交给底层（gin 会按 RFC 语义忽略并记 warning，不改状态码）。
+		w.ResponseWriter.WriteHeader(code)
+		return
 	}
-	return c.body.Write(b)
-}
-func (c *captureWriter) WriteString(s string) (int, error) {
-	if !c.wroteHead {
-		c.WriteHeader(http.StatusOK)
-	}
-	return c.body.WriteString(s)
+	w.status = code
 }
 
-// Status / Size / Written 让外层 flush 时能读出 capture 状态。
-func (c *captureWriter) Status() int              { return c.status }
-func (c *captureWriter) Size() int                { return c.body.Len() }
-func (c *captureWriter) Written() bool            { return c.wroteHead }
-func (c *captureWriter) WriteHeaderWritten() bool { return c.wroteHead }
+// WriteHeaderNow 强制下发响应头（gin 在 Write 内部也会调，幂等）。
+func (w *compressWriter) WriteHeaderNow() { w.writeHeadNow() }
+
+// writeHeadNow 下发响应头：此刻 handler 设置的响应头已全部就位，是做判定的唯一正确时机。
+func (w *compressWriter) writeHeadNow() {
+	if w.headSent {
+		return
+	}
+	w.headSent = true
+	w.decide()
+	w.ResponseWriter.WriteHeader(w.status)
+	w.ResponseWriter.WriteHeaderNow()
+	if w.compress {
+		w.startGzip()
+	}
+}
+
+// decide 依据当前响应头判定是否压缩。只在下发前调用一次。
+func (w *compressWriter) decide() {
+	header := w.ResponseWriter.Header()
+	// 204/304 无 body，挂 Content-Encoding 属于无意义甚至有害的语义污染。
+	if w.status == http.StatusNoContent || w.status == http.StatusNotModified {
+		return
+	}
+	// 流式响应：gzip.Writer 的缓冲会吞掉 Flush，一旦压缩，SSE 就退化成
+	// 「整段生成完才吐第一个字节」。这是 FINN-52 的核心修复点。
+	if isStreamingContentType(header.Get("Content-Type")) {
+		return
+	}
+	// handler 已声明字节偏移语义（206）或已自行压缩，不介入。
+	if header.Get("Content-Encoding") != "" || header.Get("Content-Range") != "" {
+		return
+	}
+	w.compress = true
+	header.Del("Content-Length") // 压缩后长度未知，删掉让 net/http 走 chunked
+	header.Set("Content-Encoding", "gzip")
+	header.Set("Vary", "Accept-Encoding")
+}
+
+// isStreamingContentType 识别不应压缩的流式响应。
+// 用 Contains 而非相等：Content-Type 可能带 charset 等参数。
+func isStreamingContentType(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
+}
+
+// startGzip 惰性创建 gzip.Writer。gzip.NewWriter 在首次 Write 前不写任何字节，
+// 因此放在响应头下发之后创建是安全的。
+func (w *compressWriter) startGzip() {
+	if w.gz != nil || !w.compress {
+		return
+	}
+	if w.level == 5 {
+		w.gz = gzipWriterPool.Get().(*gzip.Writer)
+		w.gz.Reset(w.ResponseWriter)
+		w.pooled = true
+		return
+	}
+	gz, err := gzip.NewWriterLevel(w.ResponseWriter, w.level)
+	if err != nil {
+		// 理论上不可达（构造期已把 level 夹到 [1,9]，gzip 只对 <-2 或 >9 报错）。
+		// 兜底仍用 level 5：绝不能留下 gz==nil 而 compress==true 的状态 ——
+		// 那会变成「声明了 Content-Encoding: gzip 却写明文」的静默损坏。
+		gz, _ = gzip.NewWriterLevel(w.ResponseWriter, 5)
+	}
+	w.gz = gz
+}
+
+// finish 由中间件在 c.Next() 返回后调用：兜底下发响应头并收尾 gzip 流。
+func (w *compressWriter) finish() {
+	if !w.headSent {
+		// handler 什么都没写（如 OPTIONS 预检直接 return）—— 与原生行为一致地下发响应头。
+		w.writeHeadNow()
+	}
+	if w.gz == nil {
+		return
+	}
+	_ = w.gz.Close()
+	if w.pooled {
+		w.gz.Reset(io.Discard)
+		gzipWriterPool.Put(w.gz)
+	}
+	w.gz = nil
+}
+
+func (w *compressWriter) Write(b []byte) (int, error) {
+	w.writeHeadNow()
+	if w.compress {
+		return w.gz.Write(b)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *compressWriter) WriteString(s string) (int, error) {
+	w.writeHeadNow()
+	if w.compress {
+		return w.gz.Write([]byte(s))
+	}
+	return w.ResponseWriter.WriteString(s)
+}
+
+// Flush 必须在两条路径上都是「真 Flush」：
+//   - 透传路径直接转发，SSE 逐帧送达；
+//   - 压缩路径先 gz.Flush()（把 gzip 缓冲吐出来）再转发。
+//
+// FINN-41/FINN-49 的 captureWriter 在这里是空实现，是本轮 SSE 被吞的根因。
+func (w *compressWriter) Flush() {
+	w.writeHeadNow()
+	if w.gz != nil {
+		_ = w.gz.Flush()
+	}
+	w.ResponseWriter.Flush()
+}
 
 // gzipWriterPool 复用 gzip.Writer 实例，避免每请求 alloc。
 // 项目实际调用固定 level=5（backend/app_http.go），其他 level 走非池化路径。
@@ -130,15 +250,21 @@ var excludedExt = map[string]bool{
 	".pdf": true,
 }
 
-// excludedPathPrefixes 镜像 FINN-41/FINN-49 的 WithExcludedPaths 列表
-// （prefix 匹配；trailing slash 决定是否匹配同级根路径）。
+// excludedPathPrefixes 是**快路径**白名单：命中即完全不包装 writer（省掉包装开销）。
+//
+// 注意：正确性不再依赖本列表 —— 响应 Content-Type 为 text/event-stream 时
+// compressWriter 会自动走透传（见 decide）。所以这里**不要**为了「保险」把
+// LLM JSON 端点加进来：/api/anthropic/v1/messages 这类端点同时承载流式(SSE)
+// 与非流式(大 JSON)两种响应，按路径排除会连带丢掉非流式大响应的压缩收益。
+//
+// （prefix 匹配；trailing slash 决定是否匹配同级根路径。）
 var excludedPathPrefixes = []string{
 	"/api/health",
 	"/s/",
 	"/sub/proxy",
+	"/ss/",
 	"/mock/",
-	// SSE 排除路径必须与 backend/routes/{ai_gateway,image_understanding}.go
-	// 的 Group() 注册字符串完全一致；不要凭记忆或缩写。详见 FINN-49。
+	// 以下是确定只有 SSE/WS 语义、永不需要压缩的路径。
 	"/api/internal/chat/stream",
 	"/api/ai-gateway/v1/image/understanding/sse",
 	"/api/ai-gateway/v1/image/understanding/stream/",
@@ -155,34 +281,25 @@ var excludedPathPrefixes = []string{
 
 // ResponseCompression 范围收窄后的响应压缩中间件。
 //
-// level: gzip 压缩级别（0-9，0=不压缩，9=最大压缩；建议 5）。
+// level: gzip 压缩级别（0-9；建议 5）。
 //
-// 已排除路径（按前缀匹配）：
-//   - /api/health                                  健康探活
-//   - /s/                                          短链 302 重定向
-//   - /sub/proxy, /mock/                           公共非 API 下载与 Mock
-//   - /api/internal/chat/stream                    SSE AI 网关聊天
-//   - /api/ai-gateway/v1/image/understanding/sse   SSE 图片理解
-//   - /api/ai-gateway/v1/image/understanding/stream/  SSE 图片理解进度
-//   - /api/image-understanding/sse/stream/          SSE 图片理解
-//   - /api/api-gateway/cpa/                         SSE CPA 反代（兜底）
-//   - /api/autodev/                                SSE 项目初始化与 CLI 更新流
-//   - /api/terminal/                               WebSocket SSH
-//   - /api/screen/                                 WebSocket 屏幕共享信令
-//   - /api/nfsshare/                               WebSocket 监视 + HLS 分片 + Range 视频
-//   - /api/proxy/ws-tunnel                         WebSocket 隧道
-//   - /api/game/arcade/ws/                         WebSocket 游戏
-//   - /api/chat/room/                              WebSocket 聊天室
+// 请求侧快路径排除（命中即不包装 writer）：
+//   - HEAD 请求                                  RFC 9110 §9.3.2 不应有 body
+//   - 带 Range 的请求                            字节偏移语义与压缩互斥
+//   - Accept-Encoding 不含 gzip / Connection: Upgrade / Accept: text/event-stream
+//   - 已压缩 / 媒体扩展名（excludedExt）
+//   - SSE / WS / HLS 路径前缀（excludedPathPrefixes）
 //
-// 已排除扩展名：图片、音视频、字体、压缩归档、PDF。
+// 响应侧兜底判定（compressWriter.decide，见文件头 FINN-52 说明）：
+//   - 204 / 304                                          无 body
+//   - Content-Type 含 text/event-stream                  流式，压缩会吞 Flush
+//   - Content-Encoding / Content-Range 已设               handler 已处理或字节偏移语义
 func ResponseCompression(level int) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 缺陷 #4：HEAD 不应被压缩（gzip frame 头/校验和 ≈23 字节会被注入）。
 		if c.Request.Method == http.MethodHead {
 			c.Next()
 			return
 		}
-		// 缺陷 #1：Range 请求字节偏移与压缩互斥。
 		if c.Request.Header.Get("Range") != "" {
 			c.Next()
 			return
@@ -207,51 +324,9 @@ func ResponseCompression(level int) gin.HandlerFunc {
 			}
 		}
 
-		// 用 captureWriter 拦截 handler 的 headers 与 body，待 handler 返回后
-		// 再依据捕获的响应头决定是否走 gzip（缺陷 #2 / #3 的关键）。
-		original := c.Writer
-		cap := newCaptureWriter(original)
-		c.Writer = cap
+		w := newCompressWriter(c.Writer, level)
+		c.Writer = w
 		c.Next()
-
-		// 缺陷 #2 / #3：响应头已表明不应压缩（handler 显式声明 Content-Range
-		// 或 Content-Encoding）。直接把捕获的 headers + body 写回原始 writer。
-		if cap.bufHead.Get("Content-Range") != "" ||
-			cap.bufHead.Get("Content-Encoding") != "" {
-			for k, vv := range cap.bufHead {
-				for _, v := range vv {
-					original.Header().Add(k, v)
-				}
-			}
-			original.WriteHeader(cap.status)
-			_, _ = original.Write(cap.body.Bytes())
-			return
-		}
-
-		// 压缩路径：headers 合并 + Content-Encoding/Vary + body 走 gzip 流。
-		for k, vv := range cap.bufHead {
-			for _, v := range vv {
-				original.Header().Add(k, v)
-			}
-		}
-		original.Header().Del("Content-Length")
-		original.Header().Set("Content-Encoding", "gzip")
-		original.Header().Set("Vary", "Accept-Encoding")
-		original.WriteHeader(cap.status)
-
-		var gz *gzip.Writer
-		if level == 5 {
-			gz = gzipWriterPool.Get().(*gzip.Writer)
-			gz.Reset(original)
-		} else {
-			gz, _ = gzip.NewWriterLevel(original, level)
-		}
-		_, _ = gz.Write(cap.body.Bytes())
-		_ = gz.Close()
-		original.Header().Set("Content-Length", fmt.Sprint(original.Size()))
-		if level == 5 {
-			gz.Reset(io.Discard)
-			gzipWriterPool.Put(gz)
-		}
+		w.finish()
 	}
 }

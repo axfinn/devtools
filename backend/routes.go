@@ -27,26 +27,27 @@ type routeHandlers struct {
 	consoleHandler            *handlers.ConsoleHandler
 	monitoringHandler         *handlers.MonitoringHandler
 	terminalHandler           *handlers.SSHHandler
-	nfsShareHandler          *handlers.NFSShareHandler
-	ocrHandler               *handlers.OCRHandler
-	aiGatewayHandler         *handlers.AIGatewayHandler
+	nfsShareHandler           *handlers.NFSShareHandler
+	ocrHandler                *handlers.OCRHandler
+	aiGatewayHandler          *handlers.AIGatewayHandler
 	imageUnderstandingHandler *handlers.ImageUnderstandingHandler
-	cpaProxyHandler          *handlers.CPAProxyHandler
-	autoDevHandler           *handlers.AutoDevHandler
-	mermaidHandler           *handlers.MermaidHandler
-	npsHandler               *handlers.NPSHandler
-	proxyHandler             *handlers.ProxyHandler
-	hermesHandler            *handlers.HermesHandler
-	edgeTTSHandler           *handlers.EdgeTTSHandler
-	voiceMemoHandler         *handlers.VoiceMemoHandler
-	gameHandler              *handlers.GameHandler
-	askitSyncHandler         *handlers.AskitSyncHandler
-	screenHandler            *handlers.ScreenHandler
-	skillsHandler            *handlers.SkillsHandler
-	skillsGuard              *middleware.SkillsGuard
-	avatarHandler            *handlers.AvatarHandler
-	tripHandler              *handlers.TripHandler
-	healthHandler            *handlers.HealthHandler
+	cpaProxyHandler           *handlers.CPAProxyHandler
+	autoDevHandler            *handlers.AutoDevHandler
+	mermaidHandler            *handlers.MermaidHandler
+	npsHandler                *handlers.NPSHandler
+	proxyHandler              *handlers.ProxyHandler
+	hermesHandler             *handlers.HermesHandler
+	edgeTTSHandler            *handlers.EdgeTTSHandler
+	voiceMemoHandler          *handlers.VoiceMemoHandler
+	gameHandler               *handlers.GameHandler
+	askitSyncHandler          *handlers.AskitSyncHandler
+	screenHandler             *handlers.ScreenHandler
+	skillsHandler             *handlers.SkillsHandler
+	skillsGuard               *middleware.SkillsGuard
+	avatarHandler             *handlers.AvatarHandler
+	tripHandler               *handlers.TripHandler
+	healthHandler             *handlers.HealthHandler
+	ssRuleHandler             *handlers.SSRuleHandler
 }
 
 func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter, h *routeHandlers) {
@@ -69,26 +70,27 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		ConsoleHandler:            h.consoleHandler,
 		MonitoringHandler:         h.monitoringHandler,
 		TerminalHandler:           h.terminalHandler,
-		NfsShareHandler:          h.nfsShareHandler,
-		OcrHandler:               h.ocrHandler,
-		AiGatewayHandler:         h.aiGatewayHandler,
+		NfsShareHandler:           h.nfsShareHandler,
+		OcrHandler:                h.ocrHandler,
+		AiGatewayHandler:          h.aiGatewayHandler,
 		ImageUnderstandingHandler: h.imageUnderstandingHandler,
-		CpaProxyHandler:          h.cpaProxyHandler,
-		AutoDevHandler:           h.autoDevHandler,
-		MermaidHandler:           h.mermaidHandler,
-		NpsHandler:               h.npsHandler,
-		ProxyHandler:             h.proxyHandler,
-		HermesHandler:            h.hermesHandler,
-		EdgeTTSHandler:           h.edgeTTSHandler,
-		VoiceMemoHandler:         h.voiceMemoHandler,
-		GameHandler:              h.gameHandler,
-		AskitSyncHandler:         h.askitSyncHandler,
-		ScreenHandler:            h.screenHandler,
-		SkillsHandler:            h.skillsHandler,
-		SkillsGuard:              h.skillsGuard,
-		AvatarHandler:            h.avatarHandler,
-		TripHandler:              h.tripHandler,
-		HealthHandler:            h.healthHandler,
+		CpaProxyHandler:           h.cpaProxyHandler,
+		AutoDevHandler:            h.autoDevHandler,
+		MermaidHandler:            h.mermaidHandler,
+		NpsHandler:                h.npsHandler,
+		ProxyHandler:              h.proxyHandler,
+		HermesHandler:             h.hermesHandler,
+		EdgeTTSHandler:            h.edgeTTSHandler,
+		VoiceMemoHandler:          h.voiceMemoHandler,
+		GameHandler:               h.gameHandler,
+		AskitSyncHandler:          h.askitSyncHandler,
+		ScreenHandler:             h.screenHandler,
+		SkillsHandler:             h.skillsHandler,
+		SkillsGuard:               h.skillsGuard,
+		AvatarHandler:             h.avatarHandler,
+		TripHandler:               h.tripHandler,
+		HealthHandler:             h.healthHandler,
+		SSRuleHandler:             h.ssRuleHandler,
 	}
 	routes.RegisterAllRoutes(api, rh, createRateLimiter)
 }

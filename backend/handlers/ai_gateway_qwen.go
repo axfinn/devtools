@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"devtools/models"
@@ -290,19 +291,26 @@ func (h *AIGatewayHandler) relayVisionSSE(
 		return
 	}
 
+	// 心跳 goroutine 与主扫描循环都会写同一个 ResponseWriter，必须经 sseWriter
+	// 串行化 Write+Flush；否则 Flush 会与 Write 在底层 bufio 上产生数据竞争，
+	// 表现为流内容错乱。
+	writer := newSSEWriter(c.Writer, flusher)
+
 	send := func(event map[string]interface{}) bool {
 		payload, _ := json.Marshal(event)
-		if _, err := c.Writer.Write([]byte("data: " + string(payload) + "\n\n")); err != nil {
+		if err := writer.write([]byte("data: " + string(payload) + "\n\n")); err != nil {
 			cancel()
 			return false
 		}
-		flusher.Flush()
 		return true
 	}
 
 	// 心跳：长时间无输出时维持连接，防止中间网关（Cloudflare）按空闲断流。
 	heartbeatDone := make(chan struct{})
+	var heartbeatWG sync.WaitGroup
+	heartbeatWG.Add(1)
 	go func() {
+		defer heartbeatWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("PANIC in heartbeat goroutine: %v", r)
@@ -313,10 +321,9 @@ func (h *AIGatewayHandler) relayVisionSSE(
 		for {
 			select {
 			case <-ticker.C:
-				if _, err := c.Writer.Write([]byte(": heartbeat\n\n")); err != nil {
+				if err := writer.write([]byte(": heartbeat\n\n")); err != nil {
 					return
 				}
-				flusher.Flush()
 			case <-ctx.Done():
 				return
 			case <-heartbeatDone:
@@ -324,7 +331,12 @@ func (h *AIGatewayHandler) relayVisionSSE(
 			}
 		}
 	}()
-	defer close(heartbeatDone)
+	// close 只发信号；Wait 保证心跳 goroutine 在本函数返回前彻底退出，
+	// 否则它可能在 handler 结束后仍向已完成的 ResponseWriter 写入。
+	defer func() {
+		close(heartbeatDone)
+		heartbeatWG.Wait()
+	}()
 
 	var builder strings.Builder
 	scanner := bufio.NewScanner(upstream)

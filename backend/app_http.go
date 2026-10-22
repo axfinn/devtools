@@ -51,6 +51,10 @@ func registerPublicRoutes(router *gin.Engine, handlers *routeHandlers) {
 	router.GET("/sub/proxy", handlers.proxyHandler.DownloadSubscription)
 	router.GET("/sub/proxy/:type", handlers.proxyHandler.DownloadSubscription)
 	router.Any("/mock/:id", handlers.mockAPIHandler.Execute)
+	// SS 规则文件的公开分发。必须在这儿显式注册:非 /api 前缀的路径没注册就会
+	// 落到 NoRoute 被 SPA fallback 兜成 index.html,客户端拿到的是一坨 HTML,
+	// 而报错信息完全指不到这里。
+	router.GET("/ss/:token/:filename", handlers.ssRuleHandler.Download)
 }
 
 func registerStaticRoutes(router *gin.Engine, distDir string) {

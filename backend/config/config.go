@@ -51,6 +51,15 @@ type Config struct {
 	Monitoring          MonitoringConfig          `yaml:"monitoring"`
 	AskitSync           AskitSyncConfig           `yaml:"askit_sync"`
 	Skills              SkillsConfig              `yaml:"skills"`
+	SSRules             SSRulesConfig             `yaml:"ssrules"`
+}
+
+// SSRulesConfig Shadowsocks 规则文件(ssrules)配置。
+//
+// 本模块只有一份全局规则文件:管理页填域名列表 → 生成 ACL 正文 → 公开链接分发。
+// AdminPassword 为空时功能整体关闭,而不是「无密码放行」。
+type SSRulesConfig struct {
+	AdminPassword string `yaml:"admin_password"` // 管理页密码,为空则禁用本模块
 }
 
 // SkillsConfig 对外工具入口(skills)配置 — 让 codex/Claude Code 等外部 AI 可发现并调用非鉴权基础能力。
