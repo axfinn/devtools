@@ -13,10 +13,10 @@ import (
 )
 
 // SkillsGuard Skills 路由 guard —— 默认未启用(配置打开才放行);打开后:
-//   1. 校验 Origin 白名单(若配置了 AllowedOrigins)
-//   2. POST 走总配额限流(按 IP 滑动窗口)
-//   3. 主动读 X-Forwarded-For 第 1 个 IP,避免依赖 c.ClientIP()(后者在反代场景下
-//      需要先 SetTrustedProxies 才正确,当前项目未配置 — 显式读最稳)
+//  1. 校验 Origin 白名单(若配置了 AllowedOrigins)
+//  2. POST 走总配额限流(按 IP 滑动窗口)
+//  3. 主动读 X-Forwarded-For 第 1 个 IP,避免依赖 c.ClientIP()(后者在反代场景下
+//     需要先 SetTrustedProxies 才正确,当前项目未配置 — 显式读最稳)
 type SkillsGuard struct {
 	enabled            bool
 	rateLimitPerMinute int

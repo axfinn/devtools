@@ -14,29 +14,29 @@ type SensitiveInfoDetector struct {
 
 // DetectionRule 检测规则
 type DetectionRule struct {
-	Name        string `json:"name"`         // 规则名称
-	Pattern     string `json:"pattern"`      // 正则表达式
-	Severity    string `json:"severity"`     // 严重程度: high, medium, low
-	Description string `json:"description"`  // 描述
+	Name        string `json:"name"`        // 规则名称
+	Pattern     string `json:"pattern"`     // 正则表达式
+	Severity    string `json:"severity"`    // 严重程度: high, medium, low
+	Description string `json:"description"` // 描述
 }
 
 // DetectionResult 检测结果
 type DetectionResult struct {
-	IsDetected  bool              `json:"is_detected"`  // 是否检测到
-	FoundItems []FoundItem       `json:"found_items"`  // 检测到的项目
-	Severity    string           `json:"severity"`     // 最高严重程度
-	Suggestions []string         `json:"suggestions"`   // 建议
-	Summary     string           `json:"summary"`      // 摘要
-	CountByType map[string]int   `json:"count_by_type"` // 按类型统计
+	IsDetected  bool           `json:"is_detected"`   // 是否检测到
+	FoundItems  []FoundItem    `json:"found_items"`   // 检测到的项目
+	Severity    string         `json:"severity"`      // 最高严重程度
+	Suggestions []string       `json:"suggestions"`   // 建议
+	Summary     string         `json:"summary"`       // 摘要
+	CountByType map[string]int `json:"count_by_type"` // 按类型统计
 }
 
 // FoundItem 检测到的项目
 type FoundItem struct {
 	Type        string `json:"type"`        // 类型
 	Value       string `json:"value"`       // 检测到的值（脱敏后）
-	Position    int    `json:"position"`   // 位置
-	Severity    string `json:"severity"`   // 严重程度
-	Description string `json:"description"`  // 描述
+	Position    int    `json:"position"`    // 位置
+	Severity    string `json:"severity"`    // 严重程度
+	Description string `json:"description"` // 描述
 }
 
 // NewSensitiveInfoDetector 创建敏感信息检测器

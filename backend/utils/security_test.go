@@ -416,69 +416,69 @@ func TestDetectFileTypeByMagicBytes(t *testing.T) {
 
 func TestValidateMagicBytes(t *testing.T) {
 	tests := []struct {
-		name     string
-		filename string
-		data     []byte
+		name      string
+		filename  string
+		data      []byte
 		wantValid bool
 	}{
 		{
-			name:     "Valid PNG file",
-			filename: "image.png",
-			data:     []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
+			name:      "Valid PNG file",
+			filename:  "image.png",
+			data:      []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
 			wantValid: true,
 		},
 		{
-			name:     "Valid JPG file",
-			filename: "photo.jpg",
-			data:     []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10},
+			name:      "Valid JPG file",
+			filename:  "photo.jpg",
+			data:      []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10},
 			wantValid: true,
 		},
 		{
-			name:     "Valid PDF file",
-			filename: "document.pdf",
-			data:     []byte{0x25, 0x50, 0x44, 0x46, 0x2D, 0x31},
+			name:      "Valid PDF file",
+			filename:  "document.pdf",
+			data:      []byte{0x25, 0x50, 0x44, 0x46, 0x2D, 0x31},
 			wantValid: true,
 		},
 		{
-			name:     "Valid ZIP file",
-			filename: "archive.zip",
-			data:     []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00},
+			name:      "Valid ZIP file",
+			filename:  "archive.zip",
+			data:      []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00},
 			wantValid: true,
 		},
 		{
-			name:     "Valid 7Z file",
-			filename: "archive.7z",
-			data:     []byte{0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C},
+			name:      "Valid 7Z file",
+			filename:  "archive.7z",
+			data:      []byte{0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C},
 			wantValid: true,
 		},
 		{
-			name:     "Valid DOCX file (ZIP format)",
-			filename: "document.docx",
-			data:     []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00},
+			name:      "Valid DOCX file (ZIP format)",
+			filename:  "document.docx",
+			data:      []byte{0x50, 0x4B, 0x03, 0x04, 0x14, 0x00},
 			wantValid: true,
 		},
 		{
-			name:     "Mismatched - PNG with .jpg extension",
-			filename: "photo.jpg",
-			data:     []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
+			name:      "Mismatched - PNG with .jpg extension",
+			filename:  "photo.jpg",
+			data:      []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A},
 			wantValid: false, // PNG 魔数检测为 png，但扩展名是 jpg
 		},
 		{
-			name:     "Unsupported extension",
-			filename: "document.xyz",
-			data:     []byte{0x25, 0x50, 0x44, 0x46, 0x2D, 0x31},
+			name:      "Unsupported extension",
+			filename:  "document.xyz",
+			data:      []byte{0x25, 0x50, 0x44, 0x46, 0x2D, 0x31},
 			wantValid: false,
 		},
 		{
-			name:     "EXE伪装成图片",
-			filename: "photo.png",
-			data:     []byte{0x4D, 0x5A, 0x90, 0x00},
+			name:      "EXE伪装成图片",
+			filename:  "photo.png",
+			data:      []byte{0x4D, 0x5A, 0x90, 0x00},
 			wantValid: false,
 		},
 		{
-			name:     "Small file - pass through",
-			filename: "small.png",
-			data:     []byte{0x00},
+			name:      "Small file - pass through",
+			filename:  "small.png",
+			data:      []byte{0x00},
 			wantValid: true,
 		},
 	}

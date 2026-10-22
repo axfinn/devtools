@@ -140,10 +140,10 @@ func (h *TripHandler) Delete(c *gin.Context) {
 }
 
 type tripAddDayRequest struct {
-	Date       string `form:"date" json:"date"`
-	City       string `form:"city" json:"city"`
-	Region     string `form:"region" json:"region"`
-	Country    string `form:"country" json:"country"`
+	Date    string `form:"date" json:"date"`
+	City    string `form:"city" json:"city"`
+	Region  string `form:"region" json:"region"`
+	Country string `form:"country" json:"country"`
 }
 
 func (h *TripHandler) AddDay(c *gin.Context) {
@@ -287,11 +287,11 @@ func (h *TripHandler) ProcessNow(c *gin.Context) {
 type tripBudgetRequest struct {
 	// BudgetTotal 用「元」传入(前端友好);服务端转 cents 入库。
 	// BudgetTotalCents 可选,直接接「分」精度更高,优先使用。
-	BudgetTotal      int64   `form:"budget_total" json:"budget_total"`
-	BudgetTotalCents int64   `form:"budget_total_cents" json:"budget_total_cents"`
-	BudgetCurrency   string  `form:"budget_currency" json:"budget_currency"`
+	BudgetTotal      int64  `form:"budget_total" json:"budget_total"`
+	BudgetTotalCents int64  `form:"budget_total_cents" json:"budget_total_cents"`
+	BudgetCurrency   string `form:"budget_currency" json:"budget_currency"`
 	// 兼容字段:金额也能按"元"传,带 2 位小数
-	BudgetYuan       float64 `form:"budget_yuan" json:"budget_yuan"`
+	BudgetYuan float64 `form:"budget_yuan" json:"budget_yuan"`
 }
 
 // UpdateBudget 处理 PUT /api/trips/:id/budget。
@@ -320,10 +320,10 @@ func (h *TripHandler) UpdateBudget(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"code":             0,
-		"trip_id":          tripID,
-		"budget_total":     cents,
-		"budget_currency":  firstNonEmptyCurrency(currency, "CNY"),
+		"code":            0,
+		"trip_id":         tripID,
+		"budget_total":    cents,
+		"budget_currency": firstNonEmptyCurrency(currency, "CNY"),
 	})
 }
 
@@ -539,7 +539,7 @@ func (h *TripHandler) UpdateDay(c *gin.Context) {
 		return
 	}
 	d := &trip.DayPlan{
-		ID:  dayID,
+		ID:   dayID,
 		Date: strings.TrimSpace(req.Date),
 		Destination: trip.Destination{
 			City:    strings.TrimSpace(req.City),

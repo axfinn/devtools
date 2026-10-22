@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"strings"
 	"time"
 
@@ -21,6 +22,12 @@ func NewRequestLogger(db *models.DB, enabled bool) *RequestLogger {
 	}
 	logger.entries = make(chan models.HTTPRequestLog, 2048)
 	go func() {
+		// gin 的 recover 只护请求 goroutine,这里 panic 会杀掉整个后端进程
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in request logger writer: %v", r)
+			}
+		}()
 		for item := range logger.entries {
 			_ = db.CreateHTTPRequestLog(&item)
 		}

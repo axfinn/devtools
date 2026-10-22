@@ -4,7 +4,7 @@
 
 ---
 
-## 34 模块地图
+## 42 模块地图
 
 | # | 模块 | Handler 文件 | Route 文件 | View 组件 | 主要功能 |
 |---|------|------------|----------|---------|---------|
@@ -55,7 +55,7 @@
 
 ## 技术栈
 
-- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（73 个 View 组件）
+- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（86 个 View 组件 + 12 个公共组件）
 - **后端**：Go (Gin) + SQLite + **Redis（软依赖，失败自动降级到内存存储）**
 - **辅助服务**：
   - `ocr-service`：Python FastAPI + RapidOCR（二维码识别/OCR，端口 8000）
@@ -220,7 +220,7 @@ handlers/
 3. 创建 Handler：`backend/handlers/yourtool.go`
 4. 添加路由文件：`backend/routes/yourtool.go`（注册 `RegisterYourToolRoutes`）
 5. 在 `backend/routes/index.go` 的 `RegisterAllRoutes` 中添加调用
-6. 更新本文件 `34 模块地图` 表格
+6. 更新本文件 `42 模块地图` 表格
 
 ---
 

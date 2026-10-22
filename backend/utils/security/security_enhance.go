@@ -23,12 +23,12 @@ func NewSecurityEnhancer() *SecurityEnhancer {
 
 // SecurityResult 安全增强结果
 type SecurityResult struct {
-	IsSafe          bool                   `json:"is_safe"`           // 是否安全
-	HasSensitive    bool                   `json:"has_sensitive"`    // 是否包含敏感信息
-	SensitiveResult *DetectionResult       `json:"sensitive_result"` // 敏感信息检测结果
-	ContentHash     string                 `json:"content_hash"`     // 内容哈希
-	Suggestions     []string               `json:"suggestions"`      // 建议
-	Warnings        []string               `json:"warnings"`         // 警告
+	IsSafe          bool             `json:"is_safe"`          // 是否安全
+	HasSensitive    bool             `json:"has_sensitive"`    // 是否包含敏感信息
+	SensitiveResult *DetectionResult `json:"sensitive_result"` // 敏感信息检测结果
+	ContentHash     string           `json:"content_hash"`     // 内容哈希
+	Suggestions     []string         `json:"suggestions"`      // 建议
+	Warnings        []string         `json:"warnings"`         // 警告
 }
 
 // EnhanceSecurity 执行安全增强

@@ -33,7 +33,13 @@ RUN pip install --no-cache-dir \
     -r requirements.txt
 
 COPY config_loader.py .
-COPY config.example.yaml ./config.yaml
+# 只作为模板放进镜像，不安装成生效的 config.yaml：
+# config_loader 的取值顺序是「config.yaml(若存在) → 环境变量 → 默认」，
+# 而示例文件里的 6 个字段值与 compose 传的 ASR_* 默认值完全相同，
+# 所以装成 config.yaml 等于把 compose 的 ASR_* 全部变成死变量
+# （想把模型换成 large 改 ASR_MODEL 无效）。
+# 不用配置文件时走 ASR_* 环境变量；要用文件请自行挂载 config.yaml 到 /app/config.yaml。
+COPY config.example.yaml ./config.example.yaml
 
 COPY main.py .
 

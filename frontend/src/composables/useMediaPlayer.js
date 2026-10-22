@@ -100,6 +100,9 @@ function playIndex(idx) {
     }).catch(() => {
       state.isPlaying = false
     })
+    // 必须在这里 return:下面那句无条件 `state.isPlaying = true` 会把 catch 里
+    // 设的 false 覆盖掉,导致播放被浏览器拒绝时 UI 仍显示"播放中"。
+    return
   }
   // Video playback is managed in-component since it needs a DOM element
   state.isPlaying = true

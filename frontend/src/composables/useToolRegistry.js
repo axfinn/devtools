@@ -25,9 +25,19 @@ const visibleTools = computed(() =>
 function loadHiddenRoutes(force = false) {
   if (loadPromise && !force) return loadPromise
   loadPromise = fetch('/api/console/settings')
-    .then(r => r.json())
+    .then(r => {
+      // 不判 res.ok 的话,后端 500 返回非 JSON body 时 r.json() 抛错,
+      // 被下面的 catch 吞掉 → hiddenRoutes 保持默认全量可见,
+      // 用户在控制台里勾的隐藏项刷新后悄悄失效,且没有任何提示。
+      if (!r.ok) throw new Error(`console settings ${r.status}`)
+      return r.json()
+    })
     .then(d => { hiddenRoutes.value = d.hidden_routes || [] })
-    .catch(() => {})
+    .catch(() => {
+      // 失败后清掉缓存的 promise:否则这个已 settle 的 promise 会被一直复用,
+      // 之后即使后端恢复也永远不会重试(除非显式 force=true)。
+      loadPromise = null
+    })
   return loadPromise
 }
 

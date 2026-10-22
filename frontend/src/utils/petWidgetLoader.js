@@ -32,7 +32,22 @@ export function ensurePetWidget() {
     s.setAttribute('fetchpriority', 'low')
     s.onload = () => {
       if (typeof customElements !== 'undefined' && customElements.whenDefined) {
-        customElements.whenDefined(TAG).then(resolve, resolve)
+        // whenDefined 只在元素被 define 时才 resolve,且永不 reject:
+        // 脚本加载成功但没执行 customElements.define 时,这个 Promise 永远不 settle,
+        // 模块级 promise 也永不重置 → widget 整个页面生命周期内彻底不可用且无报错。
+        // 这里加超时兜底,并在已定义时立即 resolve。
+        if (customElements.get(TAG)) {
+          resolve()
+          return
+        }
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          resolve()
+        }
+        customElements.whenDefined(TAG).then(finish, finish)
+        setTimeout(finish, 10000)
       } else {
         resolve()
       }

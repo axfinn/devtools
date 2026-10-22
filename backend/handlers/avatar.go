@@ -28,9 +28,9 @@ const (
 	avatarMaxClipSize     = 4 * 1024 * 1024  // 4MB
 	avatarDefaultModelTTL = 30 * 24 * time.Hour
 	avatarDefaultClipTTL  = 30 * 24 * time.Hour
-	avatarMaxFrameCount   = 60000             // R10:30 分钟 @ 30fps 的安全上限
-	avatarMinPasswordLen  = 4                 // 与 excalidraw 一致(见 excalidraw.go:94)
-	avatarShareCodeBytes  = 8                 // 64-bit hex(16 chars) —— 实际可用空间远大于短链池
+	avatarMaxFrameCount   = 60000 // R10:30 分钟 @ 30fps 的安全上限
+	avatarMinPasswordLen  = 4     // 与 excalidraw 一致(见 excalidraw.go:94)
+	avatarShareCodeBytes  = 8     // 64-bit hex(16 chars) —— 实际可用空间远大于短链池
 )
 
 // AvatarHandler 虚拟形象模块处理器
@@ -193,11 +193,11 @@ func (h *AvatarHandler) ListModels(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"items":    list,
-		"limit":    limit,
-		"offset":   offset,
-		"count":    len(list),
-		"scope":    ownerScope(ownerID),
+		"items":  list,
+		"limit":  limit,
+		"offset": offset,
+		"count":  len(list),
+		"scope":  ownerScope(ownerID),
 	})
 }
 
@@ -225,8 +225,9 @@ func (h *AvatarHandler) GetModel(c *gin.Context) {
 }
 
 // DeleteModel 删除记录 + 磁盘文件 —— R1 + R5:
-//   必须提供 creator_key;只能删自己上传的(系统共享不允许);
-//   若模型设了 password_hash,password 也必须对(双因子对齐 excalidraw)。
+//
+//	必须提供 creator_key;只能删自己上传的(系统共享不允许);
+//	若模型设了 password_hash,password 也必须对(双因子对齐 excalidraw)。
 func (h *AvatarHandler) DeleteModel(c *gin.Context) {
 	id := c.Param("id")
 	callerOwner, password, ok := readOwnerAndPassword(c)
@@ -600,12 +601,12 @@ func (h *AvatarHandler) CreateShare(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{
-		"code":        code,
-		"target_type": s.TargetType,
-		"target_id":   s.TargetID,
-		"expires_at":  s.ExpiresAt,
+		"code":         code,
+		"target_type":  s.TargetType,
+		"target_id":    s.TargetID,
+		"expires_at":   s.ExpiresAt,
 		"has_password": passwordHash != "",
-		"share_url":   "/api/avatar/share/" + code,
+		"share_url":    "/api/avatar/share/" + code,
 	})
 }
 

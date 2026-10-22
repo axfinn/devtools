@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -233,6 +234,12 @@ func (h *AIGatewayHandler) handleAsyncTokenPlanRequest(c *gin.Context, key *mode
 // runAsyncMinimaxMediaTask 后台异步执行 MiniMax 媒体任务并轮询结果
 
 func (h *AIGatewayHandler) runAsyncMinimaxMediaTask(taskID, apiKey, baseURL, upstreamURL string, bodyBytes []byte, model, apiKeyID string) {
+	// gin 的 recover 只护请求 goroutine,后台 goroutine panic 会杀掉整个后端进程
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runAsyncMinimaxMediaTask: %v", r)
+		}
+	}()
 	task, err := h.db.GetMiniMaxMediaTask(taskID)
 	if err != nil {
 		return

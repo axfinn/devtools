@@ -47,15 +47,15 @@ func TestHashPasswordIfPresent_R5(t *testing.T) {
 // TestReadOwnerAndPassword —— owner_id 提取顺序:header → form → query
 func TestReadOwnerAndPassword(t *testing.T) {
 	cases := []struct {
-		name        string
-		headerKey   string
-		formOwner   string
-		queryOwner  string
-		formPass    string
-		queryPass   string
-		wantOwner   string
-		wantPass    string
-		wantOK      bool
+		name       string
+		headerKey  string
+		formOwner  string
+		queryOwner string
+		formPass   string
+		queryPass  string
+		wantOwner  string
+		wantPass   string
+		wantOK     bool
 	}{
 		{name: "全部空 → 失败", wantOwner: "", wantPass: "", wantOK: false},
 		{name: "只有 header", headerKey: "alice", wantOwner: "alice", wantPass: "", wantOK: true},

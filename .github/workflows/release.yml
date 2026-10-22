@@ -7,7 +7,7 @@ on:
 
 env:
   NODE_VERSION: '20'
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.25.5'
 
 jobs:
   build:
@@ -42,16 +42,24 @@ jobs:
           cd ..
           tar -czf frontend-${{ steps.get_version.outputs.VERSION }}.tar.gz frontend/dist
 
+      - name: Install cross compiler for arm64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build backend binaries
         run: |
           cd backend
 
-          # Build for multiple platforms
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o devtools-server-linux-amd64 ./main.go
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o devtools-server-linux-arm64 ./main.go
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o devtools-server-darwin-amd64 ./main.go
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o devtools-server-darwin-arm64 ./main.go
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o devtools-server-windows-amd64.exe ./main.go
+          # package main 由 7 个文件组成,必须用 `.` 编译整个包;
+          # `./main.go` 文件列表模式只编译 main.go → undefined: newAppRuntime。
+          # -tags with_utls:与 Dockerfile:42 一致,否则启动即报 uTLS 未编入。
+          # CGO_ENABLED=1:后端依赖 mattn/go-sqlite3,CGO_ENABLED=0 编出来的是
+          # 运行即崩的 stub("go-sqlite3 requires cgo to work")。
+          # darwin/windows 不再产出:CGO 交叉编译需要 osxcross/mingw 工具链,
+          # 与项目"后端跨编译只走 Docker"的规则冲突;这两平台用 Docker 镜像。
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags with_utls -ldflags="-s -w" -o devtools-server-linux-amd64 .
+          CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc go build -tags with_utls -ldflags="-s -w" -o devtools-server-linux-arm64 .
 
           cd ..
 
@@ -70,6 +78,7 @@ jobs:
           echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+          echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -91,22 +100,20 @@ jobs:
             docker-compose up -d
             ```
 
-            ### Binary Installation
-            Download the appropriate binary for your platform below and run:
+            ### Binary Installation (Linux only)
+            后端依赖 SQLite(CGO),跨平台交叉编译需要额外工具链,原生二进制只提供 Linux 版:
             ```bash
-            chmod +x devtools-server-*
-            ./devtools-server-*
+            chmod +x devtools-server-linux-*
+            ./devtools-server-linux-amd64
             ```
+            macOS / Windows 请用上面的 Docker 镜像(多架构,含 linux/amd64 与 linux/arm64)。
 
             ## Full Changelog
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.previous_tag.outputs.tag }}...v${{ steps.get_version.outputs.VERSION }}
+            **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.changelog.outputs.previous_tag }}...v${{ steps.get_version.outputs.VERSION }}
           files: |
             frontend-*.tar.gz
             backend/devtools-server-linux-amd64
             backend/devtools-server-linux-arm64
-            backend/devtools-server-darwin-amd64
-            backend/devtools-server-darwin-arm64
-            backend/devtools-server-windows-amd64.exe
           draft: false
           prerelease: false
         env:
@@ -133,6 +140,12 @@ jobs:
       - name: Extract version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Seed AskIt extension zip
+        # Dockerfile:107 `COPY askit-extension.zip` 需要构建上下文里存在这个文件,
+        # 但它被 .gitignore 排除、不在版本库。CI 没有 AskIt 仓库凭据 → 写占位包,
+        # 扩展在容器启动后由运行时 SSH 拉取(handlers/askit_extension.go)。
+        run: SKIP_ASKIT=1 ./deploy.sh build-askit
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5

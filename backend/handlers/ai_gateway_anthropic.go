@@ -208,6 +208,12 @@ func (h *AIGatewayHandler) dbAnthropicProvidersToConfig(dbProviders []*models.An
 				p.APIKey = ""
 				// 异步写回,不阻塞当前请求(失败下次重启再迁移)
 				go func(pid int64, cipher string) {
+					// 异步写回:gin 的 recover 只护请求 goroutine,这里 panic 会杀掉整个进程
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("PANIC in anthropic provider key migration: %v", r)
+						}
+					}()
 					_ = h.db.UpdateAnthropicProvider(&models.AnthropicProvider{
 						ID:              pid,
 						APIKeyEncrypted: cipher,

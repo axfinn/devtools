@@ -394,6 +394,13 @@ EOF
 askit_bailout() {
     log_warn "$1：写入占位 zip 继续（发布不阻断，扩展改由运行时 SSH 拉取）"
     write_askit_placeholder "$ASKIT_ZIP"
+    # 占位包也要落到磁盘兜底目录：非 Docker 本地运行时 handler 从这里读，
+    # 原来只在 bail 分支写仓库根那一份，本地跑就找不到扩展包了。
+    local data_dir="${2:-}"
+    if [ -n "$data_dir" ]; then
+        mkdir -p "$data_dir"
+        cp "$ASKIT_ZIP" "$data_dir/askit-extension.zip" || log_warn "占位 zip 写入 ${data_dir} 失败"
+    fi
 }
 
 # askit_pack_dist <源目录> <输出 zip>：把源目录里的 dist/ 打成 zip。
@@ -436,19 +443,19 @@ build_askit() {
     local ASKIT_DATA_DIR="$BACKEND_DIR/data/askit"
 
     if [ "${SKIP_ASKIT:-0}" = "1" ]; then
-        askit_bailout "SKIP_ASKIT=1"
+        askit_bailout "SKIP_ASKIT=1" "$ASKIT_DATA_DIR"
         return 0
     fi
 
     if [ -n "${ASKIT_DIR:-}" ]; then
         # 显式指定本地 checkout：原样使用它的 dist/，不 fetch / 不 reset。
         if [ ! -d "$ASKIT_DIR/dist" ]; then
-            askit_bailout "ASKIT_DIR=$ASKIT_DIR 下没有 dist/（请先在该 checkout 里构建）"
+            askit_bailout "ASKIT_DIR=$ASKIT_DIR 下没有 dist/（请先在该 checkout 里构建）" "$ASKIT_DATA_DIR"
             return 0
         fi
         log_info "使用本地 AskIt checkout: $ASKIT_DIR"
         if ! askit_pack_dist "$ASKIT_DIR" "$ASKIT_ZIP"; then
-            askit_bailout "本地 AskIt checkout 打包失败"
+            askit_bailout "本地 AskIt checkout 打包失败" "$ASKIT_DATA_DIR"
             return 0
         fi
     else
@@ -462,7 +469,7 @@ build_askit() {
             git clone --depth 1 --branch main git@github.com:axfinn/Askit.git "$tmp_dir"
             askit_pack_dist "$tmp_dir" "$ASKIT_ZIP"
         ); then
-            askit_bailout "AskIt 克隆或打包失败"
+            askit_bailout "AskIt 克隆或打包失败" "$ASKIT_DATA_DIR"
             return 0
         fi
     fi
@@ -476,7 +483,11 @@ build_askit() {
 build_backend() {
     log_info "构建后端..."
     cd "$BACKEND_DIR"
-    go build -o server main.go
+    # 必须用 `.` 而不是 `main.go`：package main 由 7 个文件组成(main.go 只调用
+    # app_runtime.go/app_handlers.go/app_http.go/app_startup.go 里定义的函数),
+    # 文件列表模式只编译列出的文件 → undefined: newAppRuntime。
+    # -tags with_utls 与 Dockerfile:42 保持一致,否则 sing-box Reality 启动即报错。
+    go build -tags with_utls -o server .
     log_success "后端构建完成"
 }
 

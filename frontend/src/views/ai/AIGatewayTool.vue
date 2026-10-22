@@ -1114,7 +1114,7 @@ const createResp = await fetch("${origin}/api/minimax/token-plan/v1/generations"
   })
 });
 const { task_id, status } = await createResp.json();
-console.log("任务ID:", task_id);
+console.debug("任务ID:", task_id);
 
 // 2. 轮询任务状态
 async function pollTask(taskId, maxAttempts = 60) {
@@ -1124,9 +1124,9 @@ async function pollTask(taskId, maxAttempts = 60) {
       headers: { "Authorization": "Bearer dtk_ai_xxx" }
     });
     const task = await resp.json();
-    console.log(\`状态: \${task.status}\`);
+    console.debug(\`状态: \${task.status}\`);
     if (task.status === "succeeded") {
-      console.log("结果:", task.result_urls);
+      console.debug("结果:", task.result_urls);
       return task;
     }
     if (task.status === "failed") {
@@ -1149,11 +1149,11 @@ const listResp = await fetch("${origin}/api/minimax/token-plan/tasks", {
   headers: { "Authorization": "Bearer dtk_ai_xxx" }
 });
 const { tasks, total } = await listResp.json();
-console.log("任务总数:", total);
+console.debug("任务总数:", total);
 tasks.forEach(task => {
-  console.log(\`[\${task.status}] \${task.model} - \${task.task_id}\`);
+  console.debug(\`[\${task.status}] \${task.model} - \${task.task_id}\`);
   if (task.result_urls) {
-    console.log("  结果:", task.result_urls);
+    console.debug("  结果:", task.result_urls);
   }
 });</pre>
             </el-tab-pane>
@@ -2074,8 +2074,8 @@ const gatewayJsExample = `const response = await fetch("${origin}/api/ai-gateway
 })
 
 const data = await response.json()
-console.log(data.usage_summary)
-console.log(data.choices?.[0]?.message?.content)`
+console.debug(data.usage_summary)
+console.debug(data.choices?.[0]?.message?.content)`
 
 const gatewayPythonExample = `import requests
 

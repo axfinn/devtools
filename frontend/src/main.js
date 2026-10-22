@@ -245,6 +245,10 @@ if (typeof document !== 'undefined' && document.readyState === 'complete') {
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {})
+    // 用 BASE_URL 而不是写死 '/sw.js':vite base 非 '/' 时(子路径部署)
+    // 写死绝对路径会注册到错误的 scope,404 被空 catch 吞掉,完全无感知。
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((e) => {
+      console.warn('[sw] 注册失败', e)
+    })
   })
 }

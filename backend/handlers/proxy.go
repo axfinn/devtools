@@ -1341,6 +1341,12 @@ func (h *ProxyHandler) applyManagedSubscription(sourceURL, yamlText string, node
 }
 
 func (h *ProxyHandler) refreshPublishedSubscriptionCaches(sourceURLs []string) {
+	// gin 的 recover 只护请求 goroutine,后台 goroutine panic 会杀掉整个后端进程
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in refreshPublishedSubscriptionCaches: %v", r)
+		}
+	}()
 	sourceURLs = normalizeSourceURLs(sourceURLs, "")
 	if len(sourceURLs) == 0 {
 		return
@@ -4714,6 +4720,12 @@ func dialTrojan(nodeAddr, targetHost string, node *ProxyNode) (net.Conn, error) 
 }
 
 func (h *ProxyHandler) sendAlert(subject, body string) {
+	// gin 的 recover 只护请求 goroutine,后台 goroutine panic 会杀掉整个后端进程
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in sendAlert: %v", r)
+		}
+	}()
 	h.sendAlertWithAttachment(subject, body, nil)
 }
 

@@ -21,18 +21,18 @@ func NewXMLParser() *XMLParser {
 
 // XMLParseResult XML 解析结果
 type XMLParseResult struct {
-	Original    string   `json:"original"`    // 原始内容
-	Formatted   string   `json:"formatted"`  // 格式化后的内容
-	IsValid     bool     `json:"is_valid"`   // 是否为有效 XML
-	ParseError  string   `json:"parse_error"`// 解析错误信息
-	RootElement string   `json:"root_element"`// 根元素名称
-	Elements    []string `json:"elements"`   // 所有元素名称
-	Attributes  []string `json:"attributes"`  // 所有属性名称
-	Depth       int      `json:"depth"`       // 嵌套深度
-	ByteSize    int      `json:"byte_size"`   // 字节大小
-	LineCount   int      `json:"line_count"`  // 行数
-	HasCDATA    bool     `json:"has_cdata"`   // 是否包含 CDATA
-	HasComment  bool     `json:"has_comment"` // 是否包含注释
+	Original    string   `json:"original"`     // 原始内容
+	Formatted   string   `json:"formatted"`    // 格式化后的内容
+	IsValid     bool     `json:"is_valid"`     // 是否为有效 XML
+	ParseError  string   `json:"parse_error"`  // 解析错误信息
+	RootElement string   `json:"root_element"` // 根元素名称
+	Elements    []string `json:"elements"`     // 所有元素名称
+	Attributes  []string `json:"attributes"`   // 所有属性名称
+	Depth       int      `json:"depth"`        // 嵌套深度
+	ByteSize    int      `json:"byte_size"`    // 字节大小
+	LineCount   int      `json:"line_count"`   // 行数
+	HasCDATA    bool     `json:"has_cdata"`    // 是否包含 CDATA
+	HasComment  bool     `json:"has_comment"`  // 是否包含注释
 }
 
 // Parse 解析 XML 内容

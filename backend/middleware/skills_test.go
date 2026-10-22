@@ -25,10 +25,10 @@ func newSkillsGuard(t *testing.T, enabled bool, perMin int, origins []string) (*
 	t.Helper()
 	store := state.NewMemoryStore()
 	guard := NewSkillsGuard(config.SkillsConfig{
-		Enabled:                enabled,
-		RateLimitPerMinute:     perMin,
+		Enabled:                 enabled,
+		RateLimitPerMinute:      perMin,
 		WriteRateLimitPerMinute: 5,
-		AllowedOrigins:         origins,
+		AllowedOrigins:          origins,
 	}, store)
 	return guard, store
 }

@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-DevTools 项目快速参考。详细架构和 API 文档见 `AGENTS.md`（34 模块地图、完整 handler/route 索引、详细 API 索引）。
+DevTools 项目快速参考。详细架构和 API 文档见 `AGENTS.md`（42 模块地图、完整 handler/route 索引、详细 API 索引）。
 
 ---
 
 ## 概览
 
-- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（72 个 View 组件）
+- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（86 个 View 组件 + 12 个公共组件）
 - **后端**：Go (Gin) + SQLite + **Redis（软依赖，失败自动降级内存存储）**
 - **辅助服务**：ocr-service (8000), asr-service (9000), tts-service (8083), diarize-service (9100, 可选)
 - **部署**：Docker Compose（4 服务）
@@ -31,12 +31,12 @@ docker compose up -d && docker compose logs -f devtools
 ## 项目结构速查
 
 ```
-frontend/src/views/       # 72 Vue 组件，按 category/ 分组
+frontend/src/views/       # 86 Vue 组件，按 category/ 分组
 backend/
 ├── main.go              # 入口：DB 初始化、中间件、每小时清理 goroutine
-├── routes/              # 38 个路由文件（routes.go 已拆分）
+├── routes/              # 40 个路由文件（routes.go 已拆分，含 index.go）
 │   └── index.go         # RouteHandlers struct + RegisterAllRoutes
-├── handlers/            # ~95 个 handler 文件（按域分组）
+├── handlers/            # 118 个 handler 文件（按域分组）
 ├── models/              # SQLite 操作（自动建表）
 ├── middleware/          # RateLimiter、ContentSizeLimiter 等
 └── state/               # Redis/内存状态（Redis 软依赖）
@@ -64,7 +64,7 @@ backend/
 3. `backend/handlers/yourtool.go`
 4. `backend/routes/yourtool.go`（`RegisterYourToolRoutes`）
 5. `backend/routes/index.go` → `RegisterAllRoutes` 中添加调用
-6. 更新 `AGENTS.md` 34 模块地图
+6. 更新 `AGENTS.md` 42 模块地图
 
 ---
 

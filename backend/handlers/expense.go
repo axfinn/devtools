@@ -1088,6 +1088,11 @@ func (h *ExpenseHandler) Analyze(c *gin.Context) {
 	expenseAnalyzeJobs.Store(job.ID, job)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC in expense analyze job wrapper: %v", r)
+			}
+		}()
 		h.runAnalyzeJob(job.ID, profileID, req)
 		// job 完成后 30 分钟过期,防止 sync.Map 内存泄漏
 		time.AfterFunc(30*time.Minute, func() {
@@ -1556,10 +1561,25 @@ func (h *ExpenseHandler) callDeepSeekVoiceParse(text string, categories []*model
 		return nil, err
 	}
 
-	choices := result["choices"].([]interface{})
-	firstChoice := choices[0].(map[string]interface{})
-	message := firstChoice["message"].(map[string]interface{})
-	content := message["content"].(string)
+	// 上游响应结构不受我们控制:choices 缺失/为空、message 不是对象、content 不是
+	// 字符串,任何一种都会让单值类型断言 panic。这里全部走 comma-ok,解析失败按
+	// 错误返回(和上游异常同一条路径),不再 panic。
+	choices, ok := result["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil, fmt.Errorf("API返回错误: 响应缺少 choices 字段")
+	}
+	firstChoice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("API返回错误: choices[0] 结构异常")
+	}
+	message, ok := firstChoice["message"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("API返回错误: 响应缺少 message 字段")
+	}
+	content, ok := message["content"].(string)
+	if !ok {
+		return nil, fmt.Errorf("API返回错误: message.content 不是字符串")
+	}
 
 	// Parse JSON from response
 	content = strings.TrimSpace(content)

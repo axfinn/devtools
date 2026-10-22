@@ -22,7 +22,11 @@ func startBackgroundServices(rt *appRuntime, handlerSet *routeHandlers) {
 }
 
 func preloadBackgroundImages() {
-	defer func() { if r := recover(); r != nil { log.Printf("PANIC in preloadBackgroundImages: %v", r) } }()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in preloadBackgroundImages: %v", r)
+		}
+	}()
 	time.Sleep(3 * time.Second)
 	handlers.InitBackgroundImages()
 	log.Println("背景图预加载完成")

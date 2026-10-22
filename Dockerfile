@@ -4,7 +4,7 @@ WORKDIR /app/frontend
 
 RUN npm install -g pnpm
 
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc frontend/pnpm-workspace.yaml ./
 COPY frontend/scripts ./scripts
 RUN pnpm install --frozen-lockfile
 
@@ -77,9 +77,12 @@ RUN wget -qO /tmp/npc.tar.gz "${NPS_SERVER_URL}/static/download/client/npc_linux
     rm /tmp/npc.tar.gz || echo "npc download skipped (will download at runtime)"
 
 # Create isolated venv for TTS service (edge-tts + FastAPI)
+# 版本锁定在 tts-service/requirements.txt：edge-tts/fastapi/uvicorn 都会发破坏性
+# 升级，不锁版本镜像不可复现，某次升级就能让 TTS 静默起不来。
+COPY tts-service/requirements.txt /tmp/tts-requirements.txt
 RUN python3 -m venv /app/tts-venv && \
     /app/tts-venv/bin/pip install --upgrade pip && \
-    /app/tts-venv/bin/pip install edge-tts fastapi uvicorn
+    /app/tts-venv/bin/pip install -r /tmp/tts-requirements.txt
 
 # Install uv (provides uvx) for MCP runtime
 RUN curl -Ls https://astral.sh/uv/install.sh | sh
