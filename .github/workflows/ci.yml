@@ -9,9 +9,9 @@ on:
 
 env:
   NODE_VERSION: '20'
-  GO_VERSION: '1.25.5'
+  GO_VERSION: '1.26.10'
   GOPROXY: 'https://goproxy.cn,direct'
-  GOSUMDB: 'off'
+  GOSUMDB: 'sum.golang.org'
 
 jobs:
   # Frontend Tests and Build
@@ -26,29 +26,38 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        # 统一用 pnpm:项目有 .npmrc(node-linker=hoisted)+ pnpm-workspace.yaml +
+        # pnpm-lock.yaml,Dockerfile 也是 pnpm --frozen-lockfile。
+        # 原来 CI 走 npm ci 装的是另一套依赖树 —— CI 测的版本和镜像里跑的不是同一份,
+        # 两份 lock 文件还会各自漂移(前端漏洞修不动就是因为 npm 这边先坏了)。
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run linter (静态规则)
         # 真正会失败的闸门:frontend/scripts/lint-static-rules.mjs 零依赖,
         # 覆盖 R3(模板 .value)/R4(裸下标)/L1(console.log)三条会白屏/脏日志的规则。
         # 原来这里是 `npm run lint || echo "ESLint not configured yet"` + continue-on-error,
         # 而 package.json 里根本没有 lint 脚本 → 这道闸门从来没跑过,永远显示绿色。
-        run: npm run lint
+        run: pnpm lint
 
       - name: Run tests
-        run: npm test || echo "Tests not configured yet"
+        run: pnpm test || echo "Tests not configured yet"
         continue-on-error: true
 
       - name: Build frontend
-        run: npm run build
+        run: pnpm build
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

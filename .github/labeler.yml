@@ -29,7 +29,7 @@ dependencies:
   - changed-files:
     - any-glob-to-any-file:
       - 'frontend/package.json'
-      - 'frontend/package-lock.json'
+      - 'frontend/pnpm-lock.yaml'
       - 'backend/go.mod'
       - 'backend/go.sum'
 

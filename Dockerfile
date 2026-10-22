@@ -25,7 +25,7 @@ RUN pnpm build
 # 确实要临时跳过时：SKIP_ASKIT=1 ./deploy.sh docker —— 会写一个占位 zip
 # 保证 COPY 成立，扩展改由运行时 SSH 拉取（handlers/askit_extension.go:128）。
 
-FROM golang:1.25.5-alpine AS backend-builder
+FROM golang:1.26.10-alpine AS backend-builder
 
 WORKDIR /app/backend
 
@@ -42,7 +42,7 @@ COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -tags with_utls -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
 # 编译 proxy-client 跨平台二进制
-FROM golang:1.25.5-alpine AS proxy-client-builder
+FROM golang:1.26.10-alpine AS proxy-client-builder
 
 WORKDIR /app/proxy-client
 
@@ -85,8 +85,13 @@ RUN python3 -m venv /app/tts-venv && \
     /app/tts-venv/bin/pip install -r /tmp/tts-requirements.txt
 
 # Install uv (provides uvx) for MCP runtime
-RUN curl -Ls https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
+# 不用 `curl -Ls https://astral.sh/uv/install.sh | sh`：管道执行远端脚本正是
+# eMudhra 事件里点名的暴露面 —— 构建期若被中间人用伪造证书劫持(那批弱私钥 CA
+# 签出的证书对 curl/Node/Python 默认配置有效),可以直接往镜像里注入代码。
+# 改用独立 venv + 钉版本的 PyPI 包(uv 0.13.4+ 内含对被吊销中间 CA 的 distrust 修复)。
+RUN python3 -m venv /app/uv-venv && \
+    /app/uv-venv/bin/pip install --no-cache-dir uv==0.13.5
+ENV PATH="/app/uv-venv/bin:/root/.local/bin:${PATH}"
 ENV UV_PYTHON=python3
 ENV UV_CACHE_DIR=/root/.cache/uv
 
