@@ -34,7 +34,7 @@
     "element-plus": "^2.13.0",
     "events": "^3.3.0",
     "highlight.js": "^11.11.1",
-    "hls.js": "^1.6.15",
+    "hls.js": "^1.7.3",
     "html5-qrcode": "^2.3.8",
     "i18next": "^25.8.4",
     "js-yaml": "^4.3.0",
