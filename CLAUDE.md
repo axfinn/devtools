@@ -17,7 +17,7 @@ DevTools 项目快速参考。详细架构和 API 文档见 `AGENTS.md`（42 模
 
 ```bash
 # 前端
-cd frontend && npm install && npm run dev   # :5173
+cd frontend && pnpm install && pnpm dev      # :5173  (前端统一用 pnpm,锁文件 pnpm-lock.yaml)
 
 # 后端
 cd backend && go mod tidy && go run main.go   # :8080
