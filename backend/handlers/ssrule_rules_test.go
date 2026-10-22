@@ -18,6 +18,23 @@ func ssRuleLines(content string) []string {
 	return out
 }
 
+// ssRuleProxyLines 取出生成结果里的**规则行**:排掉段标记,只留真正要写进
+// [proxy_list] 的那些行。
+//
+// ACL 正文有**两个**段标记:[bypass_all](默认直连)与 [proxy_list](走代理)。
+// 断言规则行时两个都要排掉 —— 只排 [proxy_list] 会把 [bypass_all] 当成一条
+// 规则,行数断言必然对不上。
+func ssRuleProxyLines(content string) []string {
+	var out []string
+	for _, l := range ssRuleLines(content) {
+		if l == "[bypass_all]" || l == "[proxy_list]" {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 func TestBuildACLRules_Parsing(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -91,15 +108,8 @@ func TestBuildACLRules_Parsing(t *testing.T) {
 				t.Fatalf("不该有跳过项,得到: %v", skipped)
 			}
 
-			lines := ssRuleLines(content)
-			// 除了 [proxy_list] 标记本身,应当恰好是期望的那些行
-			got := make([]string, 0, len(lines))
-			for _, l := range lines {
-				if l == "[proxy_list]" {
-					continue
-				}
-				got = append(got, l)
-			}
+			// 除了段标记本身,应当恰好是期望的那些行
+			got := ssRuleProxyLines(content)
 
 			if len(got) != len(tt.want) {
 				t.Fatalf("行数不符,想要 %v,得到 %v\n完整内容:\n%s", tt.want, got, content)
@@ -148,13 +158,7 @@ func TestBuildACLRules_SkipsInvalidLines(t *testing.T) {
 		t.Fatalf("期望跳过 4 行,实际跳过 %d 行: %v", len(skipped), skipped)
 	}
 
-	lines := ssRuleLines(content)
-	got := make([]string, 0, len(lines))
-	for _, l := range lines {
-		if l != "[proxy_list]" {
-			got = append(got, l)
-		}
-	}
+	got := ssRuleProxyLines(content)
 	want := []string{`(^|\.)good\.com$`, `(^|\.)another-good\.com$`}
 	if len(got) != len(want) {
 		t.Fatalf("合法行数不符,想要 %v,得到 %v", want, got)

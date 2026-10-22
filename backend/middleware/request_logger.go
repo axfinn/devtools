@@ -87,6 +87,9 @@ func shouldSkipMonitoringRequest(method, path, upgrade string) bool {
 		"/assets/",
 		"/neon/",
 		"/api/bg/cached/",
+		// 规则文件的公开分发链接:路径里带着分发 token,
+		// 写进 http_request_logs 等于把凭据抄进日志表。
+		"/ss/",
 	} {
 		if strings.HasPrefix(path, prefix) {
 			return true
