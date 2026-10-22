@@ -73,14 +73,14 @@ jobs:
           go-version: '1.26.10'
           cache-dependency-path: backend/go.sum
 
-      - name: Install golangci-lint
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.55.2
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-
-      - name: Run golangci-lint
-        run: golangci-lint run --timeout=5m || echo "golangci-lint config not found, using defaults"
-        continue-on-error: true
+      # 原来这里有 golangci-lint 两步，两个问题：
+      #   1) 安装方式是从 master 分支 curl | sh 执行远端脚本 —— 与 uv 一样的供应链
+      #      暴露面（master 内容随时可变、无法固定到可审计的版本）；
+      #   2) 仓库里没有 .golangci.yml，默认规则跑这个体量必然失败，又被
+      #      `|| echo` + continue-on-error 吞掉 —— 一道从来没拦住任何东西的假闸门。
+      # 想要真正的 Go lint：先加 .golangci.yml（建议从 govet/ineffassign/unused
+      # 这类低噪声的 linter 起步，配合 new-from-rev 只卡新增代码），再把
+      # golangci/golangci-lint-action 钉到具体版本接回来。
 
       - name: Check Go formatting
         run: |

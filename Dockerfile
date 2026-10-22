@@ -64,8 +64,21 @@ WORKDIR /app
 # apk 源切到国内（Aliyun 镜像）
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 
-RUN apk add --no-cache ca-certificates tzdata curl python3 py3-pip coreutils ffmpeg \
+RUN apk add --no-cache tzdata curl python3 py3-pip coreutils ffmpeg \
     nodejs npm git bash openssh-client hugo
+
+# ca-certificates 单独一层，并强制刷新到仓库里的最新版本。
+#
+# 为什么必须单独成层：Docker 按「指令文本 + 前置层」做缓存，同一条
+# `apk add --no-cache ca-certificates` 在 Dockerfile 不变时会一直复用旧层，
+# 装到的还是几个月前的根库快照。实测本镜像里装的是 ca-certificates-20260611-r0
+# —— 早于 2026-10 的 eMudhra 弱私钥事件，容器内的 curl / wget / python / node
+# 仍会信任那 8 张被攻陷的中间 CA（Go 侧靠 1.26.10 的 x509 内置 distrust 兜住，
+# 非 Go 客户端没有这层保护）。
+#
+# `apk update` + `--upgrade` 让这一层每次改动指令时都拿到最新根库；
+# 想强制刷新也可以直接 docker build --no-cache。
+RUN apk update && apk add --no-cache --upgrade ca-certificates
 
 # 内置 npc 客户端（从 NPS 服务端下载，避免运行时下载）
 # 如果构建时无法访问，npc 将在首次启动时由 Go 服务自动下载
