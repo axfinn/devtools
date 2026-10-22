@@ -190,7 +190,7 @@ function formatBytes(value) {
 }
 
 function typeLabel(type) {
-  const map = { audio: '音乐', speech: '语音', video: '视频', image: '图片', media: '媒体', text: '文本', lyrics: '歌词', cover_feature: '翻唱前处理' }
+  const map = { audio: '音乐', speech: '语音', video: '视频', image: '图片', media: '媒体', text: '文本', lyrics: '歌词', cover_feature: '翻唱前处理', image_understanding: '图像理解' }
   return map[type] || type || 'result'
 }
 

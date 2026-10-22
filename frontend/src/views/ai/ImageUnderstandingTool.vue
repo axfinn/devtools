@@ -89,7 +89,10 @@
             <template #header>
               <div class="panel-header">
                 <span>结果</span>
-                <el-button text :disabled="!resultText" @click="copyResult">复制文本</el-button>
+                <div class="panel-actions">
+                  <el-button text :disabled="!resultText" @click="copyResult">复制文本</el-button>
+                  <el-button text :disabled="!resultText" :loading="sharingMcp" @click="shareMcpResult">保存分享</el-button>
+                </div>
               </div>
             </template>
 
@@ -297,6 +300,13 @@ import { ElMessage } from 'element-plus'
 import { Upload, Picture } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
+// ---- 保存分享（复用 MiniMax Studio 的同源凭证键） ----
+const SHARE_SUPER_ADMIN_KEY = 'minimax_studio_super_admin_password'
+const SHARE_API_KEY_STORAGE = 'minimax_studio_api_key'
+const SHARE_TITLE_MAX = 120
+const SHARE_SUMMARY_MAX = 240
+const SHARE_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+
 // ---- 模式切换 ----
 const activeMode = ref('minimax')
 
@@ -311,6 +321,7 @@ const imageFile = ref(null)
 const argsText = ref('')
 const submitting = ref(false)
 const sseLoading = ref(false)
+const sharingMcp = ref(false)
 let eventSource = null
 const resultText = ref('')
 const rawResult = ref('')
@@ -809,6 +820,93 @@ const copyResult = async () => {
     ElMessage.success('已复制')
   } catch (err) {
     ElMessage.error('复制失败')
+  }
+}
+
+// 剔除 raw 里回显的图片 base64，避免与 assets 里的 data URL 重复撑大请求体
+const stripInlineImage = (raw, imageBase64) => {
+  if (typeof raw !== 'string' || !raw) return raw
+  const bare = String(imageBase64 || '').replace(/^data:[^,]*,/, '')
+  return (bare ? raw.split(bare).join('[image omitted]') : raw)
+    .replace(/data:image\/[\w.+-]+;base64,[A-Za-z0-9+/=]+/g, '"[image omitted]"')
+}
+
+const shareMcpResult = async () => {
+  if (!resultText.value) return
+  const apiKey = (localStorage.getItem(SHARE_API_KEY_STORAGE) || '').trim()
+  const superAdminPassword = (localStorage.getItem(SHARE_SUPER_ADMIN_KEY) || '').trim()
+  if (!apiKey && !superAdminPassword) {
+    ElMessage.error('请先在 MiniMax 工作室填写 AI Gateway API Key 或超级管理员密码')
+    return
+  }
+  sharingMcp.value = true
+  try {
+    const tool = selectedTool.value || 'MiniMax-MCP'
+    const assets = []
+    // 10MB 闸门按原始文件字节计（不是 base64 解码后字节）
+    const imageSize = imageFile.value?.size || 0
+    if (imageBase64.value && imageSize > SHARE_IMAGE_MAX_BYTES) {
+      ElMessage.warning('图片过大，仅保存识别文本')
+    } else if (imageBase64.value) {
+      assets.push({
+        data_url: imageBase64.value,
+        filename: imageFile.value?.name || 'image-understanding.png',
+        content_type: String(imageBase64.value).split(';')[0].replace(/^data:/, '') || 'image/png',
+        kind: 'image'
+      })
+    }
+    const promptText = String(prompt.value || '').trim()
+    const title = (promptText ? `图像理解 · ${promptText.slice(0, 36)}` : '图像理解').slice(0, SHARE_TITLE_MAX)
+    const summary = `MiniMax MCP 图像理解 · 工具 ${tool}`.slice(0, SHARE_SUMMARY_MAX)
+    const headers = { 'Content-Type': 'application/json' }
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`
+    } else {
+      headers['X-Super-Admin-Password'] = superAdminPassword
+    }
+    const resp = await fetch('/api/minimax/result-shares', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        title,
+        summary,
+        result_type: 'image_understanding',
+        model: tool,
+        payload: {
+          text: resultText.value,
+          prompt: prompt.value,
+          tool: selectedTool.value,
+          source: 'minimax-mcp',
+          raw: stripInlineImage(rawResult.value, imageBase64.value)
+        },
+        assets
+      })
+    })
+    let data = {}
+    try {
+      data = await parseJsonSafe(resp)
+    } catch {
+      data = {}
+    }
+    if (!resp.ok) {
+      throw new Error(data.error || '保存分享失败')
+    }
+    ElMessage.success('图像理解结果已保存为分享页')
+    const shareUrl = data.share_url || ''
+    if (!shareUrl) {
+      ElMessage.warning('后端未返回分享链接')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      ElMessage.success('分享链接已复制')
+    } catch {
+      ElMessage.warning(`复制失败，请手动复制分享链接：${shareUrl}`)
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '保存分享失败')
+  } finally {
+    sharingMcp.value = false
   }
 }
 
