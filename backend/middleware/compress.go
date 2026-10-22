@@ -52,6 +52,12 @@ package middleware
 //   透传路径（不压缩）直接写原始 ResponseWriter，Flush 真实转发，SSE 恢复逐帧送达。
 //   请求侧白名单保留为快路径（省掉包装开销），但不再是正确性的唯一依赖。
 //
+// FINN-108 修复（Vary 覆盖）：
+//
+//   decide() 原本用 header.Set("Vary", "Accept-Encoding")，会**覆盖** handler
+//   自己声明的 Vary 维度（如 Vary: Origin），把上游已声明的缓存维度抹掉。
+//   改为 appendVary：已存在则跳过，不存在才追加，且按逗号分隔的 token 精确比较。
+//
 // 本中间件只暴露 Handler（gin 中间件），便于单测；调用方只需 router.Use(...)。
 
 import (
@@ -146,7 +152,29 @@ func (w *compressWriter) decide() {
 	w.compress = true
 	header.Del("Content-Length") // 压缩后长度未知，删掉让 net/http 走 chunked
 	header.Set("Content-Encoding", "gzip")
-	header.Set("Vary", "Accept-Encoding")
+	appendVary(header, acceptEncoding)
+}
+
+// acceptEncoding 是 Accept-Encoding 的头名，兼作 Vary 的维度名。
+const acceptEncoding = "Accept-Encoding"
+
+// appendVary 追加一个 Vary 维度，保留 handler 已声明的其它维度。
+//
+// 判据是「按逗号分隔的 token 精确比较」而非 strings.Contains：
+// Accept-Encoding 与 X-Accept-Encoding 前缀相同，Contains 会把后者误判为已存在，
+// 结果是 Accept-Encoding 维度被漏加，缓存会按错误维度分流。
+//
+// 已存在则不再追加：Vary 是列表型头，无条件 Add 会让响应出现
+// `Vary: Accept-Encoding, Accept-Encoding`，重复声明同一维度没有意义。
+func appendVary(header http.Header, value string) {
+	for _, existing := range header.Values("Vary") {
+		for _, token := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
 }
 
 // isStreamingContentType 识别不应压缩的流式响应。
@@ -305,7 +333,7 @@ func ResponseCompression(level int) gin.HandlerFunc {
 			return
 		}
 		// 请求头协商（与 gin-contrib/gzip v1.0.1 shouldCompress 一致）。
-		if !strings.Contains(c.Request.Header.Get("Accept-Encoding"), "gzip") ||
+		if !strings.Contains(c.Request.Header.Get(acceptEncoding), "gzip") ||
 			strings.Contains(c.Request.Header.Get("Connection"), "Upgrade") ||
 			strings.Contains(c.Request.Header.Get("Accept"), "text/event-stream") {
 			c.Next()
