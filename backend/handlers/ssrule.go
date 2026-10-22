@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -208,6 +209,9 @@ func (h *SSRuleHandler) Get(c *gin.Context) {
 	// 让页面上的 skipped 提示与现实一致。
 	content, skipped, err := buildACLRules(file.Source)
 	if err != nil {
+		// 回落行为不变(用库里存的正文 + 空 skipped),但必须留现场:
+		// 否则「页面上 skipped 为什么是空的」事后无从查起。
+		log.Printf("ssrules: 规则正文重建失败,回落到库内已存内容: %v", err)
 		content, skipped = file.Content, []string{}
 	}
 	file.Content = content
@@ -261,6 +265,8 @@ func (h *SSRuleHandler) RegenerateToken(c *gin.Context) {
 	// 重跑一遍生成,让当前 source 里的非法行照样报出来(与 Get 的口径相同)。
 	content, skipped, err := buildACLRules(file.Source)
 	if err != nil {
+		// 与 Get 同一口径:回落行为不变,只补可观测性。
+		log.Printf("ssrules: 规则正文重建失败,回落到库内已存内容: %v", err)
 		content, skipped = file.Content, []string{}
 	}
 	file.Content = content
