@@ -51,10 +51,31 @@ func registerPublicRoutes(router *gin.Engine, handlers *routeHandlers) {
 	router.GET("/sub/proxy", handlers.proxyHandler.DownloadSubscription)
 	router.GET("/sub/proxy/:type", handlers.proxyHandler.DownloadSubscription)
 	router.Any("/mock/:id", handlers.mockAPIHandler.Execute)
-	// SS 规则文件的公开分发。必须在这儿显式注册:非 /api 前缀的路径没注册就会
-	// 落到 NoRoute 被 SPA fallback 兜成 index.html,客户端拿到的是一坨 HTML,
+	registerSSRulePublicRoutes(router, handlers.ssRuleHandler)
+}
+
+// registerSSRulePublicRoutes 注册 SS 规则文件的公开分发路由。
+//
+// 为什么要拆成独立函数:HTTP 级回归用例(package main)要复用**同一份**注册逻辑,
+// 否则测试里手抄一遍路由就等于没有测到真实接线(接线漂移不会被发现)。
+func registerSSRulePublicRoutes(router *gin.Engine, h *handlers.SSRuleHandler) {
+	// 分发端独立限流桶:120 次/分钟/IP。
+	distributeRL := handlers.NewSSRuleLimiter(handlers.SSRuleDistributeRateLimitPerMinute)
+
+	// 正常分发端点。必须显式注册:非 /api 前缀的路径没注册就会落到 NoRoute
+	// 被 SPA fallback 兜成 index.html,客户端拿到的是一坨 HTML,
 	// 而报错信息完全指不到这里。
-	router.GET("/ss/:token/:filename", handlers.ssRuleHandler.Download)
+	router.GET("/ss/:token/:filename", distributeRL, h.Download)
+
+	// 显式注册尾斜杠 / 空 filename / 少一段的形态并直返 404,用来"关闭"
+	// /ss/ 前缀的 RedirectTrailingSlash 自动重定向。不注册的话 gin 会 301 到
+	// 无尾斜杠形态,尾斜杠载荷就拿不到同款 404。
+	//
+	// 注意这三条必须指向 404 handler 而**不是** Download:尾斜杠是独立的空段,
+	// 不进 :filename 参数,指过去会返回 200 + 规则正文 —— 比 301 更糟。
+	router.GET("/ss/:token/:filename/", distributeRL, h.NotFound)
+	router.GET("/ss/:token/", distributeRL, h.NotFound)
+	router.GET("/ss/:token", distributeRL, h.NotFound)
 }
 
 func registerStaticRoutes(router *gin.Engine, distDir string) {
@@ -83,6 +104,17 @@ func registerStaticRoutes(router *gin.Engine, distDir string) {
 		path := c.Request.URL.Path
 		if path == "/api" || strings.HasPrefix(path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "接口不存在", "path": path})
+			return
+		}
+
+		// /ss/ 前缀一律 404「规则文件不存在」。
+		// 不加这条 → 未匹配上的 /ss/ 路径会落进下面的 SPA fallback,
+		// 客户端拿到 200 + index.html,把一坨 HTML 当规则文件用 ——
+		// 静默失败,比 404 更难排查。
+		//
+		// 只拦 /ss/ 前缀,不影响其它路径的 SPA 兜底行为。
+		if strings.HasPrefix(path, "/ss/") {
+			c.String(http.StatusNotFound, handlers.SSRuleNotFoundBody)
 			return
 		}
 
