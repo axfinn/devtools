@@ -42,34 +42,47 @@ if [ -f "${CLAWTEST_DIR}/autodev/autodev" ]; then
 fi
 
 # 2. 每次启动重新生成 settings.json，确保 MINIMAX_API_KEY 等 env 变量实时生效
+# 用 python3 生成而不是 shell heredoc：heredoc 未加引号时变量值里的 " \ 等字符
+# 会原样写进 JSON，生成非法文件。Claude Code 读到非法 JSON 会静默忽略整个
+# settings.json（skills / mcpServers / env 全部失效），容器启动时毫无报错。
 echo "[entrypoint] Writing ${CLAUDE_HOME}/settings.json..."
 mkdir -p "${CLAUDE_HOME}/skills"
-cat > "${CLAUDE_HOME}/settings.json" << EOF
-{
-  "skills": {
-    "paths": ["~/.claude/skills"]
-  },
-  "mcpServers": {
-    "MiniMax": {
-      "command": "uvx",
-      "args": ["minimax-coding-plan-mcp", "-y"],
-      "env": {
-        "MINIMAX_API_KEY": "${MINIMAX_API_KEY}",
-        "MINIMAX_API_HOST": "https://api.minimaxi.com"
-      }
-    }
-  },
-  "env": {
-    "API_TIMEOUT_MS": "3000000",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "ANTHROPIC_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7"
-  }
+CLAUDE_HOME="${CLAUDE_HOME}" MINIMAX_API_KEY="${MINIMAX_API_KEY}" python3 - <<'PY'
+import json
+import os
+
+claude_home = os.environ["CLAUDE_HOME"]
+settings = {
+    "skills": {
+        "paths": ["~/.claude/skills"],
+    },
+    "mcpServers": {
+        "MiniMax": {
+            "command": "uvx",
+            "args": ["minimax-coding-plan-mcp", "-y"],
+            "env": {
+                "MINIMAX_API_KEY": os.environ.get("MINIMAX_API_KEY", ""),
+                "MINIMAX_API_HOST": "https://api.minimaxi.com",
+            },
+        },
+    },
+    "env": {
+        "API_TIMEOUT_MS": "3000000",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "ANTHROPIC_MODEL": "MiniMax-M2.7",
+        "ANTHROPIC_SMALL_FAST_MODEL": "MiniMax-M2.7",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2.7",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2.7",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2.7",
+    },
 }
-EOF
+
+path = os.path.join(claude_home, "settings.json")
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(settings, fh, indent=2, ensure_ascii=False)
+    fh.write("\n")
+print(f"[entrypoint] wrote {path}")
+PY
 
 # 每次启动修正权限（防止重建镜像后 UID 变化）
 chown -R autodev:autodev "${CLAUDE_HOME}"

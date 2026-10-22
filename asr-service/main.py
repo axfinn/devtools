@@ -9,12 +9,14 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+import wave
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from config_loader import ASRConfig, ServiceConfig, load_config
 
@@ -113,9 +115,17 @@ async def lifespan(app: FastAPI):
         logger.exception("Whisper 模型加载失败")
         raise
 
-    # 预热(只跑一次很短的转写,避免首次请求长时间阻塞)
+    # 预热(跑一次极短的静音转写,避免首次请求长时间阻塞)
     with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
         try:
+            # 必须真的写一段 0.5s 静音 PCM:之前这里是个 0 字节文件,
+            # faster-whisper 解空文件必然抛异常 → 永远走"预热跳过"分支,
+            # 真正需要的首帧 JIT/预热从未发生,首次真实请求仍会长时间阻塞。
+            with wave.open(tmp.name, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(b"\x00\x00" * (16000 // 2))  # 0.5s 静音
             whisper_model.transcribe(
                 tmp.name,
                 language=(config.asr.language or None),
@@ -123,7 +133,7 @@ async def lifespan(app: FastAPI):
             )
             logger.info("ASR 预热完成")
         except Exception:
-            logger.info("ASR 预热跳过(临时文件不可用)")
+            logger.exception("ASR 预热跳过(静音 wav 生成或推理失败)")
 
     logger.info(
         "ASR 服务就绪: device=%s, gpu_available=%s",
@@ -163,6 +173,22 @@ async def health():
     }
 
 
+def _run_whisper(path: str, lang: str | None):
+    """CPU 密集的 whisper 解码,必须离开事件循环执行。
+
+    faster-whisper 的 transcribe() 只做准备工作,真正的解码发生在迭代
+    segs_iter 时,所以「建 generator + 迭代」整段都要在一个工作线程里跑完。
+    """
+    segs_iter, info = whisper_model.transcribe(
+        path,
+        language=lang,
+        beam_size=config.asr.beam_size,
+        vad_filter=config.asr.vad_filter,
+        condition_on_previous_text=False,
+    )
+    return [s for s in segs_iter if s.text.strip()], info
+
+
 @app.post("/transcribe", response_model=ASRResponse)
 async def transcribe(
     file: UploadFile = File(...),
@@ -183,14 +209,11 @@ async def transcribe(
                 tmp.write(chunk)
 
         lang = (language or config.asr.language or None)
-        segs_iter, info = whisper_model.transcribe(
-            temp_path,
-            language=lang,
-            beam_size=config.asr.beam_size,
-            vad_filter=config.asr.vad_filter,
-            condition_on_previous_text=False,
-        )
-        whisper_segs = [s for s in segs_iter if s.text.strip()]
+        # whisper 解码是 CPU 密集同步调用,放在 async 端点里会卡死事件循环:
+        # 推理期间同循环上的 /health 无法响应,compose healthcheck
+        # (timeout 10s / interval 10s / retries 30)会连续失败把容器判 unhealthy。
+        # run_in_threadpool 把整段丢到工作线程,转写结果不变。
+        whisper_segs, info = await run_in_threadpool(_run_whisper, temp_path, lang)
 
         segments = [
             ASRSegment(start=float(s.start), end=float(s.end), text=s.text.strip())

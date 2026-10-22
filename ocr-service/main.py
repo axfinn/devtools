@@ -115,7 +115,12 @@ def detect_qr_codes(pil_image: Image.Image) -> list[dict]:
 
 
 @app.post("/ocr", response_model=OCRResponse)
-async def ocr(request: OCRRequest):
+def ocr(request: OCRRequest):
+    # 同步 def:FastAPI 会把同步端点丢到线程池执行。
+    # 原来写成 async def,里面的 ONNX 推理(zxing + RapidOCR)是 CPU 密集同步调用,
+    # 直接把事件循环卡住 —— 推理期间同循环上的 /health 无响应,
+    # compose healthcheck(timeout 10s / interval 10s)会连续失败把容器判 unhealthy。
+    # 转写/识别结果本身不变,只是不再阻塞事件循环。
     try:
         image_b64 = request.image
         if "," in image_b64:
