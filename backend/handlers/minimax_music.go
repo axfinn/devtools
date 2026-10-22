@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -135,6 +136,12 @@ func (h *AIGatewayHandler) MiniMaxLyricsGeneration(c *gin.Context) {
 // 上游判断"成功"只看 base_resp.status_code == 0,歌词字段空不空由前端 extractLyricsText 处理;
 // 后端不要再画蛇添足去判定空内容然后重试,反而把正常响应误判成 failed 让整个歌曲生成流程断掉。
 func (h *AIGatewayHandler) runAsyncLyricsGeneration(taskID, apiKey, upstreamURL string, bodyBytes []byte, incoming http.Header, apiKeyID string) {
+	// gin 的 recover 只护请求 goroutine,后台 goroutine panic 会杀掉整个后端进程
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runAsyncLyricsGeneration: %v", r)
+		}
+	}()
 	task, err := h.db.GetMiniMaxMediaTask(taskID)
 	if err != nil {
 		return

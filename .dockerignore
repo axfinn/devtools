@@ -4,6 +4,9 @@
 
 # Node
 frontend/node_modules
+# 断点重装留下的 node_modules.BROKEN-* 也要排除:精确路径 frontend/node_modules
+# 匹配不到同级的 frontend/node_modules.BROKEN-1709(106MB),每次 build 都进上下文
+frontend/node_modules*
 frontend/.env.local
 frontend/.env.*.local
 

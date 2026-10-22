@@ -476,7 +476,11 @@ build_askit() {
 build_backend() {
     log_info "构建后端..."
     cd "$BACKEND_DIR"
-    go build -o server main.go
+    # 必须用 `.` 而不是 `main.go`：package main 由 7 个文件组成(main.go 只调用
+    # app_runtime.go/app_handlers.go/app_http.go/app_startup.go 里定义的函数),
+    # 文件列表模式只编译列出的文件 → undefined: newAppRuntime。
+    # -tags with_utls 与 Dockerfile:42 保持一致,否则 sing-box Reality 启动即报错。
+    go build -tags with_utls -o server .
     log_success "后端构建完成"
 }
 

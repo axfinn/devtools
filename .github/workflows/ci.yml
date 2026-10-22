@@ -9,7 +9,7 @@ on:
 
 env:
   NODE_VERSION: '20'
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.25.5'
   GOPROXY: 'https://goproxy.cn,direct'
   GOSUMDB: 'off'
 
@@ -91,9 +91,12 @@ jobs:
           fi
 
       - name: Run file size budget checks
+        # Makefile 在仓库根,这个 job 的 working-directory 是 ./backend →
+        # 直接 `make lint-go` 会 "No rule to make target",被 || true 吞掉,
+        # 这个门禁从来没生效过。-C .. 切到仓库根再执行。
         run: |
-          make lint-go || true
-          make lint-vue || true
+          make -C .. lint-go
+          make -C .. lint-vue
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./... || echo "Tests not configured yet"
@@ -108,7 +111,10 @@ jobs:
         continue-on-error: true
 
       - name: Build backend
-        run: go build -v -o devtools-server ./main.go
+        # `.` 而不是 `./main.go`:package main 由 7 个文件组成,文件列表模式只编译
+        # main.go 会 undefined: newAppRuntime。-tags with_utls 与 Dockerfile 一致,
+        # 否则产物启动即报 "uTLS ... is not included in this build"。
+        run: go build -v -tags with_utls -o devtools-server .
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

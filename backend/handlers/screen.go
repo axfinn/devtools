@@ -507,6 +507,11 @@ func (h *ScreenHandler) ScreenSignalingWS(c *gin.Context) {
 		}
 		if room.host == nil && room.viewerCount() == 0 {
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("PANIC in screen room idle cleanup: %v", r)
+					}
+				}()
 				time.Sleep(screenRoomIdleTTL)
 				if room.host == nil && room.viewerCount() == 0 {
 					h.rooms.Delete(id)
@@ -838,6 +843,11 @@ func (h *ScreenHandler) ScreenRelayHostWS(c *gin.Context) {
 		room.removeHost()
 		if room.isEmpty() {
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("PANIC in screen relay room idle cleanup: %v", r)
+					}
+				}()
 				time.Sleep(screenRoomIdleTTL)
 				if room.isEmpty() {
 					h.relayRooms.Delete(id)
@@ -979,6 +989,11 @@ func (h *ScreenHandler) ScreenRelayViewerWS(c *gin.Context) {
 		room.removeViewer(peerID)
 		if room.isEmpty() {
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("PANIC in screen relay room idle cleanup: %v", r)
+					}
+				}()
 				time.Sleep(screenRoomIdleTTL)
 				if room.isEmpty() {
 					h.relayRooms.Delete(id)

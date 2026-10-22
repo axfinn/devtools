@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -175,6 +176,12 @@ func (h *AIGatewayHandler) MiniMaxH3VideoCreate(c *gin.Context) {
 // H3-Context-IR (modality=text) 不会超过 1 分钟,留同样窗口足够。
 // 连续 5 次网络/解析错误就认栽(避免上游故障时无限压测)。
 func (h *AIGatewayHandler) runAsyncH3VideoTask(localTaskID, externalTaskID, model, apiKey, baseURL, taskType, apiKeyID string) {
+	// gin 的 recover 只护请求 goroutine,后台 goroutine panic 会杀掉整个后端进程
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in runAsyncH3VideoTask: %v", r)
+		}
+	}()
 	deadline := time.Now().Add(30 * time.Minute)
 	pollInterval := 4 * time.Second
 	endpoint := "/api/minimax/h3/v2/query/video_generation"
