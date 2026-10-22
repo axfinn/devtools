@@ -48,7 +48,7 @@ export function useScreenRTC() {
   // 创建 peer 后回放(关键:host 还没开始共享时 viewer 的 offer 会先到)
   const pendingSignals = new Map() // peerId → [{type, sdp, candidate}]
 
-  function log(...args) { console.log('[RTC]', ...args) }
+  function log(...args) { console.debug('[RTC]', ...args) }
   function logErr(...args) { console.error('[RTC]', ...args) }
 
   // Chrome 屏幕选择器 / LastPass 等扩展会在 unhandledrejection 抛

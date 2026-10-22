@@ -36,9 +36,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run linter (ESLint)
-        run: npm run lint || echo "Linter not configured yet"
-        continue-on-error: true
+      - name: Run linter (静态规则)
+        # 真正会失败的闸门:frontend/scripts/lint-static-rules.mjs 零依赖,
+        # 覆盖 R3(模板 .value)/R4(裸下标)/L1(console.log)三条会白屏/脏日志的规则。
+        # 原来这里是 `npm run lint || echo "ESLint not configured yet"` + continue-on-error,
+        # 而 package.json 里根本没有 lint 脚本 → 这道闸门从来没跑过,永远显示绿色。
+        run: npm run lint
 
       - name: Run tests
         run: npm test || echo "Tests not configured yet"

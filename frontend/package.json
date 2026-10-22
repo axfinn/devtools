@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "postinstall": "node ./scripts/ensure-lightningcss.mjs",
+    "lint": "node scripts/lint-static-rules.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
