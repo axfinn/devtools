@@ -25,7 +25,7 @@ const VIDEO_MAX_WIDTH = 960
 const VIDEO_MAX_HEIGHT = 540
 const AUDIO_BITRATE = 64000
 
-function log(...args) { console.log('[RELAY]', ...args) }
+function log(...args) { console.debug('[RELAY]', ...args) }
 function logErr(...args) { console.error('[RELAY]', ...args) }
 
 // ── Host: 上传 ────────────────────────────────────────────────────

@@ -427,17 +427,17 @@ async function connectHostWS(sessionId) {
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/screen/sessions/${sessionId}/ws?role=host&token=${encodeURIComponent(token)}`)
   signalingWS = ws
   ws.onopen = () => {
-    console.log('[HOST] WS open')
+    console.debug('[HOST] WS open')
     ElMessage.success('信令通道已建立')
   }
   ws.onmessage = (ev) => {
     let msg
     try { msg = JSON.parse(ev.data) } catch { return }
-    console.log('[HOST] recv', msg.type, msg.from || '', msg.to || '')
+    console.debug('[HOST] recv', msg.type, msg.from || '', msg.to || '')
     handleSignalingMessage(msg)
   }
   ws.onclose = (ev) => {
-    console.log('[HOST] WS close', ev.code, ev.reason)
+    console.debug('[HOST] WS close', ev.code, ev.reason)
     if (currentSession.value) {
       ElMessage.warning('信令通道已断开')
     }
@@ -450,7 +450,7 @@ async function connectHostWS(sessionId) {
 
 function wsSend(obj) {
   if (signalingWS && signalingWS.readyState === WebSocket.OPEN) {
-    console.log('[HOST] send', obj.type, obj.to || '')
+    console.debug('[HOST] send', obj.type, obj.to || '')
     signalingWS.send(JSON.stringify(obj))
   } else {
     console.warn('[HOST] send dropped (ws not open)', obj.type)
@@ -492,7 +492,7 @@ function onViewerJoined(viewer) {
   // 之前这里会调 rtc.hostAttachViewer 走 P2P。但用户网络下 TURN 不可达,
   // P2P ICE 100% 失败,白白占用带宽和 CPU,且 viewer 端已经改成纯 relay。
   // 这里直接跳过 P2P 初始化,viewer 走 server relay 看画面。
-  console.log('[HOST] viewer_joined', viewer.peer_id, viewer.nickname, '— relay-only mode, skip P2P attach')
+  console.debug('[HOST] viewer_joined', viewer.peer_id, viewer.nickname, '— relay-only mode, skip P2P attach')
 }
 
 // 把 viewer 控制消息转成 host 视频预览上的反馈标注。
@@ -535,7 +535,7 @@ function handleRemoteInputFeedback(kind, data) {
 
 // ── 控制按钮 ──────────────────────────────────────────────
 async function onStartShare() {
-  console.log('[HOST] onStartShare click')
+  console.debug('[HOST] onStartShare click')
   try {
     await rtc.startCapture()
     nextTick(() => {
@@ -543,7 +543,7 @@ async function onStartShare() {
         localVideoEl.value.srcObject = rtc.localStream.value
       }
     })
-    console.log('[HOST] capture ready, viewers count=' + viewers.value.length)
+    console.debug('[HOST] capture ready, viewers count=' + viewers.value.length)
     // 启动 server relay fallback:P2P 失败时 viewer 走这里看画面 + 听音频。
     // 始终上传,不靠 P2P 检测触发;host 带宽代价(~500KB/s)换 100% 可达性。
     relayUpload.start(rtc.localStream.value)
@@ -563,7 +563,7 @@ async function onStartShare() {
 }
 
 function onStopShare() {
-  console.log('[HOST] onStopShare click')
+  console.debug('[HOST] onStopShare click')
   relayUpload.stop()
   rtc.stopCapture()
   // 通知 viewers:host 已停止

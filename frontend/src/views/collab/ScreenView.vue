@@ -330,7 +330,7 @@ function connect() {
   const ws = new WebSocket(`${proto}://${location.host}/api/screen/sessions/${sessionId.value}/ws?${params}`)
   signalingWS = ws
   ws.onopen = async () => {
-    console.log('[VIEWER] WS open')
+    console.debug('[VIEWER] WS open')
     connecting.value = false
     connected.value = true
     reconnecting.value = false
@@ -347,11 +347,11 @@ function connect() {
   ws.onmessage = (ev) => {
     let msg
     try { msg = JSON.parse(ev.data) } catch { return }
-    console.log('[VIEWER] recv', msg.type, msg.from || '', msg.to || '')
+    console.debug('[VIEWER] recv', msg.type, msg.from || '', msg.to || '')
     handleSignaling(msg)
   }
   ws.onclose = (ev) => {
-    console.log('[VIEWER] WS close', ev.code, ev.reason)
+    console.debug('[VIEWER] WS close', ev.code, ev.reason)
     // 之前确实连上过(host 已知道我们),而不是第一次就连不上 → 自动重连
     if (connected.value) {
       ElMessage.warning('与信令服务器断开连接,正在重连……')
@@ -398,7 +398,7 @@ function scheduleReconnect() {
 
 function wsSend(obj) {
   if (signalingWS && signalingWS.readyState === WebSocket.OPEN) {
-    console.log('[VIEWER] send', obj.type, obj.to || '')
+    console.debug('[VIEWER] send', obj.type, obj.to || '')
     signalingWS.send(JSON.stringify(obj))
   } else {
     console.warn('[VIEWER] send dropped (ws not open)', obj.type)
@@ -510,7 +510,7 @@ watch(() => relayDownload.lastFrameAt.value, (t) => {
   if (t > 0) {
     relayFrameReceived.value = true
     if (relayFrameReceived.value && !hasRemoteTrack.value) {
-      console.log('[VIEWER] relay first frame painted')
+      console.debug('[VIEWER] relay first frame painted')
     }
   }
 })
@@ -520,7 +520,7 @@ watch(() => {
   const e = rtc.peers.value.get(hostPeerId)
   return e?.peer?._channel?.readyState
 }, (state) => {
-  console.log('[VIEWER] data channel state =', state)
+  console.debug('[VIEWER] data channel state =', state)
   if (state === 'open') {
     if (session.value?.allow_remote_control && remoteControlEnabled.value) attachInput()
   } else if (state === 'closed') {
