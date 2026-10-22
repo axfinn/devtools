@@ -31,6 +31,34 @@ function makeSut(options) {
   return result
 }
 
+// Node 26 ships an experimental global `localStorage` that stays `undefined` unless
+// `--localstorage-file` is passed, and that global shadows jsdom's implementation.
+// Stubbing both storages with a self-contained in-memory implementation keeps this
+// suite independent of the host runtime (Node 20 in CI vs Node 26 locally).
+function makeMemStorage() {
+  const items = new Map()
+  return {
+    get length() {
+      return items.size
+    },
+    key(index) {
+      return [...items.keys()][index] ?? null
+    },
+    getItem(key) {
+      return items.has(String(key)) ? items.get(String(key)) : null
+    },
+    setItem(key, value) {
+      items.set(String(key), String(value))
+    },
+    removeItem(key) {
+      items.delete(String(key))
+    },
+    clear() {
+      items.clear()
+    },
+  }
+}
+
 describe('useAdminAuth', () => {
   beforeEach(() => {
     mockFetch.mockReset()
@@ -39,12 +67,14 @@ describe('useAdminAuth', () => {
     mockElMessage.warning.mockReset()
     mockElMessage.info.mockReset()
     global.fetch = mockFetch
-    localStorage.clear()
-    sessionStorage.clear()
+    // Fresh storages per test: no leakage, no dependency on the host implementation.
+    vi.stubGlobal('localStorage', makeMemStorage())
+    vi.stubGlobal('sessionStorage', makeMemStorage())
   })
 
   afterEach(() => {
     delete global.fetch
+    vi.unstubAllGlobals()
   })
 
   describe('credentialMode: body (default)', () => {
