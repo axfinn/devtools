@@ -19,7 +19,7 @@ Excalidraw 是 React 组件，需要在 Vue 中集成。采用 **Vue 包装组�
 
 ```bash
 # 前端依赖
-npm install react react-dom @excalidraw/excalidraw
+pnpm add react react-dom @excalidraw/excalidraw
 ```
 
 创建 `ExcalidrawWrapper.vue` 组件：

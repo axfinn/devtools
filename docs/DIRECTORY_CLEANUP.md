@@ -190,7 +190,7 @@ devtools/
 
 - [ ] `git status` 应该干净（无大量未跟踪文件）
 - [ ] 后端可以正常编译：`cd backend && go build .`
-- [ ] 前端可以正常构建：`cd frontend && npm run build`
+- [ ] 前端可以正常构建：`cd frontend && pnpm build`
 - [ ] 文档都在 `docs/` 目录
 - [ ] 无 `.old`、`.bak` 备份文件
 - [ ] `.gitignore` 规则正常工作
@@ -204,7 +204,7 @@ devtools/
 ### 构建流程
 
 部署时需要：
-1. `cd frontend && npm run build` - 构建前端
+1. `cd frontend && pnpm build` - 构建前端
 2. `cp -r frontend/dist backend/` - 复制到后端
 3. `cd backend && go build .` - 构建后端
 

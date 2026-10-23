@@ -278,7 +278,7 @@ CSS 变量定义
 
 ```bash
 cd frontend
-npm run dev
+pnpm dev
 ```
 
 访问：http://localhost:5175
@@ -330,7 +330,7 @@ mv dark-theme.css.old dark-theme.css
 git checkout src/main.js
 
 # 重启开发服务器
-npm run dev
+pnpm dev
 ```
 
 ---
