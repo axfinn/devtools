@@ -1,5 +1,11 @@
 # 百炼图片工具 API
 
+> ⚠️ **本模块已于 2026-09-09 下线**（commit `7d08dfd`「feat: 下线阿里百炼图片模块」）。
+> 阿里百炼图片模块的 `backend/handlers/bailian.go`、`backend/models/bailian.go`、`backend/routes/bailian.go`
+> 及前端 `BailianImageTool.vue` 均已从 main 移除，本文所列的 `/api/bailian/*` 端点（含 `POST /api/bailian/image`）
+> **均已不存在**，调用只会得到 404。本文件仅作**历史留存**，不作为现行接口参考。
+> 现行 AI Gateway 接口见 [`ai-gateway-api.md`](./ai-gateway-api.md)。
+
 所有接口都以 `/api/bailian` 为前缀。
 
 鉴权方式：

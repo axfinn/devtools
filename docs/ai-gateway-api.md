@@ -16,7 +16,7 @@
   - `qwen-image-2.0-2026-03-03`
   - `qwen-image-plus-2026-01-09`
   - `wan2.6-i2v-flash`
-  - 以及 `backend/config.yaml` 中启用的其他 Bailian 模型
+  - 以及 `backend/config.yaml` 中启用的其他 DashScope / MiniMax 模型
 
 ## 1. 超级管理员能力
 
@@ -217,7 +217,7 @@ AI Gateway 会做以下限制：
 - Key 级别模型白名单校验
 - Key 级别 Scope 校验
 - Key 级别每小时请求数限制
-- Bailian 模型本地额度限制和截止时间限制
+- Key 级别预算上限（`budget_limit`）与告警阈值（`alert_threshold`）
 
 ## 7. Token 统计与计费
 
@@ -259,8 +259,8 @@ ai_gateway:
       output_per_1k_tokens: 0.008
       request_cost: 0
       currency: "CNY"
-    - model: "qwen-image-2.0-pro"
-      provider: "bailian"
+    - model: "image-01"
+      provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0.12
