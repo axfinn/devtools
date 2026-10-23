@@ -566,11 +566,20 @@ async function runTutor() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || data.message || '英语学习接口请求失败')
 
-    const parsed = parseJsonContent(data.content || '')
+    const rawContent = typeof data.content === 'string' ? data.content : ''
+    if (!rawContent || !rawContent.trim()) {
+      result.value = null
+      rawResult.value = ''
+      ElMessage.warning('AI 返回为空，请稍后重试或更换模型')
+      return
+    }
+    const parsed = parseJsonContent(rawContent)
     if (parsed) {
       result.value = normalizeResult(parsed)
+      rawResult.value = ''
     } else {
-      rawResult.value = normalizeRawLearningText(data.content || data)
+      rawResult.value = normalizeRawLearningText(rawContent)
+      result.value = null
     }
     pushHistory()
   } catch (err) {
@@ -582,22 +591,54 @@ async function runTutor() {
 
 function parseJsonContent(content) {
   if (!content) return null
-  const cleaned = content
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```$/i, '')
-    .trim()
+  // 允许内容里有 ```json ... ``` 或 ``` ... ``` 包裹
+  const fenceMatch = String(content).match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenceMatch ? fenceMatch[1] : String(content)
+  const trimmed = candidate.trim()
+  if (!trimmed) return null
+  // 1) 直接整段 JSON
   try {
-    return JSON.parse(cleaned)
+    return JSON.parse(trimmed)
   } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/)
-    if (!match) return null
-    try {
-      return JSON.parse(match[0])
-    } catch {
-      return null
+    /* fallthrough */
+  }
+  // 2) 截取首个平衡大括号子串（避免贪婪正则吞掉多个对象导致解析失败）
+  const start = trimmed.indexOf('{')
+  if (start < 0) return null
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < trimmed.length; i += 1) {
+    const ch = trimmed[i]
+    if (escape) {
+      escape = false
+      continue
+    }
+    if (inString) {
+      if (ch === '\\') {
+        escape = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        const candidateStr = trimmed.slice(start, i + 1)
+        try {
+          return JSON.parse(candidateStr)
+        } catch {
+          return null
+        }
+      }
     }
   }
+  return null
 }
 
 function normalizeRawLearningText(value) {
