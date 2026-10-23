@@ -7,6 +7,30 @@ on:
     branches: [ main, develop ]
 
 jobs:
+  # GitHub Actions workflow 文件自身的静态检查
+  workflow-lint:
+    name: Workflow Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: backend/go.sum
+
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+      - name: Lint workflow files
+        # 为什么这道闸门必须有:actionlint 能查出 GitHub 自己会拒绝执行的写法 ——
+        # 比如 step 级 `if:` 里用 secrets 上下文(GitHub 判定整个 workflow 非法,
+        # run 直接 0 job 失败,连日志都没有)。ci.yml 和 deploy.yml 长期 0 job 失败
+        # 就是这么来的,而此前没有任何一道闸门能发现它。
+        run: $(go env GOPATH)/bin/actionlint .github/workflows/*.yml
+
   # Frontend code quality
   frontend-lint:
     name: Frontend Linting
