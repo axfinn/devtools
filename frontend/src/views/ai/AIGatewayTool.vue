@@ -2124,7 +2124,7 @@ curl -X POST ${origin}/api/minimax/h3/v2/video_generation \\
   }'
 
 # 轮询视频生成任务
-curl ${origin}/api/minimax/h3/v2/query/video_generation/task_xxx \\
+curl ${origin}/api/minimax/h3/v2/query/video_generation/mmh3_xxxxxxxxxxxx \\
   -H "Authorization: Bearer ai_xxx"`
 
 const gatewayResponseExample = `{
