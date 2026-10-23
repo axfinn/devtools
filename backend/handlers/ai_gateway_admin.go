@@ -22,10 +22,11 @@ func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 		"auth": gin.H{
 			"admin_header": "X-Super-Admin-Password",
 			"api_key":      "Authorization: Bearer dtk_ai_xxx",
+			"scope_hint":   "图像理解与视频生成要求 API Key 的 allowed_scopes 包含 media",
 		},
 		"billing": gin.H{
 			"fields":  []string{"input_tokens", "output_tokens", "total_tokens", "estimated_cost", "currency"},
-			"rule":    "文本模型优先读取上游 usage，缺失时后端本地估算；图片/视频按配置 request_cost 计费。",
+			"rule":    "文本模型优先读取上游 usage，缺失时后端本地估算；视频生成按配置 request_cost 计费，图像理解当前记 0 费用。",
 			"pricing": h.cfg.AIGateway.Pricing,
 		},
 		"routes": []gin.H{
@@ -39,9 +40,12 @@ func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 			{"method": "GET", "path": "/api/ai-gateway/admin/reports", "description": "超级管理员查看按天/月聚合报表"},
 			{"method": "GET", "path": "/api/ai-gateway/admin/alerts", "description": "超级管理员查看预算阈值告警"},
 			{"method": "POST", "path": "/api/ai-gateway/v1/chat/completions", "description": "统一文本模型接口"},
-			{"method": "POST", "path": "/api/ai-gateway/v1/media/generations", "description": "统一图片/视频模型接口"},
-			{"method": "GET", "path": "/api/ai-gateway/v1/media/tasks", "description": "当前 API Key 维度的媒体任务列表"},
-			{"method": "GET", "path": "/api/ai-gateway/v1/media/tasks/:id", "description": "当前 API Key 维度的媒体任务详情"},
+			{"method": "POST", "path": "/api/ai-gateway/v1/image/understanding", "description": "图像理解接口（Base64 图片入参，单张解码后不超过 10MB）"},
+			{"method": "POST", "path": "/api/ai-gateway/v1/image/understanding/file", "description": "图像理解接口（multipart 文件上传图片）"},
+			{"method": "POST", "path": "/api/ai-gateway/v1/image/understanding/sse", "description": "图像理解接口（SSE 流式返回）"},
+			{"method": "POST", "path": "/api/ai-gateway/v1/image/understanding/sse/file", "description": "图像理解接口（multipart 文件上传图片 + SSE 流式返回）"},
+			{"method": "POST", "path": "/api/minimax/h3/v2/video_generation", "description": "异步视频生成接口（返回 202 + task_id + poll_url）"},
+			{"method": "GET", "path": "/api/minimax/h3/v2/query/video_generation/:task_id", "description": "查询视频生成任务状态"},
 		},
 		"examples": gin.H{
 			"chat": gin.H{
@@ -54,13 +58,21 @@ func (h *AIGatewayHandler) GetDocs(c *gin.Context) {
 				"max_tokens":       1024,
 				"reasoning_effort": "medium",
 			},
-			"media": gin.H{
-				"model":        "qwen-image-2.0-pro",
-				"prompt":       "一只橘猫穿宇航服，电影海报风格",
-				"images":       []string{"data:image/png;base64,..."},
-				"size":         "1328x1328",
-				"auto_poll":    true,
-				"wait_seconds": 30,
+			"image_understanding": gin.H{
+				"route":  "POST /api/ai-gateway/v1/image/understanding",
+				"model":  "minimax-mcp-understand-image",
+				"image":  "data:image/png;base64,...",
+				"prompt": "请描述这张图片里的关键对象与文字",
+				"note":   "image 只接受 Base64（data URL 或裸 Base64），不接受 HTTP URL；解码后不超过 10MB。需要 MiniMax-M3 原生多模态请用内部接口 POST /api/image-understanding/qwen-vision。",
+			},
+			"video_generation": gin.H{
+				"route":      "POST /api/minimax/h3/v2/video_generation",
+				"model":      "MiniMax-H3",
+				"prompt":     "一个男孩在海边打篮球",
+				"resolution": "2K",
+				"duration":   5,
+				"ratio":      "16:9",
+				"note":       "异步接口：返回 202 + task_id + poll_url，用 GET /api/minimax/h3/v2/query/video_generation/:task_id 轮询；可用模型 MiniMax-H3 / MiniMax-H3-Max。",
 			},
 		},
 	})
