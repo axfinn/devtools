@@ -604,6 +604,19 @@ ai_gateway:
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
+    # MiniMax-H3 视频生成（异步 submit → task_id → 轮询）
+    - model: "MiniMax-H3"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0.12
+      currency: "CNY"
+    - model: "MiniMax-H3-Max"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0.12
+      currency: "CNY"
     # Music
     - model: "music-2.5"
       provider: "minimax"
