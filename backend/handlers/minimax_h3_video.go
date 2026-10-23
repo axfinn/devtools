@@ -136,7 +136,7 @@ func (h *AIGatewayHandler) MiniMaxH3VideoCreate(c *gin.Context) {
 		return
 	}
 
-	// 本地任务记录(本地 ID 形如 mmh3_ + 12 hex,与上游 18 位数字 ID 区分;external_task_id 存上游 ID)。
+	// 本地任务记录(本地 ID 形如 mmh3_ + 24 hex(12 字节),与上游 18 位数字 ID 区分;external_task_id 存上游 ID)。
 	localTaskID := "mmh3_" + utils.GenerateHexKey(12)
 	task := &models.MiniMaxMediaTask{
 		ID:             localTaskID,
