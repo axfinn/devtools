@@ -385,13 +385,13 @@ describe('JsonTool', () => {
 cd frontend
 
 # 运行测试
-npm run test
+pnpm test
 
 # 运行测试并监听文件变化
-npm run test:watch
+pnpm test:watch
 
-# 生成覆盖率报告
-npm run test:coverage
+# 生成覆盖率报告（需先安装覆盖率插件：pnpm add -D @vitest/coverage-v8）
+pnpm exec vitest run --coverage
 ```
 
 ---
@@ -474,8 +474,8 @@ security:
 **解决**:
 ```bash
 # 清理并重新安装依赖
-rm -rf node_modules package-lock.json
-npm install
+rm -rf node_modules
+pnpm install
 ```
 
 ### 4. Go 模块依赖问题

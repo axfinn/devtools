@@ -81,7 +81,7 @@ export TERMINAL_ENCRYPTION_KEY="your-key-here"
 go run main.go
 
 cd frontend
-npm run dev
+pnpm dev
 
 # 生产模式（Docker）
 docker-compose up -d

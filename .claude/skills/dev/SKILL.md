@@ -305,9 +305,9 @@ go run main.go
 
 # 前端
 cd frontend
-npm install
-npm run dev      # 开发
-npm run build    # 构建
+pnpm install
+pnpm dev      # 开发
+pnpm build    # 构建
 
 # Docker
 docker-compose up -d

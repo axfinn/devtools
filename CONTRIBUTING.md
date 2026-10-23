@@ -121,7 +121,7 @@
    cd backend && go test ./...
 
    # 前端
-   cd frontend && npm run test
+   cd frontend && pnpm test
    ```
 
 4. **检查代码质量**
@@ -130,7 +130,7 @@
    cd backend && gofmt -w .
 
    # 前端: 运行 ESLint
-   cd frontend && npm run lint
+   cd frontend && pnpm lint
    ```
 
 #### 提交代码
