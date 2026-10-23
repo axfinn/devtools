@@ -31,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '20'
           cache: 'pnpm'
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Setup Node.js
@@ -116,12 +116,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        # runner 镜像只自带 npm（随 Node），pnpm 不预装 —— 缺这一步时
+        # `pnpm audit` 必然 command not found(exit 127)，再被 `|| echo` 吞成成功，
+        # 安全闸门静默失效（改之前跑的是真在跑的 npm audit）。
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Run npm audit (frontend)
+      - name: Run pnpm audit (frontend)
         run: |
           cd frontend
           pnpm audit --audit-level=high || echo "Security vulnerabilities found in frontend dependencies"
