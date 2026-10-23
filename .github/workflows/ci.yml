@@ -174,7 +174,10 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKER_USERNAME }}/devtools
+          # 仓库没配 DOCKER_USERNAME secret 时,`${{ env.DOCKER_USERNAME }}/devtools`
+          # 会变成 "/devtools" → buildx 报 invalid reference format,整步失败。
+          # 这种情况回落成一个合法的本地引用,配合下面的 push: false 只构建不推送。
+          images: ${{ env.DOCKER_USERNAME != '' && format('{0}/devtools', env.DOCKER_USERNAME) || 'devtools:ci' }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -185,10 +188,14 @@ jobs:
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
+        # 有 Docker Hub 凭据才推;没有就只构建不推(下一步)。
+        # 原来这一步无条件执行、push 由表达式决定 —— 配上下面那个 `if: DOCKER_USERNAME == ''`
+        # 的步骤,两种情况下都会构建一次,等于每次 push 白构建两遍。
+        if: env.DOCKER_USERNAME != ''
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name == 'push' && env.DOCKER_USERNAME != '' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

@@ -38,6 +38,19 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 COPY backend/ ./
+
+# 断言 Go 工具链 >= 1.26.10：eMudhra 弱私钥事件的修复(CVE-2026-111943 /
+# GO-2026-6809)是 crypto/x509 里对这 8 张被攻陷中间 CA 的内置 distrust，
+# 低于 1.26.10 的工具链出站 HTTPS 仍会信任它们。
+# 镜像 tag 漂到旧 patch 时这里直接构建失败，而不是悄悄产出一个带 vuln 的镜像。
+RUN set -eu; \
+    v="$(go env GOVERSION)"; \
+    echo "Go toolchain: $v"; \
+    case "$v" in \
+      go1.26.1[0-9]*|go1.26.[2-9][0-9]*|go1.2[7-9].*|go1.[3-9][0-9].*|go[2-9]*) ;; \
+      *) echo "需要 Go >= 1.26.10（eMudhra 中间 CA distrust 修复版本），当前 $v"; exit 1 ;; \
+    esac
+
 # -tags with_utls 启用 sing-box Reality 所需的 uTLS 指纹(否则启动失败: "uTLS ... is not included in this build")
 RUN CGO_ENABLED=1 GOOS=linux go build -tags with_utls -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
@@ -78,7 +91,10 @@ RUN apk add --no-cache tzdata curl python3 py3-pip coreutils ffmpeg \
 #
 # `apk update` + `--upgrade` 让这一层每次改动指令时都拿到最新根库；
 # 想强制刷新也可以直接 docker build --no-cache。
-RUN apk update && apk add --no-cache --upgrade ca-certificates
+# apk update 失败(索引过期/签名不符)时退回用现有索引安装,不让整步构建挂掉 ——
+# 拿到的根库会旧一点,但远好过构建失败。
+RUN (apk update && apk add --no-cache --upgrade ca-certificates) || \
+    apk add --no-cache --upgrade ca-certificates
 
 # 内置 npc 客户端（从 NPS 服务端下载，避免运行时下载）
 # 如果构建时无法访问，npc 将在首次启动时由 Go 服务自动下载
