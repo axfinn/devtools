@@ -9,14 +9,15 @@
   - `deepseek-v4-pro`
   - 或配置中的 `deepseek.model`
   - `abab6.5s-chat` / `MiniMax-M2.5` 或配置中的 `minimax.model`
-- 图片 / 视频模型
-  - `qwen-image-2.0-pro`
-  - `qwen-image-2.0`
-  - `qwen-image-2.0-pro-2026-03-03`
-  - `qwen-image-2.0-2026-03-03`
-  - `qwen-image-plus-2026-01-09`
-  - `wan2.6-i2v-flash`
-  - 以及 `backend/config.yaml` 中启用的其他 Bailian 模型
+- 图像理解模型
+  - `minimax-mcp-understand-image`（`POST /api/ai-gateway/v1/image/understanding`，内部走 MCP 图像理解工具）
+  - `MiniMax-M3`（`POST /api/image-understanding/qwen-vision`，内部免 API Key 端点，非 MiniMax 开头的 model 一律强制回落 `MiniMax-M3`）
+- 视频生成模型
+  - `MiniMax-H3` / `MiniMax-H3-Max`（`POST /api/minimax/h3/v2/video_generation`，异步 submit → task_id → 轮询）
+- DashScope 文本模型（需配置 `DASHSCOPE_API_KEY`）
+  - `qwen3.5-plus`、`qwen3-max-2026-01-23`、`qwen3-coder-next`、`qwen3-coder-plus`
+  - `glm-5`、`glm-4.7`、`kimi-k2.5`
+- 以及 `backend/config.yaml` 的 `ai_gateway.proxy` 中启用的其他代理模型
 
 ## 1. 超级管理员能力
 
@@ -36,7 +37,7 @@
 {
   "super_admin_password": "your-password",
   "name": "marketing-service",
-  "allowed_models": ["deepseek-chat", "qwen-image-2.0-pro"],
+  "allowed_models": ["deepseek-chat", "qwen3.5-plus"],
   "allowed_scopes": ["chat", "media"],
   "expires_days": 90,
   "rate_limit_per_hour": 500,
@@ -169,44 +170,75 @@ X-API-Key: dtk_ai_xxxxxxxxxxxxx
 - `deepseek-reasoner` 额外返回 `reasoning_content`
 - `MiniMax` 会被适配成统一 `choices`
 
-## 5. 图片 / 视频模型接口
+## 5. 图像理解 / 视频生成接口
 
-`POST /api/ai-gateway/v1/media/generations`
+> ⚠️ **历史变更**：原图片 / 视频模型模块已于 2026-09-09 整块下线（commit `7d08dfd`），
+> 原 `POST /api/ai-gateway/v1/media/generations`、`GET /api/ai-gateway/v1/media/tasks`、
+> `GET /api/ai-gateway/v1/media/tasks/:id` 三个路由已随之下线，调用返回 404。
+> 下文是当前真实存在的图像 / 视频能力。
 
-请求体：
+### 5.1 图像理解
+
+`POST /api/ai-gateway/v1/image/understanding`
+
+鉴权：超级管理员密码或 API Key（scope 需含 `media`）。请求体：
 
 ```json
 {
-  "model": "qwen-image-2.0-pro",
-  "prompt": "一只橘猫穿宇航服，电影海报风格",
-  "negative_prompt": "模糊、低清晰度、变形手",
-  "images": ["data:image/png;base64,..."],
-  "size": "1328x1328",
-  "count": 1,
-  "auto_poll": true,
-  "wait_seconds": 30,
-  "client_name": "marketing-site",
-  "client_request_id": "order-20260307-1",
-  "parameters": {
-    "watermark": false
-  }
+  "prompt": "描述这张图片",
+  "image": "data:image/png;base64,...",
+  "tool": "",
+  "args": {}
 }
 ```
 
+- `image` 必填，单张 ≤ 10MB；本端点只收 **Base64**（`data:image/...;base64,...` 或裸 base64），
+  传 HTTP(S) URL 会因 base64 解码失败而报 400；需要传远端图片请用下面的 `/file` 变体或 `qwen-vision`
+- `tool` 可选，留空时自动挑选 MCP 图像理解工具（优先 `understand_image`）
+- `prompt` 可选，留空时使用默认描述提示词
+
 返回：
-- `task`
-- `events`
-- `assets`
-- `completed`
-- `waited`
+- `tool`
+- `model`（`minimax-mcp-understand-image`）
+- `text`
+- `result`
+- `args_preview`
 
-### 查看当前 API Key 的媒体任务列表
+其他变体：
 
-`GET /api/ai-gateway/v1/media/tasks?model=qwen-image-2.0-pro&status=succeeded&limit=20&offset=0`
+- `POST /api/ai-gateway/v1/image/understanding/file` —— multipart 上传图片
+- `POST /api/ai-gateway/v1/image/understanding/sse` —— SSE 流式
+- `POST /api/ai-gateway/v1/image/understanding/sse/file` —— SSE + multipart
+- `POST /api/image-understanding/qwen-vision` —— 内部免 API Key 端点，最多 10 张图；
+  `model` 非 `MiniMax` 前缀时强制回落 `MiniMax-M3`（原 qwen / DashScope 视觉通道已停用）
 
-### 查看当前 API Key 的媒体任务详情
+### 5.2 视频生成（MiniMax-H3，异步）
 
-`GET /api/ai-gateway/v1/media/tasks/:id`
+`POST /api/minimax/h3/v2/video_generation`
+
+鉴权：超级管理员密码或 API Key（scope 需含 `media`）。请求体：
+
+```json
+{
+  "model": "MiniMax-H3",
+  "prompt": "一个男孩在海边打篮球",
+  "resolution": "2K",
+  "duration": 5,
+  "ratio": "16:9"
+}
+```
+
+文生视频（`prompt`）；图生视频额外传 `first_frame_image`（HTTP(S) URL）。
+
+接口**立即返回 `task_id`**，由后台 goroutine 轮询上游并落库（避免 Cloudflare 524 读超时），
+客户端需自行轮询任务状态：
+
+- `GET /api/minimax/h3/v2/query/video_generation` —— 列出最近 7 天任务
+  （支持 `filter.status` / `filter.task_ids` / `filter.model` / `filter.task_type`）
+- `GET /api/minimax/h3/v2/query/video_generation/:task_id` —— 查询单个任务，
+  `succeeded` 时 `content.url` 为视频产物
+- `DELETE /api/minimax/h3/v2/video_generation/:task_id` —— 取消 `queued` 任务，
+  或删除 `succeeded` / `failed` 记录（`running` / `cancelled` 不可操作）
 
 ## 6. 调用限制
 
@@ -217,7 +249,6 @@ AI Gateway 会做以下限制：
 - Key 级别模型白名单校验
 - Key 级别 Scope 校验
 - Key 级别每小时请求数限制
-- Bailian 模型本地额度限制和截止时间限制
 
 ## 7. Token 统计与计费
 
@@ -233,7 +264,7 @@ AI Gateway 会做以下限制：
 
 - 文本模型优先使用上游返回的 `usage`
 - 如果上游没返回 `usage`，后端会做本地估算
-- 图片 / 视频模型按 `request_cost` 记一次费用
+- 视频生成等按次计费的模型按 `request_cost` 记一次费用（图像理解当前记 0 费用）
 
 预算与告警：
 
@@ -259,8 +290,8 @@ ai_gateway:
       output_per_1k_tokens: 0.008
       request_cost: 0
       currency: "CNY"
-    - model: "qwen-image-2.0-pro"
-      provider: "bailian"
+    - model: "MiniMax-H3"
+      provider: "minimax"
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0.12
@@ -329,19 +360,34 @@ curl -X POST http://localhost:8080/api/ai-gateway/v1/chat/completions \
   }'
 ```
 
-### cURL 图片接口
+### cURL 图像理解接口
 
 ```bash
-curl -X POST http://localhost:8080/api/ai-gateway/v1/media/generations \
+curl -X POST http://localhost:8080/api/ai-gateway/v1/image/understanding \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer dtk_ai_xxx" \
   -d '{
-    "model": "qwen-image-2.0-pro",
-    "prompt": "一只橘猫穿宇航服，电影海报风格",
-    "size": "1328x1328",
-    "auto_poll": true,
-    "wait_seconds": 30
+    "prompt": "描述这张图片",
+    "image": "data:image/png;base64,..."
   }'
+```
+
+### cURL 视频生成接口（提交后轮询 task_id）
+
+```bash
+curl -X POST http://localhost:8080/api/minimax/h3/v2/video_generation \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer dtk_ai_xxx" \
+  -d '{
+    "model": "MiniMax-H3",
+    "prompt": "一个男孩在海边打篮球",
+    "resolution": "2K",
+    "duration": 5,
+    "ratio": "16:9"
+  }'
+
+curl "http://localhost:8080/api/minimax/h3/v2/query/video_generation/<task_id>" \
+  -H "Authorization: Bearer dtk_ai_xxx"
 ```
 
 ### JavaScript 示例
@@ -370,24 +416,41 @@ async function chat() {
   console.log(data.content);
 }
 
-async function generateImage() {
-  const res = await fetch('http://localhost:8080/api/ai-gateway/v1/media/generations', {
+async function understandImage(imageBase64) {
+  const res = await fetch('http://localhost:8080/api/ai-gateway/v1/image/understanding', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'qwen-image-2.0-pro',
-      prompt: '极简白色产品摄影，智能手表，广告海报',
-      size: '1328x1328',
-      auto_poll: true,
-      wait_seconds: 30
+      prompt: '描述这张图片',
+      image: imageBase64,
     }),
   });
 
   const data = await res.json();
-  console.log(data.assets);
+  console.log(data.text);
+}
+
+async function generateVideo() {
+  const res = await fetch('http://localhost:8080/api/minimax/h3/v2/video_generation', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'MiniMax-H3',
+      prompt: '极简白色产品摄影，智能手表，广告海报',
+      resolution: '2K',
+      duration: 5,
+      ratio: '16:9'
+    }),
+  });
+
+  const data = await res.json();
+  console.log(data.task_id); // 后续轮询 /api/minimax/h3/v2/query/video_generation/:task_id
 }
 ```
 
@@ -415,20 +478,33 @@ def chat():
     )
     print(resp.json()["content"])
 
-def generate():
+def understand_image(image_base64):
     resp = requests.post(
-        f"{BASE_URL}/v1/media/generations",
+        f"{BASE_URL}/v1/image/understanding",
         headers={"Authorization": f"Bearer {API_KEY}"},
         json={
-            "model": "qwen-image-2.0-pro",
-            "prompt": "一只金毛坐在咖啡馆里，温暖晨光",
-            "size": "1328x1328",
-            "auto_poll": True,
-            "wait_seconds": 30
+            "prompt": "描述这张图片",
+            "image": image_base64,
         },
         timeout=120,
     )
-    print(resp.json())
+    print(resp.json()["text"])
+
+def generate_video():
+    resp = requests.post(
+        "http://localhost:8080/api/minimax/h3/v2/video_generation",
+        headers={"Authorization": f"Bearer {API_KEY}"},
+        json={
+            "model": "MiniMax-H3",
+            "prompt": "一只金毛坐在咖啡馆里，温暖晨光",
+            "resolution": "2K",
+            "duration": 5,
+            "ratio": "16:9"
+        },
+        timeout=120,
+    )
+    task = resp.json()
+    print(task["task_id"])  # 再轮询 http://localhost:8080/api/minimax/h3/v2/query/video_generation/<task_id>
 ```
 
 ### Go 示例
