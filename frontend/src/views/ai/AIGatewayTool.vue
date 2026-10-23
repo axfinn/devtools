@@ -856,10 +856,10 @@ export ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M2.5-highspeed"</pre>
     "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
     "ANTHROPIC_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
-    "ANTHROPIC_SMALL_FAST_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[1] || p.models?.[0] || '') }}",
+    "ANTHROPIC_SMALL_FAST_MODEL": "{{ p.aliases?.[1]?.model || (p.models?.[1] || p.models?.[0] || '') }}",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[p.models.length - 1] || p.models?.[0] || '') }}"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ p.aliases?.[1]?.model || (p.models?.[p.models.length - 1] || p.models?.[0] || '') }}"
   }
 }</pre>
                 </el-tab-pane>
