@@ -8,7 +8,11 @@
 # =====================================================================
 
 GOPROXY := https://goproxy.cn,direct
-GOSUMDB := off
+# GOSUMDB 不能设 off：go.mod 要求 Go 1.26.10(eMudhra 中间 CA 吊销修复),
+# 本机工具链较旧时 Go 会自动下载 1.26.10，而 toolchain 模块强制走 checksum 校验 ——
+# GOSUMDB=off 会让下载直接失败("verifying module: checksum database disabled")。
+# goproxy.cn 同时代理 sumdb，所以走 sum.golang.org 既能下载也能校验。
+GOSUMDB := sum.golang.org
 GOCACHE := $(shell go env GOCACHE)
 GOMODCACHE := $(shell go env GOMODCACHE)
 

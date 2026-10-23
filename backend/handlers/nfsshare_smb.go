@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -67,13 +68,25 @@ func (b *smbBackend) ensureConnected() error {
 	return b.connect()
 }
 
-func (b *smbBackend) ReadDir(path string) ([]os.FileInfo, error) {
+func (b *smbBackend) ReadDir(path string) (entries []os.FileInfo, err error) {
+	// GO-2026-5051:go-smb2 的 ReadDir 在解析服务端响应时有越界读并 panic。
+	// 上游目前没有修复版本(Fixed in: N/A),只能在这里兜住 ——
+	// 恶意/畸形 SMB 服务器可以触发它。当前调用点在 HTTP handler 里,
+	// gin 的 recover 能兜住,但这里再挡一层,保证这个函数以后被挪到
+	// goroutine 里也不会把整个后端进程带走。
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in smbBackend.ReadDir (GO-2026-5051): %v", r)
+			entries = nil
+			err = fmt.Errorf("smb ReadDir 失败: %v", r)
+		}
+	}()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if err := b.ensureConnected(); err != nil {
 		return nil, err
 	}
-	entries, err := b.share.ReadDir(path)
+	entries, err = b.share.ReadDir(path)
 	if err != nil {
 		b.connected = false
 		return nil, err

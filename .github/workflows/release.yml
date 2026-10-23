@@ -7,7 +7,7 @@ on:
 
 env:
   NODE_VERSION: '20'
-  GO_VERSION: '1.25.5'
+  GO_VERSION: '1.26.10'
 
 jobs:
   build:
@@ -34,11 +34,16 @@ jobs:
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
       - name: Build frontend
         run: |
           cd frontend
-          npm ci
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm build
           cd ..
           tar -czf frontend-${{ steps.get_version.outputs.VERSION }}.tar.gz frontend/dist
 

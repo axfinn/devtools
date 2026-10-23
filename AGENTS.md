@@ -73,8 +73,8 @@
 ### 前端
 ```bash
 cd frontend
-npm install
-npm run dev          # http://localhost:5173
+pnpm install         # 锁文件 pnpm-lock.yaml(Dockerfile / CI 都用 pnpm)
+pnpm dev             # http://localhost:5173
 npm run build
 ```
 

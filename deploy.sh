@@ -140,11 +140,12 @@ kill_pid_gracefully() {
 }
 
 frontend_deps_hash() {
-    if [ -f "$FRONTEND_DIR/package-lock.json" ]; then
+    # 锁文件统一用 pnpm-lock.yaml(与 Dockerfile / CI 一致)
+    if [ -f "$FRONTEND_DIR/pnpm-lock.yaml" ]; then
         if command_exists shasum; then
-            cat "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/package-lock.json" | shasum -a 256 | awk '{print $1}'
+            cat "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/pnpm-lock.yaml" | shasum -a 256 | awk '{print $1}'
         else
-            cat "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/package-lock.json" | sha256sum | awk '{print $1}'
+            cat "$FRONTEND_DIR/package.json" "$FRONTEND_DIR/pnpm-lock.yaml" | sha256sum | awk '{print $1}'
         fi
     else
         if command_exists shasum; then
@@ -168,8 +169,8 @@ ensure_frontend_deps() {
     if [ ! -d "$FRONTEND_DIR/node_modules" ] || [ "$current_hash" != "$saved_hash" ]; then
         log_info "安装前端依赖..."
         cd "$FRONTEND_DIR"
-        if [ -f "package-lock.json" ]; then
-            npm ci
+        if [ -f "pnpm-lock.yaml" ] && command_exists pnpm; then
+            pnpm install --frozen-lockfile
         else
             npm install
         fi
