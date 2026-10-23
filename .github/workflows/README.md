@@ -163,7 +163,7 @@ Once you add tests, update these lines in `ci.yml`:
 ```yaml
 # Frontend
 - name: Run tests
-  run: npm test  # Remove || echo "..." part
+  run: pnpm test  # Remove || echo "..." part
 
 # Backend
 - name: Run tests
@@ -189,7 +189,7 @@ Add these badges to your README.md:
 1. **Always run tests locally before pushing**
    ```bash
    # Frontend
-   cd frontend && npm test && npm run build
+   cd frontend && pnpm test && pnpm build
 
    # Backend
    cd backend && go test ./... && go build
