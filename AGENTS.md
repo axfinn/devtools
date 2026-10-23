@@ -4,7 +4,7 @@
 
 ---
 
-## 42 模块地图
+## 43 模块地图
 
 | # | 模块 | Handler 文件 | Route 文件 | View 组件 | 主要功能 |
 |---|------|------------|----------|---------|---------|
@@ -50,6 +50,7 @@
 | 40 | **Health** | 内联 | `routes/health.go` | — | `GET /api/health` 健康检查 |
 | 41 | **Avatar 虚拟形象** | `handlers/avatar.go` | `routes/avatar.go` | `views/dev/VirtualAvatarTool/VirtualAvatarTool.vue` (+ 13 子组件) | three.js 虚拟形象调试：SkinnedMesh + Skeleton + 姿态预设；模型库 CRUD + me_asset 标记；姿态片段（pose JSON）上传/导出/分享；glb / pose.json / 视频三选一导出（MediaRecorder + WebCodecs → 降级关键帧 JSON → 复制）；摄像头调试（getUserMedia 四态降级：granted/denied/unsupported/no_device）；R5 双因子鉴权（creator_key + bcrypt password）；R10 帧数上限 60000；分享短链 16 字符 hex；CSS 变量跟随全局主题 (`--color-accent` 全局命名） |
 | 42 | **Trip 旅游行程** | `backend/trip/*.go` + `backend/cmd/trip/main.go` | — (CLI-only) | — | DDD bounded context：聚合根 `Trip` → 实体 `DayPlan` → 实体 `Activity`；值对象 `Destination` + `ActivityKind`(transport/sight/food/lodging/shopping/note)；仓储 `Repository` 接口 + SQLiteRepository；服务 `Service.RenderMarkdown` 输出可读 14 天攻略；CLI `trip create/list/show/delete/add-day/add-activity/seed/init`；第一个真实行程 fixture = 国庆 2026 粤港澳潮汕 14 日深度游（已 seed）；默认 SQLite `./data/trip.db`（`--db` 覆盖） |
+| 43 | **SSRules 规则文件** | `handlers/ssrule.go` + `handlers/ssrule_rules.go` | `routes/ssrule.go` | `views/other/SsRuleTool.vue` | Shadowsocks ACL 规则文件生成与公开分发：管理端（`/api/ssrules/*`）走 header `X-Super-Admin-Password` 密码门（未配密码 = 模块关闭）；域名列表 → ACL 正文（`(^\|\.)example\.com$` 正则形式，libev/rust/android 通吃）；32 位随机 token 公开链接 `GET /ss/:token/:filename` 分发；按端点分桶限流（verify/换发 10、读 30、写 20、分发 120 次/分钟/IP，独立计数桶）；`:filename` 白名单精确相等 + 全程不碰文件系统（路径穿越面为零）；未匹配 `/ss/` 一律 404「规则文件不存在」，不回落 SPA |
 
 ---
 
@@ -74,7 +75,7 @@
 cd frontend
 pnpm install         # 锁文件 pnpm-lock.yaml(Dockerfile / CI 都用 pnpm)
 pnpm dev             # http://localhost:5173
-npm run build
+pnpm build
 ```
 
 ### 后端
@@ -220,7 +221,7 @@ handlers/
 3. 创建 Handler：`backend/handlers/yourtool.go`
 4. 添加路由文件：`backend/routes/yourtool.go`（注册 `RegisterYourToolRoutes`）
 5. 在 `backend/routes/index.go` 的 `RegisterAllRoutes` 中添加调用
-6. 更新本文件 `42 模块地图` 表格
+6. 更新本文件 `43 模块地图` 表格
 
 ---
 

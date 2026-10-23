@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"devtools/config"
@@ -22,6 +23,15 @@ type AIGatewayHandler struct {
 	mediaClient       *http.Client             // 不走代理，启用压缩（用于 MiniMax 媒体 API：图片/视频/TTS）
 	musicSubmitClient *http.Client             // 音乐生成专用：MiniMax /v1/music_generation 是同步接口，会阻塞到音频生成完成才返回（5 分钟音频常见 1-3 分钟），不能复用 mediaClient 的 90s 超时
 	streamClient      *http.Client             // 不走代理，用于 SSE 流式请求（body 无超时，依赖 context 取消；但连接/握手/响应头有显式超时兜底）
+	// streamClientCache 按 (providerKey, headerTimeoutSec) 缓存派生出的 *http.Client。
+	// providerKey 通常为 provider.Name,headerTimeoutSec 决定 ResponseHeaderTimeout。
+	// 老的全局 streamClient 字段保留作兼容(某些 handler 还直接用它),不强制所有路径迁移。
+	streamClientCache sync.Map // map[string]*http.Client, key 见 streamClientCacheKey
+}
+
+// streamClientCacheKey 生成缓存 key。headerTimeoutSec=0 表示默认 60s。
+func streamClientCacheKey(providerName string, headerTimeoutSec int) string {
+	return providerName + "|" + time.Duration(headerTimeoutSec).String()
 }
 
 type usageSummary struct {
@@ -191,7 +201,9 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, imageHandler *ImageU
 	// 非流式：不设 ResponseHeaderTimeout，长推理（DeepSeek reasoner 等）要等
 	// generation 完成后才返回响应头，总时长由各 client 的 Timeout 兜底。
 	noProxyTransport := buildTransport(true, 0)
-	// 流式：响应头必须在 60s 内到达（防止上游挂起无限等待），body 无超时由 context 控制。
+	// 默认流式：响应头必须在 60s 内到达（防止上游挂起无限等待），body 无超时由 context 控制。
+	// 注意:按 provider 派生的 streamClient(见 pickStreamClient)走 buildStreamTransport 单独构造,
+	// Ollama 等慢本地大模型可用更长 ResponseHeaderTimeout(由 provider.HeaderTimeoutSec 决定)。
 	streamTransport := buildTransport(true, 60*time.Second)
 	// mediaTransport 启用压缩：MiniMax 图片/视频/音乐/TTS 端点要求 Accept-Encoding，
 	// 否则会直接断开连接（EOF）。这些端点不返回 Brotli，安全启用。
@@ -224,11 +236,55 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, imageHandler *ImageU
 		},
 		// 流式请求不设 Timeout：http.Client.Timeout 包含读取 body 的时间，
 		// 对 SSE 长流会在 90s 后强制断开。改用 context 取消（客户端断开时自动传播）。
+		// 该字段为全局兜底(60s header timeout),新代码应优先用 pickStreamClient(provider)
+		// 按 provider 派生(支持自定义 header_timeout_sec,Ollama 27B 用 600s)。
 		streamClient: &http.Client{
 			Timeout:   0,
 			Transport: streamTransport,
 		},
 	}
+}
+
+// buildStreamTransport 按指定的 ResponseHeaderTimeout 构造流式 Transport。
+// headerTimeoutSec <= 0 时 fallback 到默认 60s(老的全局 streamClient 行为)。
+// 与 NewAIGatewayHandler 里的 buildTransport 同源,但独立暴露给 pickStreamClient 用。
+func buildStreamTransport(headerTimeoutSec int) *http.Transport {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	timeout := time.Duration(headerTimeoutSec) * time.Second
+	if headerTimeoutSec <= 0 {
+		timeout = 60 * time.Second
+	}
+	return &http.Transport{
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: timeout,
+		// 流式上游不接收压缩:本地 Ollama 不支持 Brotli,云厂商 SSE 一般也不压缩
+		DisableCompression: true,
+	}
+}
+
+// pickStreamClient 根据 provider 派生 stream HTTP 客户端,带 sync.Map 缓存。
+// key 包含 provider 名 + header_timeout_sec,改 provider 配置后下次请求自动重建。
+// provider=nil 时返回全局 streamClient(老路径兼容,默认 60s)。
+func (h *AIGatewayHandler) pickStreamClient(provider *config.AnthropicProviderConfig) *http.Client {
+	if provider == nil {
+		return h.streamClient
+	}
+	key := streamClientCacheKey(provider.Name, provider.HeaderTimeoutSec)
+	if cached, ok := h.streamClientCache.Load(key); ok {
+		return cached.(*http.Client)
+	}
+	client := &http.Client{
+		Timeout:   0,
+		Transport: buildStreamTransport(provider.HeaderTimeoutSec),
+	}
+	actual, _ := h.streamClientCache.LoadOrStore(key, client)
+	return actual.(*http.Client)
 }
 
 // pickMediaSubmitClient 根据模型选择提交用的 HTTP 客户端。

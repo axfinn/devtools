@@ -136,7 +136,10 @@ const {
   storageKey: 'ssrules_admin_password',
   verifyEndpoint: `${API_BASE}/api/ssrules/verify`,
   credentialMode: 'header',
-  credentialField: 'X-Super-Admin-Password',
+  // header 模式读的是 headerName；credentialField 是 body/query 模式的字段名。
+  // 原先误传 credentialField：值恰好等于 headerName 的默认值，所以请求头碰巧是对的，
+  // 但语义是错的（一旦默认头名变化就会失效）。这里按 useAdminAuth 的实际语义传。
+  headerName: 'X-Super-Admin-Password',
 })
 
 const source = ref('')
@@ -164,6 +167,25 @@ function applyView(data) {
   updatedAt.value = data.updated_at ?? ''
 }
 
+// HTTP 状态码常量：让 statusMessage 一眼能读出「哪个状态走哪条话术」。
+const HTTP_BAD_REQUEST = 400
+const HTTP_PAYLOAD_TOO_LARGE = 413
+const HTTP_TOO_MANY_REQUESTS = 429
+
+// 把 HTTP 状态码翻译成用户能看懂的话。
+// 413 / 400 / 429 必须分开说：
+//   413 = 请求体超限（重试没用，必须拆小再发）
+//   400 = 内容本身格式/长度不对
+//   429 = 触发限流（等一会儿再试）
+// 混成一句话，用户就会对着一个必然失败的请求反复重试。
+function statusMessage(res, data, fallback) {
+  const detail = typeof data?.error === 'string' ? data.error : ''
+  if (res.status === HTTP_PAYLOAD_TOO_LARGE) return '请求体过大（超过 1MB），请分批粘贴后再试'
+  if (res.status === HTTP_TOO_MANY_REQUESTS) return '请求过于频繁，请稍后再试'
+  if (res.status === HTTP_BAD_REQUEST) return detail ? `格式错误：${detail}` : '格式错误'
+  return detail || fallback
+}
+
 async function load() {
   try {
     const res = await fetch(`${API_BASE}/api/ssrules`, { headers: authHeader() })
@@ -171,7 +193,11 @@ async function load() {
       logout()
       return
     }
-    if (!res.ok) throw new Error()
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      ElMessage.error(statusMessage(res, data, '读取规则文件失败'))
+      return
+    }
     applyView(await res.json())
   } catch {
     ElMessage.error('读取规则文件失败')
@@ -192,7 +218,7 @@ async function save() {
     }
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
-      ElMessage.error(data.error || '保存失败')
+      ElMessage.error(statusMessage(res, data, '保存失败'))
       return
     }
     applyView(data)
@@ -224,7 +250,11 @@ async function regenerateToken() {
       logout()
       return
     }
-    if (!res.ok) throw new Error()
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      ElMessage.error(statusMessage(res, data, '换发失败'))
+      return
+    }
     applyView(await res.json())
     ElMessage.success('已换发，请更新客户端里的链接')
   } catch {
