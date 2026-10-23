@@ -25,7 +25,7 @@ RUN pnpm build
 # 确实要临时跳过时：SKIP_ASKIT=1 ./deploy.sh docker —— 会写一个占位 zip
 # 保证 COPY 成立，扩展改由运行时 SSH 拉取（handlers/askit_extension.go:128）。
 
-FROM golang:1.26.10-alpine AS backend-builder
+FROM golang:1.27.2-alpine AS backend-builder
 
 WORKDIR /app/backend
 
@@ -42,7 +42,7 @@ COPY backend/ ./
 RUN CGO_ENABLED=1 GOOS=linux go build -tags with_utls -a -ldflags '-linkmode external -extldflags "-static"' -o server .
 
 # 编译 proxy-client 跨平台二进制
-FROM golang:1.26.10-alpine AS proxy-client-builder
+FROM golang:1.27.2-alpine AS proxy-client-builder
 
 WORKDIR /app/proxy-client
 
