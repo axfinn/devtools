@@ -219,7 +219,7 @@ handlers/
 3. 创建 Handler：`backend/handlers/yourtool.go`
 4. 添加路由文件：`backend/routes/yourtool.go`（注册 `RegisterYourToolRoutes`）
 5. 在 `backend/routes/index.go` 的 `RegisterAllRoutes` 中添加调用
-6. 更新本文件 `43 模块地图` 表格
+6. 更新本文件 `42 模块地图` 表格
 
 ---
 
