@@ -42,7 +42,7 @@
     "jsonpath-plus": "^10.4.0",
     "jszip": "^3.10.1",
     "kalidokit": "^1.1.5",
-    "katex": "^0.16.27",
+    "katex": "^0.19.0",
     "markdown-it": "^14.1.0",
     "markdown-it-footnote": "^4.0.0",
     "markdown-it-mark": "^4.0.0",
