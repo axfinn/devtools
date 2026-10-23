@@ -32,7 +32,7 @@
 | 22 | **Household 家庭** | `handlers/household.go` (7 分段) | `routes/household.go` | `views/life/HouseholdTool.vue` | 物品/位置/模板管理，通知，AI 智能添加/分析，OCR |
 | 23 | **NFSShare** | `handlers/nfsshare*.go` (5 文件) | `routes/nfsshare.go` | `views/collab/NFSShareTool.vue` | SMB/NFS 文件共享，WebRTC 流媒体，HLS 分片 |
 | 24 | **ImageUnderstanding** | `handlers/image_understanding.go` | `routes/image_understanding.go` | `views/ai/ImageUnderstandingTool.vue` | 图像理解（VLM），Base64/URL 输入，返回描述 |
-| 25 | **AIGateway** | `handlers/ai_gateway*.go` (10 文件) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/DashScope，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
+| 25 | **AIGateway** | `handlers/ai_gateway*.go` (12 文件，含 1 个测试脚手架) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/DashScope，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
 | 26 | **Askit 同步** | `handlers/askit*.go` (3 文件) | `routes/askit.go` | `views/other/AskitInviteTool.vue` | 跨设备数据同步，邀请码，Blob 大文件，快照 |
 | 27 | **Screen 屏幕共享** | `handlers/screen.go` | `routes/screen.go` | `views/collab/ScreenShareTool.vue` | WebRTC 点对点屏幕共享，TURN 中继 |
 | 28 | **APIGateway** | `handlers/apigateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
@@ -94,7 +94,7 @@ docker compose logs -f devtools
 
 ## 项目结构
 
-### 前端（72 View 组件）
+### 前端（86 View 组件）
 ```
 frontend/src/views/
 ├── ai/         # AI 相关（6）：AIGatewayTool, AIChatTool, PetTool, EnglishTutor, ImageUnderstanding, MiniMaxStudio
@@ -109,7 +109,7 @@ frontend/src/views/
 └── share/      # 分享视图（9）
 ```
 
-### 后端路由拆分（routes/ 38 个文件）
+### 后端路由拆分（routes/ 42 个文件）
 ```
 backend/routes/
 ├── index.go              # RouteHandlers struct + RegisterAllRoutes（入口）
@@ -126,7 +126,7 @@ backend/routes/
 ```
 handlers/
 ├── 核心工具（8）：paste, shorturl, mockapi, mdshare, excalidraw, photowall, terminal, dns
-├── AI 网关（15）：ai_gateway*, image_understanding, minimax_*, planner_ai, minimax_h3_video
+├── AI 网关（18）：ai_gateway*（12，含 1 个 test helper）, image_understanding, minimax_*（4）, planner_ai
 ├── 订阅/代理（5）：proxy*, singbox*, gfwlist, nps, apigateway_proxy
 ├── 家庭/健康（5）：household, pregnancy, expense, glucose, recipe
 ├── 实时功能（4）：chat, voicememo, screen, nfsshare
@@ -173,9 +173,9 @@ handlers/
 - `POST /api/skills/invoke` — 调用 skill（JSON-RPC）
 
 ### AI
-- `POST /api/ai-gateway/chat` — AI 对话
-- `POST /api/ai-gateway/image` — 图像理解
-- `POST /api/image-understanding` — 图像描述
+- `POST /api/ai-gateway/v1/chat/completions` — AI 对话
+- `POST /api/ai-gateway/v1/image/understanding` — 图像理解
+- `POST /api/image-understanding/describe` — 图像描述
 - `POST /api/edge-tts` — 语音合成
 - `GET /api/skills/manifest` — Skills 清单（OpenAI function-calling 格式）
 - `GET /api/skills/mcp` — MCP 发现端点
@@ -205,7 +205,7 @@ handlers/
 
 ### 后端
 - **Redis 软依赖**：Redis 不可用时自动降级到内存存储（`state.New()` → `NewMemoryStore()`）
-- **路由拆分**：`routes.go` → `routes/` 包（38 文件，34 分组）
+- **路由拆分**：`routes.go` → `routes/` 包（42 文件，34 分组）
 - **自动清理**：每小时清理过期数据（pastes/shorturls/mdshares/excalidraws/photowalls/terminals）
 - **静态优先**：未匹配路由返回 `index.html`（SPA 支持）
 - **配置**：YAML 配置文件（`config.yaml`）
