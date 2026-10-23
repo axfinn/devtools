@@ -178,7 +178,7 @@ go run main.go
 
 # 前端
 cd frontend
-npm run dev
+pnpm dev
 ```
 
 ### 3. 访问终端

@@ -345,7 +345,7 @@ func TestCreatePaste(t *testing.T) {
 **收益**: 类型安全、更好的 IDE 支持、减少运行时错误
 
 **实施步骤**:
-1. 安装 TypeScript: `npm install -D typescript @vue/typescript`
+1. 安装 TypeScript: `pnpm add -D typescript @vue/typescript`
 2. 创建 `tsconfig.json`
 3. 将 `.vue` 文件中的 `<script setup>` 改为 `<script setup lang="ts">`
 4. 为 API 响应定义类型接口

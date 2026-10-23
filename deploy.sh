@@ -172,7 +172,13 @@ ensure_frontend_deps() {
         if [ -f "pnpm-lock.yaml" ] && command_exists pnpm; then
             pnpm install --frozen-lockfile
         else
-            npm install
+            # 回落分支：老机器没装 pnpm 时不能直接断（PM 已批准的偏离）。
+            # 但仓库只认 pnpm-lock.yaml，package-lock.json 已删 ⇒ 回落时无锁可依，
+            # npm 会重新解析 semver 最新版依赖树（产物不可复现），且默认会在
+            # frontend/ 下自动生成一个 package-lock.json，与「只认 pnpm-lock.yaml」
+            # 的口径冲突 ⇒ 用 --no-package-lock 禁掉这个自动生成。
+            log_warn "未找到 pnpm，回落到 npm install（无锁解析，产物不可复现）"
+            npm install --no-package-lock
         fi
         mkdir -p "$FRONTEND_DIR/node_modules"
         echo "$current_hash" > "$hash_file"

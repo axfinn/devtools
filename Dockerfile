@@ -2,7 +2,7 @@ FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@10.28.2
 
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc frontend/pnpm-workspace.yaml ./
 COPY frontend/scripts ./scripts
