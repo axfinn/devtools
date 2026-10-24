@@ -856,10 +856,10 @@ export ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M2.5-highspeed"</pre>
     "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
     "ANTHROPIC_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
-    "ANTHROPIC_SMALL_FAST_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[1] || p.models?.[0] || '') }}",
+    "ANTHROPIC_SMALL_FAST_MODEL": "{{ p.aliases?.[1]?.model || (p.models?.[1] || p.models?.[0] || '') }}",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[p.models.length - 1] || p.models?.[0] || '') }}"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ p.aliases?.[1]?.model || (p.models?.[p.models.length - 1] || p.models?.[0] || '') }}"
   }
 }</pre>
                 </el-tab-pane>
@@ -869,7 +869,7 @@ export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"
 # 默认模型：{{ p.default_model || p.models?.[0] || '' }}
 export ANTHROPIC_MODEL="{{ p.default_model || p.models?.[0] || '' }}"</pre>
                   <pre class="doc-code" style="margin-top: 6px;" v-if="p.aliases && p.aliases.length > 0"># 推荐用别名（管理员可控切换下游）
-export ANTHROPIC_SMALL_FAST_MODEL="{{ p.aliases[1] ? p.aliases[1].model : p.aliases[0].model }}"</pre>
+export ANTHROPIC_SMALL_FAST_MODEL="{{ (p.aliases?.[1]?.model) || (p.aliases?.[0]?.model) || '' }}"</pre>
                   <pre class="doc-code" style="margin-top: 6px;" v-else>export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models?.[1] || p.models?.[0] || '' }}"</pre>
                 </el-tab-pane>
               </el-tabs>
@@ -2124,7 +2124,7 @@ curl -X POST ${origin}/api/minimax/h3/v2/video_generation \\
   }'
 
 # 轮询视频生成任务
-curl ${origin}/api/minimax/h3/v2/query/video_generation/task_xxx \\
+curl ${origin}/api/minimax/h3/v2/query/video_generation/mmh3_xxxxxxxxxxxx \\
   -H "Authorization: Bearer ai_xxx"`
 
 const gatewayResponseExample = `{

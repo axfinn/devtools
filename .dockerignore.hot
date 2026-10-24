@@ -1,0 +1,45 @@
+# HOT 叠加构建专用 dockerignore
+# 与 .dockerignore 的区别：保留 frontend/dist 与 backend/dist，
+# 因为 Dockerfile.hot 需要把它们（本机/容器里已构建好的产物）叠加入镜像。
+# 其余重目录仍排除，避免构建上下文过大。
+
+# Git
+.git
+.gitignore
+
+# 依赖（仍排除，HOT 构建不需要重新安装）
+frontend/node_modules
+frontend/node_modules*
+frontend/.env.local
+frontend/.env.*.local
+node_modules
+.pnpm-store
+
+# Go（保留 frontend/dist/backend/dist，仅排除已编译二进制与本地数据）
+backend/server
+backend/data
+
+# 本地数据(含真实数据库,绝不进镜像)
+data/
+*.db
+
+# 临时/备份文件
+*.bak
+*.bak.*
+*.old
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Build
+*.log
+*.tmp
+
+# Docker
+docker-compose.override.yml
+
+# Config (contains passwords)
+backend/config.yaml

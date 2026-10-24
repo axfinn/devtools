@@ -68,16 +68,19 @@ func (c *MonitoredWSConn) WriteMessage(messageType int, data []byte) error {
 
 func (c *MonitoredWSConn) Close() error {
 	c.markClosed("")
-	return c.Conn.Close()
+	return nil
 }
 
 // MarkClosed records a session summary row with a given close reason before
 // closing the underlying conn. Safe to call multiple times.
 func (c *MonitoredWSConn) MarkClosed(reason string) {
 	c.markClosed(reason)
-	_ = c.Conn.Close()
 }
 
+// markClosed is the single place that finalizes the connection. The underlying
+// net.Conn is closed at most once (guarded by the closed CAS + closeMu), so it
+// is safe for readPump, writePump and AdminDeleteRoom to all call Close() — only
+// the first wins and actually closes the socket.
 func (c *MonitoredWSConn) markClosed(reason string) {
 	if !c.closed.CompareAndSwap(false, true) {
 		return
@@ -96,10 +99,10 @@ func (c *MonitoredWSConn) markClosed(reason string) {
 	}
 	summary.CloseReason = truncateValue(reason, 255)
 	summary.CreatedAt = time.Now().UTC()
-	if c.db == nil {
-		return
+	if c.db != nil {
+		_ = c.db.CreateProxySessionLog(&summary)
 	}
-	_ = c.db.CreateProxySessionLog(&summary)
+	_ = c.Conn.Close()
 }
 
 // MonitoredTunnelConn counts read+write bytes passing through a CONNECT

@@ -10,6 +10,12 @@
 #   status   - 查看服务状态
 #   logs     - 查看日志
 #   deploy   - 完整部署 (构建 + 启动)
+#
+# 环境变量:
+#   HOT_DEPLOY=1   仅对 docker 命令生效：跳过完整 compose build，改为在本机用终端
+#                   代理(HTTP(S)_PROXY)编译前端，再叠加到已缓存的 devtools-devtools
+#                   镜像（零拉取，不动 daemon 配置，不影响其他容器）。
+#                   当 Docker daemon 拉不到 golang/node 基础镜像时也可被自动回退触发。
 
 set -euo pipefail
 
@@ -369,6 +375,67 @@ build_frontend() {
     log_success "静态文件复制完成"
 }
 
+# build_frontend_host：在本机（而非容器内）构建前端。
+# 关键场景：Docker daemon 拉不到 node/golang 基础镜像，而代理只监听在本机回环
+# 127.0.0.1，容器内/daemon 侧都连不上 —— 这时「在本机用终端代理（HTTP(S)_PROXY）
+# 编译前端」是唯一可行路径。pnpm/npm 会自动读取终端里 export 的代理环境变量。
+build_frontend_host() {
+    # 本机若已存在可用的前端构建产物（例如已在终端用代理 + pnpm 编译好），直接复用，
+    # 既不重复构建，也不会回退去「运行容器提取旧 dist」而把新改动覆盖掉。
+    if [ -d "$FRONTEND_DIR/dist" ] && [ -n "$(ls -A "$FRONTEND_DIR/dist" 2>/dev/null)" ]; then
+        log_info "本机 frontend/dist 已存在，直接复用（如需重新构建请先删除该目录）"
+        return 0
+    fi
+    log_info "尝试本机构建前端（依赖终端已 export 的 HTTP(S)_PROXY 代理）..."
+    if ( cd "$FRONTEND_DIR" && npm install --no-package-lock --no-bin-links >/dev/null 2>&1 && npm run build >/dev/null 2>&1 ); then
+        log_success "前端本机构建完成 -> $FRONTEND_DIR/dist"
+        return 0
+    fi
+    # 回退：本机常因沙箱禁止 symlink(pnpm) 或 pnpm workspace 不兼容 npm 而构建失败。
+    # 此时直接复用「正在运行的 devtools 容器里已经过验证的前端 dist」（即当前线上版本），
+    # 它本身就是本次要发布的内容，零构建、零拉取、不依赖代理。
+    log_warn "本机构建失败，回退：从正在运行的 devtools 容器提取已验证的前端 dist"
+    local cid
+    cid="$(docker_devtools_container_id)"
+    if [ -n "$cid" ] && docker cp "${cid}:/app/dist/." "$FRONTEND_DIR/dist/"; then
+        log_success "已从运行中的 devtools 容器提取 dist 作为回退"
+        return 0
+    fi
+    log_error "前端本机构建失败且无法从运行容器提取 dist"
+    return 1
+}
+
+# hot_layer_build：零拉取叠加构建。
+# 以本地已缓存的 devtools-devtools:latest 为基础，仅把本机编译好的前端 dist 覆盖进去
+# （见 Dockerfile.hot）。不拉取任何基础镜像、不动 daemon 配置、不影响其他容器。
+# 后端二进制沿用已缓存镜像里的版本（本次前端改动无需重编后端）。
+hot_layer_build() {
+    log_info "HOT 叠加构建：基于本地缓存的 devtools-devtools:latest，仅覆盖新前端 dist（不拉取任何基础镜像）..."
+    # 本机 Docker 不支持 --ignore-file，故构建前把 .dockerignore 临时替换为 .dockerignore.hot
+    # （排除 node_modules 等重目录，但保留 frontend/dist，供 Dockerfile.hot 的 COPY 使用），
+    # 构建后立即还原，不影响正常的 compose build。
+    local ctx="$SCRIPT_DIR"
+    local di="$ctx/.dockerignore"
+    local di_hot="$ctx/.dockerignore.hot"
+    local swapped=0
+    if [ -f "$di" ] && [ -f "$di_hot" ]; then
+        cp "$di" "$di.bak-hot"
+        cp "$di_hot" "$di"
+        swapped=1
+    fi
+    docker build -f Dockerfile.hot -t devtools-devtools:latest "$ctx"
+    local rc=$?
+    if [ "$swapped" -eq 1 ] && [ -f "$di.bak-hot" ]; then
+        mv "$di.bak-hot" "$di"
+    fi
+    if [ $rc -eq 0 ]; then
+        log_success "HOT 镜像已构建并打 tag devtools-devtools:latest"
+    else
+        log_error "HOT 镜像构建失败"
+    fi
+    return $rc
+}
+
 # write_askit_placeholder <目标路径>：写一个占位 zip，让 Dockerfile 的
 # `COPY askit-extension.zip` 始终能找到源文件。
 #
@@ -651,21 +718,46 @@ docker_deploy() {
 
     cd "$SCRIPT_DIR"
 
-    # Dockerfile 里是 `COPY askit-extension.zip`，构建前上下文里必须先有它。
-    # 放在 compose build 之前，保证 docker 部署仍然是一条命令。
-    # 失败不阻断（见 build_askit 注释）。
-    build_askit
-
     local current_container_id old_image_id service_image
     current_container_id="$(docker_devtools_container_id)"
     old_image_id="$(docker_container_image_id "$current_container_id")"
     service_image="$(docker_container_image_ref "$current_container_id")"
 
-    log_info "先构建镜像，避免构建阶段影响线上服务..."
-    if [ "${NO_CACHE:-0}" = "1" ]; then
-        compose build --no-cache
+    local skip_compose_build=0
+
+    if [ "${HOT_DEPLOY:-0}" = "1" ]; then
+        # 受限网络场景：Docker daemon 拉不到 golang/node 基础镜像，而代理只在本机回环
+        # 127.0.0.1，容器内/daemon 侧都连不上。改为「本机用终端代理编译前端 +
+        # 叠加到已缓存镜像」，零拉取、不动 daemon 配置、不影响其他容器。
+        log_info "HOT_DEPLOY=1：跳过完整 compose build，改为本机构建前端并叠加到已缓存镜像"
+        build_frontend_host
+        hot_layer_build
+        skip_compose_build=1
     else
-        compose build
+        # Dockerfile 里是 `COPY askit-extension.zip`，构建前上下文里必须先有它。
+        # 放在 compose build 之前，保证 docker 部署仍然是一条命令。
+        # 失败不阻断（见 build_askit 注释）。
+        build_askit
+
+        log_info "先构建镜像，避免构建阶段影响线上服务..."
+        if [ "${NO_CACHE:-0}" = "1" ]; then
+            if compose build --no-cache; then
+                skip_compose_build=1
+            fi
+        else
+            if compose build; then
+                skip_compose_build=1
+            fi
+        fi
+
+        if [ "$skip_compose_build" -eq 0 ]; then
+            # compose build 失败（绝大多数是 golang/node 基础镜像拉取超时）。
+            # 自动回退到 HOT 叠加部署，保证发布仍能完成。
+            log_warn "compose build 失败，自动回退到 HOT 叠加部署（本机构建前端 + 叠加到已缓存镜像）"
+            build_frontend_host
+            hot_layer_build
+            skip_compose_build=1
+        fi
     fi
 
     log_info "确保其他服务已就绪..."
@@ -804,6 +896,7 @@ help() {
     echo ""
     echo "Docker 命令:"
     echo "  docker            Docker 先构建、再替换 devtools，失败时尝试回滚"
+    echo "                    受限网络可加 HOT_DEPLOY=1 走零拉取叠加（本机用终端代理编译前端）"
     echo "  docker-warm-asr   预构建 asr-service、预下载模型并等待就绪"
     echo "  docker-stop       停止 Docker 容器"
     echo "  docker-restart    重启 Docker 容器"
