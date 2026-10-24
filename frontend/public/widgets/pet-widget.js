@@ -61,7 +61,51 @@
   var THREE = null;
   var GLTFLoader = null;
 
-  function playVoice(file, volume) {
+  // ---------------------------------------------------------------------------
+  // 全局语音总开关（所有 <pet-widget> 实例共享，刷新后仍然生效）
+  // ---------------------------------------------------------------------------
+  // 沿用合并前 main 的同一个持久化键；缺失 = 开启（不改变首次访问体验）。
+  var VOICE_ENABLED_KEY = 'pet-widget.enabled';
+  // 全局开关变化时广播给页面上的 UI（让 🔊/🔇 图标与实际发声状态保持一致）
+  var VOICE_CHANGE_EVENT = 'pet-voice-change';
+
+  function readGlobalVoice() {
+    try {
+      var v = localStorage.getItem(VOICE_ENABLED_KEY);
+      return v === null ? true : v === '1';
+    } catch (e) { return true; } // 隐私模式 / 无 localStorage ⇒ 降级为默认开启
+  }
+
+  var globalVoiceOn = readGlobalVoice();
+
+  function emitVoiceChange() {
+    try {
+      document.dispatchEvent(new CustomEvent(VOICE_CHANGE_EVENT, { detail: { enabled: globalVoiceOn } }));
+    } catch (e) { /* ignore */ }
+  }
+
+  // 写回全局开关（持久化）；值变化时广播，避免 UI 图标与实际状态脱节
+  function setGlobalVoice(on) {
+    var next = !!on;
+    var changed = next !== globalVoiceOn;
+    globalVoiceOn = next;
+    try { localStorage.setItem(VOICE_ENABLED_KEY, globalVoiceOn ? '1' : '0'); } catch (e) { /* ignore */ }
+    if (changed) emitVoiceChange();
+  }
+
+  // 发声前刷新：页面 UI（或另一个标签页）改了存储，这里立刻跟上
+  function refreshGlobalVoice() {
+    var next = readGlobalVoice();
+    if (next !== globalVoiceOn) {
+      globalVoiceOn = next;
+      emitVoiceChange();
+    }
+    return globalVoiceOn;
+  }
+
+  // 唯一的 MP3 出口：allowed 为假时连 Audio 都不创建（不是"播了但静音"）
+  function playVoice(file, volume, allowed) {
+    if (!allowed) return;
     try {
       var a = new Audio(VOICE_BASE + file);
       a.volume = volume == null ? 0.6 : volume;
@@ -71,8 +115,8 @@
   }
 
   // 主题预录语音：theme_<id>.mp3（id 取自 THEMES，未知主题不发声、也绝不回退成文本朗读）
-  function playThemeVoice(themeId) {
-    if (THEMES[themeId]) playVoice('theme_' + themeId + '.mp3');
+  function playThemeVoice(themeId, allowed) {
+    if (THEMES[themeId]) playVoice('theme_' + themeId + '.mp3', undefined, allowed);
   }
 
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
@@ -109,9 +153,18 @@
 
     attributeChangedCallback(name, _old, val) {
       if (name === 'theme') this._applyTheme(val);
-      else if (name === 'voice') this._voiceOn = this.hasAttribute('voice');
-      else if (name === 'form') this.setForm(val);
+      else if (name === 'voice') {
+        this._voiceOn = this.hasAttribute('voice');
+        // 元素已连接后 voice 属性的变化 = 用户意图 ⇒ 写回全局开关（刷新/换页后仍生效）。
+        // 首次挂载（尚未连接）时只决定元素自身开关，绝不覆盖持久化的全局开关。
+        if (this.isConnected) setGlobalVoice(this._voiceOn);
+      } else if (name === 'form') this.setForm(val);
       else if (name === 'width' || name === 'height') this._resize();
+    }
+
+    // 有效发声 = 全局开关 && 元素自身开关（voice 属性）
+    _voiceAllowed() {
+      return refreshGlobalVoice() && this._voiceOn;
     }
 
     _init() {
@@ -311,7 +364,7 @@
         if (!self._friendly || !self._friendly.length) return;
         var name = self._friendly[Math.floor(Math.random() * self._friendly.length)];
         self._play(name, 0.3);
-        if (ACTION_VOICE[name]) playVoice(ACTION_VOICE[name]);
+        if (ACTION_VOICE[name]) playVoice(ACTION_VOICE[name], undefined, self._voiceAllowed());
         var clip = self._actions[name];
         var d = (clip ? clip.getClip().duration * 1000 : 1200) + 300;
         setTimeout(function () {
@@ -325,7 +378,7 @@
       if (!this._friendly || !this._friendly.length) return;
       var name = this._friendly[Math.floor(Math.random() * this._friendly.length)];
       this._play(name, 0.2);
-      if (ACTION_VOICE[name]) playVoice(ACTION_VOICE[name]);
+      if (ACTION_VOICE[name]) playVoice(ACTION_VOICE[name], undefined, this._voiceAllowed());
     }
 
     setForm(id) {
@@ -346,7 +399,7 @@
           }
         });
       }
-      if (FORM_VOICE[this._form]) playVoice(FORM_VOICE[this._form], 0.5);
+      if (FORM_VOICE[this._form]) playVoice(FORM_VOICE[this._form], 0.5, this._voiceAllowed());
     }
 
     setTheme(id) {
@@ -354,29 +407,30 @@
       this._applyTheme(id);
       if (this.getAttribute('theme') !== id) this.setAttribute('theme', id);
       // 换色后播一次该主题的预录欢迎语（对齐 main「主题切换也播一次」）
-      playThemeVoice(id);
+      playThemeVoice(id, this._voiceAllowed());
     }
 
     speak(kind) {
       var self = this;
+      var allowed = this._voiceAllowed();
       if (kind === 'cheer') {
-        playVoice('cheer_' + pad2(Math.floor(Math.random() * 19) + 1) + '.mp3');
+        playVoice('cheer_' + pad2(Math.floor(Math.random() * 19) + 1) + '.mp3', undefined, allowed);
         self._play('ThumbsUp', 0.2);
-        if (self._voiceOn && 'speechSynthesis' in window) {
+        if (allowed && 'speechSynthesis' in window) {
           var u = new SpeechSynthesisUtterance('你已经很棒啦！');
           u.lang = 'zh-CN'; u.rate = 1;
           window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
         }
         return;
       }
-      if (kind === 'greeting') { playVoice('greeting_hi.mp3'); self._play('Wave', 0.2); return; }
-      if (kind === 'bye') { playVoice('greeting_bye.mp3'); return; }
+      if (kind === 'greeting') { playVoice('greeting_hi.mp3', undefined, allowed); self._play('Wave', 0.2); return; }
+      if (kind === 'bye') { playVoice('greeting_bye.mp3', undefined, allowed); return; }
       // 主题欢迎语：'theme_<id>' 播放预录主题语音，绝不把 key 当文本念出来
       if (typeof kind === 'string' && kind.indexOf('theme_') === 0) {
-        playThemeVoice(kind.slice('theme_'.length));
+        playThemeVoice(kind.slice('theme_'.length), allowed);
         return;
       }
-      if (self._voiceOn && 'speechSynthesis' in window && typeof kind === 'string') {
+      if (allowed && 'speechSynthesis' in window && typeof kind === 'string') {
         var u2 = new SpeechSynthesisUtterance(kind);
         u2.lang = 'zh-CN'; u2.rate = 1;
         window.speechSynthesis.cancel(); window.speechSynthesis.speak(u2);
