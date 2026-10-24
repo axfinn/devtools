@@ -1311,6 +1311,32 @@ const themeModeName = computed(() => {
   .player-bar { padding-bottom: env(safe-area-inset-bottom); }
 }
 
+/* ===== 聊天室（keep-alive）：独占滚动，禁用外层 main-content ===== */
+/* 仅通过 body class 控制，离开时（onDeactivated/onUnmounted）会移除，避免污染其它页面 */
+body.chat-room-active .main-content {
+  overflow: hidden;
+}
+body.chat-room-active .page-footer {
+  display: none;
+}
+/* 移动端：聊天室精确填满「固定头部(56px)」之下的区域，
+   避免 .wx-app 用 calc(100dvh - 40px) 时比可视区高 30px+，把输入栏推到屏幕外 */
+@media (max-width: 768px) {
+  body.chat-room-active .mobile-main {
+    margin-top: 56px;
+    height: calc(100dvh - 56px);
+    height: calc(100svh - 56px);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  body.chat-room-active .wx-app {
+    height: 100%;
+    border-radius: 0;
+  }
+}
+
 @media (max-width: 768px) {
   .pb-inner { padding: 0 10px; gap: 8px; height: 52px; }
   .pb-time { display: none; }
