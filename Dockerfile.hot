@@ -1,0 +1,28 @@
+# 零拉取叠加构建（HOT 部署）
+#
+# 用途：在受限网络下（Docker daemon 无法拉取 golang:1.26.10-alpine / node 基础镜像，
+# 而代理又只监听在本机回环 127.0.0.1，容器内/daemon 侧都连不上）部署前端改动。
+#
+# 做法：以本地已缓存的 devtools-devtools:latest 作为基础（不再拉取任何基础镜像），
+# 仅把「本机用终端代理编译好的前端 dist」覆盖进去。后端二进制沿用已缓存镜像中的版本
+# （本次聊天室前端改动无需重新编译后端；若日后在本机交叉编译出了新 server，可取消
+# 对应 COPY 注释叠加）。
+#
+# 触发方式：
+#   HOT_DEPLOY=1 ./deploy.sh docker
+# 或 compose build 因基础镜像拉取失败时被 deploy.sh 自动回退到本路径。
+#
+# 注意：本 Dockerfile 不需要 askit-extension.zip（基础镜像里已有），也不跑任何 apk/pip。
+
+FROM devtools-devtools:latest
+
+WORKDIR /app
+
+# 前端静态资源：由 deploy.sh 的 build_frontend_host 在本机产出
+COPY frontend/dist ./dist
+
+# 可选：若在本机交叉编译出了新的后端二进制，取消下行注释即可一并叠加
+# COPY backend/server ./server
+
+# 保持与正式镜像一致的启动入口
+CMD ["./entrypoint.sh"]

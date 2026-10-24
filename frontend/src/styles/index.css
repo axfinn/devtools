@@ -26,6 +26,7 @@
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   background-color: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-family);
@@ -34,4 +35,5 @@ body {
 
 #app {
   min-height: 100vh;
+  min-height: 100dvh;
 }

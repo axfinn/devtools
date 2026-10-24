@@ -1,261 +1,197 @@
 <template>
-  <div class="tool-container">
-    <!-- 房间列表界面 -->
-    <div v-if="!currentRoom" class="room-list-view">
-      <div class="tool-header">
-        <h2>聊天室</h2>
-        <div class="actions">
-          <el-button @click="showAdminPasswordDialog = true" size="small">
-            <el-icon><Setting /></el-icon>
-            管理
-          </el-button>
-          <el-button type="primary" @click="showCreateDialog = true">
-            <el-icon><Plus /></el-icon>
-            创建房间
-          </el-button>
+  <div class="wx-app">
+    <!-- 左侧深色导航栏（微信风） -->
+    <aside class="wx-sidebar">
+      <div class="wx-me" :title="nickname || '我'">
+        <div class="wx-avatar wx-avatar-lg">{{ (nickname || '我')[0] }}</div>
+      </div>
+      <nav class="wx-nav">
+        <button class="wx-nav-item active" title="聊天"><el-icon :size="22"><ChatDotRound /></el-icon></button>
+        <button class="wx-nav-item" title="AI 机器人" @click="openBotDialog"><el-icon :size="22"><Service /></el-icon></button>
+        <button class="wx-nav-item" :class="{ on: ttsEnabled }" :title="ttsEnabled ? '自动朗读已开' : '自动朗读已关'" @click="toggleTTS(!ttsEnabled)"><el-icon :size="22"><Microphone /></el-icon></button>
+        <button class="wx-nav-item" title="房间管理" @click="showAdminPasswordDialog = true"><el-icon :size="22"><Setting /></el-icon></button>
+      </nav>
+      <div class="wx-nav-bottom">
+        <button v-if="currentRoom" class="wx-nav-item" title="退出房间" @click="leaveRoom"><el-icon :size="22"><SwitchButton /></el-icon></button>
+      </div>
+    </aside>
+
+    <!-- 中间会话列表 -->
+    <section class="wx-list" :class="{ 'mobile-hidden': isMobile && mobileView === 'chat' }">
+      <header class="wx-list-header">
+        <span class="wx-list-title">聊天室</span>
+        <div class="wx-list-actions">
+          <el-tooltip content="创建房间" placement="bottom">
+            <el-button type="primary" circle size="small" @click="showCreateDialog = true"><el-icon><Plus /></el-icon></el-button>
+          </el-tooltip>
         </div>
+      </header>
+
+      <div class="wx-search">
+        <el-input v-model="roomSearch" placeholder="搜索房间" :prefix-icon="Search" clearable size="default" />
       </div>
 
-      <div class="join-section">
-        <el-input
-          v-model="joinRoomId"
-          placeholder="输入房间ID直接加入"
-          class="join-input"
-          @keyup.enter="joinRoomById"
-        >
-          <template #append>
-            <el-button @click="joinRoomById">加入</el-button>
-          </template>
+      <div class="wx-join-row">
+        <el-input v-model="joinRoomId" placeholder="输入房间 ID 加入" size="default" @keyup.enter="joinRoomById">
+          <template #append><el-button @click="joinRoomById">加入</el-button></template>
         </el-input>
       </div>
 
-      <div class="room-list">
-        <div class="section-title">公开房间</div>
-        <div v-if="rooms.length === 0" class="empty-tip">暂无房间，创建一个吧</div>
+      <div class="wx-room-scroll">
+        <div class="wx-list-subtitle">公开房间 · {{ filteredRooms.length }}</div>
+        <div v-if="filteredRooms.length === 0" class="wx-empty">暂无房间，点右上角 + 创建</div>
         <div
-          v-for="room in rooms"
+          v-for="room in filteredRooms"
           :key="room.id"
-          class="room-item"
+          :class="['wx-room-item', currentRoom && currentRoom.id === room.id ? 'active' : '']"
           @click="handleJoinRoom(room)"
         >
-          <div class="room-info">
-            <span class="room-name">
-              <el-icon v-if="room.has_password"><Lock /></el-icon>
-              <el-icon v-else><House /></el-icon>
-              {{ room.name }}
-            </span>
-            <span class="room-id">ID: {{ room.id }}</span>
+          <div class="wx-room-avatar" :class="room.has_password ? 'lock' : 'open'">
+            <el-icon v-if="room.has_password"><Lock /></el-icon>
+            <el-icon v-else><House /></el-icon>
           </div>
-          <el-button type="primary" size="small">进入</el-button>
+          <div class="wx-room-body">
+            <div class="wx-room-name">{{ room.name }}</div>
+            <div class="wx-room-id">ID: {{ room.id }}</div>
+          </div>
+          <span v-if="room.has_password" class="wx-badge">密码</span>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- 聊天界面 -->
-    <div v-else class="chat-view">
-      <div class="chat-header">
-        <div class="room-title">
-          <el-icon v-if="currentRoom.has_password"><Lock /></el-icon>
-          <el-icon v-else><House /></el-icon>
-          {{ currentRoom.name }}
-          <span class="room-id-tag">{{ currentRoom.id }}</span>
-          <!-- 连接状态指示器 -->
-          <span :class="['connection-status', connectionStatus]">
-            <span class="status-dot"></span>
-            {{ connectionStatusText }}
-          </span>
+    <!-- 右侧聊天区 -->
+    <section v-if="currentRoom" class="wx-main" :class="{ 'mobile-hidden': isMobile && mobileView === 'list' }">
+      <header class="wx-chat-header">
+        <div class="wx-chat-back" @click="mobileView = 'list'"><el-icon><ArrowLeft /></el-icon></div>
+        <div class="wx-chat-title">
+          <el-icon v-if="currentRoom.has_password" class="wx-lock"><Lock /></el-icon>
+          <el-icon v-else class="wx-lock"><House /></el-icon>
+          <span class="wx-chat-name">{{ currentRoom.name }}</span>
+          <span :class="['wx-conn', connectionStatus]"><i class="dot"></i>{{ connectionStatusText }}</span>
         </div>
-        <div class="header-actions">
-          <!-- 机器人状态 + 按钮 -->
-          <template v-for="bot in botConfig" :key="bot.nickname">
-            <el-tag type="success" size="small" class="bot-online-tag">{{ bot.nickname }} 在线</el-tag>
-          </template>
+        <div class="wx-chat-actions">
+          <el-tag v-for="bot in botConfig" :key="bot.nickname" size="small" type="success" class="wx-bot-tag" effect="dark">{{ bot.nickname }}</el-tag>
           <el-tooltip v-if="botConfig.length" content="中断全部 bot 回复" placement="bottom">
-            <el-button size="small" type="warning" @click="stopBotReply()" :loading="stoppingBot">⏹</el-button>
+            <el-button size="small" type="warning" circle @click="stopBotReply()" :loading="stoppingBot"><el-icon><VideoPause /></el-icon></el-button>
           </el-tooltip>
-          <el-tooltip :content="ttsEnabled ? '自动朗读已开启，点击关闭' : '自动朗读已关闭，点击开启'" placement="bottom">
-            <el-button size="small" :type="ttsEnabled ? 'primary' : ''" @click="toggleTTS(!ttsEnabled)">
-              {{ ttsEnabled ? '🔊' : '🔇' }}
-            </el-button>
+          <el-tooltip :content="ttsEnabled ? '自动朗读已开' : '自动朗读已关'" placement="bottom">
+            <el-button size="small" circle :type="ttsEnabled ? 'primary' : ''" @click="toggleTTS(!ttsEnabled)">{{ ttsEnabled ? '🔊' : '🔇' }}</el-button>
           </el-tooltip>
-          <el-button size="small" @click="openBotDialog">
-            🤖 {{ botConfig.length ? '管理机器人' : '添加机器人' }}
-          </el-button>
-          <el-button @click="showQRCode" size="small" type="primary">
-            <el-icon><Tickets /></el-icon>
-            扫码进房
-          </el-button>
-          <el-button @click="leaveRoom" type="danger" size="small">退出</el-button>
+          <el-tooltip content="AI 机器人" placement="bottom">
+            <el-button size="small" circle @click="openBotDialog">🤖</el-button>
+          </el-tooltip>
+          <el-tooltip content="扫码进房" placement="bottom">
+            <el-button size="small" circle type="primary" @click="showQRCode"><el-icon><Tickets /></el-icon></el-button>
+          </el-tooltip>
+          <el-tooltip content="退出房间" placement="bottom">
+            <el-button size="small" circle type="danger" @click="leaveRoom"><el-icon><SwitchButton /></el-icon></el-button>
+          </el-tooltip>
         </div>
-      </div>
+      </header>
 
-      <div class="messages-container" ref="messagesContainer">
+      <div class="wx-messages" ref="messagesContainer">
         <div
           v-for="msg in messages"
           :key="msg.id || msg.created_at"
-          :class="['message-item', msg.type === 'system' ? 'system-message' : (msg.nickname === nickname ? 'my-message' : '')]"
+          :class="['wx-msg', msg.type === 'system' ? 'sys' : (msg.nickname === nickname ? 'mine' : 'other')]"
         >
-          <template v-if="msg.type === 'system'">
-            <span class="system-text">{{ msg.content }}</span>
-          </template>
+          <div v-if="msg.type === 'system'" class="wx-sys-text">{{ msg.content }}</div>
           <template v-else>
-            <div class="message-header">
-              <span class="nickname">{{ msg.nickname }}</span>
-              <span class="time">{{ formatTime(msg.created_at) }}</span>
-            </div>
-            <div class="message-content">
-              <template v-if="msg.msg_type === 'image'">
-                <img
-                  :src="msg.content"
-                  class="message-image"
-                  @click="previewImage(msg.content)"
-                  loading="lazy"
-                />
-              </template>
-              <template v-else-if="msg.msg_type === 'video'">
-                <video
-                  :src="msg.content"
-                  class="message-video"
-                  controls
-                  preload="metadata"
-                />
-              </template>
-              <template v-else-if="msg.msg_type === 'audio'">
-                <audio
-                  :src="msg.content"
-                  class="message-audio"
-                  controls
-                  preload="metadata"
-                />
-              </template>
-              <template v-else-if="msg.msg_type === 'file'">
-                <a
-                  :href="msg.content"
-                  class="message-file"
-                  target="_blank"
-                  :download="msg.original_name || 'file'"
+            <div v-if="msg.nickname !== nickname" class="wx-avatar wx-msg-avatar">{{ (msg.nickname || '?')[0] }}</div>
+            <div class="wx-msg-body">
+              <div v-if="msg.nickname !== nickname" class="wx-msg-nick">
+                <span class="wx-msg-nick-name">{{ msg.nickname }}</span>
+                <span class="wx-msg-time">{{ formatTime(msg.created_at) }}</span>
+              </div>
+              <div class="wx-bubble" :class="msg.msg_type || 'text'">
+                <template v-if="msg.msg_type === 'image'">
+                  <img :src="msg.content" class="wx-img" @click="previewImage(msg.content)" loading="lazy" />
+                </template>
+                <template v-else-if="msg.msg_type === 'video'">
+                  <video :src="msg.content" class="wx-video" controls preload="metadata"></video>
+                </template>
+                <template v-else-if="msg.msg_type === 'audio'">
+                  <audio :src="msg.content" class="wx-audio" controls preload="metadata"></audio>
+                </template>
+                <template v-else-if="msg.msg_type === 'file'">
+                  <a :href="msg.content" class="wx-file" target="_blank" :download="msg.original_name || 'file'">
+                    <el-icon><Document /></el-icon><span>{{ msg.original_name || '下载文件' }}</span>
+                  </a>
+                </template>
+                <template v-else-if="msg.nickname !== nickname">
+                  <div class="wx-md" v-html="renderMd(msg.content)"></div>
+                </template>
+                <template v-else>
+                  <span class="wx-text">{{ msg.content }}</span>
+                </template>
+              </div>
+              <div class="wx-msg-actions">
+                <el-tooltip content="复制" placement="top" v-if="!msg.msg_type || msg.msg_type === 'text'">
+                  <el-icon class="wx-act" @click.stop="copyText(msg.content)"><CopyDocument /></el-icon>
+                </el-tooltip>
+                <el-tooltip content="复制链接" placement="top" v-if="msg.msg_type === 'image'">
+                  <el-icon class="wx-act" @click.stop="copyText(msg.content)"><CopyDocument /></el-icon>
+                </el-tooltip>
+                <el-tooltip content="下载" placement="top" v-if="['image','video','audio','file'].includes(msg.msg_type)">
+                  <el-icon class="wx-act" @click.stop="downloadFile(msg)"><Download /></el-icon>
+                </el-tooltip>
+                <el-tooltip
+                  v-if="isBotMsg(msg) && (!msg.msg_type || msg.msg_type === 'text')"
+                  :content="playingMsgId === (msg.id || msg.created_at) ? '停止朗读' : '朗读此条'"
+                  placement="top"
                 >
-                  <el-icon><Document /></el-icon>
-                  <span>{{ msg.original_name || '下载文件' }}</span>
-                </a>
-              </template>
-              <template v-else>
-                <div v-if="msg.nickname !== nickname" class="md-content" v-html="renderMd(msg.content)"></div>
-                <span v-else>{{ msg.content }}</span>
-              </template>
+                  <el-icon class="wx-act" @click.stop="toggleMsgTTS(msg)">
+                    <VideoPause v-if="playingMsgId === (msg.id || msg.created_at)" />
+                    <VideoPlay v-else />
+                  </el-icon>
+                </el-tooltip>
+              </div>
             </div>
-            <!-- 消息操作按钮（hover 显示） -->
-            <div class="message-actions">
-              <el-tooltip content="复制" placement="top" v-if="!msg.msg_type || msg.msg_type === 'text'">
-                <el-icon class="action-icon" @click.stop="copyText(msg.content)"><CopyDocument /></el-icon>
-              </el-tooltip>
-              <el-tooltip content="复制链接" placement="top" v-if="msg.msg_type === 'image'">
-                <el-icon class="action-icon" @click.stop="copyText(msg.content)"><CopyDocument /></el-icon>
-              </el-tooltip>
-              <el-tooltip content="下载" placement="top" v-if="['image','video','audio','file'].includes(msg.msg_type)">
-                <el-icon class="action-icon" @click.stop="downloadFile(msg)"><Download /></el-icon>
-              </el-tooltip>
-              <!-- bot 文本消息：独立朗读按钮 -->
-              <el-tooltip
-                v-if="isBotMsg(msg) && (!msg.msg_type || msg.msg_type === 'text')"
-                :content="playingMsgId === (msg.id || msg.created_at) ? '停止朗读' : '朗读此条'"
-                placement="top"
-              >
-                <el-icon
-                  class="action-icon"
-                  @click.stop="toggleMsgTTS(msg)"
-                >
-                  <VideoPause v-if="playingMsgId === (msg.id || msg.created_at)" />
-                  <VideoPlay v-else />
-                </el-icon>
-              </el-tooltip>
-            </div>
+            <div v-if="msg.nickname === nickname" class="wx-avatar wx-msg-avatar mine">{{ (nickname || '我')[0] }}</div>
           </template>
         </div>
       </div>
 
-      <div class="input-area">
-        <div class="input-tools">
-          <el-popover
-            placement="top-start"
-            trigger="click"
-            v-model:visible="showEmoji"
-            popper-class="emoji-popover"
-          >
+      <div class="wx-inputbar">
+        <div class="wx-tools">
+          <el-popover placement="top-start" trigger="click" v-model:visible="showEmoji" popper-class="emoji-popover">
             <template #reference>
-              <el-button class="tool-btn" title="表情">
-                <el-icon><Sugar /></el-icon>
-              </el-button>
+              <el-button class="wx-tool" title="表情"><el-icon><Sugar /></el-icon></el-button>
             </template>
             <div class="emoji-panel">
-              <span
-                v-for="emoji in emojis"
-                :key="emoji"
-                class="emoji-item"
-                @click="insertEmoji(emoji)"
-              >{{ emoji }}</span>
+              <span v-for="emoji in emojis" :key="emoji" class="emoji-item" @click="insertEmoji(emoji)">{{ emoji }}</span>
             </div>
           </el-popover>
-          <el-button class="tool-btn" @click="triggerFileUpload" :loading="uploading" title="文件">
-            <el-icon><FolderOpened /></el-icon>
-          </el-button>
-          <el-button class="tool-btn" @click="triggerImageUpload" :loading="uploading" title="图片">
-            <el-icon><Picture /></el-icon>
-          </el-button>
-          <el-button class="tool-btn" @click="openCamera" :loading="uploading" title="拍照">
-            <el-icon><Camera /></el-icon>
-          </el-button>
-          <el-button class="tool-btn" :class="{ recording: isRecordingVideo }" @click="startVideoRecording" title="录视频">
-            <el-icon><VideoCamera /></el-icon>
-          </el-button>
-          <el-button class="tool-btn" :class="{ recording: isRecordingScreen }" @click="toggleScreenRecording" title="录屏">
-            <el-icon><Monitor /></el-icon>
-          </el-button>
-          <el-button
-            class="tool-btn"
-            :class="{ recording: isRecordingAudio }"
-            @click="toggleAudioRecording"
-            :loading="uploading"
-            title="语音"
-          >
-            <el-icon><Microphone /></el-icon>
-          </el-button>
+          <el-button class="wx-tool" @click="triggerFileUpload" :loading="uploading" title="文件"><el-icon><FolderOpened /></el-icon></el-button>
+          <el-button class="wx-tool" @click="triggerImageUpload" :loading="uploading" title="图片"><el-icon><Picture /></el-icon></el-button>
+          <el-button class="wx-tool" @click="openCamera" :loading="uploading" title="拍照"><el-icon><Camera /></el-icon></el-button>
+          <el-button class="wx-tool" :class="{ recording: isRecordingVideo }" @click="startVideoRecording" title="录视频"><el-icon><VideoCamera /></el-icon></el-button>
+          <el-button class="wx-tool" :class="{ recording: isRecordingScreen }" @click="toggleScreenRecording" title="录屏"><el-icon><Monitor /></el-icon></el-button>
+          <el-button class="wx-tool" :class="{ recording: isRecordingAudio }" @click="toggleAudioRecording" :loading="uploading" title="语音"><el-icon><Microphone /></el-icon></el-button>
         </div>
-        <input
-          type="file"
-          ref="fileInput"
-          accept="*/*"
-          style="display: none"
-          @change="handleFileSelect"
-        />
-        <input
-          type="file"
-          ref="imageInput"
-          accept="image/*"
-          style="display: none"
-          @change="handleImageSelect"
-        />
-        <el-input
-          v-model="inputMessage"
-          placeholder="输入消息，可粘贴图片或视频..."
-          @keyup.enter="sendMessage"
-          @paste="handlePaste"
-          class="message-input"
-        />
-        <el-button type="primary" @click="sendMessage" :disabled="!inputMessage.trim()">
-          发送
-        </el-button>
+        <input type="file" ref="fileInput" accept="*/*" style="display: none" @change="handleFileSelect" />
+        <input type="file" ref="imageInput" accept="image/*" style="display: none" @change="handleImageSelect" />
+        <div class="wx-input-row">
+          <el-input
+            v-model="inputMessage"
+            placeholder="输入消息，可粘贴图片或视频..."
+            @keyup.enter="sendMessage"
+            @paste="handlePaste"
+            type="textarea"
+            :autosize="{ minRows: 1, maxRows: 4 }"
+            class="wx-input"
+            resize="none"
+          />
+          <el-button type="primary" class="wx-send" @click="sendMessage" :disabled="!inputMessage.trim()">发送</el-button>
+        </div>
       </div>
 
-      <!-- 录音状态显示 -->
-      <div v-if="isRecordingAudio" class="recording-indicator">
-        <span class="recording-dot"></span>
-        录音中 {{ recordingDuration }}s
+      <div v-if="isRecordingAudio" class="wx-recording">
+        <span class="wx-rec-dot"></span>录音中 {{ recordingDuration }}s
         <el-button size="small" @click="stopAudioRecording">停止并发送</el-button>
         <el-button size="small" @click="cancelAudioRecording">取消</el-button>
       </div>
 
-      <!-- 拍照/录像弹窗 -->
       <el-dialog v-model="showCameraDialog" title="拍照/录像" width="500px" @close="closeCamera">
         <div class="camera-container">
           <video ref="cameraVideo" autoplay playsinline class="camera-preview"></video>
@@ -269,13 +205,16 @@
         </template>
       </el-dialog>
 
-      <!-- 图片预览 -->
-      <el-image-viewer
-        v-if="previewVisible"
-        :url-list="[previewUrl]"
-        @close="previewVisible = false"
-      />
-    </div>
+      <el-image-viewer v-if="previewVisible" :url-list="[previewUrl]" @close="previewVisible = false" />
+    </section>
+
+    <!-- 未选择房间时的占位 -->
+    <section v-else class="wx-main wx-placeholder" :class="{ 'mobile-hidden': isMobile && mobileView === 'list' }">
+      <div class="wx-ph-inner">
+        <el-icon :size="60" class="wx-ph-icon"><ChatDotRound /></el-icon>
+        <p>从左侧选择一个房间开始聊天</p>
+      </div>
+    </section>
 
     <!-- 创建房间对话框 -->
     <el-dialog v-model="showCreateDialog" title="创建房间" width="400px">
@@ -284,12 +223,7 @@
           <el-input v-model="createForm.name" placeholder="请输入房间名称" maxlength="50" />
         </el-form-item>
         <el-form-item label="密钥">
-          <el-input
-            v-model="createForm.password"
-            type="password"
-            placeholder="可选，留空为公开房间"
-            show-password
-          />
+          <el-input v-model="createForm.password" type="password" placeholder="可选，留空为公开房间" show-password />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -305,12 +239,7 @@
           <el-input v-model="joinForm.nickname" :placeholder="joinForm.defaultNickname" maxlength="20" clearable />
         </el-form-item>
         <el-form-item v-if="joinForm.needPassword" label="密钥">
-          <el-input
-            v-model="joinForm.password"
-            type="password"
-            placeholder="请输入房间密钥"
-            show-password
-          />
+          <el-input v-model="joinForm.password" type="password" placeholder="请输入房间密钥" show-password />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -333,8 +262,6 @@
 
     <!-- 机器人管理对话框 -->
     <el-dialog v-model="showBotDialog" title="🤖 AI 机器人" width="520px">
-      <!-- 已有机器人：显示当前配置 -->
-      <!-- 已有机器人列表 -->
       <div v-if="botConfig.length" class="bot-active-panel">
         <div v-for="bot in botConfig" :key="bot.nickname" class="bot-current">
           <span class="bot-avatar">{{ bot.nickname.split(' ')[0] }}</span>
@@ -348,11 +275,8 @@
           <el-button type="danger" size="small" @click="removeBot(bot.nickname)" :loading="addingBot">移除</el-button>
         </div>
       </div>
-      <!-- 添加新机器人 -->
       <div class="bot-hint">{{ botConfig.length ? '继续添加机器人：' : '选择一个角色加入聊天室' }}</div>
-      <div v-if="!botHasKey" class="bot-no-key-tip">
-        ⚠️ 未配置 MINIMAX_API_KEY，机器人功能不可用
-      </div>
+      <div v-if="!botHasKey" class="bot-no-key-tip">⚠️ 未配置 MINIMAX_API_KEY，机器人功能不可用</div>
       <div class="bot-templates">
         <div
           v-for="tmpl in botTemplates"
@@ -364,7 +288,6 @@
           <div class="bot-template-name">{{ tmpl.name }}</div>
         </div>
       </div>
-      <!-- 高级选项 -->
       <el-collapse v-model="showBotAdvanced" class="bot-advanced">
         <el-collapse-item title="自定义设置（可选）" name="advanced">
           <el-form label-width="80px" size="small">
@@ -372,12 +295,7 @@
               <el-input v-model="customBotNickname" placeholder="留空使用模板默认昵称" maxlength="20" />
             </el-form-item>
             <el-form-item label="人设提示">
-              <el-input
-                v-model="customSystemPrompt"
-                type="textarea"
-                :rows="3"
-                placeholder="留空使用模板默认人设"
-              />
+              <el-input v-model="customSystemPrompt" type="textarea" :rows="3" placeholder="留空使用模板默认人设" />
             </el-form-item>
             <el-form-item label="触发方式">
               <el-switch v-model="mentionOnly" active-text="仅 @我 触发" inactive-text="全部消息触发" />
@@ -387,12 +305,7 @@
       </el-collapse>
       <template #footer>
         <el-button @click="showBotDialog = false">关闭</el-button>
-        <el-button
-          type="primary"
-          @click="addBot"
-          :loading="addingBot"
-          :disabled="!selectedRole || !botHasKey"
-        >加入房间</el-button>
+        <el-button type="primary" @click="addBot" :loading="addingBot" :disabled="!selectedRole || !botHasKey">加入房间</el-button>
       </template>
     </el-dialog>
 
@@ -400,13 +313,7 @@
     <el-dialog v-model="showAdminPasswordDialog" title="管理员登录" width="400px">
       <el-form label-width="80px">
         <el-form-item label="管理密码">
-          <el-input
-            v-model="adminPassword"
-            type="password"
-            placeholder="请输入管理员密码"
-            show-password
-            @keyup.enter="verifyAdminPassword"
-          />
+          <el-input v-model="adminPassword" type="password" placeholder="请输入管理员密码" show-password @keyup.enter="verifyAdminPassword" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -420,10 +327,7 @@
       <div class="admin-panel">
         <div class="admin-header">
           <span>共 {{ adminRooms.length }} 个房间</span>
-          <el-button size="small" @click="loadAdminRooms" :loading="loadingAdminRooms">
-            <el-icon><Refresh /></el-icon>
-            刷新
-          </el-button>
+          <el-button size="small" @click="loadAdminRooms" :loading="loadingAdminRooms"><el-icon><Refresh /></el-icon>刷新</el-button>
         </div>
         <el-table :data="adminRooms" style="width: 100%" max-height="500">
           <el-table-column prop="id" label="房间ID" width="120" />
@@ -435,22 +339,14 @@
             </template>
           </el-table-column>
           <el-table-column label="创建时间" width="150">
-            <template #default="{ row }">
-              {{ formatDateTime(row.created_at) }}
-            </template>
+            <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
           </el-table-column>
           <el-table-column label="最后活跃" width="150">
-            <template #default="{ row }">
-              {{ formatDateTime(row.last_active_at) }}
-            </template>
+            <template #default="{ row }">{{ formatDateTime(row.last_active_at) }}</template>
           </el-table-column>
           <el-table-column label="操作" width="100" fixed="right">
             <template #default="{ row }">
-              <el-button
-                type="danger"
-                size="small"
-                @click="confirmDeleteRoom(row)"
-              >删除</el-button>
+              <el-button type="danger" size="small" @click="confirmDeleteRoom(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -462,6 +358,7 @@
 <script setup>
 import { ref, computed, onActivated, onDeactivated, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElImageViewer, ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 import { API_BASE, WS_BASE } from '../../api'
 import MarkdownIt from 'markdown-it'
 import hljs from '../../utils/highlight'
@@ -512,6 +409,16 @@ const adminRooms = ref([])
 // 连接状态
 const connectionStatus = ref('disconnected') // connected, connecting, disconnected
 const reconnectAttempts = ref(0)
+
+// 响应式布局：移动端单栏切换
+const isMobile = ref(typeof window !== 'undefined' && window.innerWidth < 860)
+const mobileView = ref('list') // 'list' | 'chat'
+const roomSearch = ref('')
+const filteredRooms = computed(() => {
+  const q = roomSearch.value.trim().toLowerCase()
+  if (!q) return rooms.value
+  return rooms.value.filter(r => r.name.toLowerCase().includes(q) || String(r.id).toLowerCase().includes(q))
+})
 
 // 录音相关
 const isRecordingAudio = ref(false)
@@ -694,6 +601,7 @@ const confirmJoin = async () => {
     currentRoom.value = data.room
     showJoinDialog.value = false
     reconnectAttempts.value = 0
+    mobileView.value = 'chat'
 
     // 持久化，刷新后自动恢复
     sessionStorage.setItem('chat_room_id', data.room.id)
@@ -752,7 +660,10 @@ const connectWebSocket = () => {
   }
 
   connectionStatus.value = 'connecting'
-  const wsUrl = `${WS_BASE}/api/chat/room/${currentRoom.value.id}/ws?nickname=${encodeURIComponent(nickname.value)}`
+  // 加密房间必须在 WS 握手时把密码带上（后端 HandleWebSocket 要求 query 带 password），
+  // 否则会被 401 拒绝、WebSocket 升级失败。密码由加入房间时存入 localStorage。
+  const roomPassword = localStorage.getItem('chat_room_password') || ''
+  const wsUrl = `${WS_BASE}/api/chat/room/${currentRoom.value.id}/ws?nickname=${encodeURIComponent(nickname.value)}` + (roomPassword ? `&password=${encodeURIComponent(roomPassword)}` : '')
 
   ws = new WebSocket(wsUrl)
 
@@ -1504,6 +1415,7 @@ const leaveRoom = () => {
   botConfig.value = []
   connectionStatus.value = 'disconnected'
   reconnectAttempts.value = 0
+  mobileView.value = 'list'
   loadRooms()
 }
 
@@ -1646,11 +1558,9 @@ const deleteRoom = async (roomId) => {
       { method: 'DELETE' }
     )
     const data = await response.json()
-
     if (!response.ok) {
       throw new Error(data.error || '删除失败')
     }
-
     ElMessage.success('房间删除成功')
     loadAdminRooms()
   } catch (error) {
@@ -1672,9 +1582,11 @@ const formatDateTime = (timeStr) => {
 }
 
 onMounted(async () => {
-  // 禁止外层 main-content 滚动，让聊天室自己管理滚动
-  const mainContent = document.querySelector('.main-content')
-  if (mainContent) mainContent.style.overflow = 'hidden'
+  // 通过 body class 控制外层滚动，而不是直接改全局 DOM：
+  // 本应用所有页面都是 keep-alive 缓存，离开时只触发 onDeactivated 而不会触发
+  // onUnmounted，直接改 .main-content 的 style 会残留、导致后续页面无法滚动。
+  document.body.classList.add('chat-room-active')
+  window.addEventListener('resize', onResize)
   loadRooms()
 
   const urlParams = new URLSearchParams(window.location.hash.split('?')[1])
@@ -1704,6 +1616,7 @@ onMounted(async () => {
         nickname.value = savedNickname
         currentRoom.value = data.room
         reconnectAttempts.value = 0
+        mobileView.value = 'chat'
         window.history.replaceState(null, '', `#/chat?roomId=${data.room.id}`)
         await loadHistoryMessages()
         loadBotConfig()
@@ -1725,10 +1638,14 @@ onMounted(async () => {
   }
 })
 
+const onResize = () => {
+  isMobile.value = window.innerWidth < 860
+}
+
 onUnmounted(() => {
-  // 恢复外层滚动
-  const mainContent = document.querySelector('.main-content')
-  if (mainContent) mainContent.style.overflow = ''
+  window.removeEventListener('resize', onResize)
+  // 还原外层滚动（与 onDeactivated 一起确保在 keep-alive 下也能还原）
+  document.body.classList.remove('chat-room-active')
   cancelAudioRecording()
   closeCamera()
   stopScreenRecording()
@@ -1748,9 +1665,13 @@ onDeactivated(() => {
   if (recordingTimer) { clearInterval(recordingTimer); recordingTimer = null }
   ttsQueue.length = 0
   ttsPlaying = false
+  // 离开聊天室（缓存）时还原外层滚动，避免影响其它页面
+  document.body.classList.remove('chat-room-active')
 })
 
 onActivated(() => {
+  // 重新进入缓存页面时确保外层滚动被锁定（聊天室自己管理滚动）
+  document.body.classList.add('chat-room-active')
   if (currentRoom.value && (!ws || ws.readyState !== WebSocket.OPEN)) {
     reconnectAttempts.value = 0
     connectWebSocket()
@@ -1760,642 +1681,472 @@ onActivated(() => {
 </script>
 
 <style scoped>
-.tool-container {
+.wx-app {
   display: flex;
-  flex-direction: column;
-  height: calc(100vh - 40px); /* main-content padding 20px * 2 */
+  height: calc(100vh - 40px);
   height: calc(100dvh - 40px);
-  padding: 20px;
-  box-sizing: border-box;
+  background: #ededed;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.08);
 }
 
-.tool-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-
-.tool-header h2 {
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.join-section {
-  margin-bottom: 20px;
-}
-
-.join-input {
-  max-width: 400px;
-}
-
-.section-title {
-  color: var(--text-secondary);
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-
-.room-list {
-  flex: 1;
-  overflow-y: auto;
-}
-
-.empty-tip {
-  color: var(--text-tertiary);
-  text-align: center;
-  padding: 40px;
-}
-
-.room-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  background: var(--card-bg);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.room-item:hover {
-  background: var(--bg-hover);
-}
-
-.room-info {
+/* ============ 左侧深色导航栏 ============ */
+.wx-sidebar {
+  width: 64px;
+  flex-shrink: 0;
+  background: #1e1e26;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  padding: 18px 0;
+  gap: 22px;
 }
-
-.room-name {
+.wx-me { margin-bottom: 6px; }
+.wx-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #07c160;
+  color: #fff;
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
-  font-size: 16px;
-}
-
-.room-id {
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
-/* 聊天界面 */
-.chat-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.chat-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-base);
-  margin-bottom: 16px;
-}
-
-.header-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.room-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
+  justify-content: center;
   font-size: 18px;
-  flex-wrap: wrap;
+  font-weight: 600;
+  flex-shrink: 0;
+  user-select: none;
 }
+.wx-avatar-lg { width: 40px; height: 40px; border-radius: 10px; }
+.wx-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 1;
+}
+.wx-nav-bottom { margin-top: auto; }
+.wx-nav-item {
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: transparent;
+  color: #9a9aa3;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.wx-nav-item:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.wx-nav-item.active { color: #07c160; }
+.wx-nav-item.on { color: #07c160; }
 
-.room-id-tag {
+/* ============ 中间会话列表 ============ */
+.wx-list {
+  width: 300px;
+  flex-shrink: 0;
+  background: #e6e6e6;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #d8d8d8;
+  min-width: 0;
+}
+.wx-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 10px;
+}
+.wx-list-title { font-size: 20px; font-weight: 600; color: #1a1a1a; }
+.wx-search { padding: 0 12px 8px; }
+.wx-join-row { padding: 0 12px 10px; }
+.wx-room-scroll { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+.wx-list-subtitle {
   font-size: 12px;
-  color: var(--text-tertiary);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-base);
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
+  color: #8a8a8a;
+  padding: 6px 8px;
+}
+.wx-empty {
+  text-align: center;
+  color: #9a9a9a;
+  font-size: 13px;
+  padding: 40px 12px;
+}
+.wx-room-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.wx-room-item:hover { background: #dcdcdc; }
+.wx-room-item.active { background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.wx-room-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.wx-room-avatar.open { background: linear-gradient(135deg, #07c160, #04a34e); }
+.wx-room-avatar.lock { background: linear-gradient(135deg, #f0a020, #e8890c); }
+.wx-room-body { flex: 1; min-width: 0; }
+.wx-room-name {
+  font-size: 15px;
+  color: #1a1a1a;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wx-room-id {
+  font-size: 12px;
+  color: #9a9a9a;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wx-badge {
+  font-size: 11px;
+  color: #e8890c;
+  background: #fdf1e0;
+  border: 1px solid #f6d9a8;
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
 }
 
-/* 连接状态指示器 */
-.connection-status {
+/* ============ 右侧聊天区 ============ */
+.wx-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ededed;
+}
+.wx-placeholder { align-items: center; justify-content: center; }
+.wx-ph-inner { text-align: center; color: #b0b0b0; }
+.wx-ph-icon { color: #c8c8c8; margin-bottom: 12px; }
+.wx-ph-inner p { font-size: 15px; margin: 0; }
+
+.wx-chat-header {
+  height: 60px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  background: #f5f5f5;
+  border-bottom: 1px solid #e0e0e0;
+}
+.wx-chat-back { display: none; cursor: pointer; color: #333; }
+.wx-chat-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+.wx-lock { color: #f0a020; }
+.wx-chat-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wx-conn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  padding: 2px 8px;
+  font-weight: 400;
+  padding: 1px 8px;
   border-radius: 10px;
-  margin-left: 8px;
+  margin-left: 6px;
 }
+.wx-conn .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.wx-conn.connected { color: #07c160; background: #e3f6ea; }
+.wx-conn.connecting { color: #e8890c; background: #fdf1e0; }
+.wx-conn.disconnected { color: #d03050; background: #fbe4e8; }
+.wx-chat-actions { display: flex; align-items: center; gap: 6px; }
+.wx-bot-tag { border-radius: 10px; }
 
-.connection-status.connected {
-  color: var(--color-success);
-  background: var(--success-light);
-}
-
-.connection-status.connecting {
-  color: var(--color-warning);
-  background: var(--warning-light);
-}
-
-.connection-status.disconnected {
-  color: var(--color-danger);
-  background: var(--danger-light);
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.connection-status.connecting .status-dot {
-  animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-.messages-container {
+/* ============ 消息区 ============ */
+.wx-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  margin-bottom: 16px;
+  padding: 20px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
-
-.message-item {
-  margin-bottom: 16px;
-  position: relative;
-}
-
-.system-message {
+.wx-msg { display: flex; align-items: flex-start; gap: 10px; position: relative; }
+.wx-msg.sys { justify-content: center; }
+.wx-sys-text {
+  font-size: 12px;
+  color: #999;
+  background: #e2e2e2;
+  border-radius: 6px;
+  padding: 3px 12px;
+  max-width: 80%;
   text-align: center;
 }
+.wx-msg-avatar { width: 38px; height: 38px; border-radius: 8px; font-size: 16px; }
+.wx-msg-avatar.mine { background: #07c160; }
 
-.system-text {
-  color: var(--text-tertiary);
-  font-size: 12px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-light);
-  padding: 4px 12px;
-  border-radius: var(--radius-lg);
-}
+.wx-msg-body { max-width: 62%; display: flex; flex-direction: column; }
+.wx-msg.mine { flex-direction: row-reverse; }
+.wx-msg.mine .wx-msg-body { align-items: flex-end; }
 
-.message-header {
+.wx-msg-nick {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   margin-bottom: 4px;
+  padding: 0 2px;
 }
+.wx-msg-nick-name { font-size: 12px; color: #8a8a8a; }
+.wx-msg-time { font-size: 11px; color: #b0b0b0; }
 
-.nickname {
-  color: var(--color-primary);
-  font-weight: 500;
-}
-
-.my-message .nickname {
-  color: var(--color-success);
-}
-
-.time {
-  color: var(--text-tertiary);
-  font-size: 12px;
-}
-
-.message-content {
-  color: var(--text-primary);
+.wx-bubble {
+  position: relative;
+  padding: 9px 13px;
+  border-radius: 8px;
+  font-size: 15px;
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
+.wx-msg.other .wx-bubble { background: #ffffff; color: #1a1a1a; border-top-left-radius: 2px; }
+.wx-msg.mine .wx-bubble { background: #95ec69; color: #0b3d1e; border-top-right-radius: 2px; }
+.wx-bubble.image, .wx-bubble.video { padding: 4px; background: transparent !important; box-shadow: none; }
+.wx-bubble.audio { padding: 6px 10px; }
+.wx-bubble.file { padding: 10px 14px; }
+.wx-text { white-space: pre-wrap; }
 
-.md-content {
-  line-height: 1.6;
-  word-break: break-word;
+.wx-img {
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 8px;
+  cursor: zoom-in;
+  display: block;
 }
-.md-content :deep(p) { margin: 0 0 6px; }
-.md-content :deep(p:last-child) { margin-bottom: 0; }
-.md-content :deep(pre) { background: var(--bg-tertiary); border-radius: 6px; padding: 10px 12px; overflow-x: auto; margin: 6px 0; }
-.md-content :deep(code) { font-family: monospace; font-size: 13px; }
-.md-content :deep(:not(pre) > code) { background: var(--bg-tertiary); padding: 1px 5px; border-radius: 4px; }
-.md-content :deep(ul), .md-content :deep(ol) { padding-left: 20px; margin: 4px 0; }
-.md-content :deep(blockquote) { border-left: 3px solid var(--border-base); margin: 4px 0; padding-left: 10px; color: var(--text-secondary); }
-.md-content :deep(a) { color: var(--color-primary); }
-.md-content :deep(h1), .md-content :deep(h2), .md-content :deep(h3) { margin: 6px 0 4px; font-size: 1em; font-weight: 600; }
+.wx-video { max-width: 280px; border-radius: 8px; display: block; }
+.wx-audio { width: 220px; }
 
-.message-image {
-  max-width: 300px;
-  max-height: 200px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: transform 0.2s;
-}
-
-.message-image:hover {
-  transform: scale(1.02);
-}
-
-.message-video {
-  max-width: 400px;
-  max-height: 300px;
-  border-radius: var(--radius-md);
-  background: #000;
-}
-
-.message-audio {
-  max-width: 300px;
-  height: 40px;
-  border-radius: 20px;
-}
-
-.message-file {
-  display: inline-flex;
+.wx-file {
+  display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  color: var(--color-primary);
+  color: #1a1a1a;
   text-decoration: none;
-  transition: background 0.2s;
+  font-size: 14px;
 }
+.wx-file:hover { color: #07c160; }
 
-.message-file:hover {
-  background: var(--bg-hover);
+/* markdown 内容 */
+.wx-md { font-size: 14px; }
+.wx-md :deep(pre) {
+  background: #2d2d2d;
+  color: #f8f8f2;
+  padding: 10px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 13px;
+  margin: 6px 0;
 }
+.wx-md :deep(code) { font-family: 'SFMono-Regular', Consolas, monospace; }
+.wx-md :deep(p) { margin: 4px 0; }
+.wx-md :deep(a) { color: #576b95; }
 
-/* 消息操作按钮 */
-.message-actions {
+/* 消息操作（hover 显示） */
+.wx-msg-actions {
   display: flex;
-  gap: 6px;
+  gap: 10px;
   margin-top: 4px;
-  opacity: 0.35;
+  padding: 0 2px;
+  opacity: 0;
   transition: opacity 0.15s;
 }
-
-.message-item:hover .message-actions {
-  opacity: 1;
-}
-
-.action-icon {
+.wx-msg:hover .wx-msg-actions { opacity: 1; }
+.wx-act {
   cursor: pointer;
-  font-size: 14px;
-  color: var(--text-tertiary);
-  padding: 3px 5px;
-  border-radius: var(--radius-sm);
-  transition: color 0.15s, background 0.15s;
+  color: #9a9a9a;
+  font-size: 15px;
+}
+.wx-act:hover { color: #07c160; }
+
+/* ============ 输入区 ============ */
+.wx-inputbar {
+  flex-shrink: 0;
+  background: #f5f5f5;
+  border-top: 1px solid #e0e0e0;
+  padding: 8px 16px calc(12px + env(safe-area-inset-bottom));
 }
 
-.action-icon:hover {
-  color: var(--color-primary);
-  background: var(--bg-hover);
+/* 移动端：单栏布局，可见面板撑满剩余宽度，避免固定 300px 在小屏溢出 */
+@media (max-width: 860px) {
+  .wx-sidebar { width: 54px; padding: 14px 0; gap: 16px; }
+  .wx-list { width: auto; flex: 1; min-width: 0; }
+  .wx-main { width: auto; flex: 1; min-width: 0; }
+  .wx-chat-header { padding: 0 12px; }
+  .wx-chat-back { display: flex; align-items: center; }
+  .wx-messages { padding: 14px 12px; }
+  .wx-msg-body { max-width: 76%; }
+  .wx-img { max-width: 180px; max-height: 180px; }
+  .wx-video { max-width: 200px; }
 }
-
-/* 机器人相关 */
-.bot-online-tag {
-  font-size: 12px;
+.wx-tools { display: flex; gap: 4px; margin-bottom: 6px; }
+.wx-tool {
+  border: none;
+  background: transparent;
+  color: #555;
+  font-size: 19px;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
 }
+.wx-tool:hover { background: #e6e6e6; color: #07c160; }
+.wx-tool.recording { color: #d03050; }
+.wx-input-row { display: flex; gap: 10px; align-items: flex-end; }
+.wx-input { flex: 1; }
+.wx-input :deep(.el-textarea__inner) {
+  border-radius: 8px;
+  resize: none;
+  font-size: 15px;
+}
+.wx-send {
+  background: #07c160;
+  border-color: #07c160;
+  border-radius: 8px;
+  height: 40px;
+  padding: 0 22px;
+  font-size: 15px;
+}
+.wx-send:hover { background: #06ad56; border-color: #06ad56; }
+.wx-send.is-disabled { background: #9adfbb; border-color: #9adfbb; }
 
-.bot-active-panel {
+.wx-recording {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px;
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  margin-bottom: 8px;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #fdf1e0;
+  color: #b06a00;
+  font-size: 14px;
+  border-top: 1px solid #f0d9b0;
+}
+.wx-rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d03050;
+  animation: wx-pulse 1s infinite;
+}
+@keyframes wx-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
+.camera-preview { width: 100%; border-radius: 8px; background: #000; }
+.qr-container { text-align: center; }
+.qr-container canvas { border-radius: 8px; }
+.qr-info { margin-top: 14px; font-size: 14px; color: #555; }
+.qr-tip { color: #999; font-size: 12px; }
+
+/* 机器人对话框 */
+.bot-hint { font-size: 13px; color: #666; margin: 10px 0; }
+.bot-no-key-tip {
+  font-size: 13px;
+  color: #b06a00;
+  background: #fdf1e0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+.bot-active-panel { margin-bottom: 10px; }
 .bot-current {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.bot-avatar {
-  font-size: 24px;
-}
-
-.bot-name {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.bot-role-label {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.bot-hint {
-  color: var(--text-secondary);
-  font-size: 13px;
-  margin-bottom: 16px;
-}
-
-.bot-no-key-tip {
-  background: var(--warning-light);
-  color: var(--color-warning);
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  font-size: 13px;
-  margin-bottom: 12px;
-}
-
-.bot-templates {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
-  margin-bottom: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
 }
-
-.bot-template-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 8px;
-  border: 1px solid var(--border-base);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
-  text-align: center;
-}
-
-.bot-template-card:hover {
-  border-color: var(--color-primary);
-  background: var(--bg-hover);
-}
-
-.bot-template-card.selected {
-  border-color: var(--color-primary);
-  background: var(--primary-light, #ecf5ff);
-}
-
-.bot-template-icon {
-  font-size: 24px;
-  line-height: 1;
-}
-
-.bot-template-name {
-  font-size: 12px;
-  color: var(--text-primary);
-}
-
-.bot-tts-row {
+.bot-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #07c160;
+  color: #fff;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 0 8px;
-  border-top: 1px solid var(--border-light);
-  margin-top: 8px;
-}
-
-.bot-tts-tip {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.bot-tts-engine-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0 8px;
-}
-
-.bot-tts-engine-label {
-  font-size: 13px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.bot-advanced {
-  margin-top: 8px;
-}
-
-@media (max-width: 480px) {
-  .bot-templates {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-.input-area {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.input-tools {
-  display: flex;
-  gap: 4px;
-}
-
-.tool-btn {
-  padding: 8px 10px;
-}
-
-.tool-btn.recording {
-  color: var(--color-danger);
-  border-color: var(--color-danger);
-  animation: recording-pulse 1s infinite;
-}
-
-@keyframes recording-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-.message-input {
-  flex: 1;
-  min-width: 200px;
-}
-
-.emoji-panel {
-  display: grid;
-  grid-template-columns: repeat(10, 1fr);
-  gap: 4px;
-  max-width: calc(100vw - 40px);
-  width: 320px;
-  box-sizing: border-box;
-}
-
-.emoji-item {
-  font-size: 20px;
-  padding: 4px;
-  cursor: pointer;
-  text-align: center;
-  border-radius: var(--radius-sm);
-  transition: background 0.2s;
-}
-
-.emoji-item:hover {
-  background: var(--bg-hover);
-}
-
-@media (max-width: 400px) {
-  .emoji-panel {
-    width: calc(100vw - 40px);
-    grid-template-columns: repeat(8, 1fr);
-  }
-
-  .emoji-item {
-    font-size: 18px;
-    padding: 3px;
-  }
-}
-
-/* 录音状态显示 */
-.recording-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: var(--danger-light);
-  border-radius: var(--radius-md);
-  color: var(--color-danger);
-  font-size: 14px;
-  margin-top: 8px;
-}
-
-.recording-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-danger);
-  animation: recording-pulse 1s infinite;
-}
-
-/* 拍照/录像弹窗 */
-.camera-container {
-  display: flex;
   justify-content: center;
-  background: #000;
-  border-radius: var(--radius-md);
-  overflow: hidden;
+  font-size: 15px;
 }
-
-.camera-preview {
-  width: 100%;
-  max-height: 400px;
-  object-fit: contain;
-}
-
-/* 二维码对话框 */
-.qr-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px;
-  gap: 20px;
-}
-
-.qr-container canvas {
-  border: 2px solid var(--border-base);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.qr-info {
+.bot-info { flex: 1; }
+.bot-name { font-size: 14px; font-weight: 500; }
+.bot-role-label { font-size: 12px; color: #999; margin-top: 2px; }
+.bot-templates { display: flex; flex-wrap: wrap; gap: 10px; }
+.bot-template-card {
+  width: 88px;
+  padding: 12px 6px;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
   text-align: center;
-  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s;
 }
-
-.qr-info p {
-  margin: 8px 0;
-  font-size: 14px;
+.bot-template-card:hover { border-color: #07c160; }
+.bot-template-card.selected { border-color: #07c160; background: #e3f6ea; }
+.bot-template-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: #07c160;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  margin: 0 auto 6px;
 }
+.bot-template-name { font-size: 12px; color: #333; }
+.bot-advanced { margin-top: 12px; }
 
-.qr-tip {
-  color: var(--text-secondary);
-  font-size: 12px !important;
-  margin-top: 12px !important;
-}
-
-/* 管理面板 */
-.admin-panel {
-  padding: 0;
-}
-
+.admin-panel { min-height: 300px; }
 .admin-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-  padding: 0 4px;
-  color: var(--text-primary);
+  margin-bottom: 12px;
   font-size: 14px;
+  color: #555;
 }
 
-@media (max-width: 768px) {
-  .tool-container {
-    padding: 12px;
-  }
-
-  .emoji-panel {
-    width: min(320px, calc(100vw - 40px));
-    grid-template-columns: repeat(8, 1fr);
-  }
-
-  .emoji-item {
-    font-size: 18px;
-    padding: 3px;
-  }
-
-  .input-area {
-    flex-wrap: wrap;
-  }
-
-  .input-tools {
-    width: 100%;
-    justify-content: space-between;
-    order: 2;
-    margin-top: 8px;
-  }
-
-  .message-input {
-    flex: 1 1 calc(100% - 80px);
-    order: 1;
-  }
-
-  .input-area > .el-button:last-child {
-    order: 1;
-  }
-
-  .room-title {
-    font-size: 16px;
-  }
-
-  .connection-status {
-    font-size: 11px;
-  }
+/* 表情面板 */
+.emoji-panel {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 4px;
+  max-width: 320px;
 }
-</style>
+.emoji-item { font-size: 20px; cursor: pointer; text-align: center; padding: 3px; border-radius: 4px; }
+.emoji-item:hover { background: #f0f0f0; }
 
-<style>
-/* 全局样式 - 表情弹窗自适应 */
-.emoji-popover.el-popover {
-  width: auto !important;
-  min-width: auto !important;
-  max-width: calc(100vw - 24px) !important;
-  padding: 8px !important;
-}
-
-@media (max-width: 768px) {
-  .emoji-popover.el-popover {
-    max-width: calc(100vw - 16px) !important;
-    padding: 6px !important;
-  }
+/* ============ 移动端适配 ============ */
+@media (max-width: 859px) {
+  .wx-app { border-radius: 0; }
+  .wx-list { width: 100%; border-right: none; }
+  .wx-main { width: 100%; }
+  .wx-list.mobile-hidden, .wx-main.mobile-hidden { display: none !important; }
+  .wx-chat-back { display: flex; align-items: center; }
+  .wx-msg-body { max-width: 72%; }
 }
 </style>
