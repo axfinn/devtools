@@ -429,6 +429,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/news',
+    name: 'News',
+    component: () => import('../views/life/NewsTool.vue'),
+    meta: {
+      title: '每日新闻',
+      icon: 'Reading',
+      category: 'life',
+      description: '每日抓取 RSS 资讯，AI 精编今日要闻，历史归档可查'
+    }
+  },
+  {
     path: '/qrcode',
     name: 'QrCode',
     component: () => import('../views/convert/QrCodeTool.vue'),

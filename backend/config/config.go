@@ -52,6 +52,25 @@ type Config struct {
 	AskitSync           AskitSyncConfig           `yaml:"askit_sync"`
 	Skills              SkillsConfig              `yaml:"skills"`
 	SSRules             SSRulesConfig             `yaml:"ssrules"`
+	News                NewsConfig                `yaml:"news"`
+}
+
+// NewsConfig 每日新闻模块配置。
+//
+// 后端内置定时任务(RSS 抓取 + 可选 AI 精编)每天在 schedule_hour:schedule_minute(对应 timezone)生成一份当日新闻,
+// 存库并保留历史归档(默认永久保留,retention_days>0 时才清理)。
+// feeds 为空时使用内置默认订阅源;model 为空时只抓取原文、不做 AI 精编。
+// 默认关闭(enabled:false),在 config.yaml 设置 news.enabled: true 即可开启;一旦开启其余字段均有合理默认值。
+type NewsConfig struct {
+	Enabled        bool     `yaml:"enabled"`         // 是否启用每日新闻生成(默认 false,需显式开启)
+	Feeds          []string `yaml:"feeds"`           // RSS/Atom 订阅源 URL 列表,空=内置默认源
+	ScheduleHour   int      `yaml:"schedule_hour"`   // 每日生成时刻(0-23),默认 8
+	ScheduleMinute int      `yaml:"schedule_minute"` // 每日生成分钟(0-59),默认 0
+	Timezone       string   `yaml:"timezone"`        // IANA 时区,如 Asia/Shanghai;空=服务器本地时区
+	Model          string   `yaml:"model"`           // AI 精编使用的模型;空=只抓原文不精编
+	MaxItems       int      `yaml:"max_items"`       // 每日最多保留条数,默认 30
+	RetentionDays  int      `yaml:"retention_days"`  // 历史保留天数,0=永久保留,>0 时清理更早的归档
+	AdminPassword  string   `yaml:"admin_password"`  // 保护 /api/news/generate 手动触发接口;空=开放
 }
 
 // SSRulesConfig Shadowsocks 规则文件(ssrules)配置。

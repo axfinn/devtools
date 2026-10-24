@@ -48,6 +48,7 @@ type RouteHandlers struct {
 	TripHandler               *handlers.TripHandler
 	HealthHandler             *handlers.HealthHandler
 	SSRuleHandler             *handlers.SSRuleHandler
+	NewsHandler               *handlers.NewsHandler
 }
 
 // RegisterAllRoutes wires up all domain route groups.
@@ -91,4 +92,5 @@ func RegisterAllRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateLimiter
 	RegisterAvatarRoutes(api, h, createRateLimiter)
 	RegisterTripRoutes(api, h, createRateLimiter)
 	RegisterSSRuleRoutes(api, h, createRateLimiter)
+	RegisterNewsRoutes(api, h, createRateLimiter)
 }

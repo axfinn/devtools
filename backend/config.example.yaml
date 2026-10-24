@@ -759,3 +759,26 @@ ssrules:
   # 管理页密码，必填 —— 留空则禁用本模块（不是无密码放行）
   # 改成你自己的密码；生成的规则文件链接是公开的（靠随机 token 保护），不受此密码影响
   admin_password: "改成你自己的密码"
+
+# ===== 每日新闻模块 =====
+# 后端内置定时任务:每天在 schedule_hour:schedule_minute(对应 timezone)抓取 feeds 中的 RSS/Atom,
+# 去重后存库(历史归档永久保留),若配置 model 则调用 AI 网关精编成「今日要闻」简报。
+# 默认关闭,把 enabled 改为 true 即可开启;其余字段均有合理默认值。
+news:
+  # 设为 true 开启每日自动生成(默认 false)
+  enabled: true
+  # 订阅源(可选);留空则用内置默认源(IT之家 / cnBeta / 少数派 / 阮一峰 / Hacker News / BBC中文)
+  feeds: []
+  # 每日生成时刻(0-23 / 0-59),默认 08:00
+  schedule_hour: 8
+  schedule_minute: 0
+  # 时区(IANA),如 Asia/Shanghai;留空=服务器本地时区
+  timezone: "Asia/Shanghai"
+  # AI 精编模型;留空=只抓原文不精编(需先在 ai_gateway 配置好任意可用 provider/key)
+  # model: "MiniMax-M2.5"
+  # 每日最多保留条数,默认 30
+  max_items: 30
+  # 历史保留天数,0=永久保留,>0 时清理更早的归档
+  retention_days: 0
+  # 手动触发接口 /api/news/generate 的保护密码;留空=开放
+  admin_password: ""

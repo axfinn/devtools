@@ -95,6 +95,9 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	// 公开链接(/ss/:token/:filename)供客户端直接拉取。
 	ssRuleHandler := handlers.NewSSRuleHandler(db, cfg.SSRules.AdminPassword)
 
+	// 新闻模块:复用主 SQLite 连接与 AI Gateway(可选精编)。
+	newsHandler := handlers.NewNewsHandler(db, cfg, aiGatewayHandler)
+
 	// Skills 模块:对外工具入口,默认未启用(cfg.Skills.Enabled = false),
 	// 由管理员在 config.yaml 显式打开后才对外暴露。
 	// Guard 在 db 初始化后单独构造,AttachGuard 给 SkillsHandler 注入写库专项限流。
@@ -143,6 +146,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		tripHandler:               tripHandler,
 		healthHandler:             healthHandler,
 		ssRuleHandler:             ssRuleHandler,
+		newsHandler:               newsHandler,
 	}, nil
 }
 

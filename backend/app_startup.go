@@ -19,6 +19,8 @@ func startBackgroundServices(rt *appRuntime, handlerSet *routeHandlers) {
 	// 恢复上次崩溃/重启遗留的孤儿录音分片(30s 阈值,确保不和在跑 session 撞车)
 	go handlerSet.nfsShareHandler.RecoverOrphanRecordings(30 * time.Second)
 	startCleanupRoutine(rt.db, handlerSet.plannerHandler, handlerSet.tripHandler, rt.cfg)
+	// 每日新闻:启动内置定时任务(enabled 时才真正排程)。
+	handlerSet.newsHandler.StartScheduler()
 }
 
 func preloadBackgroundImages() {
