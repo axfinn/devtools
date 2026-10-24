@@ -57,7 +57,20 @@ import {
   // FINN-29 A4
   VideoCamera,
   VideoPause,
-  VideoPlay
+  VideoPlay,
+  // 聊天室（微信风改版）所需图标
+  Service,
+  Microphone,
+  SwitchButton,
+  Plus,
+  Lock,
+  House,
+  ArrowLeft,
+  Tickets,
+  Sugar,
+  Camera,
+  CopyDocument,
+  Download
 } from '@element-plus/icons-vue'
 import './styles/index.css'
 import App from './App.vue'
@@ -187,7 +200,19 @@ const globalIcons = {
   Tools,
   VideoCamera,
   VideoPause,
-  VideoPlay
+  VideoPlay,
+  Service,
+  Microphone,
+  SwitchButton,
+  Plus,
+  Lock,
+  House,
+  ArrowLeft,
+  Tickets,
+  Sugar,
+  Camera,
+  CopyDocument,
+  Download
 }
 
 for (const [key, component] of Object.entries(globalIcons)) {
