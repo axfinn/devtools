@@ -299,7 +299,7 @@ minimax_voice_cloning:
 #   千问: qwen3.5-plus | qwen3-max-2026-01-23 | qwen3-coder-next | qwen3-coder-plus
 #   智谱: glm-5 | glm-4.7
 #   Kimi: kimi-k2.5
-# 注意: 此 API Key 独立于百炼(bailian)，从 https://coding.dashscope.aliyuncs.com 申请
+# 注意: 此 API Key 为 coding 端点专用（文本/多品牌聚合），从 https://coding.dashscope.aliyuncs.com 申请
 # 也可通过环境变量 DASHSCOPE_API_KEY 设置
 dashscope:
   api_key: "sk-sp-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -312,93 +312,6 @@ dashscope:
 image_understanding:
   # 查看请求流水的独立管理员密码，独立于 ai_gateway.super_admin_password
   admin_password: ""
-
-# 阿里云百炼图片模型配置
-bailian:
-  # DashScope / 百炼 API Key
-  # 也可通过环境变量 BAILIAN_API_KEY 设置
-  api_key: ""
-  # 调试台与开放 API 的管理密码
-  # 也可通过环境变量 BAILIAN_ADMIN_PASSWORD 设置
-  admin_password: ""
-  # 百炼基础地址，一般无需修改
-  base_url: "https://dashscope.aliyuncs.com"
-  # 创建异步任务时，默认最多等待的秒数
-  default_wait_seconds: 45
-  # 任务和流水保留天数
-  task_retention_days: 180
-  # 本地额度保护配置。total_quota 用于本地计数防超额，expires_at 到期后自动拒绝调用。
-  models:
-    - name: "qwen-image-2.0-pro"
-      type: "multimodal"
-      enabled: true
-      total_quota: 100
-      expires_at: "2026-06-01"
-      default_size: "1328x1328"
-      description: "文生图/图像编辑，同步接口"
-    - name: "qwen-image-2.0"
-      type: "multimodal"
-      enabled: true
-      total_quota: 100
-      expires_at: "2026-06-01"
-      default_size: "1328x1328"
-      description: "文生图/图像编辑，同步接口"
-    - name: "qwen-image-2.0-pro-2026-03-03"
-      type: "multimodal"
-      enabled: true
-      total_quota: 100
-      expires_at: "2026-06-01"
-      default_size: "1328x1328"
-      description: "快照版本"
-    - name: "qwen-image-2.0-2026-03-03"
-      type: "multimodal"
-      enabled: true
-      total_quota: 100
-      expires_at: "2026-06-01"
-      default_size: "1328x1328"
-      description: "快照版本"
-    - name: "qwen-image-plus-2026-01-09"
-      type: "text2image"
-      enabled: true
-      total_quota: 100
-      expires_at: "2026-04-09"
-      default_size: "1024*1024"
-      description: "异步文生图"
-    - name: "wan2.6-i2v-flash"
-      type: "image2video"
-      enabled: true
-      total_quota: 50
-      expires_at: "2026-04-16"
-      default_size: "1280x720"
-      description: "图生视频 Flash"
-    - name: "wan2.6-i2v"
-      type: "image2video"
-      enabled: false
-      total_quota: 0
-      expires_at: ""
-      default_size: "1280x720"
-      description: "无免费额度，默认禁用"
-    - name: "qwen-image-plus"
-      type: "text2image"
-      enabled: false
-      total_quota: 0
-      expires_at: ""
-      default_size: "1024*1024"
-      description: "无免费额度，默认禁用"
-    - name: "qwen-image-edit-plus"
-      type: "multimodal"
-      enabled: false
-      total_quota: 0
-      expires_at: ""
-      default_size: "1328x1328"
-      description: "无免费额度，默认禁用"
-    - name: "qwen-image-max"
-      type: "text2image"
-      enabled: false
-      total_quota: 0
-      expires_at: ""
-      default_size: "1024*1024"
-      description: "无免费额度，默认禁用"
 
 # NFS/SMB 文件分享配置
 # 仅超管密码可操作，支持指定访问次数和过期时间，超限后禁止访问
@@ -610,67 +523,6 @@ ai_gateway:
       output_per_1k_tokens: 0
       request_cost: 0
       currency: "CNY"
-    # 百炼图片/视频模型计费
-    - model: "qwen-image-2.0-pro"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "qwen-image-2.0"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "qwen-image-2.0-pro-2026-03-03"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "qwen-image-2.0-2026-03-03"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "qwen-image-plus-2026-01-09"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "wan2.6-i2v-flash"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "wan2.6-i2v"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "qwen-image-plus"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "qwen-image-edit-plus"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
-    - model: "qwen-image-max"
-      provider: "bailian"
-      input_per_1k_tokens: 0
-      output_per_1k_tokens: 0
-      request_cost: 0
-      currency: "CNY"
     # MiniMax Token Plan 媒体生成计费（按次计费，官方模型名）
     # TTS HD / Turbo 系列
     - model: "speech-01-hd"
@@ -751,6 +603,19 @@ ai_gateway:
       input_per_1k_tokens: 0
       output_per_1k_tokens: 0
       request_cost: 0
+      currency: "CNY"
+    # MiniMax-H3 视频生成（异步 submit → task_id → 轮询）
+    - model: "MiniMax-H3"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0.12
+      currency: "CNY"
+    - model: "MiniMax-H3-Max"
+      provider: "minimax"
+      input_per_1k_tokens: 0
+      output_per_1k_tokens: 0
+      request_cost: 0.12
       currency: "CNY"
     # Music
     - model: "music-2.5"

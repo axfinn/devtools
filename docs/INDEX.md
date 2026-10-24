@@ -9,7 +9,7 @@
 | 文档 | 说明 |
 |---|---|
 | `ai-gateway-api.md` | AI Gateway API 文档 |
-| `bailian-image-api.md` | 百炼图像 API |
+| `bailian-image-api.md` | 百炼图像 API（**已于 2026-09-09 下线**，仅历史留存） |
 | `image-understanding-api.md` | 图像理解 API |
 
 ---

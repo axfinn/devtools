@@ -33,7 +33,7 @@
               <el-input v-model="form.name" placeholder="如 marketing-service" />
             </el-form-item>
             <el-form-item label="允许模型（每行一个，留空表示全部）">
-              <el-input v-model="modelsText" type="textarea" :rows="6" placeholder="deepseek-chat&#10;qwen-image-2.0-pro" />
+              <el-input v-model="modelsText" type="textarea" :rows="6" placeholder="deepseek-chat&#10;minimax-mcp-understand-image&#10;MiniMax-H3" />
             </el-form-item>
             <el-form-item label="允许能力">
               <el-checkbox-group v-model="form.allowed_scopes">
@@ -549,14 +549,17 @@
               <h4>接入方式</h4>
               <p class="docs-text">
                 业务方使用平台签发的 API Key 直接调用统一网关。文本能力走
-                `/api/ai-gateway/v1/chat/completions`，图片和视频走
-                `/api/ai-gateway/v1/media/generations`，所有请求都会进入统一记账、限流和审计。
+                `/api/ai-gateway/v1/chat/completions`，图像理解走
+                `/api/ai-gateway/v1/image/understanding`，视频生成走
+                `/api/minimax/h3/v2/video_generation`，所有请求都会进入统一记账、限流和审计。
+                图像理解与视频生成要求 API Key 的 `allowed_scopes` 包含 `media`。
               </p>
               <el-descriptions :column="1" border>
                 <el-descriptions-item label="鉴权 Header">Authorization: Bearer &lt;API_KEY&gt;</el-descriptions-item>
                 <el-descriptions-item label="文本接口">POST /api/ai-gateway/v1/chat/completions</el-descriptions-item>
-                <el-descriptions-item label="媒体接口">POST /api/ai-gateway/v1/media/generations</el-descriptions-item>
-                <el-descriptions-item label="任务查询">GET /api/ai-gateway/v1/media/tasks/:id</el-descriptions-item>
+                <el-descriptions-item label="图像理解">POST /api/ai-gateway/v1/image/understanding</el-descriptions-item>
+                <el-descriptions-item label="视频生成">POST /api/minimax/h3/v2/video_generation</el-descriptions-item>
+                <el-descriptions-item label="任务查询">GET /api/minimax/h3/v2/query/video_generation/:task_id</el-descriptions-item>
                 <el-descriptions-item label="接口总文档">GET /api/ai-gateway/docs</el-descriptions-item>
               </el-descriptions>
             </div>
@@ -565,7 +568,8 @@
               <h4>返回与计费</h4>
               <ul class="docs-list">
                 <li>文本接口会回传上游结果，并附带 `usage_summary`，包含输入、输出、总 Tokens 和费用。</li>
-                <li>媒体接口返回统一任务对象，支持轮询查看状态、结果地址和失败原因。</li>
+                <li>图像理解同步返回理解结果（当前记 0 费用）。</li>
+                <li>视频生成异步返回 202 + task_id + poll_url，用 `GET /api/minimax/h3/v2/query/video_generation/:task_id` 轮询查看状态、结果地址和失败原因。</li>
                 <li>每个 API Key 都会累计请求数、Token、费用，并支持预算上限、告警阈值、日报和月报。</li>
               </ul>
             </div>
@@ -578,7 +582,7 @@
                 <ol class="docs-steps">
                   <li>在当前页面生成 API Key，并确认允许的模型、作用域、限流和预算。</li>
                   <li>业务服务端保存 API Key，不要暴露到浏览器前端。</li>
-                  <li>调用聊天接口或媒体接口，Header 带上 `Authorization: Bearer &lt;API_KEY&gt;`。</li>
+                  <li>调用聊天接口、图像理解接口或视频生成接口，Header 带上 `Authorization: Bearer &lt;API_KEY&gt;`。</li>
                   <li>读取响应中的 `usage_summary`、任务状态和错误信息，接入你自己的日志系统。</li>
                   <li>在本页查看请求明细、累计 Token、费用、预算告警和日报月报。</li>
                 </ol>
@@ -852,10 +856,10 @@ export ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M2.5-highspeed"</pre>
     "ANTHROPIC_BASE_URL": "https://t.jaxiu.cn/api/anthropic",
     "ANTHROPIC_AUTH_TOKEN": "dtk_ai_xxx",
     "ANTHROPIC_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
-    "ANTHROPIC_SMALL_FAST_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[1] || p.models?.[0] || '') }}",
+    "ANTHROPIC_SMALL_FAST_MODEL": "{{ p.aliases?.[1]?.model || (p.models?.[1] || p.models?.[0] || '') }}",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "{{ p.default_model || p.models?.[0] || '' }}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ (p.aliases && p.aliases[1]) ? p.aliases[1].model : (p.models?.[p.models.length - 1] || p.models?.[0] || '') }}"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{{ p.aliases?.[1]?.model || (p.models?.[p.models.length - 1] || p.models?.[0] || '') }}"
   }
 }</pre>
                 </el-tab-pane>
@@ -865,7 +869,7 @@ export ANTHROPIC_AUTH_TOKEN="dtk_ai_xxx"
 # 默认模型：{{ p.default_model || p.models?.[0] || '' }}
 export ANTHROPIC_MODEL="{{ p.default_model || p.models?.[0] || '' }}"</pre>
                   <pre class="doc-code" style="margin-top: 6px;" v-if="p.aliases && p.aliases.length > 0"># 推荐用别名（管理员可控切换下游）
-export ANTHROPIC_SMALL_FAST_MODEL="{{ p.aliases[1] ? p.aliases[1].model : p.aliases[0].model }}"</pre>
+export ANTHROPIC_SMALL_FAST_MODEL="{{ (p.aliases?.[1]?.model) || (p.aliases?.[0]?.model) || '' }}"</pre>
                   <pre class="doc-code" style="margin-top: 6px;" v-else>export ANTHROPIC_SMALL_FAST_MODEL="{{ p.models?.[1] || p.models?.[0] || '' }}"</pre>
                 </el-tab-pane>
               </el-tabs>
@@ -2097,20 +2101,30 @@ data = resp.json()
 print(data.get("usage_summary"))
 print(data["choices"][0]["message"]["content"])`
 
-const gatewayMediaExample = `curl -X POST ${origin}/api/ai-gateway/v1/media/generations \\
+const gatewayMediaExample = `# 图像理解：Base64 入参，同步返回理解结果
+curl -X POST ${origin}/api/ai-gateway/v1/image/understanding \\
   -H "Authorization: Bearer ai_xxx" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "qwen-image-2.0-pro",
-    "prompt": "一张北欧客厅海报，柔和自然光",
-    "images": [],
-    "parameters": {
-      "size": "1328x1328",
-      "watermark": false
-    }
+    "model": "minimax-mcp-understand-image",
+    "image": "data:image/png;base64,...",
+    "prompt": "请描述这张图片里的关键对象与文字"
   }'
 
-curl ${origin}/api/ai-gateway/v1/media/tasks/task_xxx \\
+# 视频生成：异步，立即返回 202 + task_id + poll_url
+curl -X POST ${origin}/api/minimax/h3/v2/video_generation \\
+  -H "Authorization: Bearer ai_xxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "MiniMax-H3",
+    "prompt": "一个男孩在海边打篮球",
+    "resolution": "2K",
+    "duration": 5,
+    "ratio": "16:9"
+  }'
+
+# 轮询视频生成任务
+curl ${origin}/api/minimax/h3/v2/query/video_generation/mmh3_xxxxxxxxxxxx \\
   -H "Authorization: Bearer ai_xxx"`
 
 const gatewayResponseExample = `{
@@ -2139,9 +2153,9 @@ const gatewayFieldDocs = [
   { field: 'model', required: '是', description: '要调用的模型名，必须在当前 API Key 白名单内。', example: 'deepseek-v4-pro / deepseek-reasoner' },
   { field: 'messages', required: '聊天必填', description: '聊天消息数组，兼容 OpenAI 风格。', example: '[{"role":"user","content":"你好"}]' },
   { field: 'reasoning_effort', required: '否', description: 'DeepSeek 推理模型可选，控制推理强度。', example: 'low / medium / high' },
-  { field: 'prompt', required: '媒体必填', description: '图片或视频生成提示词。', example: '北欧风客厅海报' },
-  { field: 'images', required: '按模型', description: '媒体模型输入图，支持 base64 或公网 URL。', example: '["data:image/png;base64,..."]' },
-  { field: 'parameters', required: '否', description: '模型高级参数，原样透传给对应提供商。', example: '{"size":"1328x1328"}' },
+  { field: 'prompt', required: '视频生成必填', description: '视频生成的提示词；图像理解的 prompt 可选，留空时后端使用默认描述指令。', example: '一个男孩在海边打篮球' },
+  { field: 'image', required: '图像理解必填', description: '图像理解的输入图片，只接受 Base64（data URL 或裸 Base64），解码后不超过 10MB。', example: 'data:image/png;base64,...' },
+  { field: 'resolution', required: '否', description: '视频生成的分辨率、时长（duration）与画幅（ratio），原样透传给上游。', example: '"2K" / 5 / "16:9"' },
   { field: 'Authorization', required: '是', description: '统一鉴权头，格式为 Bearer API Key。', example: 'Bearer ai_xxx' },
   { field: 'usage_summary', required: '响应', description: '网关追加的统一计费信息，便于业务记账。', example: '{"total_tokens":579}' }
 ]
@@ -2157,7 +2171,7 @@ const gatewayErrorDocs = [
 const gatewayFaqs = [
   { q: 'API Key 应该放在哪里？', a: '放在服务端配置或密钥中心，不要直接放到浏览器页面、App 安装包或公开仓库里。' },
   { q: '如何统计每个业务方的费用？', a: '建议每个业务系统单独签发一个 Key，这样后台会自动按 Key 统计请求数、Token、费用和报表。' },
-  { q: '为什么有些模型没有 Token？', a: '图片和视频模型通常按次计费，没有文本 Token 概念，网关会写入 request_cost 并累计 total_cost。' },
+  { q: '为什么有些模型没有 Token？', a: '视频生成按配置 request_cost 计费，没有文本 Token 概念，网关会写入 request_cost 并累计 total_cost；图像理解当前记 0 费用。' },
   { q: '如何排查某次调用失败？', a: '在 Key 详情里查看最近请求明细，重点看状态码、错误信息、模型名、耗时和费用字段。' }
 ]
 

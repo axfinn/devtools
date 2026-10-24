@@ -4,7 +4,7 @@
 
 ---
 
-## 43 模块地图
+## 42 模块地图
 
 | # | 模块 | Handler 文件 | Route 文件 | View 组件 | 主要功能 |
 |---|------|------------|----------|---------|---------|
@@ -32,25 +32,24 @@
 | 22 | **Household 家庭** | `handlers/household.go` (7 分段) | `routes/household.go` | `views/life/HouseholdTool.vue` | 物品/位置/模板管理，通知，AI 智能添加/分析，OCR |
 | 23 | **NFSShare** | `handlers/nfsshare*.go` (5 文件) | `routes/nfsshare.go` | `views/collab/NFSShareTool.vue` | SMB/NFS 文件共享，WebRTC 流媒体，HLS 分片 |
 | 24 | **ImageUnderstanding** | `handlers/image_understanding.go` | `routes/image_understanding.go` | `views/ai/ImageUnderstandingTool.vue` | 图像理解（VLM），Base64/URL 输入，返回描述 |
-| 25 | **Bailian 百炼** | `handlers/bailian.go` | `routes/bailian.go` | — | 阿里百炼图像理解 API 封装 |
-| 26 | **AIGateway** | `handlers/ai_gateway*.go` (10 文件) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/百炼，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
-| 27 | **Askit 同步** | `handlers/askit*.go` (3 文件) | `routes/askit.go` | `views/other/AskitInviteTool.vue` | 跨设备数据同步，邀请码，Blob 大文件，快照 |
-| 28 | **Screen 屏幕共享** | `handlers/screen.go` | `routes/screen.go` | `views/collab/ScreenShareTool.vue` | WebRTC 点对点屏幕共享，TURN 中继 |
-| 29 | **APIGateway** | `handlers/apigateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
-| 30 | **AutoDev** | `handlers/autodev.go` (6 分段) | `routes/autodev.go` | `views/dev/AutoDevTool.vue` | Claude Code / Codex CLI 集成，Ask/Extend/Submit/List |
-| 31 | **Mermaid** | `handlers/mermaid.go` | `routes/mermaid.go` | `views/draw/MermaidTool.vue` | Mermaid 图表，实时渲染，导出 SVG/PNG |
-| 32 | **Proxy 代理** | `handlers/proxy.go` (4 分段) | `routes/proxy.go` | `views/other/ProxyTool.vue` | sing-box 嵌入式代理，节点订阅/测速/选优，NPS 隧道 |
-| 33 | **NPS NPS** | `handlers/nps.go` | `routes/nps.go` | `views/other/NPSTool.vue` | NPS 内网穿透管理 |
-| 34 | **Hermes** | `handlers/hermes.go` | `routes/hermes.go` | `views/dev/HermesTool.vue` | Hermes 工具 |
-| 35 | **Background 背景图** | `handlers/background.go` | `routes/bg.go` | `views/other/BackgroundTool.vue` | 背景图库，本地缓存，分页浏览 |
-| 36 | **Monitor 监控** | `handlers/monitoring.go` | `routes/monitor.go` | `views/other/MonitorTool.vue` | AI Gateway 使用监控，费用分析，实时日志 |
-| 37 | **Console 控制台** | `handlers/console.go` | `routes/console.go` | `views/other/ConsoleTool.vue` | 管理控制台 |
-| 38 | **Skills+MCP** | `handlers/skills*.go` (3 文件) | `routes/skills.go` | `views/other/SkillsTool.vue` | OpenAI function-calling 风格清单，MCP 协议，5 个 skill |
-| 39 | **OCR** | `handlers/ocr.go` | `routes/ocr.go` | — | 二维码识别 + OCR，Python RapidOCR |
-| 40 | **Health** | 内联 | `routes/health.go` | — | `GET /api/health` 健康检查 |
-| 41 | **Avatar 虚拟形象** | `handlers/avatar.go` | `routes/avatar.go` | `views/dev/VirtualAvatarTool/VirtualAvatarTool.vue` (+ 13 子组件) | three.js 虚拟形象调试：SkinnedMesh + Skeleton + 姿态预设；模型库 CRUD + me_asset 标记；姿态片段（pose JSON）上传/导出/分享；glb / pose.json / 视频三选一导出（MediaRecorder + WebCodecs → 降级关键帧 JSON → 复制）；摄像头调试（getUserMedia 四态降级：granted/denied/unsupported/no_device）；R5 双因子鉴权（creator_key + bcrypt password）；R10 帧数上限 60000；分享短链 16 字符 hex；CSS 变量跟随全局主题 (`--color-accent` 全局命名） |
-| 42 | **Trip 旅游行程** | `backend/trip/*.go` + `backend/cmd/trip/main.go` | — (CLI-only) | — | DDD bounded context：聚合根 `Trip` → 实体 `DayPlan` → 实体 `Activity`；值对象 `Destination` + `ActivityKind`(transport/sight/food/lodging/shopping/note)；仓储 `Repository` 接口 + SQLiteRepository；服务 `Service.RenderMarkdown` 输出可读 14 天攻略；CLI `trip create/list/show/delete/add-day/add-activity/seed/init`；第一个真实行程 fixture = 国庆 2026 粤港澳潮汕 14 日深度游（已 seed）；默认 SQLite `./data/trip.db`（`--db` 覆盖） |
-| 43 | **SSRules 规则文件** | `handlers/ssrule.go` + `handlers/ssrule_rules.go` | `routes/ssrule.go` | `views/other/SsRuleTool.vue` | Shadowsocks ACL 规则文件生成与公开分发：管理端（`/api/ssrules/*`）走 header `X-Super-Admin-Password` 密码门（未配密码 = 模块关闭）；域名列表 → ACL 正文（`(^\|\.)example\.com$` 正则形式，libev/rust/android 通吃）；32 位随机 token 公开链接 `GET /ss/:token/:filename` 分发；按端点分桶限流（verify/换发 10、读 30、写 20、分发 120 次/分钟/IP，独立计数桶）；`:filename` 白名单精确相等 + 全程不碰文件系统（路径穿越面为零）；未匹配 `/ss/` 一律 404「规则文件不存在」，不回落 SPA |
+| 25 | **AIGateway** | `handlers/ai_gateway*.go` (12 文件，含 1 个测试脚手架) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/DashScope，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
+| 26 | **Askit 同步** | `handlers/askit*.go` (3 文件) | `routes/askit.go` | `views/other/AskitInviteTool.vue` | 跨设备数据同步，邀请码，Blob 大文件，快照 |
+| 27 | **Screen 屏幕共享** | `handlers/screen.go` | `routes/screen.go` | `views/collab/ScreenShareTool.vue` | WebRTC 点对点屏幕共享，TURN 中继 |
+| 28 | **APIGateway** | `handlers/apigateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
+| 29 | **AutoDev** | `handlers/autodev.go` (6 分段) | `routes/autodev.go` | `views/dev/AutoDevTool.vue` | Claude Code / Codex CLI 集成，Ask/Extend/Submit/List |
+| 30 | **Mermaid** | `handlers/mermaid.go` | `routes/mermaid.go` | `views/draw/MermaidTool.vue` | Mermaid 图表，实时渲染，导出 SVG/PNG |
+| 31 | **Proxy 代理** | `handlers/proxy.go` (4 分段) | `routes/proxy.go` | `views/other/ProxyTool.vue` | sing-box 嵌入式代理，节点订阅/测速/选优，NPS 隧道 |
+| 32 | **NPS NPS** | `handlers/nps.go` | `routes/nps.go` | `views/other/NPSTool.vue` | NPS 内网穿透管理 |
+| 33 | **Hermes** | `handlers/hermes.go` | `routes/hermes.go` | `views/dev/HermesTool.vue` | Hermes 工具 |
+| 34 | **Background 背景图** | `handlers/background.go` | `routes/bg.go` | `views/other/BackgroundTool.vue` | 背景图库，本地缓存，分页浏览 |
+| 35 | **Monitor 监控** | `handlers/monitoring.go` | `routes/monitor.go` | `views/other/MonitorTool.vue` | AI Gateway 使用监控，费用分析，实时日志 |
+| 36 | **Console 控制台** | `handlers/console.go` | `routes/console.go` | `views/other/ConsoleTool.vue` | 管理控制台 |
+| 37 | **Skills+MCP** | `handlers/skills*.go` (3 文件) | `routes/skills.go` | `views/other/SkillsTool.vue` | OpenAI function-calling 风格清单，MCP 协议，5 个 skill |
+| 38 | **OCR** | `handlers/ocr.go` | `routes/ocr.go` | — | 二维码识别 + OCR，Python RapidOCR |
+| 39 | **Health** | 内联 | `routes/health.go` | — | `GET /api/health` 健康检查 |
+| 40 | **Avatar 虚拟形象** | `handlers/avatar.go` | `routes/avatar.go` | `views/dev/VirtualAvatarTool/VirtualAvatarTool.vue` (+ 13 子组件) | three.js 虚拟形象调试：SkinnedMesh + Skeleton + 姿态预设；模型库 CRUD + me_asset 标记；姿态片段（pose JSON）上传/导出/分享；glb / pose.json / 视频三选一导出（MediaRecorder + WebCodecs → 降级关键帧 JSON → 复制）；摄像头调试（getUserMedia 四态降级：granted/denied/unsupported/no_device）；R5 双因子鉴权（creator_key + bcrypt password）；R10 帧数上限 60000；分享短链 16 字符 hex；CSS 变量跟随全局主题 (`--color-accent` 全局命名） |
+| 41 | **Trip 旅游行程** | `backend/trip/*.go` + `backend/cmd/trip/main.go` | — (CLI-only) | — | DDD bounded context：聚合根 `Trip` → 实体 `DayPlan` → 实体 `Activity`；值对象 `Destination` + `ActivityKind`(transport/sight/food/lodging/shopping/note)；仓储 `Repository` 接口 + SQLiteRepository；服务 `Service.RenderMarkdown` 输出可读 14 天攻略；CLI `trip create/list/show/delete/add-day/add-activity/seed/init`；第一个真实行程 fixture = 国庆 2026 粤港澳潮汕 14 日深度游（已 seed）；默认 SQLite `./data/trip.db`（`--db` 覆盖） |
+| 42 | **SSRules 规则文件** | `handlers/ssrule.go` + `handlers/ssrule_rules.go` | `routes/ssrule.go` | `views/other/SsRuleTool.vue` | Shadowsocks ACL 规则文件生成与公开分发：管理端（`/api/ssrules/*`）走 header `X-Super-Admin-Password` 密码门（未配密码 = 模块关闭）；域名列表 → ACL 正文（`(^\|\.)example\.com$` 正则形式，libev/rust/android 通吃）；32 位随机 token 公开链接 `GET /ss/:token/:filename` 分发；按端点分桶限流（verify/换发 10、读 30、写 20、分发 120 次/分钟/IP，独立计数桶）；`:filename` 白名单精确相等 + 全程不碰文件系统（路径穿越面为零）；未匹配 `/ss/` 一律 404「规则文件不存在」，不回落 SPA |
 
 ---
 
@@ -63,7 +62,7 @@
   - `asr-service`：Python FastAPI + faster-whisper（语音识别，端口 9000）
   - `tts-service`：Python FastAPI + edge-tts（语音合成，端口 8083，容器内）
   - `diarize-service`（独立）：说话人识别（CUDA GPU 加速，可选）
-- **AI**：Anthropic Claude（via MiniMax 代理）、OpenAI、MiniMax、百炼、sing-box
+- **AI**：Anthropic Claude（via MiniMax 代理）、OpenAI、MiniMax、DashScope、sing-box
 - **部署**：Docker Compose（4 服务：devtools / redis / ocr-service / asr-service）
 
 ---
@@ -95,10 +94,10 @@ docker compose logs -f devtools
 
 ## 项目结构
 
-### 前端（72 View 组件）
+### 前端（86 View 组件）
 ```
 frontend/src/views/
-├── ai/         # AI 相关（6）：AIGatewayTool, AIChatTool, BailianImage, EnglishTutor, ImageUnderstanding, MiniMaxStudio
+├── ai/         # AI 相关（6）：AIGatewayTool, AIChatTool, PetTool, EnglishTutor, ImageUnderstanding, MiniMaxStudio
 ├── collab/     # 协作（8）：ChatRoom, NFSShareTool, PasteBin, ScreenShare, ScreenView, ShortUrl, ...
 ├── convert/    # 转换（8）：Base64, Dns, QrCode, Replace, Text, Timestamp, Url
 ├── dev/        # 开发（10）：AutoDev, Diff, EdgeTTS, Hermes, Json, MockApi, Regex, Terminal, VirtualAvatar
@@ -110,14 +109,14 @@ frontend/src/views/
 └── share/      # 分享视图（9）
 ```
 
-### 后端路由拆分（routes/ 38 个文件）
+### 后端路由拆分（routes/ 42 个文件）
 ```
 backend/routes/
 ├── index.go              # RouteHandlers struct + RegisterAllRoutes（入口）
 ├── paste.go / analysis.go / dns_image.go / chat.go / edge_tts.go / game.go
 ├── voicememo.go / shorturl.go / mockapi.go / mdshare.go / excalidraw.go
 ├── pregnancy.go / expense.go / glucose.go / planner.go / recipe.go / household.go
-├── photowall.go / terminal.go / nfsshare.go / image_understanding.go / bailian.go
+├── photowall.go / terminal.go / nfsshare.go / image_understanding.go
 ├── ai_gateway.go / askit.go / screen.go / apigateway.go / autodev.go / mermaid.go
 ├── proxy.go / nps.go / hermes.go / bg.go / monitor.go / console.go / skills.go
 ├── ocr.go / health.go / avatar.go
@@ -127,7 +126,7 @@ backend/routes/
 ```
 handlers/
 ├── 核心工具（8）：paste, shorturl, mockapi, mdshare, excalidraw, photowall, terminal, dns
-├── AI 网关（15）：ai_gateway*, bailian, image_understanding, minimax_*, planner_ai, minimax_h3_video
+├── AI 网关（18）：ai_gateway*（12，含 1 个 test helper）, image_understanding, minimax_*（4）, planner_ai
 ├── 订阅/代理（5）：proxy*, singbox*, gfwlist, nps, apigateway_proxy
 ├── 家庭/健康（5）：household, pregnancy, expense, glucose, recipe
 ├── 实时功能（4）：chat, voicememo, screen, nfsshare
@@ -174,10 +173,9 @@ handlers/
 - `POST /api/skills/invoke` — 调用 skill（JSON-RPC）
 
 ### AI
-- `POST /api/ai-gateway/chat` — AI 对话
-- `POST /api/ai-gateway/image` — 图像理解
-- `POST /api/image-understanding` — 图像描述
-- `POST /api/bailian/image` — 百炼图像
+- `POST /api/ai-gateway/v1/chat/completions` — AI 对话
+- `POST /api/ai-gateway/v1/image/understanding` — 图像理解
+- `POST /api/image-understanding/describe` — 图像描述
 - `POST /api/edge-tts` — 语音合成
 - `GET /api/skills/manifest` — Skills 清单（OpenAI function-calling 格式）
 - `GET /api/skills/mcp` — MCP 发现端点
@@ -207,7 +205,7 @@ handlers/
 
 ### 后端
 - **Redis 软依赖**：Redis 不可用时自动降级到内存存储（`state.New()` → `NewMemoryStore()`）
-- **路由拆分**：`routes.go` → `routes/` 包（38 文件，34 分组）
+- **路由拆分**：`routes.go` → `routes/` 包（42 文件，34 分组）
 - **自动清理**：每小时清理过期数据（pastes/shorturls/mdshares/excalidraws/photowalls/terminals）
 - **静态优先**：未匹配路由返回 `index.html`（SPA 支持）
 - **配置**：YAML 配置文件（`config.yaml`）
@@ -221,7 +219,7 @@ handlers/
 3. 创建 Handler：`backend/handlers/yourtool.go`
 4. 添加路由文件：`backend/routes/yourtool.go`（注册 `RegisterYourToolRoutes`）
 5. 在 `backend/routes/index.go` 的 `RegisterAllRoutes` 中添加调用
-6. 更新本文件 `43 模块地图` 表格
+6. 更新本文件 `42 模块地图` 表格
 
 ---
 

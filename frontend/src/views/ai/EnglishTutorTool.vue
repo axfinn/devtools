@@ -123,6 +123,7 @@
               <div class="history-item-body">
                 <span>{{ item.modeLabel }}</span>
                 <small>{{ item.text }}</small>
+                <small v-if="item.createdAtLabel" class="history-item-time">{{ item.createdAtLabel }}</small>
               </div>
               <button
                 class="history-item-close"
@@ -394,7 +395,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   CircleClose,
@@ -566,7 +567,14 @@ async function runTutor() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || data.message || '英语学习接口请求失败')
 
-    const parsed = parseJsonContent(data.content || '')
+    const rawContent = typeof data.content === 'string' ? data.content : ''
+    if (!rawContent.trim()) {
+      result.value = null
+      rawResult.value = ''
+      ElMessage.warning('AI 返回为空，请稍后重试或更换模型')
+      return
+    }
+    const parsed = parseJsonContent(rawContent)
     if (parsed) {
       result.value = normalizeResult(parsed)
     } else {
@@ -582,22 +590,54 @@ async function runTutor() {
 
 function parseJsonContent(content) {
   if (!content) return null
-  const cleaned = content
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```$/i, '')
-    .trim()
+  // 允许内容里有 ```json ... ``` 或 ``` ... ``` 包裹
+  const fenceMatch = String(content).match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenceMatch ? fenceMatch[1] : String(content)
+  const trimmed = candidate.trim()
+  if (!trimmed) return null
+  // 1) 直接整段 JSON
   try {
-    return JSON.parse(cleaned)
+    return JSON.parse(trimmed)
   } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/)
-    if (!match) return null
-    try {
-      return JSON.parse(match[0])
-    } catch {
-      return null
+    /* fallthrough */
+  }
+  // 2) 截取首个平衡大括号子串（避免贪婪正则吞掉多个对象导致解析失败）
+  const start = trimmed.indexOf('{')
+  if (start < 0) return null
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < trimmed.length; i += 1) {
+    const ch = trimmed[i]
+    if (escape) {
+      escape = false
+      continue
+    }
+    if (inString) {
+      if (ch === '\\') {
+        escape = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        const candidateStr = trimmed.slice(start, i + 1)
+        try {
+          return JSON.parse(candidateStr)
+        } catch {
+          return null
+        }
+      }
     }
   }
+  return null
 }
 
 function normalizeRawLearningText(value) {
@@ -738,16 +778,52 @@ function sectionSpeechText(type) {
 }
 
 function pushHistory() {
+  const now = Date.now()
   const record = {
-    id: Date.now(),
+    id: now,
     mode: mode.value,
     modeLabel: currentMode.value.label,
     text: inputText.value.trim().slice(0, 120),
     fullText: inputText.value,
-    customInstruction: customInstruction.value
+    customInstruction: customInstruction.value,
+    createdAt: now,
+    createdAtLabel: formatHistoryTime(now)
   }
   history.value = [record, ...history.value.filter(item => item.fullText !== record.fullText)].slice(0, 12)
   localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value))
+}
+
+function formatHistoryTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  const diff = Date.now() - ts
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days} 天前`
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function refreshHistoryTimestamps() {
+  let dirty = false
+  history.value = history.value.map(item => {
+    const label = formatHistoryTime(item.createdAt || item.id)
+    if (label && label !== item.createdAtLabel) {
+      dirty = true
+      return { ...item, createdAtLabel: label }
+    }
+    return item
+  })
+  if (dirty) {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value))
+  }
 }
 
 function restoreHistory(item) {
@@ -815,8 +891,20 @@ function stopSpeak() {
   }
 }
 
+function detectTextLanguage(text) {
+  if (!text) return ''
+  if (/[\u4e00-\u9fff]/.test(text)) return '\u4e2d\u6587'
+  if (/[\u3040-\u30ff]/.test(text)) return '\u65e5\u6587'
+  if (/[\uac00-\ud7af]/.test(text)) return '\u97e9\u6587'
+  if (/[A-Za-z]/.test(text)) return '\u82f1\u6587'
+  return ''
+}
+
 function chooseVoice(text, language) {
-  switch (language) {
+  // \u4f18\u5148\u6309\u5b9e\u9645\u6717\u8bfb\u6587\u672c\u8bed\u79cd\u9009 voice,\u907f\u514d\u300c\u6717\u8bfb\u8f93\u5165\u300d\u6309\u94ae\u628a\u82f1\u6587\u6587\u672c\u5582\u7ed9\u4e2d\u6587\u8bed\u97f3
+  const detected = detectTextLanguage(text)
+  const lang = detected || language
+  switch (lang) {
     case '\u4e2d\u6587':
       return 'zh-CN-XiaoxiaoNeural'
     case '\u65e5\u6587':
@@ -895,7 +983,13 @@ watch(audioUrl, async url => {
 
 onMounted(() => {
   loadSettings()
+  refreshHistoryTimestamps()
   loadMeta()
+})
+
+onBeforeUnmount(() => {
+  // 离开页面时立即停止 TTS 音频和浏览器朗读,防止声音延续到其他页面
+  stopSpeak()
 })
 </script>
 
@@ -1024,6 +1118,12 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-item .history-item-time {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 .history-item {

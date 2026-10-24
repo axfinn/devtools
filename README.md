@@ -39,7 +39,7 @@
 | **血糖监测** | 血糖记录追踪，达标率统计、趋势图表 |
 | **二维码** | 二维码生成器，支持自定义颜色/尺寸，图片中二维码识别 |
 | **背景图库** | 背景图片管理，本地缓存、分页浏览、API 接口 |
-| **AI Gateway** | 统一 AI 网关，支持 OpenAI / Anthropic / MiniMax / 百炼等多模型，支持图像理解、TTS、语音、Token 计划 |
+| **AI Gateway** | 统一 AI 网关，支持 OpenAI / Anthropic / MiniMax / DashScope 等多模型，支持图像理解、TTS、语音、Token 计划 |
 | **Proxy 代理** | sing-box 嵌入式代理，支持节点订阅抓取、自动选优、测速、NPS 隧道、节点管理 |
 | **AutoDev** | Claude Code / Codex CLI 集成，本地代码任务执行，支持 Ask/Submit/List 等 API |
 | **Planner 事项** | 工作/生活分离的待办事项管理，时间线、任务、专注模式、AI 建议、会议纪要 |
@@ -80,7 +80,7 @@
 - **前端**：Vue 3 + Vite + Element Plus + TailwindCSS
 - **后端**：Go Gin + SQLite + Redis（软依赖，Redis 不可用时自动降级到内存存储）
 - **辅助服务**：Python FastAPI + edge-tts（TTS 语音合成）、Python FastAPI + faster-whisper（ASR 语音识别）、RapidOCR（二维码识别）
-- **AI 集成**：Anthropic Claude（via MiniMax 代理）、OpenAI、MiniMax、百炼、sing-box（代理）、Claude Code CLI、Codex CLI
+- **AI 集成**：Anthropic Claude（via MiniMax 代理）、OpenAI、MiniMax、DashScope、sing-box（代理）、Claude Code CLI、Codex CLI
 - **部署**：Docker + Docker Compose（4 服务：devtools / redis / ocr-service / asr-service）
 
 ## 快速开始

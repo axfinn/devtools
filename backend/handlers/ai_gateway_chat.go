@@ -316,6 +316,9 @@ func (h *AIGatewayHandler) callDashScope(req ChatCompletionRequest) (gin.H, map[
 	if req.TopP != nil {
 		bodyMap["top_p"] = *req.TopP
 	}
+	if len(req.ResponseFormat) > 0 {
+		bodyMap["response_format"] = req.ResponseFormat
+	}
 
 	baseURL := fallbackString(h.cfg.DashScope.BaseURL, "https://coding.dashscope.aliyuncs.com/v1")
 	endpoint := strings.TrimRight(baseURL, "/") + "/chat/completions"
