@@ -70,6 +70,11 @@
     } catch (e) { /* 自动播放可能被拦截，忽略 */ }
   }
 
+  // 主题预录语音：theme_<id>.mp3（id 取自 THEMES，未知主题不发声、也绝不回退成文本朗读）
+  function playThemeVoice(themeId) {
+    if (THEMES[themeId]) playVoice('theme_' + themeId + '.mp3');
+  }
+
   function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 
   class PetWidgetElement extends HTMLElement {
@@ -348,6 +353,8 @@
       if (!id) return;
       this._applyTheme(id);
       if (this.getAttribute('theme') !== id) this.setAttribute('theme', id);
+      // 换色后播一次该主题的预录欢迎语（对齐 main「主题切换也播一次」）
+      playThemeVoice(id);
     }
 
     speak(kind) {
@@ -364,6 +371,11 @@
       }
       if (kind === 'greeting') { playVoice('greeting_hi.mp3'); self._play('Wave', 0.2); return; }
       if (kind === 'bye') { playVoice('greeting_bye.mp3'); return; }
+      // 主题欢迎语：'theme_<id>' 播放预录主题语音，绝不把 key 当文本念出来
+      if (typeof kind === 'string' && kind.indexOf('theme_') === 0) {
+        playThemeVoice(kind.slice('theme_'.length));
+        return;
+      }
       if (self._voiceOn && 'speechSynthesis' in window && typeof kind === 'string') {
         var u2 = new SpeechSynthesisUtterance(kind);
         u2.lang = 'zh-CN'; u2.rate = 1;
