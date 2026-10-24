@@ -5,14 +5,15 @@
         <p class="eyebrow">MAGIC PET · 浏览器版</p>
         <h2>魔法宠物助手</h2>
         <p class="hero-desc">
-          嵌入式的 3D 小生灵，配上预录的 12 段主题语音。
-          点击 / 双击 / 长按宠物体验不同动作，切主题自动播放对应欢迎语。
+          嵌入式的 3D 小生灵，配上预录的主题语音。
+          点一下宠物就随机来一个友好动作，每 4–9 秒它还会自己动一下；切主题自动播放对应欢迎语。
         </p>
         <ul class="tips">
           <li>🎵 所有语音都是预生成的 MP3，零 API 调用、零延迟</li>
-          <li>🐾 包含 5 主题 + 5 动作 + 通用打气 + 首次启动问候</li>
+          <li>🐾 包含 5 主题 + 5 形态（只换配色）+ 通用打气 + 首次启动问候</li>
           <li>🎨 切主题会播放对应声线的欢迎语</li>
           <li>💪 点 💪 按钮或等 12 分钟获得一次自动打气</li>
+          <li>🔇 舞台下方的 🔊/🔇 可静音，全站生效、刷新后仍保留</li>
         </ul>
       </div>
 
@@ -45,10 +46,22 @@
           <div class="control-row">
             <span class="control-label">形态</span>
             <el-radio-group v-model="form" size="small">
-              <el-radio-button v-for="f in FORMS" :key="f.id" :value="f.id">
+              <el-radio-button
+                v-for="f in FORMS"
+                :key="f.id"
+                :value="f.id"
+                :title="'只改变配色（同一个模型，不换体型）'"
+              >
                 {{ f.icon }} {{ f.label }}
               </el-radio-button>
             </el-radio-group>
+          </div>
+          <div class="control-row">
+            <span class="control-label">语音</span>
+            <el-button size="small" @click="toggleVoice">
+              {{ voiceOn ? '🔊 声音开启' : '🔇 已静音' }}
+            </el-button>
+            <span class="control-hint">静音状态全站生效，刷新后仍保留</span>
           </div>
         </div>
       </el-card>
@@ -63,10 +76,7 @@
           <el-table-column prop="name" label="动作" width="100" />
           <el-table-column label="触发" width="120">
             <template #default="{ row }">
-              <el-tag
-                size="small"
-                :type="row.trigger === 'tap' ? 'primary' : row.trigger === 'double' ? 'success' : 'danger'"
-              >
+              <el-tag size="small" :type="TRIGGER_TAG_TYPE[row.trigger] || 'info'">
                 {{ row.trigger }}
               </el-tag>
             </template>
@@ -115,14 +125,23 @@ const THEMES = [
 ]
 
 const ACTIONS = [
-  { name: '待机',     trigger: 'tap',   flavor: '悬浮、眨眼、微微摆头',     voiceKey: '' },
-  { name: '打招呼',   trigger: 'tap',   flavor: '向你点头致意',              voiceKey: 'act_wave' },
-  { name: '跳跃',     trigger: 'tap',   flavor: '抛物线 + 落地 squash',      voiceKey: 'act_jump' },
-  { name: '旋转',     trigger: 'double',flavor: '360° 转一圈',                voiceKey: '' },
-  { name: '舞蹈',     trigger: 'double',flavor: '按主题节奏扭动 2.4s',       voiceKey: 'act_dance' },
-  { name: '魔法攻击', trigger: 'hold',  flavor: '蓄力 + 释放 + 粒子',         voiceKey: 'act_attack' },
-  { name: '打盹',     trigger: 'tap',   flavor: '眼睛闭起，下沉',             voiceKey: 'act_sleep' },
+  { name: '点击',     trigger: 'tap',   flavor: '随机播放 8 个友好动作之一（挥手 / 点头 / 跳跃 …）', voiceKey: 'act_wave 等' },
+  { name: '待机',     trigger: 'idle',  flavor: '每 4–9 秒自动换一个 idle 动作（可静音）',            voiceKey: 'act_* 随机' },
+  { name: '首次出现', trigger: 'mount', flavor: '模型加载完成后 0.6 秒打个招呼',                       voiceKey: 'greeting_hi' },
+  { name: '切换形态', trigger: 'form',  flavor: '同一个模型换配色（不换体型）',                        voiceKey: 'form_cat 等' },
+  { name: '切换主题', trigger: 'theme', flavor: '换配色并播放该主题的欢迎语',                          voiceKey: 'theme_prism 等' },
+  { name: '打气',     trigger: 'cheer', flavor: '随机一句鼓励语 + 一段语音',                           voiceKey: 'cheer_01 等' },
 ]
+
+// 「触发」列的标签配色
+const TRIGGER_TAG_TYPE = {
+  tap: 'primary',
+  idle: 'success',
+  mount: 'info',
+  form: 'info',
+  theme: 'info',
+  cheer: 'warning',
+}
 
 const FORMS = [
   { id: 'default', icon: '🔵', label: '默认' },
@@ -137,6 +156,35 @@ const form = ref('default')
 const widget = ref(null)
 // FINN-29 A6 · pet-widget 是否已升级（customElement upgrade 完成）
 const petReady = ref(false)
+
+// 全局语音总开关的持久化键与广播事件（与 pet-widget.js 内保持一致）
+const VOICE_ENABLED_KEY = 'pet-widget.enabled'
+const VOICE_CHANGE_EVENT = 'pet-voice-change'
+
+// 语音开关初值读持久化的全局开关（缺失 = 开启）
+function readVoiceEnabled() {
+  try {
+    const v = localStorage.getItem(VOICE_ENABLED_KEY)
+    return v === null ? true : v === '1'
+  } catch { return true } // 隐私模式 / 无 localStorage ⇒ 默认开启
+}
+const voiceOn = ref(readVoiceEnabled())
+
+function toggleVoice() {
+  voiceOn.value = !voiceOn.value
+  // 直接写持久化键：即使页面上还没有 pet-widget 实例，静音选择也不会丢
+  try { localStorage.setItem(VOICE_ENABLED_KEY, voiceOn.value ? '1' : '0') } catch { /* ignore */ }
+  // 通知所有 widget（voice 属性变化会驱动 pet-widget 写回全局开关）
+  document.querySelectorAll('pet-widget').forEach((el) => {
+    if (voiceOn.value) el.setAttribute('voice', '')
+    else el.removeAttribute('voice')
+  })
+}
+
+// pet-widget 广播全局开关变化 ⇒ 同步本页按钮的图标状态
+function onVoiceChange(e) {
+  if (e?.detail && typeof e.detail.enabled === 'boolean') voiceOn.value = e.detail.enabled
+}
 
 const STAGE_W = 320
 const STAGE_H = 360
@@ -166,8 +214,12 @@ onMounted(() => {
   ensurePetWidget()
     .then(() => { petReady.value = true })
     .catch(() => { /* 保留占位 */ })
+  // 订阅全局语音开关广播
+  document.addEventListener(VOICE_CHANGE_EVENT, onVoiceChange)
 })
-onUnmounted(() => {})
+onUnmounted(() => {
+  document.removeEventListener(VOICE_CHANGE_EVENT, onVoiceChange)
+})
 </script>
 
 <style scoped>
@@ -273,6 +325,10 @@ onUnmounted(() => {})
   font-size: 12px;
   color: #a4abc4;
   min-width: 32px;
+}
+.control-hint {
+  font-size: 12px;
+  color: #8a91a8;
 }
 .config {
   display: grid;

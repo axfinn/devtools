@@ -51,7 +51,7 @@
           v-for="f in FORMS"
           :key="f.id"
           :class="['form-btn', { active: formId === f.id }]"
-          :title="'变身：' + f.label"
+          :title="'形态：' + f.label + '（同一模型，只改变配色）'"
           @click.stop="setForm(f.id)"
         >{{ f.icon }}</button>
       </div>
@@ -97,6 +97,10 @@ const POS_KEY = 'pet-widget.position'
 const THEME_KEY = 'pet-widget.theme'
 const CHEER_INTERVAL_KEY = 'pet-widget.cheerInterval'
 const CHEER_ENABLED_KEY = 'pet-widget.cheerEnabled'
+// 全局语音总开关的持久化键（与 pet-widget.js 内保持一致）
+const VOICE_ENABLED_KEY = 'pet-widget.enabled'
+// pet-widget.js 在全局开关变化时广播的事件（用于图标与实际状态同步）
+const VOICE_CHANGE_EVENT = 'pet-voice-change'
 
 const CHEERS = [
   '今天也是元气满满的一天！',
@@ -129,7 +133,15 @@ const CHEERS = [
 const visible = ref(true)
 const themeId = ref('prism')
 const formId = ref('default')
-const voiceOn = ref(true)
+
+// 语音开关初值读持久化的全局开关（缺失 = 开启），保证 🔊/🔇 图标与实际发声状态一致
+function readVoiceEnabled() {
+  try {
+    const v = localStorage.getItem(VOICE_ENABLED_KEY)
+    return v === null ? true : v === '1'
+  } catch { return true } // 隐私模式 / 无 localStorage ⇒ 默认开启
+}
+const voiceOn = ref(readVoiceEnabled())
 const rootEl = ref(null)
 const petRef = ref(null)
 // FINN-29 A6 · pet-widget custom element 是否已 upgrade
@@ -206,11 +218,18 @@ function cycleTheme() {
 
 function toggleVoice() {
   voiceOn.value = !voiceOn.value
-  // 通知所有 widget
+  // 直接写持久化键：即使页面上还没有 pet-widget 实例，静音选择也不会丢
+  try { localStorage.setItem(VOICE_ENABLED_KEY, voiceOn.value ? '1' : '0') } catch { /* ignore */ }
+  // 通知所有 widget（voice 属性变化会驱动 pet-widget 写回全局开关）
   document.querySelectorAll('pet-widget').forEach((el) => {
     if (voiceOn.value) el.setAttribute('voice', '')
     else el.removeAttribute('voice')
   })
+}
+
+// pet-widget 广播全局开关变化 ⇒ 同步本组件的图标状态（页面上多个入口共用同一个开关）
+function onVoiceChange(e) {
+  if (e?.detail && typeof e.detail.enabled === 'boolean') voiceOn.value = e.detail.enabled
 }
 
 // ============ 打气 ============
@@ -313,6 +332,8 @@ onMounted(() => {
     if (enabled !== null) cheerEnabled.value = enabled === '1'
   } catch { /* ignore */ }
   startCheerTimer()
+  // 订阅全局语音开关广播
+  document.addEventListener(VOICE_CHANGE_EVENT, onVoiceChange)
   // FINN-29 A6 · 异步注入 pet-widget.js（首屏之后；用户首次可见窗口才真正用到）
   // 回头访客场景：localStorage['pet-widget.global'] === '0' 时 visible 保持 false，
   // 不调用 ensurePetWidget，用户点 🐾 时再 show() 也会自然加载（见 show 方法）。
@@ -325,6 +346,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopCheerTimer()
+  document.removeEventListener(VOICE_CHANGE_EVENT, onVoiceChange)
 })
 
 // 切主题时由 widget 内部自己播报（无 token 推送需要）
