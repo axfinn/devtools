@@ -341,8 +341,12 @@
 
           self._play('Idle', 0.4);
           self._scheduleRandom();
-          self.setForm(self._form); // 应用当前形态着色
-          setTimeout(function () { if (!self._disposed) self.speak('greeting'); }, 600);
+          // 初始化只用 setForm 上色，静音：否则会先播 form_*.mp3 再播问候，叠加成"说两遍"
+          self.setForm(self._form, true);
+          // 仅悬浮助手（GlobalPet）自动问候；内嵌展示宠物用 no-greet 关闭，避免多实例重复打招呼
+          if (!self.hasAttribute('no-greet')) {
+            setTimeout(function () { if (!self._disposed) self.speak('greeting'); }, 600);
+          }
         },
         undefined,
         function (e) { console.error('[pet-widget] 模型加载失败', e); }
@@ -381,7 +385,7 @@
       if (ACTION_VOICE[name]) playVoice(ACTION_VOICE[name], undefined, this._voiceAllowed());
     }
 
-    setForm(id) {
+    setForm(id, silent) {
       this._form = id || 'default';
       if (this._model) {
         var tintHex = FORM_TINT[this._form] || 0xffffff;
@@ -399,7 +403,9 @@
           }
         });
       }
-      if (FORM_VOICE[this._form]) playVoice(FORM_VOICE[this._form], 0.5, this._voiceAllowed());
+      // silent=true（初始化时）不发声，避免与开场问候叠加成"说两遍"；
+      // 只有用户主动切形态时才给反馈语音。
+      if (!silent && FORM_VOICE[this._form]) playVoice(FORM_VOICE[this._form], 0.5, this._voiceAllowed());
     }
 
     setTheme(id) {

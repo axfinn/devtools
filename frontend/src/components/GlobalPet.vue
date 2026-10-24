@@ -15,6 +15,7 @@
       v-else
       ref="rootEl"
       class="pet-window"
+      @pointerdown="onWindowPointerDown"
       :style="{
         left: position.x + 'px',
         top: position.y + 'px',
@@ -22,9 +23,10 @@
         height: size.h + 'px',
       }"
     >
-      <div class="pet-drag-handle" @mousedown="onDragStart" @touchstart="onDragStart" title="拖动">
-        <span class="handle-grip">⋮⋮</span>
+      <div class="pet-drag-handle" title="按住拖动可移动宠物，避免遮挡按钮">
+        <span class="handle-grip">⠿</span>
         <span class="handle-title">魔法宠物</span>
+        <span class="handle-hint">拖动可移动</span>
         <span class="handle-theme" :style="{ color: theme.accent }">{{ theme.name }} · {{ formLabel }}</span>
       </div>
 
@@ -274,44 +276,54 @@ function stopCheerTimer() {
   }
 }
 
-// ============ 拖动 ============
+// ============ 拖动（指针事件，桌面/触屏通用；除按钮外整窗可拖） ============
 let dragState = null
+let pointerMoved = false
 
-function onDragStart(e) {
+// 点按钮 / 表单按钮不启动拖动，让它们正常响应
+function isInteractive(el) {
+  return !!(el && el.closest && el.closest('button, input, textarea, select, .pet-forms, .pet-actions'))
+}
+
+function onWindowPointerDown(e) {
+  if (isInteractive(e.target)) return
   e.preventDefault()
-  const isTouch = e.type === 'touchstart'
-  const point = isTouch ? e.touches[0] : e
+  pointerMoved = false
   dragState = {
-    startX: point.clientX,
-    startY: point.clientY,
+    startX: e.clientX,
+    startY: e.clientY,
     startPosX: position.x,
     startPosY: position.y,
   }
-  document.addEventListener(isTouch ? 'touchmove' : 'mousemove', onDragMove, { passive: false })
-  document.addEventListener(isTouch ? 'touchend' : 'mouseup', onDragEnd, { once: true })
+  window.addEventListener('pointermove', onPointerMove, { passive: false })
+  window.addEventListener('pointerup', onPointerUp, { once: true })
+  window.addEventListener('pointercancel', onPointerUp, { once: true })
   document.body.style.userSelect = 'none'
   document.body.style.cursor = 'grabbing'
 }
 
-function onDragMove(e) {
+function onPointerMove(e) {
   if (!dragState) return
+  const dx = e.clientX - dragState.startX
+  const dy = e.clientY - dragState.startY
+  // 移动 < 4px 视为点击，不触发拖动（点宠物仍可触发其动作）
+  if (!pointerMoved && Math.hypot(dx, dy) < 4) return
+  pointerMoved = true
   e.preventDefault?.()
-  const point = e.touches ? e.touches[0] : e
-  const dx = point.clientX - dragState.startX
-  const dy = point.clientY - dragState.startY
   const newX = Math.max(0, Math.min(window.innerWidth - size.w, dragState.startPosX + dx))
   const newY = Math.max(0, Math.min(window.innerHeight - size.h, dragState.startPosY + dy))
   position.x = newX
   position.y = newY
 }
 
-function onDragEnd() {
+function onPointerUp() {
+  const wasDragging = pointerMoved
   dragState = null
-  document.removeEventListener('mousemove', onDragMove)
-  document.removeEventListener('touchmove', onDragMove)
+  pointerMoved = false
+  window.removeEventListener('pointermove', onPointerMove)
   document.body.style.userSelect = ''
   document.body.style.cursor = ''
-  savePos()
+  if (wasDragging) savePos()
 }
 
 const theme = computed(() => THEMES[themeId.value])
@@ -395,39 +407,50 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
   box-shadow: none;
   border: none;
   backdrop-filter: none;
+  touch-action: none;        /* 触屏拖动不触发页面滚动 */
+  cursor: grab;              /* 提示整窗可拖 */
+}
+.pet-window:active {
+  cursor: grabbing;
 }
 
 .pet-drag-handle {
-  height: 24px;
+  height: 26px;
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 10px;
   gap: 6px;
-  background: rgba(0, 0, 0, 0.45);   /* 略深，确保文字可见 */
+  background: rgba(0, 0, 0, 0.55);   /* 略深，确保文字可见 */
   border-radius: 12px;               /* 拖动条独立成胶囊 */
   cursor: grab;
   user-select: none;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.9);
   flex-shrink: 0;
   margin-bottom: 2px;
-  width: fit-content;
+  width: 100%;
+  box-sizing: border-box;
 }
 .pet-drag-handle:active {
   cursor: grabbing;
 }
 .handle-grip {
-  font-size: 10px;
-  letter-spacing: 2px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  opacity: 0.8;
 }
 .handle-title {
-  flex: 1;
   font-weight: 500;
+}
+.handle-hint {
+  font-size: 10px;
+  opacity: 0.55;
 }
 .handle-theme {
   font-size: 10px;
   font-family: monospace;
   opacity: 0.8;
+  margin-left: auto;                 /* 主题信息推到最右 */
 }
 
 .pet-actions {

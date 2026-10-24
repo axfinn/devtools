@@ -28,6 +28,7 @@
             :width="stageWidth"
             :height="stageHeight"
             voice
+            no-greet
           />
           <div v-else class="stage-placeholder">
             <div class="stage-placeholder-emoji">🐾</div>

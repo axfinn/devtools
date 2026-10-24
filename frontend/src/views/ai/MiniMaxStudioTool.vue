@@ -60,6 +60,7 @@
             :height="280"
             voice
             no-shell
+            no-greet
           />
           <div v-else class="pet-inline-placeholder">
             <div class="pet-inline-placeholder-emoji">🐾</div>
