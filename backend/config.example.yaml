@@ -776,6 +776,8 @@ news:
   timezone: "Asia/Shanghai"
   # AI 精编模型;留空=只抓原文不精编(需先在 ai_gateway 配置好任意可用 provider/key)
   # model: "MiniMax-M2.5"
+  # 配置了 model 后:英文新闻条目会自动翻译为简体中文,且生成覆盖全部条目的「面面俱到」要闻日报
+  # 关闭自动翻译可显式设置 translate_english: false(默认开启)
   # 每日最多保留条数,默认 30
   max_items: 30
   # 历史保留天数,0=永久保留,>0 时清理更早的归档

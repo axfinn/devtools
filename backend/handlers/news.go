@@ -196,6 +196,11 @@ func (h *NewsHandler) GenerateInternal(ctx context.Context) error {
 		all = all[:h.cfg.News.MaxItems]
 	}
 
+	// 英文条目翻译:配置了 AI 模型且开启翻译时,把英文新闻逐条翻译为简体中文(非英文原样保留)。
+	if h.cfg.News.Model != "" && h.ai != nil && h.cfg.News.TranslateEnabled() {
+		all = h.translateItems(ctx, all)
+	}
+
 	digest := &models.NewsDigest{
 		Date:        h.todayDate(),
 		DateLabel:   h.todayLabel(),
@@ -239,34 +244,130 @@ func (h *NewsHandler) GenerateInternal(ctx context.Context) error {
 
 func (h *NewsHandler) generateSummary(ctx context.Context, items []models.NewsItem) (string, error) {
 	var b strings.Builder
-	b.WriteString("以下是今日抓取到的新闻条目(已去重,按时间排序):\n\n")
+	b.WriteString(fmt.Sprintf("以下是今日抓取到的新闻条目(共 %d 条,已去重并翻译为简体中文,按时间排序):\n\n", len(items)))
 	for i, it := range items {
-		if i >= 25 {
-			break // 控制 prompt 体积
-		}
 		src := it.Source
 		if src == "" {
 			src = "未知来源"
 		}
 		summary := it.Summary
-		if len([]rune(summary)) > 120 {
-			summary = string([]rune(summary)[:120]) + "…"
+		if len([]rune(summary)) > 200 {
+			summary = string([]rune(summary)[:200]) + "…"
 		}
-		fmt.Fprintf(&b, "- 【%s】%s%s\n", src, it.Title, func() string {
-			if summary != "" {
-				return "：" + summary
-			}
-			return ""
-		}())
+		fmt.Fprintf(&b, "%d. 【%s】%s", i+1, src, it.Title)
+		if summary != "" {
+			fmt.Fprintf(&b, "："+summary)
+		}
+		b.WriteString("\n")
 	}
 
-	system := "你是一个中文新闻编辑。根据下方抓取的今日新闻条目,生成一份简洁的「今日要闻」简报(Markdown 格式)。要求:\n" +
-		"1) 用 3-6 个要点概括最重要的趋势/事件;\n" +
-		"2) 每条要点后用括号注明主要来源;\n" +
-		"3) 不编造未出现的信息,不添加条目之外的细节;\n" +
-		"4) 总字数 200-400 字,语言精炼客观。\n" +
-		"只输出简报正文,不要额外解释或标题。"
+	system := "你是一名资深中文新闻编辑。根据下方抓取的今日新闻条目(已去重、翻译为简体中文、按时间排序)," +
+		"撰写一份全面、专业、可读性强的「今日要闻」日报(使用 Markdown)。要求:\n" +
+		"1) 开头先写一段『今日总览』:共多少条新闻、来自哪些来源、覆盖哪些主要领域;\n" +
+		"2) 按来源或主题分组,确保覆盖全部条目,不要遗漏任何一条;\n" +
+		"3) 每条新闻用一句话概括其核心事实或影响,句后括号标注来源;\n" +
+		"4) 相关联的多条可合并评述并指出趋势;\n" +
+		"5) 不编造未出现的信息,语言精炼、客观、流畅;\n" +
+		"6) 力求『面面俱到』,但避免冗余啰嗦。\n" +
+		"只输出日报正文,不要额外解释或标题。"
 	return h.ai.Complete(ctx, h.cfg.News.Model, system, b.String())
+}
+
+// ---------- 英文翻译 ----------
+
+// isMostlyEnglish 粗略判断文本是否以英文为主(用于决定是否翻译)。
+func isMostlyEnglish(s string) bool {
+	if s == "" {
+		return false
+	}
+	var cjk, latin int
+	for _, r := range s {
+		switch {
+		case (r >= 0x3040 && r <= 0x30FF) || // 日文假名
+			(r >= 0x3400 && r <= 0x4DBF) || // 扩展 A
+			(r >= 0x4E00 && r <= 0x9FFF) || // 汉字
+			(r >= 0xF900 && r <= 0xFAFF): // 兼容汉字
+			cjk++
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			latin++
+		}
+	}
+	if cjk == 0 {
+		return latin > 0
+	}
+	return float64(latin) > float64(cjk)*0.5
+}
+
+// translateItems 并发把英文条目翻译为简体中文,非英文条目原样返回。
+func (h *NewsHandler) translateItems(ctx context.Context, items []models.NewsItem) []models.NewsItem {
+	need := make([]int, 0, len(items))
+	for i := range items {
+		if isMostlyEnglish(items[i].Title) {
+			need = append(need, i)
+		}
+	}
+	if len(need) == 0 {
+		return items
+	}
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for _, i := range need {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			zhTitle, zhSum, err := h.translateOne(ctx, items[i].Title, items[i].Summary)
+			if err != nil {
+				log.Printf("[news] 翻译失败(保留原文): %v", err)
+				return
+			}
+			items[i].Title = zhTitle
+			if zhSum != "" {
+				items[i].Summary = zhSum
+			}
+		}(i)
+	}
+	wg.Wait()
+	return items
+}
+
+// translateOne 调用 AI 把单条英文新闻的标题与摘要翻译为简体中文。
+func (h *NewsHandler) translateOne(ctx context.Context, title, summary string) (string, string, error) {
+	system := "你是一名专业的中英新闻翻译。请将用户提供的英文新闻条目准确翻译为简体中文,保持专业、客观、简洁。只输出要求格式,不要多余解释或标点之外的字符。"
+	user := fmt.Sprintf("请将下面的新闻条目翻译为简体中文。严格按以下两行格式输出:\n标题：<中文标题>\n摘要：<中文摘要>\n\n原文标题：%s\n原文摘要：%s",
+		title, summary)
+	out, err := h.ai.Complete(ctx, h.cfg.News.Model, system, user)
+	if err != nil {
+		return "", "", err
+	}
+	return parseTranslation(out, title, summary)
+}
+
+// parseTranslation 从模型输出中解析「标题：」与「摘要：」两行,解析失败回退原文。
+func parseTranslation(out, fallbackTitle, fallbackSummary string) (string, string, error) {
+	title := ""
+	summary := ""
+	for _, ln := range strings.Split(out, "\n") {
+		ln = strings.TrimSpace(ln)
+		switch {
+		case strings.HasPrefix(ln, "标题："):
+			title = strings.TrimSpace(strings.TrimPrefix(ln, "标题："))
+		case strings.HasPrefix(ln, "标题:"):
+			title = strings.TrimSpace(strings.TrimPrefix(ln, "标题:"))
+		case strings.HasPrefix(ln, "摘要："):
+			summary = strings.TrimSpace(strings.TrimPrefix(ln, "摘要："))
+		case strings.HasPrefix(ln, "摘要:"):
+			summary = strings.TrimSpace(strings.TrimPrefix(ln, "摘要:"))
+		}
+	}
+	if title == "" {
+		title = fallbackTitle
+	}
+	if summary == "" {
+		summary = fallbackSummary
+	}
+	return title, summary, nil
 }
 
 // ---------- HTTP 接口 ----------
