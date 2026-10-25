@@ -14,7 +14,7 @@
     <el-alert type="info" :closable="false" class="news-tip">
       <template #title>
         <el-icon><InfoFilled /></el-icon>
-        <span>后端每日定时抓取 RSS 资讯并(可选)经 AI 精编成「今日要闻」；历史各日期归档均保留可查。手动生成需服务端开启本模块。</span>
+        <span>由本地智能体每日采集、整理并撰写「今日要闻」日报（含英文翻译与面面俱到摘要），发布于此；历史各日期归档均保留可查。点「立即生成」可手动补一期。</span>
       </template>
     </el-alert>
 
@@ -61,8 +61,8 @@
 
           <!-- AI 今日要闻 -->
           <el-card v-if="current.summary" class="summary-card" shadow="never">
-            <template #header><span class="summary-title">今日要闻 · AI 简报</span></template>
-            <div class="summary-body">{{ current.summary }}</div>
+            <template #header><span class="summary-title">今日要闻 · 每日简报</span></template>
+            <div class="summary-body" v-html="summaryHtml"></div>
           </el-card>
 
           <!-- 按来源分组 -->
@@ -70,7 +70,7 @@
             <div class="source-name"><el-tag size="small" type="info">{{ src }}</el-tag></div>
             <el-card v-for="(it, i) in group" :key="i" class="news-item" shadow="hover">
               <a :href="it.link" target="_blank" rel="noopener noreferrer" class="news-title">{{ it.title }}</a>
-              <div class="news-summary" v-if="it.summary">{{ it.summary }}</div>
+              <div class="news-summary" v-if="it.summary" v-html="itemSummaryHtml(it)"></div>
               <div class="news-meta" v-if="it.published">{{ formatTime(it.published) }}</div>
             </el-card>
           </div>
@@ -122,6 +122,63 @@ function formatTime(iso) {
   if (isNaN(d)) return ''
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// ---- 轻量 Markdown 渲染(零依赖,先转义防 XSS 再解析) ----
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+// 行内元素:链接 / 加粗 / 斜体 / 行内代码(输入已是转义后文本)
+function inlineMd(text) {
+  let t = escapeHtml(text)
+  // 链接 [文本](url) —— 仅允许 http/https/mailto,其余降级为 # 防 XSS
+  t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, txt, url) => {
+    const safe = /^(https?:|mailto:)/i.test(url) ? url : '#'
+    return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${txt}</a>`
+  })
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+  t = t.replace(/`([^`]+)`/g, '<code>$1</code>')
+  return t
+}
+
+// 块级渲染:标题 / 无序&有序列表 / 段落
+function renderMarkdown(src) {
+  if (!src) return ''
+  const lines = src.split(/\r?\n/)
+  let html = ''
+  let inList = false
+  const closeList = () => { if (inList) { html += '</ul>'; inList = false } }
+  for (const line of lines) {
+    if (/^\s*$/.test(line)) { closeList(); continue }
+    const h = line.match(/^(#{1,6})\s+(.*)$/)
+    if (h) {
+      closeList()
+      const lv = h[1].length
+      html += `<h${lv} class="md-h md-h${lv}">${inlineMd(h[2])}</h${lv}>`
+      continue
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      if (!inList) { html += '<ul class="md-ul">'; inList = true }
+      html += `<li>${inlineMd(line.replace(/^\s*[-*]\s+/, ''))}</li>`
+      continue
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      if (!inList) { html += '<ul class="md-ul">'; inList = true }
+      html += `<li>${inlineMd(line.replace(/^\s*\d+\.\s+/, ''))}</li>`
+      continue
+    }
+    closeList()
+    html += `<p>${inlineMd(line)}</p>`
+  }
+  closeList()
+  return html
+}
+
+const summaryHtml = computed(() => renderMarkdown(current.value?.summary || ''))
+function itemSummaryHtml(it) {
+  return inlineMd(it.summary || '')
 }
 
 const groupedItems = computed(() => {
@@ -309,9 +366,31 @@ onBeforeUnmount(() => {
 }
 .summary-title { font-weight: 600; }
 .summary-body {
-  white-space: pre-wrap;
   line-height: 1.7;
   font-size: 14px;
+  color: var(--el-text-color-regular);
+  word-break: break-word;
+}
+.summary-body .md-h { margin: 14px 0 8px; font-weight: 600; line-height: 1.4; }
+.summary-body .md-h:first-child { margin-top: 0; }
+.summary-body .md-h2 {
+  font-size: 16px;
+  border-left: 3px solid var(--el-color-primary);
+  padding-left: 8px;
+  color: var(--el-text-color-primary);
+}
+.summary-body .md-h3 { font-size: 14.5px; color: var(--el-text-color-primary); }
+.summary-body .md-ul { margin: 8px 0; padding-left: 20px; }
+.summary-body .md-ul li { margin: 5px 0; line-height: 1.7; }
+.summary-body p { margin: 8px 0; }
+.summary-body a { color: var(--el-color-primary); text-decoration: none; }
+.summary-body a:hover { text-decoration: underline; }
+.summary-body strong { font-weight: 600; color: var(--el-text-color-primary); }
+.summary-body code {
+  background: var(--el-fill-color-light);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12.5px;
 }
 .source-group { margin-bottom: 18px; }
 .source-name { margin-bottom: 8px; }
