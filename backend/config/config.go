@@ -62,21 +62,27 @@ type Config struct {
 // feeds 为空时使用内置默认订阅源;model 为空时只抓取原文、不做 AI 精编。
 // 默认关闭(enabled:false),在 config.yaml 设置 news.enabled: true 即可开启;一旦开启其余字段均有合理默认值。
 type NewsConfig struct {
-	Enabled          bool     `yaml:"enabled"`           // 是否启用每日新闻生成(默认 false,需显式开启)
-	Feeds            []string `yaml:"feeds"`             // RSS/Atom 订阅源 URL 列表,空=内置默认源
-	ScheduleHour     int      `yaml:"schedule_hour"`     // 每日生成时刻(0-23),默认 8
-	ScheduleMinute   int      `yaml:"schedule_minute"`   // 每日生成分钟(0-59),默认 0
-	Timezone         string   `yaml:"timezone"`          // IANA 时区,如 Asia/Shanghai;空=服务器本地时区
-	Model            string   `yaml:"model"`             // AI 精编使用的模型;空=只抓原文不精编
-	MaxItems         int      `yaml:"max_items"`         // 每日最多保留条数,默认 30
-	RetentionDays    int      `yaml:"retention_days"`    // 历史保留天数,0=永久保留,>0 时清理更早的归档
-	AdminPassword    string   `yaml:"admin_password"`    // 保护 /api/news/generate 手动触发接口;空=开放
-	TranslateEnglish *bool    `yaml:"translate_english"` // 英文条目自动翻译为简体中文;缺省(nil)=开启
+	Enabled           bool     `yaml:"enabled"`            // 是否启用每日新闻生成(默认 false,需显式开启)
+	Feeds             []string `yaml:"feeds"`              // RSS/Atom 订阅源 URL 列表,空=内置默认源
+	ScheduleHour      int      `yaml:"schedule_hour"`      // 每日生成时刻(0-23),默认 8
+	ScheduleMinute    int      `yaml:"schedule_minute"`    // 每日生成分钟(0-59),默认 0
+	Timezone          string   `yaml:"timezone"`           // IANA 时区,如 Asia/Shanghai;空=服务器本地时区
+	Model             string   `yaml:"model"`              // AI 精编使用的模型;空=只抓原文不精编
+	MaxItems          int      `yaml:"max_items"`          // 每日最多保留条数,默认 30
+	RetentionDays     int      `yaml:"retention_days"`     // 历史保留天数,0=永久保留,>0 时清理更早的归档
+	AdminPassword     string   `yaml:"admin_password"`     // 保护 /api/news/generate 手动触发接口;空=开放
+	TranslateEnglish  *bool    `yaml:"translate_english"`  // 英文条目自动翻译为简体中文;缺省(nil)=开启
+	InternalScheduler *bool    `yaml:"internal_scheduler"` // 后端内置每日定时任务;缺省(nil)=开启。关闭后由外部(如 WorkBuddy 自动化)调用接口触发
 }
 
 // TranslateEnabled 返回是否开启英文自动翻译。缺省(nil)按开启处理,显式 false 才关闭。
 func (n NewsConfig) TranslateEnabled() bool {
 	return n.TranslateEnglish == nil || *n.TranslateEnglish
+}
+
+// InternalSchedulerEnabled 返回是否启用后端内置每日定时任务。缺省(nil)=开启,显式 false 才关闭(交给外部调度,如 WorkBuddy 自动化)。
+func (n NewsConfig) InternalSchedulerEnabled() bool {
+	return n.InternalScheduler == nil || *n.InternalScheduler
 }
 
 // SSRulesConfig Shadowsocks 规则文件(ssrules)配置。

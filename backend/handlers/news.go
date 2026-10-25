@@ -66,9 +66,14 @@ func NewNewsHandler(db *models.DB, cfg *config.Config, ai *AIGatewayHandler) *Ne
 // ---------- 调度器 ----------
 
 // StartScheduler 启动每日定时生成(在独立 goroutine 中运行,启动后若当日尚无归档会延迟 30s 先生成一次)。
+// 若 internal_scheduler=false,则完全关闭后端内置定时任务,改由外部(如 WorkBuddy 自动化)调用 /api/news/generate 触发。
 func (h *NewsHandler) StartScheduler() {
 	if !h.cfg.News.Enabled {
 		log.Printf("[news] 模块未启用(enabled=false),跳过定时任务")
+		return
+	}
+	if !h.cfg.News.InternalSchedulerEnabled() {
+		log.Printf("[news] 后端内置定时任务已关闭(internal_scheduler=false),由外部(如 WorkBuddy 自动化)调用 /api/news/generate 触发")
 		return
 	}
 	go func() {
