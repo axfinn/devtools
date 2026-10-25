@@ -84,6 +84,7 @@ coverage/
 
 # Archives
 scripts/archive/
+news_archive/  # WorkBuddy 智能体本地采编的每日新闻存档(本地备份,不入库)
 .env
 backend/expense_csv_import
 

@@ -392,6 +392,92 @@ func (h *NewsHandler) Generate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "date": h.todayDate(), "generated_at": h.lastRunAt})
 }
 
+// NewsPublishRequest 智能体(WorkBuddy 本地定时任务)采编好之后发布的日报结构。
+// 后端只负责接收、存储与展示;抓取/翻译/摘要撰写全部由智能体在本地完成。
+type NewsPublishRequest struct {
+	Date    string            `json:"date"`     // YYYY-MM-DD,缺省=今天(本地时区)
+	Summary string            `json:"summary"`  // 面面俱到日报(Markdown),由智能体撰写
+	Items   []models.NewsItem `json:"items"`    // 智能体整理好的条目(标题/链接/来源/摘要/分类/时间)
+	AIModel string            `json:"ai_model"` // 采编者标识,缺省=WorkBuddy-Agent
+}
+
+// Publish 接收智能体(WorkBuddy 本地定时任务)采编好的日报并发布/归档。受 admin_password 保护。
+// 这是「本地收集整理好 然后发布」的发布入口:采编在 WorkBuddy 侧完成,后端只做存储与展示。
+func (h *NewsHandler) Publish(c *gin.Context) {
+	if pwd := h.cfg.News.AdminPassword; pwd != "" {
+		if c.GetHeader("X-Admin-Password") != pwd && c.Query("admin_password") != pwd {
+			c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员密码"})
+			return
+		}
+	}
+	var req NewsPublishRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体非法: " + err.Error()})
+		return
+	}
+	date := req.Date
+	if date == "" {
+		date = h.todayDate()
+	}
+	if !validNewsDate(date) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的日期,应为 YYYY-MM-DD"})
+		return
+	}
+	items := req.Items
+	if items == nil {
+		items = []models.NewsItem{}
+	}
+	srcSet := make(map[string]bool)
+	for i := range items {
+		if items[i].Source == "" {
+			items[i].Source = "未知来源"
+		} else {
+			srcSet[items[i].Source] = true
+		}
+	}
+	status := "ok"
+	if len(items) == 0 {
+		status = "empty"
+	}
+	aiModel := req.AIModel
+	if aiModel == "" {
+		aiModel = "WorkBuddy-Agent"
+	}
+	digest := &models.NewsDigest{
+		Date:        date,
+		DateLabel:   h.labelForDate(date),
+		Summary:     req.Summary,
+		Items:       models.MarshalNewsItems(items),
+		ItemCount:   len(items),
+		SourceCount: len(srcSet),
+		AIModel:     aiModel,
+		Status:      status,
+		GeneratedAt: time.Now(),
+	}
+	if err := h.db.UpsertNewsDigest(digest); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	log.Printf("[news] 已发布 %s 新闻(智能体采编): %d 条 / %d 源 (status=%s)", digest.Date, digest.ItemCount, digest.SourceCount, digest.Status)
+	c.JSON(http.StatusOK, gin.H{
+		"ok":           true,
+		"date":         date,
+		"item_count":   len(items),
+		"source_count": len(srcSet),
+		"published_at": digest.GeneratedAt,
+	})
+}
+
+// labelForDate 由 YYYY-MM-DD 生成「2026年10月25日 周日」样式的展示标签。
+func (h *NewsHandler) labelForDate(date string) string {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return date
+	}
+	weekdays := []string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
+	return fmt.Sprintf("%d年%d月%d日 %s", t.Year(), t.Month(), t.Day(), weekdays[t.Weekday()])
+}
+
 // GetLatest 返回最新一期(可能是今天或最近一次生成)。
 func (h *NewsHandler) GetLatest(c *gin.Context) {
 	d, err := h.db.GetLatestNewsDigest()
