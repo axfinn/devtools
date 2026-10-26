@@ -261,7 +261,7 @@ func (h *NewsHandler) generateSummary(ctx context.Context, items []models.NewsIt
 		}
 		fmt.Fprintf(&b, "%d. 【%s】%s", i+1, src, it.Title)
 		if summary != "" {
-			fmt.Fprintf(&b, "："+summary)
+			fmt.Fprintf(&b, "%s", "："+summary)
 		}
 		b.WriteString("\n")
 	}
