@@ -2,9 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // TestNormalizeEnglishTutorMode 验证 mode 字段归一化逻辑：
@@ -246,5 +251,89 @@ func TestEnglishTutorRateLimiterCleanup(t *testing.T) {
 	}
 	if _, exists := rl.hourHits["3.3.3.3"]; exists {
 		t.Errorf("cleanup 应删除完全过期的 hourHits 桶, hourHits=%v", rl.hourHits)
+	}
+}
+
+// newEnglishTutorMockContext 构造 EnglishTutor* handler 测试用的 gin.Context
+func newEnglishTutorMockContext(t *testing.T, method, path string) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = &http.Request{
+		Method:     method,
+		URL:        &url.URL{Path: path},
+		Header:     make(http.Header),
+		RemoteAddr: "127.0.0.1:1234",
+	}
+	return c, rec
+}
+
+// TestEnglishTutorMeta_LimitsAndModes 验证 meta 接口返回的限流参数与前端 limits 默认值一致
+// 防止后端改限流值后前端默认值忘记同步,导致 UI 显示「2000 字符」但服务端实际拒收 2500 字符
+func TestEnglishTutorMeta_LimitsAndModes(t *testing.T) {
+	c, rec := newEnglishTutorMockContext(t, "GET", "/api/english-tutor/meta")
+	h := &AIGatewayHandler{}
+	h.EnglishTutorMeta(c)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		Modes  []map[string]string `json:"modes"`
+		Limits map[string]int      `json:"limits"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("meta response not JSON: %v", err)
+	}
+
+	wantLimitKeys := []string{"max_text_chars", "max_custom_instruction_chars", "rate_limit_per_minute", "rate_limit_per_hour"}
+	for _, key := range wantLimitKeys {
+		if _, ok := resp.Limits[key]; !ok {
+			t.Errorf("meta missing limit %q", key)
+		}
+	}
+	if resp.Limits["max_text_chars"] != 2000 {
+		t.Errorf("max_text_chars=%d, want 2000", resp.Limits["max_text_chars"])
+	}
+	if resp.Limits["rate_limit_per_minute"] != 8 {
+		t.Errorf("rate_limit_per_minute=%d, want 8", resp.Limits["rate_limit_per_minute"])
+	}
+
+	wantModes := map[string]bool{"translate": false, "pronounce": false, "explain": false, "correct": false, "dialogue": false, "guide": false, "api": false}
+	for _, m := range resp.Modes {
+		if _, ok := wantModes[m["value"]]; ok {
+			wantModes[m["value"]] = true
+		}
+	}
+	for value, seen := range wantModes {
+		if !seen {
+			t.Errorf("meta mode %q missing", value)
+		}
+	}
+}
+
+// TestEnglishTutorMeta_LimitsMatchHandler 当 meta 限流变化时,handler 实际硬编码限流也要同步改;
+// 该测试用作显式提醒:改 meta 时也要改 english_tutor.go 里的常量
+func TestEnglishTutorMeta_LimitsMatchHandler(t *testing.T) {
+	c, rec := newEnglishTutorMockContext(t, "GET", "/api/english-tutor/meta")
+	h := &AIGatewayHandler{}
+	h.EnglishTutorMeta(c)
+
+	var resp struct {
+		Limits map[string]int `json:"limits"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("meta response not JSON: %v", err)
+	}
+
+	// 这些常量值直接对照 handler 内的硬编码。
+	// handler 的文本长度校验在 EnglishTutor() 里硬编码为 2000 / 240,
+	// 一旦改 meta 必须同步改 handler。
+	if resp.Limits["max_text_chars"] != 2000 {
+		t.Errorf("meta says max_text_chars=%d, but handler hard-codes 2000; sync them", resp.Limits["max_text_chars"])
+	}
+	if resp.Limits["max_custom_instruction_chars"] != 240 {
+		t.Errorf("meta says max_custom_instruction_chars=%d, but handler hard-codes 240; sync them", resp.Limits["max_custom_instruction_chars"])
 	}
 }
