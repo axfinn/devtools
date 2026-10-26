@@ -31,7 +31,7 @@ jobs:
         # pnpm-lock.yaml,Dockerfile 也是 pnpm --frozen-lockfile。
         # 原来 CI 走 npm ci 装的是另一套依赖树 —— CI 测的版本和镜像里跑的不是同一份,
         # 两份 lock 文件还会各自漂移(前端漏洞修不动就是因为 npm 这边先坏了)。
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.28.2
 
