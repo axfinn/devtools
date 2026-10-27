@@ -53,6 +53,15 @@ type Config struct {
 	Skills              SkillsConfig              `yaml:"skills"`
 	SSRules             SSRulesConfig             `yaml:"ssrules"`
 	News                NewsConfig                `yaml:"news"`
+	ChatPlus            ChatPlusConfig            `yaml:"chat_plus"`
+}
+
+// ChatPlusConfig 新版 AI 聊天页（Open WebUI 风格，/ai-chat）配置。
+// 双引擎：局域网 Ollama（OpenAI 兼容端点，模型列表运行时动态拉取）+ MiniMax（复用 minimax.api_key，key 不下发前端）。
+// Password 为空 = 模块整体禁用（fail-closed），与其他模块的密码门惯例一致。
+type ChatPlusConfig struct {
+	Password      string `yaml:"password"`        // 页面访问密码；为空则禁用本模块
+	OllamaBaseURL string `yaml:"ollama_base_url"` // 局域网 Ollama 服务地址，如 http://192.168.31.147:11434
 }
 
 // NewsConfig 每日新闻模块配置。
@@ -633,6 +642,9 @@ func DefaultConfig() *Config {
 				"shorturl_create",
 				"paste_create",
 			},
+		},
+		ChatPlus: ChatPlusConfig{
+			OllamaBaseURL: "http://192.168.31.147:11434",
 		},
 		Proxy: ProxyConfig{
 			SubscriptionRefresh: ProxySubscriptionRefreshConfig{

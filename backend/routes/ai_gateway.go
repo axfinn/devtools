@@ -40,6 +40,11 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 	api.GET("/askit/extension", h.AiGatewayHandler.AskitExtensionDownload)
 	api.POST("/askit/extension/refresh", h.AiGatewayHandler.AskitExtensionRefresh)
 	api.POST("/ai-chat/verify", h.AiGatewayHandler.AIChatVerify)
+
+	// 新版聊天页（chat-plus，Open WebUI 风格）：Ollama + MiniMax 双引擎
+	api.POST("/chat-plus/verify", h.AiGatewayHandler.ChatPlusVerify)
+	api.GET("/chat-plus/models", h.AiGatewayHandler.ChatPlusModels)
+	api.POST("/chat-plus/chat/stream", createRateLimiter.Middleware(), h.AiGatewayHandler.ChatPlusStream)
 	api.GET("/english-tutor/meta", h.AiGatewayHandler.EnglishTutorMeta)
 	api.POST("/english-tutor", h.AiGatewayHandler.EnglishTutor)
 

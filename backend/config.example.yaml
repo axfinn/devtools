@@ -760,6 +760,14 @@ ssrules:
   # 改成你自己的密码；生成的规则文件链接是公开的（靠随机 token 保护），不受此密码影响
   admin_password: "改成你自己的密码"
 
+# ===== 新版 AI 聊天页（chat-plus，Open WebUI 风格）=====
+# 页面 /ai-chat：局域网 Ollama + MiniMax 双引擎流式聊天。MiniMax 复用上方 minimax.api_key（key 不下发前端）。
+chat_plus:
+  # 页面访问密码，必填 —— 留空则禁用本模块（不是无密码放行）
+  password: "改成你自己的密码"
+  # 局域网 Ollama 服务地址（OpenAI 兼容端点，模型列表运行时动态拉取）
+  ollama_base_url: "http://192.168.31.147:11434"
+
 # ===== 每日新闻模块 =====
 # 后端内置定时任务:每天在 schedule_hour:schedule_minute(对应 timezone)抓取 feeds 中的 RSS/Atom,
 # 去重后存库(历史归档永久保留),若配置 model 则调用 AI 网关精编成「今日要闻」简报。
