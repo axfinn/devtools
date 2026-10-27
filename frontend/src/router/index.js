@@ -486,6 +486,17 @@ const toolRoutes = [
     }
   },
   {
+    path: '/role-play',
+    name: 'RolePlay',
+    component: () => import('../views/ai/RolePlayTool.vue'),
+    meta: {
+      title: '角色剧场',
+      icon: 'MagicStick',
+      category: 'ai',
+      description: '多角色模拟对话：2-6 个 AI 角色按剧本轮流圆桌发言，可控制轮数（≤200）、暂停续演、导出记录'
+    }
+  },
+  {
     path: '/ai-gateway',
     name: 'AIGateway',
     component: () => import('../views/ai/AIGatewayTool.vue'),
