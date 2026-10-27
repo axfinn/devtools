@@ -70,7 +70,7 @@ type NewsConfig struct {
 	Model             string   `yaml:"model"`              // AI 精编使用的模型;空=只抓原文不精编
 	MaxItems          int      `yaml:"max_items"`          // 每日最多保留条数,默认 30
 	RetentionDays     int      `yaml:"retention_days"`     // 历史保留天数,0=永久保留,>0 时清理更早的归档
-	AdminPassword     string   `yaml:"admin_password"`     // 保护 /api/news/generate 手动触发接口;空=开放
+	AdminPassword     string   `yaml:"admin_password"`     // 保护 /api/news/generate 与 /api/news/publish 写端点;为空或全空白=写端点禁用(fail-closed,返回 403)
 	TranslateEnglish  *bool    `yaml:"translate_english"`  // 英文条目自动翻译为简体中文;缺省(nil)=开启
 	InternalScheduler *bool    `yaml:"internal_scheduler"` // 后端内置每日定时任务;缺省(nil)=开启。关闭后由外部(如 WorkBuddy 自动化)调用接口触发
 }

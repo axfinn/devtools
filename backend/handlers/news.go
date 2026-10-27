@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -379,11 +380,13 @@ func parseTranslation(out, fallbackTitle, fallbackSummary string) (string, strin
 
 // Generate 手动触发生成(也供外部定时任务/同步接口调用)。受 admin_password 保护。
 func (h *NewsHandler) Generate(c *gin.Context) {
-	if pwd := h.cfg.News.AdminPassword; pwd != "" {
-		if c.GetHeader("X-Admin-Password") != pwd && c.Query("admin_password") != pwd {
-			c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员密码"})
-			return
-		}
+	if pwd := h.cfg.News.AdminPassword; strings.TrimSpace(pwd) == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "news 管理接口已禁用：未配置 news.admin_password"})
+		return
+	} else if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Admin-Password")), []byte(pwd)) != 1 &&
+		subtle.ConstantTimeCompare([]byte(c.Query("admin_password")), []byte(pwd)) != 1 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员密码"})
+		return
 	}
 	if err := h.GenerateInternal(c.Request.Context()); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -404,11 +407,13 @@ type NewsPublishRequest struct {
 // Publish 接收智能体(WorkBuddy 本地定时任务)采编好的日报并发布/归档。受 admin_password 保护。
 // 这是「本地收集整理好 然后发布」的发布入口:采编在 WorkBuddy 侧完成,后端只做存储与展示。
 func (h *NewsHandler) Publish(c *gin.Context) {
-	if pwd := h.cfg.News.AdminPassword; pwd != "" {
-		if c.GetHeader("X-Admin-Password") != pwd && c.Query("admin_password") != pwd {
-			c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员密码"})
-			return
-		}
+	if pwd := h.cfg.News.AdminPassword; strings.TrimSpace(pwd) == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "news 管理接口已禁用：未配置 news.admin_password"})
+		return
+	} else if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Admin-Password")), []byte(pwd)) != 1 &&
+		subtle.ConstantTimeCompare([]byte(c.Query("admin_password")), []byte(pwd)) != 1 {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员密码"})
+		return
 	}
 	var req NewsPublishRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
