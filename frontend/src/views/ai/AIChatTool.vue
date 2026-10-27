@@ -126,6 +126,11 @@
                   <div class="reasoning-content">{{ msg.reasoning }}</div>
                 </details>
                 <div class="msg-content" :class="{ streaming: msg.streaming }" v-html="renderMarkdown(msg.content)"></div>
+                <!-- 中断标记 + 续写入口 -->
+                <div v-if="msg.interrupted" class="msg-interrupted">
+                  <span>⚠ 连接中断，回复不完整</span>
+                  <button v-if="msg === lastAssistant && !streaming && msg.content" class="continue-btn" @click="continueGeneration">继续生成</button>
+                </div>
                 <!-- 操作行 -->
                 <div v-if="!msg.streaming" class="msg-actions">
                   <button v-if="msg.role === 'assistant'" class="action-btn" title="复制回复" @click="copyMessage(msg)">
@@ -351,7 +356,7 @@ async function loadModels() {
       errorMsg.value = `Ollama（${modelInfo.value.ollama.base_url}）暂不可用：${modelInfo.value.ollama.error}`
     }
   } catch (e) {
-    errorMsg.value = `获取模型列表失败：${e.message}`
+    errorMsg.value = `获取模型列表失败：${netErrMsg(e)}`
   } finally {
     modelsLoading.value = false
   }
@@ -361,6 +366,22 @@ async function loadModels() {
 function newConversation() {
   switchConversation('__draft__')
 }
+// 把浏览器网络层错误的原始文案（Safari「Load failed」/Chrome「Failed to fetch」等）
+// 映射成可读提示——这类错误意味着请求根本没到达服务端（切网/锁屏/服务重启/公网链路抖动）
+function netErrMsg(e) {
+  const msg = (e?.message || '').toLowerCase()
+  if (e?.name === 'AbortError') return '请求已取消'
+  if (
+    msg.includes('load failed') || msg.includes('failed to fetch') ||
+    msg.includes('networkerror') || msg.includes('network error') ||
+    msg.includes('the internet connection') || msg.includes('timed out') ||
+    msg.includes('connection') && msg.includes('lost')
+  ) {
+    return '网络连接中断，请求未到达服务器（常见于切换 Wi-Fi/蜂窝、锁屏后台、弱网或服务刚重启）。请检查网络后点击重试。'
+  }
+  return `请求失败：${e?.message || e}`
+}
+
 function switchConversation(id) {
   if (isMobileViewport.value) sidebarOpen.value = false // 移动端选完会话自动收起抽屉
   if (id === '__draft__') {
@@ -423,7 +444,7 @@ function onScroll() {
   stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
 }
 
-function buildPayloadMessages() {
+function buildPayloadMessages(extra = []) {
   const msgs = []
   if (settings.value.systemPrompt.trim()) {
     msgs.push({ role: 'system', content: settings.value.systemPrompt.trim() })
@@ -431,6 +452,7 @@ function buildPayloadMessages() {
   for (const m of messages.value) {
     if (m.content && m.content.trim()) msgs.push({ role: m.role, content: m.content })
   }
+  for (const e of extra) msgs.push(e) // 隐藏指令：只进本次请求，不进界面也不进历史
   return msgs
 }
 
@@ -471,7 +493,7 @@ async function regenerate() {
   await doStream()
 }
 
-async function doStream() {
+async function doStream(extra = []) {
   streaming.value = true
   stickToBottom = true
   streamMsg.value = { id: uid(), role: 'assistant', content: '', reasoning: '', model: settings.value.model, ts: Date.now(), streaming: true }
@@ -479,6 +501,7 @@ async function doStream() {
 
   abortController = new AbortController()
   let stopped = false
+  let interrupted = false
   abortController.signal.addEventListener('abort', () => { stopped = true })
 
   try {
@@ -487,7 +510,7 @@ async function doStream() {
       headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
       body: JSON.stringify({
         model: settings.value.model,
-        messages: buildPayloadMessages(),
+        messages: buildPayloadMessages(extra),
         temperature: settings.value.temperature,
         stream: true,
       }),
@@ -527,13 +550,14 @@ async function doStream() {
     }
   } catch (e) {
     if (!stopped) {
-      errorMsg.value = `请求失败：${e.message}`
+      interrupted = true
+      errorMsg.value = netErrMsg(e)
     }
   } finally {
     const sm = streamMsg.value
     const hasContent = sm && (sm.content || sm.reasoning)
     if (sm && hasContent) {
-      messages.value.push({ id: sm.id, role: 'assistant', content: sm.content, reasoning: sm.reasoning, model: sm.model, ts: Date.now() })
+      messages.value.push({ id: sm.id, role: 'assistant', content: sm.content, reasoning: sm.reasoning, model: sm.model, ts: Date.now(), interrupted: interrupted || undefined })
       saveMessages()
       touchConversation()
     }
@@ -546,6 +570,13 @@ async function doStream() {
 
 function stopGeneration() {
   abortController?.abort()
+}
+
+// 从被网络中断的 assistant 消息处续写：截断内容已在历史里，
+// 「请继续」只作为隐藏指令进本次请求（不进界面/不进后续历史）
+function continueGeneration() {
+  if (streaming.value) return
+  doStream([{ role: 'user', content: '你上一条回复因网络中断被截断了。请从中断处直接继续输出剩余内容，不要重复已输出的部分，也不要提及中断本身。' }])
 }
 
 function copyMessage(msg) {
@@ -827,6 +858,22 @@ onActivated(() => {
   padding: 4px; border-radius: 6px; display: flex; align-items: center;
 }
 .action-btn:hover { background: var(--bg-hover); color: var(--color-primary); }
+
+/* 中断标记 */
+.msg-interrupted {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 6px; padding: 5px 10px;
+  font-size: 12.5px; color: var(--warning-color, #d97706);
+  background: color-mix(in srgb, #d97706 10%, transparent);
+  border: 1px dashed color-mix(in srgb, #d97706 45%, transparent);
+  border-radius: 8px; width: fit-content;
+}
+.continue-btn {
+  border: none; cursor: pointer; font-size: 12.5px; padding: 2px 10px;
+  border-radius: 999px; color: #fff;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+.continue-btn:hover { filter: brightness(1.1); }
 
 /* 输入区 */
 .cp-composer { padding: 10px 24px 14px; }
