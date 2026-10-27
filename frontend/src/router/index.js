@@ -482,7 +482,7 @@ const toolRoutes = [
       category: 'ai',
       shortcut: true,
       shortcutPriority: 95,
-      description: '多模型智能对话 + AskIt 浏览器扩展'
+      description: '本地 Ollama + MiniMax 双引擎流式对话（Open WebUI 风格）'
     }
   },
   {
