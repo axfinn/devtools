@@ -3,10 +3,13 @@
     <!-- 收起时的小气泡 / 宠物窗口（二选一） -->
     <button
       v-if="!visible"
+      ref="launcherEl"
       class="pet-launcher"
-      @click="show"
-      title="召唤魔法宠物"
-      aria-label="打开魔法宠物"
+      :style="{ left: launcherPos.x + 'px', top: launcherPos.y + 'px' }"
+      @pointerdown="onLauncherPointerDown"
+      @click="onLauncherClick"
+      title="拖动可移动 · 点击召唤魔法宠物"
+      aria-label="打开魔法宠物（可拖动）"
     >
       🐾
     </button>
@@ -96,6 +99,7 @@ import { ensurePetWidget } from '../utils/petWidgetLoader'
 
 const STORAGE_KEY = 'pet-widget.global'
 const POS_KEY = 'pet-widget.position'
+const LAUNCHER_POS_KEY = 'pet-widget.launcherPos'
 const THEME_KEY = 'pet-widget.theme'
 const CHEER_INTERVAL_KEY = 'pet-widget.cheerInterval'
 const CHEER_ENABLED_KEY = 'pet-widget.cheerEnabled'
@@ -171,7 +175,71 @@ const cheerEnabled = ref(true)
 let cheerTimer = null
 
 const position = reactive({ x: -1, y: -1 })
-const size = reactive({ w: 280, h: 320 + 28 }) // canvas + 28 拖动条
+const launcherEl = ref(null)
+
+const LAUNCHER_SIZE = 48
+
+function isMobileViewport() {
+  return typeof window !== 'undefined' && window.innerWidth < 768
+}
+
+// 移动端窗口按屏宽收缩（280×348 在 390px 屏上会压住整个输入区）
+function responsiveSize() {
+  if (isMobileViewport()) {
+    const w = Math.min(232, Math.round(window.innerWidth * 0.6))
+    return { w, h: Math.round(w * 1.1) + 28 }
+  }
+  return { w: 280, h: 320 + 28 }
+}
+
+const size = reactive(responsiveSize()) // canvas + 28 拖动条
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v))
+}
+
+// 缩略图标位置：桌面默认右下角 24px；移动端抬高，避开聊天输入框/发送按钮
+function defaultLauncherPos() {
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  if (vw < 768) {
+    return {
+      x: Math.max(8, vw - LAUNCHER_SIZE - 12),
+      y: Math.max(80, vh - LAUNCHER_SIZE - 104),
+    }
+  }
+  return { x: Math.max(8, vw - LAUNCHER_SIZE - 24), y: Math.max(8, vh - LAUNCHER_SIZE - 24) }
+}
+
+// 组件为异步加载（客户端），setup 期间即可读 window，避免首帧闪现错误位置
+function loadLauncherPos() {
+  const fallback = defaultLauncherPos()
+  try {
+    const raw = localStorage.getItem(LAUNCHER_POS_KEY)
+    if (!raw) return fallback
+    const p = JSON.parse(raw)
+    if (typeof p.x !== 'number' || typeof p.y !== 'number') return fallback
+    // 旧坐标可能来自桌面宽屏，落到手机上要钳制回可视区
+    return {
+      x: clamp(p.x, 0, Math.max(0, window.innerWidth - LAUNCHER_SIZE)),
+      y: clamp(p.y, 0, Math.max(0, window.innerHeight - LAUNCHER_SIZE)),
+    }
+  } catch { return fallback }
+}
+
+const launcherPos = reactive(loadLauncherPos())
+
+function saveLauncherPos() {
+  try {
+    localStorage.setItem(LAUNCHER_POS_KEY, JSON.stringify({ x: launcherPos.x, y: launcherPos.y }))
+  } catch { /* ignore */ }
+}
+
+// 把窗口位置钳制回可视区（含移动端尺寸变化后的重算）
+function clampWindowPos() {
+  position.x = clamp(position.x, 0, Math.max(0, window.innerWidth - size.w))
+  position.y = clamp(position.y, 0, Math.max(0, window.innerHeight - size.h))
+}
 
 function loadState() {
   try {
@@ -183,11 +251,13 @@ function loadState() {
     if (t && THEME_ORDER.includes(t)) themeId.value = t
   } catch { /* ignore */ }
 
-  // 默认右下角
+  // 默认右下角（移动端抬高，避免压住聊天输入框）
   if (position.x < 0 || position.y < 0) {
-    position.x = window.innerWidth - size.w - 24
-    position.y = window.innerHeight - size.h - 24
+    const bottomGap = isMobileViewport() ? 104 : 24
+    position.x = window.innerWidth - size.w - (isMobileViewport() ? 12 : 24)
+    position.y = window.innerHeight - size.h - bottomGap
   }
+  clampWindowPos()
 }
 
 function savePos() {
@@ -326,6 +396,48 @@ function onPointerUp() {
   if (wasDragging) savePos()
 }
 
+// ============ 缩略图标（🐾）拖动：触摸/鼠标通用，点击仍是唤出 ============
+let launcherDrag = null
+let launcherMoved = false
+
+function onLauncherPointerDown(e) {
+  launcherMoved = false
+  // 避免拖完后又触发 click 唤出窗口
+  launcherDrag = {
+    startX: e.clientX,
+    startY: e.clientY,
+    startPosX: launcherPos.x,
+    startPosY: launcherPos.y,
+  }
+  try { e.currentTarget.setPointerCapture?.(e.pointerId) } catch { /* ignore */ }
+  window.addEventListener('pointermove', onLauncherPointerMove, { passive: false })
+  window.addEventListener('pointerup', onLauncherPointerUp, { once: true })
+  window.addEventListener('pointercancel', onLauncherPointerUp, { once: true })
+}
+
+function onLauncherPointerMove(e) {
+  if (!launcherDrag) return
+  const dx = e.clientX - launcherDrag.startX
+  const dy = e.clientY - launcherDrag.startY
+  // 移动 < 6px 视为点击
+  if (!launcherMoved && Math.hypot(dx, dy) < 6) return
+  launcherMoved = true
+  if (e.cancelable) e.preventDefault()
+  launcherPos.x = clamp(launcherDrag.startPosX + dx, 0, Math.max(0, window.innerWidth - LAUNCHER_SIZE))
+  launcherPos.y = clamp(launcherDrag.startPosY + dy, 0, Math.max(0, window.innerHeight - LAUNCHER_SIZE))
+}
+
+function onLauncherPointerUp() {
+  window.removeEventListener('pointermove', onLauncherPointerMove)
+  if (launcherMoved) saveLauncherPos()
+  launcherDrag = null
+}
+
+function onLauncherClick() {
+  if (launcherMoved) { launcherMoved = false; return } // 刚拖过，不当作点击
+  show()
+}
+
 const theme = computed(() => THEMES[themeId.value])
 
 // 凭证相关已删除 — 预录 MP3 不需要 token
@@ -364,11 +476,18 @@ onUnmounted(() => {
 // 切主题时由 widget 内部自己播报（无 token 推送需要）
 watch(themeId, () => { /* noop */ })
 
-// 窗口尺寸变化时，确保宠物不超出
+// 窗口尺寸变化时，确保宠物不超出（并按断点重算移动端尺寸）
 function onResize() {
-  position.x = Math.max(0, Math.min(window.innerWidth - size.w, position.x))
-  position.y = Math.max(0, Math.min(window.innerHeight - size.h, position.y))
-  savePos()
+  const next = responsiveSize()
+  if (next.w !== size.w || next.h !== size.h) {
+    size.w = next.w
+    size.h = next.h
+  }
+  clampWindowPos()
+  launcherPos.x = clamp(launcherPos.x, 0, Math.max(0, window.innerWidth - LAUNCHER_SIZE))
+  launcherPos.y = clamp(launcherPos.y, 0, Math.max(0, window.innerHeight - LAUNCHER_SIZE))
+  if (position.x >= 0 && position.y >= 0) savePos()
+  saveLauncherPos()
 }
 onMounted(() => window.addEventListener('resize', onResize))
 onUnmounted(() => window.removeEventListener('resize', onResize))
@@ -377,8 +496,9 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
 <style scoped>
 .pet-launcher {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
+  /* 位置由内联 left/top 控制（可拖动），不再用 bottom/right 固定死 */
+  left: 0;
+  top: 0;
   width: 48px;
   height: 48px;
   border-radius: 24px;
@@ -387,10 +507,17 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
   backdrop-filter: blur(12px);
   color: #fff;
   font-size: 22px;
-  cursor: pointer;
+  cursor: grab;
   z-index: 9999;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   transition: transform 200ms;
+  touch-action: none;   /* 触屏拖动不触发页面滚动 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pet-launcher:active {
+  cursor: grabbing;
+  transform: scale(0.96);
 }
 .pet-launcher:hover {
   transform: scale(1.1) rotate(-8deg);
@@ -407,8 +534,18 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
   box-shadow: none;
   border: none;
   backdrop-filter: none;
-  touch-action: none;        /* 触屏拖动不触发页面滚动 */
-  cursor: grab;              /* 提示整窗可拖 */
+  /* 关键：整窗默认点击穿透，否则透明画布会盖住下面的按钮（登录/发送等）无法点击。
+     只有拖动条与工具按钮重新开启 pointer-events。 */
+  pointer-events: none;
+}
+/* 拖动条是唯一的拖动入口（点击可穿透问题只影响画布，不影响这里） */
+.pet-drag-handle {
+  pointer-events: auto;
+  touch-action: none;
+}
+.pet-actions,
+.pet-forms {
+  pointer-events: auto;
 }
 .pet-window:active {
   cursor: grabbing;
@@ -584,6 +721,7 @@ onUnmounted(() => window.removeEventListener('resize', onResize))
   position: relative;
   overflow: hidden;
   background: transparent;
+  pointer-events: none;      /* 透明画布不拦截页面点击 */
 }
 .pet-canvas >>> pet-widget {
   display: block;
