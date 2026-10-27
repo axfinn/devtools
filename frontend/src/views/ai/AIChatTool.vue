@@ -24,8 +24,10 @@
 
     <!-- ═══════════ 主界面 ═══════════ -->
     <div v-else class="chatplus-shell">
+      <!-- 移动端抽屉遮罩 -->
+      <div v-if="sidebarOpen && isMobileViewport" class="cp-backdrop" @click="sidebarOpen = false"></div>
       <!-- 侧栏：会话列表 -->
-      <aside class="cp-sidebar" :class="{ collapsed: sidebarCollapsed }">
+      <aside class="cp-sidebar" :class="{ open: sidebarOpen }">
         <button class="cp-new-chat" @click="newConversation">
           <span class="ic">＋</span>
           <span v-if="!sidebarCollapsed">新对话</span>
@@ -47,13 +49,13 @@
           <div v-if="conversations.length === 0" class="cp-conv-empty">暂无会话</div>
         </div>
         <div class="cp-sidebar-footer">
-          <button class="cp-side-btn" @click="collapseSidebar" :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'">
+          <button class="cp-side-btn" @click="toggleSidebar" title="关闭侧栏">
             <span class="ic">☰</span>
-            <span v-if="!sidebarCollapsed">收起侧栏</span>
+            <span>关闭侧栏</span>
           </button>
           <button class="cp-side-btn" @click="auth.logout">
             <span class="ic">⎋</span>
-            <span v-if="!sidebarCollapsed">退出登录</span>
+            <span>退出登录</span>
           </button>
         </div>
       </aside>
@@ -62,7 +64,7 @@
       <main class="cp-main">
         <!-- 顶栏 -->
         <header class="cp-topbar">
-          <button v-if="sidebarCollapsed" class="cp-icon-btn" @click="collapseSidebar" title="展开侧栏">☰</button>
+          <button v-if="!sidebarOpen" class="cp-icon-btn" @click="toggleSidebar" title="打开侧栏">☰</button>
           <el-select
             v-model="settings.model"
             placeholder="选择模型"
@@ -177,7 +179,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, CopyDocument, RefreshRight, Promotion, WarningFilled } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
@@ -257,7 +259,8 @@ const userInput = ref('')
 const composerFocused = ref(false)
 const streaming = ref(false)
 const errorMsg = ref('')
-const sidebarCollapsed = ref(false)
+const sidebarOpen = ref(true)
+const isMobileViewport = ref(false)
 const modelsLoading = ref(false)
 const modelInfo = ref({ minimax: { available: false, models: [] }, ollama: { available: false, models: [], error: '' } })
 
@@ -359,6 +362,7 @@ function newConversation() {
   switchConversation('__draft__')
 }
 function switchConversation(id) {
+  if (isMobileViewport.value) sidebarOpen.value = false // 移动端选完会话自动收起抽屉
   if (id === '__draft__') {
     currentConvId.value = ''
     messages.value = []
@@ -548,29 +552,78 @@ function copyMessage(msg) {
   navigator.clipboard.writeText(msg.content).then(() => ElMessage.success('已复制'))
 }
 
-function collapseSidebar() {
-  sidebarCollapsed.value = !sidebarCollapsed.value
+function toggleSidebar() {
+  sidebarOpen.value = !sidebarOpen.value
 }
 
 // ══════════════ 生命周期 ══════════════
+let mqMobile = null
+function handleViewportChange(e) {
+  isMobileViewport.value = e.matches
+  if (e.matches) sidebarOpen.value = false // 转竖屏/小屏时默认收起抽屉
+}
+
+// keep-alive 下切页时 body class 必须跟随激活状态，否则会锁死其他页面的滚动
+function activateChatShell() {
+  document.body.classList.add('chatplus-active')
+  document.body.classList.toggle('chatplus-gate', !auth.isAuthenticated.value)
+}
+function deactivateChatShell() {
+  document.body.classList.remove('chatplus-active')
+  document.body.classList.remove('chatplus-gate')
+}
+
 onMounted(async () => {
   document.addEventListener('click', handleContentClick)
+  activateChatShell()
+  mqMobile = window.matchMedia('(max-width: 768px)')
+  isMobileViewport.value = mqMobile.matches
+  sidebarOpen.value = !isMobileViewport.value
+  if (mqMobile.addEventListener) mqMobile.addEventListener('change', handleViewportChange)
   loadSettings()
   loadConversations()
-  await auth.tryStored()
-  if (auth.isAuthenticated.value) loadModels()
+  await auth.tryStored() // 成功后由上面的 watch 触发 loadModels，避免重复请求
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleContentClick)
+  deactivateChatShell()
+  if (mqMobile && mqMobile.removeEventListener) mqMobile.removeEventListener('change', handleViewportChange)
+})
+// 未登录时隐藏全局宠物，避免宠物窗口压在密码卡片/输入框上；
+// 登录成功（含首次输入密码）后必须再拉一次模型列表，否则下拉为空导致无法发送
+watch(
+  () => auth.isAuthenticated.value,
+  (authed) => {
+    document.body.classList.toggle('chatplus-gate', !authed)
+    if (authed) loadModels()
+  },
+  { immediate: true }
+)
+
+onDeactivated(() => {
+  deactivateChatShell()
+  if (mqMobile && mqMobile.removeEventListener) mqMobile.removeEventListener('change', handleViewportChange)
+})
+onActivated(() => {
+  activateChatShell()
+  if (mqMobile) {
+    isMobileViewport.value = mqMobile.matches
+    if (mqMobile.addEventListener) mqMobile.addEventListener('change', handleViewportChange)
+  }
+  // 回到本页时若模型列表为空（如首次登录时接口失败），补拉一次
+  if (auth.isAuthenticated.value && modelGroups.value.length === 0) loadModels()
 })
 </script>
 
 <style scoped>
 .chatplus-page {
   padding: 0 !important;
-  height: 100%;
+  height: calc(100dvh - 40px); /* 桌面端：main-content 上下各 20px 内边距 */
+  min-height: 0;
+  gap: 0;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* ═══════════ 密码门 ═══════════ */
@@ -604,10 +657,11 @@ onUnmounted(() => {
   display: flex; flex-direction: column;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-light);
-  transition: width 0.2s ease;
+  transition: width 0.2s ease, transform 0.25s ease;
   overflow: hidden;
 }
-.cp-sidebar.collapsed { width: 60px; }
+.cp-sidebar:not(.open) { width: 0; border-right: none; }
+.cp-backdrop { display: none; }
 .cp-new-chat {
   margin: 12px; padding: 10px 14px;
   display: flex; align-items: center; gap: 8px;
@@ -811,10 +865,72 @@ onUnmounted(() => {
   font-size: 11.5px; color: var(--text-quaternary);
 }
 
-/* 窄屏适配 */
+/* 窄屏适配：侧栏改抽屉、模型选择器收缩、输入区安全区、防 iOS 聚焦缩放 */
 @media (max-width: 768px) {
-  .cp-sidebar { position: absolute; z-index: 10; height: 100%; box-shadow: 4px 0 16px var(--shadow); }
-  .cp-model-select { width: 180px; }
-  .cp-msg { padding: 12px 14px; }
+  .chatplus-page { height: 100%; } /* 高度由 body.chatplus-active 的 .mobile-main 精确约束 */
+  .cp-backdrop {
+    display: block; position: fixed; top: 56px; left: 0; right: 0; bottom: 0;
+    z-index: 1999; background: rgba(0, 0, 0, 0.45);
+  }
+  .cp-sidebar {
+    position: fixed; top: 56px; bottom: 0; left: 0; z-index: 2000;
+    width: 78vw; max-width: 300px;
+    transform: translateX(-105%);
+    box-shadow: 6px 0 24px var(--shadow-heavy);
+    border-right: 1px solid var(--border-light);
+  }
+  .cp-sidebar.open { width: 78vw; transform: translateX(0); }
+  .cp-sidebar:not(.open) { width: 78vw; border-right: 1px solid var(--border-light); }
+  .cp-topbar { padding: 8px 10px; gap: 8px; }
+  .cp-model-select { width: min(52vw, 220px); }
+  .engine-badge { display: none; }
+  .cp-icon-btn { width: 38px; height: 38px; font-size: 19px; }
+  .cp-msg { padding: 12px 12px; gap: 10px; }
+  .msg-avatar { width: 30px; height: 30px; border-radius: 9px; font-size: 12px; }
+  .msg-content { font-size: 15px; line-height: 1.7; }
+  .cp-welcome { padding: 48px 16px 24px; }
+  .cp-welcome h2 { font-size: 20px; }
+  .welcome-chips { gap: 8px; }
+  .chip { padding: 8px 12px; font-size: 13px; }
+  .cp-messages { -webkit-overflow-scrolling: touch; }
+  .cp-composer { padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .composer-box { padding: 8px 8px 8px 10px; border-radius: 14px; }
+  .composer-input :deep(.el-textarea__inner) { font-size: 16px; } /* <16px 会触发 iOS 聚焦自动放大 */
+  .composer-hint { display: none; }
+  .msg-content :deep(pre.hljs) { font-size: 12.5px; }
+}
+
+/* 超窄屏 */
+@media (max-width: 380px) {
+  .cp-model-select { width: 46vw; }
+  .cp-msg { padding: 10px 8px; }
+}
+</style>
+
+<style>
+/* 聊天页自管滚动（沿用 ChatRoom 的 body.chat-room-active 模式）：
+   锁定外层滚动、隐藏页脚；移动端让 .mobile-main 精确填满固定头部(56px)之下区域，
+   避免自然滚动把输入栏推出屏幕。仅在本页激活（含 keep-alive 唤醒）时生效。 */
+body.chatplus-active .main-content {
+  overflow: hidden;
+}
+body.chatplus-active .page-footer {
+  display: none;
+}
+/* 密码门阶段隐藏全局宠物（避免压住登录卡片） */
+body.chatplus-gate .pet-window,
+body.chatplus-gate .pet-launcher {
+  display: none !important;
+}
+@media (max-width: 768px) {
+  body.chatplus-active .mobile-main {
+    margin-top: 56px;
+    height: calc(100dvh - 56px);
+    height: calc(100svh - 56px); /* 键盘弹起时用可视区小高度，防输入栏被顶出屏幕 */
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 }
 </style>
