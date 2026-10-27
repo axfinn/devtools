@@ -45,6 +45,28 @@
         <button class="rp-icon-btn" title="锁定（重新输入密码）" @click="auth.logout">🔒</button>
       </header>
 
+      <!-- ═══════════ 场景组切换 ═══════════ -->
+      <div class="rp-groups">
+        <div class="group-chips">
+          <button
+            v-for="g in groups"
+            :key="g.id"
+            class="group-chip"
+            :class="{ active: g.id === currentGroupId }"
+            :title="g.topic || '（未设定场景）'"
+            @click="switchGroup(g.id)"
+          >
+            <span class="g-name">{{ g.name }}</span>
+            <span v-if="g.messages && g.messages.length" class="g-count">{{ g.messages.length }}</span>
+          </button>
+        </div>
+        <div class="group-ops">
+          <button class="group-op primary" @click="createGroup()">＋ 新建场景</button>
+          <button class="group-op" @click="renameGroup">✎ 重命名</button>
+          <button class="group-op danger" @click="deleteGroup">🗑 删除</button>
+        </div>
+      </div>
+
       <!-- ═══════════ 进度条（演出中显示） ═══════════ -->
       <div v-if="showState !== 'idle' || completedRounds > 0" class="rp-progress">
         <div class="pg-bar">
@@ -141,6 +163,7 @@
                 placeholder="例：围绕「要不要给个人项目引入微服务」展开一场有分歧、有结论的讨论"
               />
             </div>
+            <p v-if="!script.roles.length" class="roles-empty">当前组还没有角色，点下方「🎭 从角色库选」挑几个人，或「＋ 自定义角色」。</p>
             <div class="roles-grid">
               <div v-for="(role, i) in script.roles" :key="role.id" class="role-card" :style="{ '--role-color': role.color }">
                 <div class="role-head">
@@ -166,6 +189,7 @@
                 />
                 <button v-if="role.id in undo.roles" class="undo-btn inline" @click="undoRole(role)">撤销润色</button>
               </div>
+              <button v-if="script.roles.length" class="role-add danger" @click="clearRoles">🗑 清空全部角色</button>
               <button v-if="script.roles.length < 6" class="role-add" @click="addRole">＋ 自定义角色</button>
               <button class="role-add library" @click="libraryOpen = true">
                 🎭 从角色库选（{{ ROLE_LIBRARY.reduce((n, c) => n + c.roles.length, 0) }} 个预设）
@@ -213,13 +237,14 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { API_BASE } from '../../api'
 import { useAdminAuth } from '../../composables/useAdminAuth'
 
 // ══════════════ 常量与持久化 ══════════════
-const SCRIPT_KEY = 'roleplay-script'
-const TRANSCRIPT_KEY = 'roleplay-transcript'
+const GROUPS_KEY = 'roleplay-groups-v2'
+const LEGACY_SCRIPT_KEY = 'roleplay-script'
+const LEGACY_TRANSCRIPT_KEY = 'roleplay-transcript'
 const MAX_ROUNDS = 200
 const CONTEXT_WINDOW = 30      // 每次请求只带最近 N 条对话，防上下文爆炸
 const MAX_REPLY_TOKENS = 700   // 单条发言上限，防单角色独白刷屏
@@ -356,7 +381,10 @@ const script = ref({
   roles: [newRole('角色 A', '', ROLE_COLORS[0], '', true), newRole('角色 B', '', ROLE_COLORS[1], '', true)],
 })
 
-const transcript = ref([])     // [{id, roleId, roleName, color, content, round, ts, streaming?}]
+const groups = ref([])         // 场景组：[{id,name,model,topic,rounds,roles,messages,completedRounds,nextRoleIdx,updatedAt}]
+const currentGroupId = ref('')
+const currentGroup = computed(() => groups.value.find(g => g.id === currentGroupId.value) || groups.value[0])
+const transcript = ref([])     // 当前组的消息 [{id, roleId, roleName, color, content, round, ts, streaming?}]
 const showState = ref('idle')  // idle | running | paused
 const completedRounds = ref(0)
 const nextRoleIdx = ref(0)     // 暂停/恢复后从哪个角色接着说
@@ -372,35 +400,177 @@ let stopAll = false
 let pauseRequested = false
 let skipFlag = false
 
-function loadScript() {
+// ── 场景组持久化：一组 = 一套剧本 + 它的对话记录 ──
+function defaultRoles() {
+  return [newRole('角色 A', '', ROLE_COLORS[0], '', true), newRole('角色 B', '', ROLE_COLORS[1], '', true)]
+}
+
+function normalizeGroup(g) {
+  return {
+    id: g.id || uid(),
+    name: (g.name || '场景').slice(0, 40),
+    model: g.model || '',
+    topic: g.topic || '',
+    rounds: Math.min(Math.max(parseInt(g.rounds) || 10, 1), MAX_ROUNDS),
+    roles: (Array.isArray(g.roles) ? g.roles.slice(0, 6) : defaultRoles()).map(r => ({ ...newRole(), ...r, enabled: r.enabled !== false })),
+    messages: Array.isArray(g.messages) ? g.messages.map(m => ({ ...m, streaming: undefined })) : [],
+    completedRounds: Math.min(Math.max(parseInt(g.completedRounds) || 0, 0), MAX_ROUNDS),
+    nextRoleIdx: Math.max(parseInt(g.nextRoleIdx) || 0, 0),
+    updatedAt: g.updatedAt || Date.now(),
+  }
+}
+
+// 把当前编辑态写回所在组
+function snapshotCurrent() {
+  const g = currentGroup.value
+  if (!g) return
+  g.model = script.value.model
+  g.topic = script.value.topic
+  g.rounds = script.value.rounds
+  g.roles = JSON.parse(JSON.stringify(script.value.roles))
+  g.messages = transcript.value.map(m => ({ ...m, streaming: undefined }))
+  g.completedRounds = completedRounds.value
+  g.nextRoleIdx = nextRoleIdx.value
+  g.updatedAt = Date.now()
+}
+
+let persistTimer = null
+function persist(immediate = false) {
+  const write = () => {
+    snapshotCurrent()
+    try {
+      localStorage.setItem(GROUPS_KEY, JSON.stringify({ groups: groups.value, currentId: currentGroupId.value, lastModel: script.value.model }))
+    } catch { /* 配额满时静默，避免中断演出 */ }
+  }
+  if (immediate) { clearTimeout(persistTimer); write(); return }
+  clearTimeout(persistTimer)
+  persistTimer = setTimeout(write, 400)   // 演出中高频写入做节流
+}
+
+// 原 saveScript/saveTranscript 保留同名，内部走整组持久化
+function saveScript() { persist() }
+function saveTranscript() { persist() }
+
+function loadViewFromGroup(g) {
+  script.value = {
+    model: g.model || '',
+    topic: g.topic || '',
+    rounds: g.rounds || 10,
+    roles: JSON.parse(JSON.stringify(g.roles || defaultRoles())),
+  }
+  transcript.value = JSON.parse(JSON.stringify(g.messages || []))
+  completedRounds.value = g.completedRounds || 0
+  nextRoleIdx.value = g.nextRoleIdx || 0
+  currentRound.value = completedRounds.value || 0
+  currentRoleId.value = ''
+  interruptedMsg.value = ''
+  undo.value = { topic: null, roles: {} }
+  showState.value = 'idle'
+}
+
+function loadGroups() {
+  let loaded = null
+  try { loaded = JSON.parse(localStorage.getItem(GROUPS_KEY) || 'null') } catch { loaded = null }
+  if (loaded && Array.isArray(loaded.groups) && loaded.groups.length) {
+    groups.value = loaded.groups.map(normalizeGroup)
+    currentGroupId.value = groups.value.some(g => g.id === loaded.currentId) ? loaded.currentId : groups.value[0].id
+  } else {
+    // 迁移旧版单场景数据，避免用户之前的剧本丢失
+    let oldScript = null, oldTr = null
+    try { oldScript = JSON.parse(localStorage.getItem(LEGACY_SCRIPT_KEY) || 'null') } catch { /* ignore */ }
+    try { oldTr = JSON.parse(localStorage.getItem(LEGACY_TRANSCRIPT_KEY) || 'null') } catch { /* ignore */ }
+    const g = normalizeGroup({
+      id: uid(),
+      name: '场景 1',
+      model: oldScript?.model || '',
+      topic: oldScript?.topic || '',
+      rounds: oldScript?.rounds || 10,
+      roles: oldScript?.roles || defaultRoles(),
+      messages: oldTr?.messages || [],
+      completedRounds: oldTr?.completedRounds || 0,
+      nextRoleIdx: oldTr?.nextRoleIdx || 0,
+    })
+    groups.value = [g]
+    currentGroupId.value = g.id
+  }
+  loadViewFromGroup(currentGroup.value)
+}
+
+// ── 场景组操作 ──
+function createGroup(fromTemplate = null) {
+  if (showState.value === 'running') { ElMessage.warning('先停止演出再切换场景'); return }
+  persist(true)
+  const n = groups.value.length + 1
+  const g = normalizeGroup({
+    id: uid(),
+    name: `场景 ${n}`,
+    model: script.value.model,
+    topic: fromTemplate?.topic || '',
+    rounds: script.value.rounds,
+    roles: fromTemplate ? fromTemplate.roles.map((r, i) => newRole(r.name, r.persona, ROLE_COLORS[i % ROLE_COLORS.length], r.emoji || '')) : defaultRoles(),
+  })
+  groups.value.push(g)
+  currentGroupId.value = g.id
+  loadViewFromGroup(g)
+  persist(true)
+  ElMessage.success(`已新建「${g.name}」`)
+}
+
+function switchGroup(id) {
+  if (id === currentGroupId.value) return
+  if (showState.value === 'running') { ElMessage.warning('先停止演出再切换场景'); return }
+  persist(true)
+  const g = groups.value.find(x => x.id === id)
+  if (!g) return
+  currentGroupId.value = id
+  loadViewFromGroup(g)
+  persist(true)
+}
+
+async function renameGroup() {
+  const g = currentGroup.value
+  if (!g) return
   try {
-    const s = JSON.parse(localStorage.getItem(SCRIPT_KEY) || 'null')
-    if (s && Array.isArray(s.roles) && s.roles.length >= 2) {
-      script.value = {
-        model: s.model || '',
-        topic: s.topic || '',
-        rounds: Math.min(Math.max(parseInt(s.rounds) || 10, 1), MAX_ROUNDS),
-        roles: s.roles.slice(0, 6).map(r => ({ ...newRole(), ...r, enabled: r.enabled !== false })),
-      }
-    }
-  } catch { /* 默认 */ }
+    const { value } = await ElMessageBox.prompt('给这个场景组起个名字', '重命名', {
+      inputValue: g.name, confirmButtonText: '确定', cancelButtonText: '取消',
+      inputValidator: v => (v && v.trim() ? true : '名字不能为空'),
+    })
+    g.name = value.trim().slice(0, 40)
+    persist(true)
+  } catch { /* 用户取消 */ }
 }
-function saveScript() {
-  localStorage.setItem(SCRIPT_KEY, JSON.stringify(script.value))
-}
-function loadTranscript() {
+
+async function deleteGroup() {
+  const g = currentGroup.value
+  if (!g) return
+  if (groups.value.length === 1) { ElMessage.warning('至少保留一个场景组，可用「清空」重来'); return }
   try {
-    const t = JSON.parse(localStorage.getItem(TRANSCRIPT_KEY) || 'null')
-    if (t && Array.isArray(t.messages)) {
-      transcript.value = t.messages
-      completedRounds.value = Math.min(Math.max(parseInt(t.completedRounds) || 0, 0), MAX_ROUNDS)
-      nextRoleIdx.value = Math.min(Math.max(parseInt(t.nextRoleIdx) || 0, 0), t.messages.length)
-    }
-  } catch { /* 默认 */ }
+    await ElMessageBox.confirm(`删除「${g.name}」及其对话记录？此操作不可恢复。`, '删除场景组', {
+      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消',
+    })
+  } catch { return }
+  if (showState.value === 'running') { ElMessage.warning('先停止演出'); return }
+  const idx = groups.value.findIndex(x => x.id === g.id)
+  groups.value.splice(idx, 1)
+  const next = groups.value[Math.max(0, idx - 1)]
+  currentGroupId.value = next.id
+  loadViewFromGroup(next)
+  persist(true)
+  ElMessage.success('已删除')
 }
-function saveTranscript() {
-  const msgs = transcript.value.map(m => ({ ...m, streaming: undefined }))
-  localStorage.setItem(TRANSCRIPT_KEY, JSON.stringify({ messages: msgs, completedRounds: completedRounds.value, nextRoleIdx: nextRoleIdx.value }))
+
+// 一键清空当前组的全部角色（不必逐个删除）
+async function clearRoles() {
+  if (showState.value === 'running') { ElMessage.warning('先停止演出再改剧本'); return }
+  try {
+    await ElMessageBox.confirm('清空当前组的全部角色？对话记录会保留。', '清空角色', {
+      type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消',
+    })
+  } catch { return }
+  script.value.roles = []
+  persist(true)
+  libraryOpen.value = true   // 直接打开角色库，方便重新挑人
+  ElMessage.success('已清空角色，可从角色库重新选择')
 }
 
 watch(script, () => {
@@ -454,6 +624,7 @@ const currentRoleName = computed(() => {
 })
 
 function applyTemplate(t) {
+  if (transcript.value.length) { createGroup(t); return }   // 已有记录 → 开新场景组，别把旧对话串进来
   script.value.topic = t.topic
   script.value.roles = t.roles.map((r, i) => newRole(r.name, r.persona, ROLE_COLORS[i % ROLE_COLORS.length], r.emoji || ''))
   ElMessage.success(`已载入剧本「${t.name}」`)
@@ -591,17 +762,36 @@ function undoRole(role) {
 function buildSystemPrompt(role) {
   const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、')
   return [
-    `你就是「${role.name}」，正和 ${others} 当面聊天。${role.persona || '（性格要鲜明，别当老好人）'}`,
-    script.value.topic ? `【此刻的场景】${script.value.topic}` : '',
-    '记住：这是说话，不是写文章。务必做到——',
-    '1. 口语：短句为主，可以有语气词（嗯、诶、行吧、真的假的）、停顿、重复、自我纠正，甚至话说一半停住。',
-    '2. 有来有回：先对刚听到的那句话做出反应（答应/反驳/追问/吐槽/被逗笑），再说自己的；可以抢话、打断、反问。',
-    '3. 带情绪和立场：会不耐烦、会惊讶、会被说动、也会死扛；别永远礼貌中立、别谁都不得罪。',
-    '4. 有人味：用自己的经历、行当里的比喻、一点口头禅，偶尔自嘲或开个小玩笑。',
-    '5. 允许极少量动作或神态，写在圆括号里，如（皱眉）（把杯子往桌上一放），每句最多一处。',
-    '禁止：分点列举、"首先/其次/总之"、总结陈词、书面语长句、客服腔（"希望对你有帮助"）、替别人说话、重复上一条的句式。',
-    '长度：1-3 句、30-120 字，像微信语音转文字那样自然。只输出你说的话，不要加名字前缀，不要旁白。',
+    `你就是「${role.name}」，此刻正和 ${others} 面对面说话。${role.persona || '（性格要鲜明，别当老好人）'}`,
+    script.value.topic ? `【眼下的处境】${script.value.topic}` : '',
+    '这是真实发生的对话，不是剧本、不是小说、也不是聊天记录整理稿。就像把你说出口的话原样打出来：',
+    '1. 只说你张嘴说出来的话。绝对不要写动作、神态、表情、心理活动，不要用括号或星号补充说明，不要旁白，不要"潜台词"，不要任何舞台提示。',
+    '2. 口语：短句为主，可以有语气词（嗯、诶、行吧、真的假的）、停顿、重复、自我纠正，话没说完被打断也行。',
+    '3. 有来有回：先接住对方刚说的那句（答应/反驳/追问/吐槽/被逗笑），再说自己的；可以抢话、追问、反问。',
+    '4. 带情绪和立场：会不耐烦、会惊讶、会被说动、也会死扛；别永远礼貌中立、别谁都不得罪。',
+    '5. 有人味：用自己的经历、行当里的比喻、一点口头禅，偶尔自嘲或开个小玩笑。',
+    '禁止：分点列举、"首先/其次/总之"、总结陈词、书面语长句、客服腔（"希望对你有帮助"）、替别人说话、复述上一条的句式。',
+    '长度：1-3 句、30-100 字，像语音转文字那样自然。只输出你说出口的那句话本身，不带名字前缀。',
   ].filter(Boolean).join('\n')
+}
+
+// 模型爱加"剧本味"（动作括号、星号动作、旁白、名字前缀、潜台词），统一剥掉
+const BRACKET_NOISE = [
+  /（[^（）]{0,40}）/g,      // 全角括号：动作/神态/心理
+  /\([^()]{0,40}\)/g,       // 半角括号
+  /\*[^*\n]{1,40}\*/g,       // *动作*
+  /【[^】]{0,20}】/g,         // 【旁白】【沉默片刻】
+  /(潜台词|内心独白|旁白|画外音)\s*[:：][^\n]*/g,
+]
+function cleanSpoken(t, roleName = '') {
+  let s = t || ''
+  if (roleName) {
+    const n = roleName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    s = s.replace(new RegExp(`^\\s*[「『"]?${n}[」』"]?\\s*[:：]\\s*`), '')
+  }
+  for (const re of BRACKET_NOISE) s = s.replace(re, '')
+  s = s.replace(/^[「『"]|[」』"]$/g, '')          // 整体引号
+  return s.replace(/[ \t]{2,}/g, ' ').replace(/\n{2,}/g, '\n').trim()
 }
 
 // 历史映射：当前角色自己的旧发言 → assistant，其他人 → user（带名字前缀），保持轮流感
@@ -609,7 +799,7 @@ function buildPayloadMessages(role) {
   const msgs = [{ role: 'system', content: buildSystemPrompt(role) }]
   const history = transcript.value.filter(m => !m.streaming).slice(-CONTEXT_WINDOW)
   if (history.length === 0) {
-    msgs.push({ role: 'user', content: `（刚坐下，还没人开口。你先说点什么，别客套，直接切入正题。）` })
+    msgs.push({ role: 'user', content: `还没人开口，你先说话。别客套，直接切入正题。` })
   }
   for (const m of history) {
     if (m.roleId === role.id) {
@@ -695,6 +885,7 @@ async function speakRole(role, round) {
   }
   if (stopAll) { transcript.value.splice(transcript.value.indexOf(msg), 1); return false }
 
+  let raw = ''
   for (let attempt = 0; attempt < 2; attempt++) {
     skipFlag = false
     abortController = new AbortController()
@@ -724,20 +915,25 @@ async function speakRole(role, round) {
         buf += decoder.decode(value, { stream: true })
         const lines = buf.split('\n')
         buf = lines.pop()
-        for (const raw of lines) {
-          const line = raw.trim()
+        for (const rawLine of lines) {
+          const line = rawLine.trim()
           if (!line.startsWith('data:')) continue
           const data = line.slice(5).trim()
           if (data === '[DONE]') continue
           let chunk
           try { chunk = JSON.parse(data) } catch { continue }
           const piece = chunk?.choices?.[0]?.delta?.content || ''
-          if (piece) { msg.content += piece; if (msg.content.length % 60 < piece.length) scrollToBottom() }
+          if (piece) {
+            raw += piece
+            msg.content = cleanSpoken(raw, role.name)
+            if (msg.content.length % 60 < piece.length) scrollToBottom()
+          }
         }
       }
       msg.streaming = false
-      // 空回复兜底：塞一条占位，避免对话断裂
-      if (!msg.content.trim()) msg.content = '（沉默片刻，没有发言）'
+      msg.content = cleanSpoken(raw, role.name)
+      // 空回复兜底：真人沉默也就是一句"……"
+      if (!msg.content.trim()) msg.content = '……'
       return true
     } catch (e) {
       msg.streaming = false
@@ -801,8 +997,7 @@ function exportMarkdown() {
 
 // ══════════════ 生命周期 ══════════════
 onMounted(async () => {
-  loadScript()
-  loadTranscript()
+  loadGroups()
   panelOpen.value = transcript.value.length === 0
   await auth.tryStored()
   if (auth.isAuthenticated.value) loadModels()
@@ -841,6 +1036,34 @@ watch(() => auth.isAuthenticated.value, (authed) => { if (authed && !modelsLoadi
   width: 36px; height: 36px; border-radius: 10px; cursor: pointer; font-size: 16px;
 }
 .rp-icon-btn:hover { color: var(--color-primary, #6366f1); border-color: var(--color-primary, #6366f1); }
+
+/* 场景组 */
+.rp-groups { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.group-chips { display: flex; gap: 6px; overflow-x: auto; max-width: 100%; padding-bottom: 2px; scrollbar-width: thin; }
+.group-chip {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  border: 1px solid var(--border-light, #e5e7eb); background: var(--bg-card, #fff);
+  color: var(--text-secondary, #555); font-size: 13px; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  max-width: 180px;
+}
+.group-chip:hover { border-color: var(--color-primary, #6366f1); }
+.group-chip.active {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+.g-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-count {
+  font-size: 11px; padding: 0 6px; border-radius: 999px;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+.group-ops { display: flex; gap: 6px; flex-shrink: 0; }
+.group-op {
+  border: 1px solid var(--border-light, #e5e7eb); background: var(--bg-card, #fff); cursor: pointer;
+  color: var(--text-secondary, #555); font-size: 12.5px; padding: 5px 10px; border-radius: 8px;
+}
+.group-op:hover { border-color: var(--color-primary, #6366f1); color: var(--color-primary, #6366f1); }
+.group-op.primary { color: var(--color-primary, #6366f1); border-color: color-mix(in srgb, var(--color-primary, #6366f1) 40%, transparent); }
+.group-op.danger:hover { border-color: var(--el-color-danger, #f56c6c); color: var(--el-color-danger, #f56c6c); }
 
 /* 进度 */
 .rp-progress { display: flex; align-items: center; gap: 12px; }
@@ -985,6 +1208,9 @@ watch(() => auth.isAuthenticated.value, (authed) => { if (authed && !modelsLoadi
 .role-add:hover { border-color: var(--color-primary, #6366f1); color: var(--color-primary, #6366f1); }
 .role-add.library { border-style: solid; color: var(--color-primary, #6366f1); border-color: color-mix(in srgb, var(--color-primary, #6366f1) 35%, transparent); }
 .role-add.library:hover { background: color-mix(in srgb, var(--color-primary, #6366f1) 6%, transparent); }
+.role-add.danger { border-style: solid; color: var(--el-color-danger, #f56c6c); border-color: color-mix(in srgb, var(--el-color-danger, #f56c6c) 35%, transparent); }
+.role-add.danger:hover { border-color: var(--el-color-danger, #f56c6c); background: color-mix(in srgb, var(--el-color-danger, #f56c6c) 6%, transparent); }
+.roles-empty { margin: 0 0 8px; font-size: 13px; color: var(--text-tertiary, #999); }
 
 /* 角色库弹层 */
 .lib-backdrop {
@@ -1038,6 +1264,10 @@ watch(() => auth.isAuthenticated.value, (authed) => { if (authed && !modelsLoadi
   .msg-content { font-size: 15px; }
   .tpl-grid { grid-template-columns: 1fr 1fr; }
   .roles-grid { grid-template-columns: 1fr; }
+  .rp-groups { gap: 6px; }
+  .group-ops { width: 100%; }
+  .group-op { flex: 1; text-align: center; }
+  .group-chip { max-width: 140px; }
   .rp-hint { display: none; }
 }
 </style>
