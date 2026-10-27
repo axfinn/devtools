@@ -30,6 +30,21 @@ const (
 	newsDefaultMaxItems = 30                // max_items 缺省值
 	newsDefaultPageSize = 30                // 归档列表默认 limit
 	newsMaxPageSize     = 100               // 归档列表 limit 上限
+
+	// newsErrAdminUnset fail-closed 语义:未配置(或全空白)news.admin_password 时写端点的响应文案。
+	// 逐字断言,注意是中文全角冒号「：」,前后无空格。
+	newsErrAdminUnset = "news 管理接口已禁用：未配置 news.admin_password"
+	// newsErrPasswordWrong 已配置密码但凭据不匹配时的响应文案(逐字断言)。
+	newsErrPasswordWrong = "需要管理员密码"
+	// newsTestBlankPwd 全空白的管理员密码,用于验证 strings.TrimSpace 语义。
+	newsTestBlankPwd = "   "
+	// newsTestWrongPwd 故意写错的管理员密码,用于验证凭据不匹配时 403。
+	newsTestWrongPwd = "wrong"
+	// newsTestPublishBody 发布端点的标准请求体(合法日期 + 空条目)。
+	newsTestPublishBody = `{"date":"` + newsTestDate + `","items":[]}`
+	// newsTestUnreachableFeed 指向本地不可达端口的订阅源。
+	// generate 端点一旦放行就会真的去抓 RSS,用这个地址保证单测不出网、且快速失败。
+	newsTestUnreachableFeed = "http://127.0.0.1:1/news.xml"
 )
 
 // ---------- 测试脚手架 ----------
@@ -62,6 +77,24 @@ func newsTestHandler(t *testing.T, db *models.DB, mutate func(*config.Config)) *
 		mutate(cfg)
 	}
 	return NewNewsHandler(db, cfg, nil)
+}
+
+// newsTestAdminHandler 构造一个「已配置 news.admin_password」的 handler。
+// fail-closed 语义下写端点必须同时满足「配置了密码」+「请求带上正确凭据」才放行,
+// 所以凡是要断言业务语义(200/400)的用例一律用它,而不是 mutate=nil 的默认无密码配置。
+func newsTestAdminHandler(t *testing.T, db *models.DB) *NewsHandler {
+	t.Helper()
+	return newsTestHandler(t, db, func(c *config.Config) { c.News.AdminPassword = newsTestAdminPwd })
+}
+
+// newsTestAuthHeader 给请求带上正确的 X-Admin-Password 头(与 newsTestAdminHandler 配对使用)。
+func newsTestAuthHeader(ctx *gin.Context) {
+	ctx.Request.Header.Set("X-Admin-Password", newsTestAdminPwd)
+}
+
+// newsTestAuthQuery 给请求带上正确的 admin_password 查询参数(与 newsTestAdminHandler 配对使用)。
+func newsTestAuthQuery(target string) string {
+	return target + "?admin_password=" + url.QueryEscape(newsTestAdminPwd)
 }
 
 // newNewsMockContext 构造 news handler 测试用的 gin.Context。
@@ -354,7 +387,9 @@ func TestNewsNewHandlerDefaults(t *testing.T) {
 // ---------- B. HTTP handler ----------
 
 // TestNewsPublishAuth Publish 的鉴权分支。
-// 当前实现语义:admin_password 为空 = 放行(不鉴权);非空时 header 或 query 命中即放行。
+// fail-closed 语义:admin_password 为空或全空白 = 写端点禁用(403,文案说明是配置问题);
+// 非空时 header 或 query 任一命中即放行,都不命中则 403「需要管理员密码」。
+// 403 的 error 文案逐字断言,防止响应文案被悄悄改掉而无测试报警。
 func TestNewsPublishAuth(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -362,13 +397,14 @@ func TestNewsPublishAuth(t *testing.T) {
 		headerPwd  string
 		queryPwd   string
 		wantStatus int
+		wantError  string
 	}{
-		{"未配置密码时放行", "", "", "", http.StatusOK},
-		{"配置密码后缺少凭据", newsTestAdminPwd, "", "", http.StatusForbidden},
-		{"配置密码后 header 密码错误", newsTestAdminPwd, "wrong", "", http.StatusForbidden},
-		{"配置密码后 query 密码错误", newsTestAdminPwd, "", "wrong", http.StatusForbidden},
-		{"配置密码后 header 正确", newsTestAdminPwd, newsTestAdminPwd, "", http.StatusOK},
-		{"配置密码后 query 正确", newsTestAdminPwd, "", newsTestAdminPwd, http.StatusOK},
+		{"未配置密码时禁用写端点", "", "", "", http.StatusForbidden, newsErrAdminUnset},
+		{"配置密码后缺少凭据", newsTestAdminPwd, "", "", http.StatusForbidden, newsErrPasswordWrong},
+		{"配置密码后 header 密码错误", newsTestAdminPwd, newsTestWrongPwd, "", http.StatusForbidden, newsErrPasswordWrong},
+		{"配置密码后 query 密码错误", newsTestAdminPwd, "", newsTestWrongPwd, http.StatusForbidden, newsErrPasswordWrong},
+		{"配置密码后 header 正确", newsTestAdminPwd, newsTestAdminPwd, "", http.StatusOK, ""},
+		{"配置密码后 query 正确", newsTestAdminPwd, "", newsTestAdminPwd, http.StatusOK, ""},
 	}
 	for _, c := range cases {
 		db := newsTestDB(t)
@@ -395,6 +431,10 @@ func TestNewsPublishAuth(t *testing.T) {
 		if c.wantStatus == http.StatusForbidden {
 			if resp.Error == "" {
 				t.Errorf("[%s] 403 响应缺少 error 说明, body=%s", c.name, rec.Body.String())
+				continue
+			}
+			if resp.Error != c.wantError {
+				t.Errorf("[%s] error = %q, want %q(逐字一致)", c.name, resp.Error, c.wantError)
 			}
 		} else if !resp.OK {
 			t.Errorf("[%s] 200 响应 ok 应为 true, body=%s", c.name, rec.Body.String())
@@ -407,9 +447,10 @@ func TestNewsPublishValidation(t *testing.T) {
 	t.Run("日期非法返回400", func(t *testing.T) {
 		for _, date := range []string{"2024-13-01", "20240101", "not-a-date"} {
 			db := newsTestDB(t)
-			h := newsTestHandler(t, db, nil)
+			h := newsTestAdminHandler(t, db)
 			body := `{"date":"` + date + `","items":[]}`
 			ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", body)
+			newsTestAuthHeader(ctx)
 			h.Publish(ctx)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("date=%q status = %d, want 400, body=%s", date, rec.Code, rec.Body.String())
@@ -419,8 +460,9 @@ func TestNewsPublishValidation(t *testing.T) {
 
 	t.Run("请求体非法返回400", func(t *testing.T) {
 		db := newsTestDB(t)
-		h := newsTestHandler(t, db, nil)
+		h := newsTestAdminHandler(t, db)
 		ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", `{"date":`)
+		newsTestAuthHeader(ctx)
 		h.Publish(ctx)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
@@ -429,8 +471,9 @@ func TestNewsPublishValidation(t *testing.T) {
 
 	t.Run("日期缺省时取今天", func(t *testing.T) {
 		db := newsTestDB(t)
-		h := newsTestHandler(t, db, nil)
+		h := newsTestAdminHandler(t, db)
 		ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", `{"items":[]}`)
+		newsTestAuthHeader(ctx)
 		h.Publish(ctx)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
@@ -446,8 +489,9 @@ func TestNewsPublishValidation(t *testing.T) {
 
 	t.Run("空条目时状态为 empty", func(t *testing.T) {
 		db := newsTestDB(t)
-		h := newsTestHandler(t, db, nil)
+		h := newsTestAdminHandler(t, db)
 		ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", `{"date":"`+newsTestDate+`","items":[]}`)
+		newsTestAuthHeader(ctx)
 		h.Publish(ctx)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
@@ -470,12 +514,13 @@ func TestNewsPublishValidation(t *testing.T) {
 
 	t.Run("来源去重且空来源被替换为未知来源", func(t *testing.T) {
 		db := newsTestDB(t)
-		h := newsTestHandler(t, db, nil)
+		h := newsTestAdminHandler(t, db)
 		body := `{"date":"` + newsTestDate + `","items":[` +
 			`{"title":"A","link":"https://a","source":"IT之家"},` +
 			`{"title":"B","link":"https://b","source":"IT之家"},` +
 			`{"title":"C","link":"https://c","source":""}]}`
 		ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", body)
+		newsTestAuthHeader(ctx)
 		h.Publish(ctx)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
@@ -508,8 +553,9 @@ func TestNewsPublishValidation(t *testing.T) {
 
 	t.Run("ai_model 缺省时填充默认值", func(t *testing.T) {
 		db := newsTestDB(t)
-		h := newsTestHandler(t, db, nil)
+		h := newsTestAdminHandler(t, db)
 		ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", `{"date":"`+newsTestDate+`","items":[]}`)
+		newsTestAuthHeader(ctx)
 		h.Publish(ctx)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
@@ -525,9 +571,10 @@ func TestNewsPublishValidation(t *testing.T) {
 
 	t.Run("ai_model 指定时原样保存", func(t *testing.T) {
 		db := newsTestDB(t)
-		h := newsTestHandler(t, db, nil)
+		h := newsTestAdminHandler(t, db)
 		body := `{"date":"` + newsTestDate + `","items":[],"ai_model":"My-Agent"}`
 		ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", body)
+		newsTestAuthHeader(ctx)
 		h.Publish(ctx)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
@@ -545,10 +592,11 @@ func TestNewsPublishValidation(t *testing.T) {
 // TestNewsPublishThenReadBack 发布后可被 GetLatest / GetByDate 读回。
 func TestNewsPublishThenReadBack(t *testing.T) {
 	db := newsTestDB(t)
-	h := newsTestHandler(t, db, nil)
+	h := newsTestAdminHandler(t, db)
 	body := `{"date":"` + newsTestDate + `","summary":"## 今日总览","items":[` +
 		`{"title":"标题一","link":"https://a","source":"IT之家","summary":"摘要一","category":"科技","published":"2026-10-25T01:00:00Z"}]}`
 	ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", body)
+	newsTestAuthHeader(ctx)
 	h.Publish(ctx)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("publish status = %d, want 200, body=%s", rec.Code, rec.Body.String())
@@ -694,9 +742,10 @@ func TestNewsListDates(t *testing.T) {
 
 	t.Run("有数据时按日期倒序并返回总数", func(t *testing.T) {
 		db := newsTestDB(t)
-		h := newsTestHandler(t, db, nil)
+		h := newsTestAdminHandler(t, db)
 		for _, date := range []string{newsTestDatePrev2, newsTestDate, newsTestDatePrev} {
 			ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/publish", `{"date":"`+date+`","items":[]}`)
+			newsTestAuthHeader(ctx)
 			h.Publish(ctx)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("publish %s status = %d, body=%s", date, rec.Code, rec.Body.String())
@@ -815,16 +864,106 @@ func TestNewsGenerateAuthRejected(t *testing.T) {
 	h := newsTestHandler(t, db, func(c *config.Config) { c.News.AdminPassword = newsTestAdminPwd })
 	ctx, rec := newNewsMockContext(t, http.MethodPost, "/api/news/generate", "")
 	h.Generate(ctx)
+	newsAssertForbiddenError(t, rec, newsErrPasswordWrong)
+}
+
+// ---------- fail-closed 回归护栏 ----------
+
+// newsAssertForbiddenError 断言响应是 403(且不得是 401),并且 error 字段逐字等于 want。
+func newsAssertForbiddenError(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("鉴权失败应返回 403,不得返回 401, body=%s", rec.Body.String())
+	}
 	if rec.Code != http.StatusForbidden {
-		t.Errorf("status = %d, want 403, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("status = %d, want 403, body=%s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("响应不是合法 JSON: %v", err)
+		t.Fatalf("响应不是合法 JSON: %v, body=%s", err, rec.Body.String())
 	}
 	if resp.Error == "" {
-		t.Error("403 响应缺少 error 说明")
+		t.Fatalf("403 响应缺少 error 说明, body=%s", rec.Body.String())
+	}
+	if resp.Error != want {
+		t.Errorf("error = %q, want %q(逐字一致), body=%s", resp.Error, want, rec.Body.String())
+	}
+}
+
+// TestNewsWriteEndpointsFailClosed 写端点 fail-closed 回归护栏。
+// 覆盖两类拒绝语义,并对响应文案做逐字断言(文案被改掉也会红):
+//   - admin_password 未配置 / 全空白 => 403 + 配置类文案(运维能一眼看出是配置问题,不是密码错);
+//   - 已配置密码但凭据错误 => 403 + 「需要管理员密码」(语义未变,且不得是 401)。
+func TestNewsWriteEndpointsFailClosed(t *testing.T) {
+	endpoints := []struct {
+		name   string
+		path   string
+		invoke func(h *NewsHandler, c *gin.Context)
+	}{
+		{"publish", "/api/news/publish", func(h *NewsHandler, c *gin.Context) { h.Publish(c) }},
+		{"generate", "/api/news/generate", func(h *NewsHandler, c *gin.Context) { h.Generate(c) }},
+	}
+	cases := []struct {
+		name      string
+		adminPwd  string
+		headerPwd string
+		wantError string
+	}{
+		{"未配置 admin_password 时 403", "", "", newsErrAdminUnset},
+		{"admin_password 为全空白时 403", newsTestBlankPwd, "", newsErrAdminUnset},
+		{"密码错误时 403", newsTestAdminPwd, newsTestWrongPwd, newsErrPasswordWrong},
+	}
+	for _, ep := range endpoints {
+		for _, c := range cases {
+			t.Run(ep.name+" "+c.name, func(t *testing.T) {
+				db := newsTestDB(t)
+				h := newsTestHandler(t, db, func(cfg *config.Config) {
+					cfg.News.AdminPassword = c.adminPwd
+					cfg.News.Feeds = []string{newsTestUnreachableFeed}
+				})
+				ctx, rec := newNewsMockContext(t, http.MethodPost, ep.path, newsTestPublishBody)
+				if c.headerPwd != "" {
+					ctx.Request.Header.Set("X-Admin-Password", c.headerPwd)
+				}
+				ep.invoke(h, ctx)
+				newsAssertForbiddenError(t, rec, c.wantError)
+			})
+		}
+	}
+}
+
+// TestNewsPublishWithCorrectPassword 正确密码仍能正常发布(fail-closed 不得误伤正常路径)。
+// header 与 query 两种凭据形式各覆盖一次,确保 OR 语义没有丢。
+func TestNewsPublishWithCorrectPassword(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		header bool
+	}{
+		{"X-Admin-Password 头带正确密码返回 200", "/api/news/publish", true},
+		{"admin_password 查询参数带正确密码返回 200", newsTestAuthQuery("/api/news/publish"), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			db := newsTestDB(t)
+			h := newsTestAdminHandler(t, db)
+			ctx, rec := newNewsMockContext(t, http.MethodPost, c.target, newsTestPublishBody)
+			if c.header {
+				newsTestAuthHeader(ctx)
+			}
+			h.Publish(ctx)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+			}
+			var resp newsPublishResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("响应不是合法 JSON: %v", err)
+			}
+			if !resp.OK {
+				t.Errorf("200 响应 ok 应为 true, body=%s", rec.Body.String())
+			}
+		})
 	}
 }
