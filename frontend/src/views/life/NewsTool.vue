@@ -100,6 +100,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Refresh, Calendar, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import { inlineMd, renderMarkdown } from '../../utils/newsMarkdown'
 
 const config = ref(null)
 const dates = ref([])
@@ -122,58 +123,6 @@ function formatTime(iso) {
   if (isNaN(d)) return ''
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-// ---- 轻量 Markdown 渲染(零依赖,先转义防 XSS 再解析) ----
-function escapeHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-// 行内元素:链接 / 加粗 / 斜体 / 行内代码(输入已是转义后文本)
-function inlineMd(text) {
-  let t = escapeHtml(text)
-  // 链接 [文本](url) —— 仅允许 http/https/mailto,其余降级为 # 防 XSS
-  t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, txt, url) => {
-    const safe = /^(https?:|mailto:)/i.test(url) ? url : '#'
-    return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${txt}</a>`
-  })
-  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-  t = t.replace(/`([^`]+)`/g, '<code>$1</code>')
-  return t
-}
-
-// 块级渲染:标题 / 无序&有序列表 / 段落
-function renderMarkdown(src) {
-  if (!src) return ''
-  const lines = src.split(/\r?\n/)
-  let html = ''
-  let inList = false
-  const closeList = () => { if (inList) { html += '</ul>'; inList = false } }
-  for (const line of lines) {
-    if (/^\s*$/.test(line)) { closeList(); continue }
-    const h = line.match(/^(#{1,6})\s+(.*)$/)
-    if (h) {
-      closeList()
-      const lv = h[1].length
-      html += `<h${lv} class="md-h md-h${lv}">${inlineMd(h[2])}</h${lv}>`
-      continue
-    }
-    if (/^\s*[-*]\s+/.test(line)) {
-      if (!inList) { html += '<ul class="md-ul">'; inList = true }
-      html += `<li>${inlineMd(line.replace(/^\s*[-*]\s+/, ''))}</li>`
-      continue
-    }
-    if (/^\s*\d+\.\s+/.test(line)) {
-      if (!inList) { html += '<ul class="md-ul">'; inList = true }
-      html += `<li>${inlineMd(line.replace(/^\s*\d+\.\s+/, ''))}</li>`
-      continue
-    }
-    closeList()
-    html += `<p>${inlineMd(line)}</p>`
-  }
-  closeList()
-  return html
 }
 
 const summaryHtml = computed(() => renderMarkdown(current.value?.summary || ''))
