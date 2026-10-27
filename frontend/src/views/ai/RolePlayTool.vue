@@ -84,7 +84,10 @@
                 <span class="msg-role" :style="{ color: msg.color }">{{ msg.roleName }}</span>
                 <span class="msg-round">第 {{ msg.round }} 轮</span>
               </div>
-              <div class="msg-content" :class="{ streaming: msg.streaming }">{{ msg.content }}<span v-if="msg.streaming" class="type-cursor"></span></div>
+              <div class="msg-content" :class="{ streaming: msg.streaming }">
+                <span v-if="msg.streaming && !msg.content" class="typing-dots"><i></i><i></i><i></i></span>
+                <template v-else>{{ msg.content }}<span v-if="msg.streaming" class="type-cursor"></span></template>
+              </div>
             </div>
           </div>
         </template>
@@ -532,8 +535,8 @@ async function polishTopic() {
   try {
     const system = '你是资深对话编剧，专门设计多角色模拟对话的"导演指令"。'
     const user = prev.trim()
-      ? `请润色下面这段多角色对话的场景设定，使其更清晰、更有张力：明确讨论焦点、隐含冲突或要达成的目标、必要的背景约束，让角色能自然产生分歧与互动。\n要求：1-3 句、不超过 150 字、只输出润色后的文本（不要解释、不要引号、不要分点）。\n\n角色阵容：${rolesBrief()}\n\n原设定：${prev}`
-      : `请根据下面的角色阵容，起草一段多角色对话的场景设定（导演指令）：给出一个具体、有争议、能让角色自然互相接话的话题，并点明讨论目标。\n要求：1-3 句、不超过 150 字、只输出文本（不要解释、不要引号）。\n\n角色阵容：${rolesBrief()}`
+      ? `请润色下面这段多角色对话的场景设定，让几个真人凑在一起就"有事发生"：给出具体的时间地点或当下处境、明确的利益/立场冲突、有人急着要结论的压力。\n要求：1-3 句、不超过 150 字、只输出润色后的文本（不要解释、不要引号、不要分点）。\n\n角色阵容：${rolesBrief()}\n\n原设定：${prev}`
+      : `请根据下面的角色阵容，起草一段多角色对话的场景设定：具体处境 + 利益冲突 + 时间压力，让人一开口就有火药味或暗流。\n要求：1-3 句、不超过 150 字、只输出文本（不要解释、不要引号）。\n\n角色阵容：${rolesBrief()}`
     const out = await callModel(system, user, 400)
     if (!out) throw new Error('模型没有返回内容')
     undo.value = { ...undo.value, topic: prev }
@@ -555,8 +558,8 @@ async function polishRole(role) {
     const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、') || '（暂无）'
     const system = '你是角色设定师，擅长为人设写出可被 AI 稳定扮演的性格与说话风格。'
     const user = prev.trim()
-      ? `请润色下面这个角色的人设，使其立场更鲜明、性格更有辨识度、说话风格可被 AI 稳定模仿，并能与其他角色形成张力。\n要求：1-2 句、不超过 120 字、只输出润色后的人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}\n现有人设：${prev}`
-      : `请为下面这个角色设计一段人设（立场、性格、说话风格），要能与其他角色形成明显差异和张力。\n要求：1-2 句、不超过 120 字、只输出人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}`
+      ? `请润色下面这个角色的人设，让它在真人对话里"像个活人"：立场鲜明、性格有毛边（偏见/软肋/小毛病）、说话习惯具体（口头禅、语速、爱用什么词、什么时候会急），并能与其他角色形成摩擦。\n要求：1-2 句、不超过 120 字、只输出润色后的人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}\n现有人设：${prev}`
+      : `请为下面这个角色设计一段人设，要像真人：立场鲜明（哪怕有偏见）、性格有毛边、说话习惯具体（口头禅、语速、爱用什么词、什么时候急眼），与其他角色形成明显差异和张力。\n要求：1-2 句、不超过 120 字、只输出人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}`
     const out = await callModel(system, user, 300)
     if (!out) throw new Error('模型没有返回内容')
     undo.value = { ...undo.value, roles: { ...undo.value.roles, [role.id]: prev } }
@@ -585,15 +588,19 @@ function undoRole(role) {
   ElMessage.info('已恢复原人设')
 }
 
-function buildSystemPrompt(role) {  const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、')
+function buildSystemPrompt(role) {
+  const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、')
   return [
-    `你在一个多角色模拟对话剧场中扮演「${role.name}」。${role.persona || ''}`,
-    script.value.topic ? `【场景/话题】${script.value.topic}` : '',
-    `其他在场角色：${others}。`,
-    '规则：',
-    `1. 只输出「${role.name}」的发言正文；不要旁白、不要替其他角色说话、不要输出自己的名字前缀。`,
-    '2. 要回应其他角色上一条发言，可以补充、反驳、提问，保持对话自然推进。',
-    `3. 每次发言控制在 200 字以内，不说空话套话。`,
+    `你就是「${role.name}」，正和 ${others} 当面聊天。${role.persona || '（性格要鲜明，别当老好人）'}`,
+    script.value.topic ? `【此刻的场景】${script.value.topic}` : '',
+    '记住：这是说话，不是写文章。务必做到——',
+    '1. 口语：短句为主，可以有语气词（嗯、诶、行吧、真的假的）、停顿、重复、自我纠正，甚至话说一半停住。',
+    '2. 有来有回：先对刚听到的那句话做出反应（答应/反驳/追问/吐槽/被逗笑），再说自己的；可以抢话、打断、反问。',
+    '3. 带情绪和立场：会不耐烦、会惊讶、会被说动、也会死扛；别永远礼貌中立、别谁都不得罪。',
+    '4. 有人味：用自己的经历、行当里的比喻、一点口头禅，偶尔自嘲或开个小玩笑。',
+    '5. 允许极少量动作或神态，写在圆括号里，如（皱眉）（把杯子往桌上一放），每句最多一处。',
+    '禁止：分点列举、"首先/其次/总之"、总结陈词、书面语长句、客服腔（"希望对你有帮助"）、替别人说话、重复上一条的句式。',
+    '长度：1-3 句、30-120 字，像微信语音转文字那样自然。只输出你说的话，不要加名字前缀，不要旁白。',
   ].filter(Boolean).join('\n')
 }
 
@@ -602,7 +609,7 @@ function buildPayloadMessages(role) {
   const msgs = [{ role: 'system', content: buildSystemPrompt(role) }]
   const history = transcript.value.filter(m => !m.streaming).slice(-CONTEXT_WINDOW)
   if (history.length === 0) {
-    msgs.push({ role: 'user', content: `（对话现在开始。请以「${role.name}」的身份发起第一条发言。）` })
+    msgs.push({ role: 'user', content: `（刚坐下，还没人开口。你先说点什么，别客套，直接切入正题。）` })
   }
   for (const m of history) {
     if (m.roleId === role.id) {
@@ -679,6 +686,15 @@ async function speakRole(role, round) {
   transcript.value.push(msg)
   scrollToBottom(true)
 
+  // 真人不会零延迟接话：0.6-1.8s 的"思考/组织语言"停顿，期间显示 ···
+  const thinkMs = 600 + Math.random() * 1200
+  const wakeAt = Date.now() + thinkMs
+  while (Date.now() < wakeAt) {
+    if (stopAll) { transcript.value.splice(transcript.value.indexOf(msg), 1); return false }
+    await new Promise(r => setTimeout(r, Math.min(120, wakeAt - Date.now())))
+  }
+  if (stopAll) { transcript.value.splice(transcript.value.indexOf(msg), 1); return false }
+
   for (let attempt = 0; attempt < 2; attempt++) {
     skipFlag = false
     abortController = new AbortController()
@@ -689,7 +705,7 @@ async function speakRole(role, round) {
         body: JSON.stringify({
           model: script.value.model,
           messages: buildPayloadMessages(role),
-          temperature: 0.8,
+          temperature: 0.9,
           max_tokens: MAX_REPLY_TOKENS,
           stream: true,
         }),
@@ -872,6 +888,16 @@ watch(() => auth.isAuthenticated.value, (authed) => { if (authed && !modelsLoadi
 .msg-content.streaming::after { content: ''; }
 .type-cursor { display: inline-block; width: 2px; height: 1em; background: var(--color-primary, #6366f1); margin-left: 2px; vertical-align: text-bottom; animation: blink 0.8s infinite; }
 @keyframes blink { 50% { opacity: 0; } }
+
+/* 「正在说话」三点动画 */
+.typing-dots { display: inline-flex; gap: 4px; align-items: center; height: 1em; }
+.typing-dots i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-tertiary, #999);
+  animation: tp-bounce 1.2s infinite ease-in-out;
+}
+.typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes tp-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.5; } 40% { transform: translateY(-4px); opacity: 1; } }
 
 .rp-interrupted {
   align-self: center; display: flex; gap: 10px; align-items: center;
