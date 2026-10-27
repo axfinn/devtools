@@ -782,5 +782,6 @@ news:
   max_items: 30
   # 历史保留天数,0=永久保留,>0 时清理更早的归档
   retention_days: 0
-  # 手动触发接口 /api/news/generate 的保护密码;留空=开放
+  # 写端点 /api/news/generate 与 /api/news/publish 的保护密码
+  # 留空(或全空白)= 写端点禁用(fail-closed),请求一律返回 403;出厂态即禁用,需要写入请显式配置
   admin_password: ""
