@@ -403,6 +403,20 @@ func (h *AIGatewayHandler) GetCatalog(c *gin.Context) {
 		}
 	}
 
+	// Ollama 本地模型（OpenAI 协议）：裸模型名直连 /v1/chat/completions，
+	// 也支持 "ollama:<name>" 前缀写法
+	if prov := h.resolveOllamaProviderConfig(); prov != nil {
+		for _, m := range prov.Models {
+			catalog = append(catalog, gin.H{
+				"model":       m,
+				"provider":    "ollama",
+				"type":        "chat",
+				"endpoint":    "/api/ai-gateway/v1/chat/completions",
+				"description": "Ollama 本地模型（OpenAI 协议，也支持 ollama:" + m + " 前缀）",
+			})
+		}
+	}
+
 	if h.hasProxyConfig() {
 		proxyModels := h.getProxyModels()
 		for _, model := range proxyModels {

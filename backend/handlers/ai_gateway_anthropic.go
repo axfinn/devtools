@@ -551,6 +551,8 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 先校验 Flusher（响应头一旦写入就不能改状态码了，必须在 WriteHeader 前检查）
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
+		// 此时响应头尚未写出，仍可用普通 JSON 返回真实状态码
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
 		return http.StatusInternalServerError, fmt.Errorf("streaming not supported")
 	}
 
@@ -571,6 +573,10 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 从第一个字节起就统一走 sseWriter：拨号期心跳、生成期心跳、主复制循环三方
 	// 都会写同一个 ResponseWriter，必须由同一把锁串行化。
 	writer := newSSEWriter(c.Writer, flusher)
+
+	// ⚠️ 从这里开始响应头已提交(200)，后续任何错误都不能再用 c.JSON/c.Data 改状态码
+	// （superfluous WriteHeader 会被 Go 静默忽略），必须改发 Anthropic 规范的 error 帧。
+
 	if err := writer.write([]byte(ssePingFrame)); err != nil {
 		return http.StatusOK, context.Canceled
 	}
@@ -620,7 +626,7 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	req, err := http.NewRequestWithContext(ctx, "POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		stopPreHeartbeat()
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		writeSSEErrorFrame(writer, http.StatusBadGateway, err.Error())
 		return http.StatusBadGateway, err
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -657,14 +663,14 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	// 上游开始响应后停掉拨号期高频心跳(并 join)，改用生成期的 5s 心跳(防止 thinking 阶段断流)
 	stopPreHeartbeat()
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		writeSSEErrorFrame(writer, http.StatusBadGateway, err.Error())
 		return http.StatusBadGateway, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(resp.Body)
-		c.Data(resp.StatusCode, "application/json", errBody)
+		forwardUpstreamSSEError(writer, resp.StatusCode, errBody)
 		return resp.StatusCode, fmt.Errorf("upstream error %d", resp.StatusCode)
 	}
 
@@ -731,6 +737,49 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 		}
 	}
 	return http.StatusOK, nil
+}
+
+// writeSSEErrorFrame 以 Anthropic 规范的 error 事件帧把错误写给客户端。
+// 流式响应头(200)一旦写出就无法再改状态码（superfluous WriteHeader 会被 Go 静默忽略），
+// 客户端只会看到 200 + 与 ping 帧混杂的裸 JSON，标准 SDK 解析直接失败。
+// 按 SSE 语义发 `event: error` 帧是 Anthropic 官方流式错误格式，SDK 能正确识别并抛错。
+func writeSSEErrorFrame(writer *sseWriter, upstreamStatus int, message string) {
+	errType := "api_error"
+	switch upstreamStatus {
+	case http.StatusBadRequest:
+		errType = "invalid_request_error"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		errType = "authentication_error"
+	case http.StatusNotFound:
+		errType = "not_found_error"
+	case http.StatusTooManyRequests:
+		errType = "rate_limit_error"
+	case 529:
+		errType = "overloaded_error"
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"type":  "error",
+		"error": map[string]interface{}{"type": errType, "message": message},
+	})
+	_ = writer.write([]byte("event: error\ndata: " + string(payload) + "\n\n"))
+}
+
+// forwardUpstreamSSEError 把上游 4xx/5xx 错误转为 SSE error 帧写给客户端。
+// 上游错误体本身就是 Anthropic 风格 {"type":"error","error":{...}} 时原样转发；
+// 否则按状态码包装成对应错误类型。
+func forwardUpstreamSSEError(writer *sseWriter, status int, errBody []byte) {
+	var probe map[string]interface{}
+	if json.Unmarshal(errBody, &probe) == nil {
+		if _, ok := probe["error"]; ok {
+			_ = writer.write([]byte("event: error\ndata: " + string(errBody) + "\n\n"))
+			return
+		}
+	}
+	msg := strings.TrimSpace(string(errBody))
+	if msg == "" {
+		msg = fmt.Sprintf("upstream error %d", status)
+	}
+	writeSSEErrorFrame(writer, status, truncateString(msg, 500))
 }
 
 // sseThinkingFilter 过滤 DeepSeek / Ollama(qwen3 系列)SSE 流中的 type="thinking" 内容块

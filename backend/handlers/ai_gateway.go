@@ -3,6 +3,7 @@ package handlers
 import (
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +32,7 @@ type AIGatewayHandler struct {
 
 // streamClientCacheKey 生成缓存 key。headerTimeoutSec=0 表示默认 60s。
 func streamClientCacheKey(providerName string, headerTimeoutSec int) string {
-	return providerName + "|" + time.Duration(headerTimeoutSec).String()
+	return providerName + "|" + strconv.Itoa(headerTimeoutSec)
 }
 
 type usageSummary struct {

@@ -172,14 +172,20 @@ func (h *AIGatewayHandler) ChatPlusStream(c *gin.Context) {
 
 	// Ollama 本地引擎：model 形如 "ollama:qwen3:14b"，
 	// 转发到局域网 Ollama 的 OpenAI 兼容端点，SSE 透传（复用心跳/重试逻辑）。
+	// 用按 provider 派生的流式客户端（header_timeout_sec 兕底 600s）：
+	// 本地 27B 模型首字节常超 60s，全局 streamClient 会把请求掐死。
 	if after, ok := strings.CutPrefix(model, "ollama:"); ok {
 		if after == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 Ollama 模型名"})
 			return
 		}
-		base := fallbackString(h.cfg.ChatPlus.OllamaBaseURL, "http://192.168.31.147:11434")
+		prov := h.resolveOllamaProviderConfig()
+		if prov == nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "未配置 Ollama 下游（chat_plus.ollama_base_url）"})
+			return
+		}
 		req.Model = after
-		h.streamOpenAICompatible(c, req, strings.TrimRight(base, "/")+"/v1/chat/completions", "ollama")
+		h.streamOpenAICompatibleWithClient(c, req, strings.TrimRight(prov.APIURL, "/")+"/v1/chat/completions", "ollama", h.pickStreamClient(prov))
 		return
 	}
 
