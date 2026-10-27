@@ -122,7 +122,13 @@
           </button>
           <div v-if="panelOpen" class="panel-body">
             <div class="setting-item topic-item">
-              <label>话题 / 场景设定（导演指令）</label>
+              <div class="label-row">
+                <label>话题 / 场景设定（导演指令）</label>
+                <button class="polish-btn" :disabled="polishing.topic" @click="polishTopic">
+                  <span v-if="polishing.topic" class="spin">◌</span>{{ polishing.topic ? ' 润色中…' : '✨ ' + (script.topic.trim() ? '润色' : '帮我起草') }}
+                </button>
+                <button v-if="undo.topic !== null" class="undo-btn" @click="undoTopic">撤销</button>
+              </div>
               <el-input
                 v-model="script.topic"
                 type="textarea"
@@ -137,6 +143,9 @@
                 <div class="role-head">
                   <span class="role-dot" :style="{ background: role.color }"></span>
                   <el-input v-model="role.name" size="small" maxlength="12" placeholder="角色名" class="role-name-input" />
+                  <button class="polish-mini" :disabled="polishing[role.id]" title="润色这个人设" @click="polishRole(role)">
+                    <span v-if="polishing[role.id]" class="spin">◌</span><span v-else>✨</span>
+                  </button>
                   <el-switch v-model="role.enabled" size="small" />
                   <button
                     v-if="script.roles.length > 2"
@@ -152,6 +161,7 @@
                   maxlength="200"
                   placeholder="人设：立场、性格、说话风格…"
                 />
+                <button v-if="role.id in undo.roles" class="undo-btn inline" @click="undoRole(role)">撤销润色</button>
               </div>
               <button v-if="script.roles.length < 6" class="role-add" @click="addRole">＋ 自定义角色</button>
               <button class="role-add library" @click="libraryOpen = true">
@@ -450,8 +460,132 @@ function addRole() {
   script.value.roles.push(newRole(`角色 ${String.fromCharCode(65 + script.value.roles.length)}`, '', ROLE_COLORS[script.value.roles.length % ROLE_COLORS.length]))
 }
 
-function buildSystemPrompt(role) {
-  const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、')
+// ══════════════ AI 润色（场景 / 角色人设） ══════════════
+const polishing = ref({})          // { topic: bool, [roleId]: bool }
+const undo = ref({ topic: null, roles: {} })   // 润色前的原文（null = 无记录），供撤销
+
+// 复用 chat/stream 端点做一次性的"补全"，把 SSE 拼成完整文本
+async function callModel(system, user, maxTokens = 400) {
+  if (!script.value.model) throw new Error('请先选择模型')
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 90000) // 兜底超时，防止卡死在"润色中"
+  try {
+    const res = await fetch(`${API_BASE}/api/chat-plus/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
+      body: JSON.stringify({
+        model: script.value.model,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        temperature: 0.7,
+        max_tokens: maxTokens,
+        stream: true,
+      }),
+      signal: ctrl.signal,
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || `HTTP ${res.status}`)
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = '', out = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop()
+      for (const raw of lines) {
+        const line = raw.trim()
+        if (!line.startsWith('data:')) continue
+        const data = line.slice(5).trim()
+        if (data === '[DONE]') continue
+        let chunk
+        try { chunk = JSON.parse(data) } catch { continue }
+        out += chunk?.choices?.[0]?.delta?.content || ''
+      }
+    }
+    return cleanModelText(out)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// 模型偶尔会带引号、"润色后："前缀或 markdown 引用，统一剥掉
+function cleanModelText(t) {
+  let s = (t || '').trim()
+  s = s.replace(/^```[a-z]*\s*/i, '').replace(/```$/,'').trim()
+  s = s.replace(/^(润色后|优化后|建议版本|场景设定|人设)[:：]\s*/,'').trim()
+  s = s.replace(/^["'“”「『](.*)["'“”」』]$/s, '$1').trim()
+  return s
+}
+
+function rolesBrief() {
+  return activeRoles.value.map(r => `${r.name}${r.persona ? `（${r.persona}）` : ''}`).join('；') || '（尚无角色）'
+}
+
+async function polishTopic() {
+  if (polishing.value.topic) return
+  if (!script.value.model) { ElMessage.warning('请先选择模型'); return }
+  const prev = script.value.topic
+  polishing.value = { ...polishing.value, topic: true }
+  try {
+    const system = '你是资深对话编剧，专门设计多角色模拟对话的"导演指令"。'
+    const user = prev.trim()
+      ? `请润色下面这段多角色对话的场景设定，使其更清晰、更有张力：明确讨论焦点、隐含冲突或要达成的目标、必要的背景约束，让角色能自然产生分歧与互动。\n要求：1-3 句、不超过 150 字、只输出润色后的文本（不要解释、不要引号、不要分点）。\n\n角色阵容：${rolesBrief()}\n\n原设定：${prev}`
+      : `请根据下面的角色阵容，起草一段多角色对话的场景设定（导演指令）：给出一个具体、有争议、能让角色自然互相接话的话题，并点明讨论目标。\n要求：1-3 句、不超过 150 字、只输出文本（不要解释、不要引号）。\n\n角色阵容：${rolesBrief()}`
+    const out = await callModel(system, user, 400)
+    if (!out) throw new Error('模型没有返回内容')
+    undo.value = { ...undo.value, topic: prev }
+    script.value.topic = out.slice(0, 500)
+    ElMessage.success(prev.trim() ? '场景已润色，不满意可点「撤销」' : '已为你起草场景')
+  } catch (e) {
+    ElMessage.error(`润色失败：${netErrMsg(e)}`)
+  } finally {
+    polishing.value = { ...polishing.value, topic: false }
+  }
+}
+
+async function polishRole(role) {
+  if (polishing.value[role.id]) return
+  if (!script.value.model) { ElMessage.warning('请先选择模型'); return }
+  const prev = role.persona
+  polishing.value = { ...polishing.value, [role.id]: true }
+  try {
+    const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、') || '（暂无）'
+    const system = '你是角色设定师，擅长为人设写出可被 AI 稳定扮演的性格与说话风格。'
+    const user = prev.trim()
+      ? `请润色下面这个角色的人设，使其立场更鲜明、性格更有辨识度、说话风格可被 AI 稳定模仿，并能与其他角色形成张力。\n要求：1-2 句、不超过 120 字、只输出润色后的人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}\n现有人设：${prev}`
+      : `请为下面这个角色设计一段人设（立场、性格、说话风格），要能与其他角色形成明显差异和张力。\n要求：1-2 句、不超过 120 字、只输出人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}`
+    const out = await callModel(system, user, 300)
+    if (!out) throw new Error('模型没有返回内容')
+    undo.value = { ...undo.value, roles: { ...undo.value.roles, [role.id]: prev } }
+    role.persona = out.slice(0, 200)
+    ElMessage.success(prev.trim() ? `「${role.name}」人设已润色` : `已为「${role.name}」生成人设`)
+  } catch (e) {
+    ElMessage.error(`润色失败：${netErrMsg(e)}`)
+  } finally {
+    polishing.value = { ...polishing.value, [role.id]: false }
+  }
+}
+
+function undoTopic() {
+  if (undo.value.topic === null) return
+  script.value.topic = undo.value.topic
+  undo.value = { ...undo.value, topic: null }
+  ElMessage.info('已恢复原场景')
+}
+function undoRole(role) {
+  const prev = undo.value.roles[role.id]
+  if (prev === undefined) return
+  role.persona = prev
+  const roles = { ...undo.value.roles }
+  delete roles[role.id]
+  undo.value = { ...undo.value, roles }
+  ElMessage.info('已恢复原人设')
+}
+
+function buildSystemPrompt(role) {  const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、')
   return [
     `你在一个多角色模拟对话剧场中扮演「${role.name}」。${role.persona || ''}`,
     script.value.topic ? `【场景/话题】${script.value.topic}` : '',
@@ -784,6 +918,29 @@ watch(() => auth.isAuthenticated.value, (authed) => { if (authed && !modelsLoadi
 .panel-toggle:hover { color: var(--color-primary, #6366f1); }
 .panel-body { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; }
 .setting-item label { display: block; font-size: 13px; color: var(--text-secondary, #555); margin-bottom: 6px; }
+.label-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.label-row label { margin-bottom: 0; }
+.polish-btn {
+  border: 1px solid color-mix(in srgb, var(--color-primary, #6366f1) 40%, transparent);
+  background: color-mix(in srgb, var(--color-primary, #6366f1) 8%, transparent);
+  color: var(--color-primary, #6366f1); font-size: 12px; padding: 2px 10px; border-radius: 999px; cursor: pointer;
+}
+.polish-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--color-primary, #6366f1) 16%, transparent); }
+.polish-btn:disabled { opacity: 0.65; cursor: default; }
+.polish-mini {
+  border: none; background: none; cursor: pointer; font-size: 13px; line-height: 1; padding: 2px 4px;
+  color: var(--color-primary, #6366f1); border-radius: 6px;
+}
+.polish-mini:hover:not(:disabled) { background: color-mix(in srgb, var(--color-primary, #6366f1) 12%, transparent); }
+.polish-mini:disabled { opacity: 0.6; cursor: default; }
+.undo-btn {
+  border: none; background: none; cursor: pointer; font-size: 12px; color: var(--text-tertiary, #999);
+  text-decoration: underline; padding: 0 2px;
+}
+.undo-btn:hover { color: var(--color-primary, #6366f1); }
+.undo-btn.inline { align-self: flex-start; margin-top: 4px; }
+.spin { display: inline-block; animation: rp-spin 1s linear infinite; }
+@keyframes rp-spin { to { transform: rotate(360deg); } }
 .roles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 .role-card {
   border: 1px solid var(--border-light, #e5e7eb); border-radius: 12px; padding: 10px;
