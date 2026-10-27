@@ -76,6 +76,16 @@ func (h *AIGatewayHandler) StreamChatCompletions(c *gin.Context, req ChatComplet
 		h.streamOpenAICompatible(c, req, endpoint, h.cfg.DashScope.APIKey)
 	case "minimax":
 		h.streamMiniMaxChat(c, req)
+	case "ollama":
+		endpoint, upstreamModel, prov, err := h.ollamaChatTarget(req.Model)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		req.Model = upstreamModel
+		// 按 provider 派生流式客户端：Ollama provider 配置了 header_timeout_sec=600
+		// （本地 27B 首字节慢），不能复用全局 streamClient 的 60s 兕底
+		h.streamOpenAICompatibleWithClient(c, req, endpoint, "ollama", h.pickStreamClient(prov))
 	case "proxy":
 		endpoint := strings.TrimRight(h.cfg.AIGateway.Proxy.APIURL, "/") + "/chat/completions"
 		req.Model = h.proxyUpstreamModel(req.Model)
@@ -85,10 +95,15 @@ func (h *AIGatewayHandler) StreamChatCompletions(c *gin.Context, req ChatComplet
 	}
 }
 
-// streamOpenAICompatible 透传 OpenAI 兼容格式的 SSE 流
+// streamOpenAICompatible 透传 OpenAI 兼容格式的 SSE 流（默认全局 streamClient，60s 响应头兕底）
+func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatCompletionRequest, endpoint, apiKey string) {
+	h.streamOpenAICompatibleWithClient(c, req, endpoint, apiKey, h.streamClient)
+}
+
+// streamOpenAICompatibleWithClient 允许调用方指定流式 HTTP 客户端（如 Ollama 的 600s header timeout）。
 // 带 20s 心跳（DeepSeek reasoner 长思考期可能长时间无 data 事件，
 // 中间代理/CDN 会因空闲超时断开连接）。
-func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatCompletionRequest, endpoint, apiKey string) {
+func (h *AIGatewayHandler) streamOpenAICompatibleWithClient(c *gin.Context, req ChatCompletionRequest, endpoint, apiKey string, client *http.Client) {
 	bodyMap := map[string]interface{}{
 		"model":    req.Model,
 		"messages": req.Messages,
@@ -135,7 +150,7 @@ func (h *AIGatewayHandler) streamOpenAICompatible(c *gin.Context, req ChatComple
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Accept", "text/event-stream")
 
-	resp, err := doStreamRequest(h.streamClient, httpReq)
+	resp, err := doStreamRequest(client, httpReq)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

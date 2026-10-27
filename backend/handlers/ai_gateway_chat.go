@@ -204,10 +204,15 @@ func (h *AIGatewayHandler) InternalChat(c *gin.Context) {
 	}
 
 	start := time.Now()
+	// 记录实际路由到的 provider，不再硬编码 minimax（日志失真导致费用/流水分析不准）
+	chatProvider := h.resolveChatProvider(req.Model)
+	if chatProvider == "" {
+		chatProvider = "unknown"
+	}
 	result, _, err := h.executeChatRequest(req)
 	if err != nil {
 		_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
-			APIKeyID: internalChatKeyID, Model: req.Model, Provider: "minimax",
+			APIKeyID: internalChatKeyID, Model: req.Model, Provider: chatProvider,
 			Endpoint: "/api/internal/chat", RequestType: "chat",
 			StatusCode: http.StatusBadGateway, Success: false, ErrorMessage: err.Error(),
 			ClientIP: c.ClientIP(), LatencyMS: time.Since(start).Milliseconds(),
@@ -216,7 +221,7 @@ func (h *AIGatewayHandler) InternalChat(c *gin.Context) {
 		return
 	}
 	_ = h.db.CreateAIAPIRequestLog(&models.AIAPIRequestLog{
-		APIKeyID: internalChatKeyID, Model: req.Model, Provider: "minimax",
+		APIKeyID: internalChatKeyID, Model: req.Model, Provider: chatProvider,
 		Endpoint: "/api/internal/chat", RequestType: "chat",
 		StatusCode: http.StatusOK, Success: true,
 		ClientIP: c.ClientIP(), LatencyMS: time.Since(start).Milliseconds(),
@@ -291,11 +296,141 @@ func (h *AIGatewayHandler) executeChatRequest(req ChatCompletionRequest) (gin.H,
 		return h.callDeepSeek(req)
 	case "minimax":
 		return h.callMiniMax(req)
+	case "ollama":
+		return h.callOllamaChat(req)
 	case "proxy":
 		return h.callProxyChat(req)
 	default:
 		return nil, nil, fmt.Errorf("不支持的文本模型: %s", req.Model)
 	}
+}
+
+// resolveOllamaProviderConfig 查找 Ollama 下游配置：anthropic_providers 表
+// （名称 ollama 不分大小写，或 URL 含 :11434）优先；找不到则回退
+// chat_plus.ollama_base_url（HeaderTimeoutSec 兕底 600s，本地大模型首字节慢）。
+func (h *AIGatewayHandler) resolveOllamaProviderConfig() *config.AnthropicProviderConfig {
+	if h.db != nil {
+		providers := h.allAnthropicProviders()
+		for i := range providers {
+			name := strings.ToLower(strings.TrimSpace(providers[i].Name))
+			urlLower := strings.ToLower(providers[i].APIURL)
+			if name == "ollama" || strings.Contains(urlLower, ":11434") {
+				if providers[i].HeaderTimeoutSec <= 0 {
+					providers[i].HeaderTimeoutSec = 600
+				}
+				return &providers[i]
+			}
+		}
+	}
+	if base := strings.TrimSpace(h.cfg.ChatPlus.OllamaBaseURL); base != "" {
+		return &config.AnthropicProviderConfig{
+			Name:             "Ollama",
+			APIURL:           base,
+			APIKey:           "ollama",
+			HeaderTimeoutSec: 600,
+		}
+	}
+	return nil
+}
+
+// ollamaChatTarget 解析 OpenAI 协议下的 Ollama 模型，返回上游 /v1/chat/completions
+// endpoint、真实模型名和 provider 配置。支持 "ollama:<name>" 前缀；裸模型名
+// 必须命中 Ollama provider 的 models 列表才路由。
+func (h *AIGatewayHandler) ollamaChatTarget(model string) (endpoint, upstreamModel string, prov *config.AnthropicProviderConfig, err error) {
+	prov = h.resolveOllamaProviderConfig()
+	if prov == nil {
+		return "", "", nil, fmt.Errorf("未配置 Ollama 下游（anthropic_providers 表或 chat_plus.ollama_base_url）")
+	}
+	endpoint = strings.TrimRight(prov.APIURL, "/") + "/v1/chat/completions"
+	if after, ok := strings.CutPrefix(model, "ollama:"); ok {
+		if strings.TrimSpace(after) == "" {
+			return "", "", nil, fmt.Errorf("缺少 Ollama 模型名")
+		}
+		return endpoint, after, prov, nil
+	}
+	for _, m := range prov.Models {
+		if m == model {
+			return endpoint, model, prov, nil
+		}
+	}
+	return "", "", nil, fmt.Errorf("不支持的文本模型: %s", model)
+}
+
+// ollamaModels 判断裸模型名是否命中 Ollama provider 的 models 列表
+func (h *AIGatewayHandler) ollamaModels(model string) bool {
+	prov := h.resolveOllamaProviderConfig()
+	if prov == nil {
+		return false
+	}
+	for _, m := range prov.Models {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
+// callOllamaChat 通过 Ollama 的 OpenAI 兼容端点（/v1/chat/completions）转发非流式聊天。
+// 复用 longChatClient（5 分钟），本地大模型长推理不会被 90s 截断。
+func (h *AIGatewayHandler) callOllamaChat(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
+	endpoint, upstreamModel, _, err := h.ollamaChatTarget(req.Model)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	bodyMap := map[string]interface{}{
+		"model":    upstreamModel,
+		"messages": req.Messages,
+		"stream":   false,
+	}
+	if req.Temperature != nil {
+		bodyMap["temperature"] = *req.Temperature
+	}
+	if req.MaxTokens != nil {
+		bodyMap["max_tokens"] = *req.MaxTokens
+	}
+	if req.TopP != nil {
+		bodyMap["top_p"] = *req.TopP
+	}
+	if req.Stop != nil {
+		bodyMap["stop"] = req.Stop
+	}
+	if len(req.ResponseFormat) > 0 {
+		bodyMap["response_format"] = req.ResponseFormat
+	}
+	if len(req.Tools) > 0 {
+		bodyMap["tools"] = req.Tools
+	}
+	if req.ToolChoice != nil {
+		bodyMap["tool_choice"] = req.ToolChoice
+	}
+	if strings.TrimSpace(req.ReasoningEffort) != "" {
+		bodyMap["reasoning_effort"] = strings.TrimSpace(req.ReasoningEffort)
+	}
+	for key, value := range req.ExtraBody {
+		bodyMap[key] = value
+	}
+
+	raw, err := h.doJSONRequest(endpoint, "ollama", bodyMap)
+	if err != nil {
+		return nil, raw, err
+	}
+	content := extractString(raw, "choices", "0", "message", "content")
+	if content == "" {
+		content = extractMessageContentFromChoices(raw["choices"])
+	}
+	result := gin.H{
+		"id":           fallbackString(extractString(raw, "id"), "chatcmpl-"+utils.GenerateHexKey(4)),
+		"object":       "chat.completion",
+		"created":      time.Now().Unix(),
+		"model":        req.Model,
+		"provider":     "ollama",
+		"choices":      raw["choices"],
+		"usage":        raw["usage"],
+		"content":      content,
+		"raw_response": raw,
+	}
+	return result, raw, nil
 }
 
 func (h *AIGatewayHandler) callDashScope(req ChatCompletionRequest) (gin.H, map[string]interface{}, error) {
@@ -783,6 +918,17 @@ func (h *AIGatewayHandler) resolveChatProvider(model string) string {
 	// DashScope 优先（若配置了 API Key）
 	if h.cfg.DashScope.APIKey != "" && dashscopeModels[model] {
 		return "dashscope"
+	}
+	// Ollama 本地模型（OpenAI 协议）："ollama:<name>" 前缀直通；
+	// 裸模型名需命中 Ollama provider 的 models 列表，避免误吞其他线路的模型
+	if strings.HasPrefix(model, "ollama:") {
+		if _, _, _, err := h.ollamaChatTarget(model); err == nil {
+			return "ollama"
+		}
+		return ""
+	}
+	if h.ollamaModels(model) {
+		return "ollama"
 	}
 	switch model {
 	case fallbackString(h.cfg.DeepSeek.Model, "deepseek-chat"), "deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-coder":
