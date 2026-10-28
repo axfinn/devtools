@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"devtools/config"
+	"devtools/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -54,7 +55,12 @@ const (
 	comfyPollInterval  = 1500 * time.Millisecond // 主链路轮询间隔
 	comfyStreamTick    = 400 * time.Millisecond  // SSE 推送间隔
 	comfyTaskTTL       = 2 * time.Hour           // 任务内存保留时长
-	comfyStreamMaxIdle = 15 * time.Minute        // SSE 单连接最长存活，防僵尸连接
+	// SSE 单连接最长存活。不能设得太短：这个到期事件只影响「这条 SSE」，
+	// ComfyUI 那边任务照跑，如果我们在这里写 failed，前端就会看到假失败。
+	comfyStreamMaxIdle = 60 * time.Minute
+	// 主链路等待窗口（cfg.timeout_sec）到了之后的宽限续等时长。
+	// ComfyUI 不受我们 ctx 约束，首帧加载模型/排队时经常在超时后才出图。
+	comfyGraceWait     = 30 * time.Minute
 	comfySamplerNodeID = "8"                     // 工作流里 KSampler 的节点 id（进度百分比据此换算）
 	comfySaveNodeID    = "10"                    // 工作流里 SaveImage 的节点 id
 	comfyImageModel    = "qwen-image-2.1"        // 对外暴露的模型名（OpenAI 兼容端点用）
@@ -86,6 +92,11 @@ type comfyImageRequest struct {
 	Image          string  `json:"image"`           // 参考图（data URL / http URL）；非空即「编辑」模式
 	ResponseFormat string  `json:"response_format"` // url（默认）| b64_json
 	N              int     `json:"n"`               // 仅支持 1
+	// ConversationID / MessageID 只为「任务终态落库」服务：带上它，出图结果（或失败原因）
+	// 会由服务端直接写进 chat_plus_messages。前端掉线/页面关掉也能在下次进会话时看到，
+	// 不会再出现「ComfyUI 图都出来了、前端却说失败且拿不到」的情况。
+	ConversationID string `json:"conversation_id"`
+	MessageID      string `json:"message_id"`
 }
 
 // comfyImage 一张生成结果。
@@ -759,8 +770,67 @@ func (h *AIGatewayHandler) startComfyTask(cfg config.ComfyUIConfig, req comfyIma
 			}
 		}()
 		h.runComfyTask(cfg, taskID, req, prompt, negative, opts, mode)
+		// 终态统一落库：成功带图、失败带原因。这样即使前端 SSE 断了、页面关了、
+		// 甚至手机切网，结果都还在服务端消息里，下次进会话就能看到。
+		h.persistComfyTaskOutcome(taskID, req, prompt)
 	}()
 	return snapshot
+}
+
+// persistComfyTaskOutcome 把出图任务的终态写成一条 assistant 消息（幂等，id 用前端给的 message_id）。
+// 只有请求带了 conversation_id + message_id 才写；缺字段的老调用方（OpenAI 兼容端点等）直接跳过。
+func (h *AIGatewayHandler) persistComfyTaskOutcome(taskID string, req comfyImageRequest, prompt string) {
+	if h.db == nil || req.ConversationID == "" || req.MessageID == "" {
+		return
+	}
+	task, ok := comfyTasks.get(taskID)
+	if !ok {
+		return
+	}
+	if task.Status != "succeeded" && task.Status != "failed" {
+		return
+	}
+	// 防串扰：用户点「重新生成」时同一条消息会换成新 task_id。
+	// 老任务如果还在 ComfyUI 里跑，晚到的终态不能把新任务的结果覆盖掉。
+	if old, err := h.db.GetChatPlusMessage(req.MessageID); err == nil && old != nil {
+		if old.TaskID != "" && old.TaskID != taskID {
+			log.Printf("[comfy] 任务 %s 已不是消息 %s 的当前任务（现为 %s），跳过落库",
+				taskID, req.MessageID, old.TaskID)
+			return
+		}
+	}
+	m := &models.ChatPlusMessage{
+		ID:             req.MessageID,
+		ConversationID: req.ConversationID,
+		Role:           "assistant",
+		Content:        prompt,
+		TaskID:         taskID,
+		Kind:           "image",
+		Status:         task.Status,
+		Ts:             task.CreatedAt.UnixMilli(),
+	}
+	if task.Status == "succeeded" {
+		imgs := make([]map[string]interface{}, 0, len(task.Images))
+		for _, img := range task.Images {
+			imgs = append(imgs, map[string]interface{}{
+				"id": img.URL, "url": img.URL, "w": img.Width, "h": img.Height,
+			})
+		}
+		raw, err := json.Marshal(imgs)
+		if err != nil {
+			log.Printf("[comfy] 任务 %s 图片序列化失败: %v", taskID, err)
+			return
+		}
+		m.Images = string(raw)
+	} else {
+		m.ErrMessage = task.Error
+	}
+	if err := h.db.UpsertChatPlusMessage(m); err != nil {
+		log.Printf("[comfy] 任务 %s 消息落库失败: %v", taskID, err)
+		return
+	}
+	_ = h.db.TouchChatPlusConversation(req.ConversationID)
+	log.Printf("[comfy] 任务 %s 终态已落库: status=%s images=%d", taskID, m.Status, len(task.Images))
 }
 
 // runComfyTask 执行完整出图链路：上传参考图（可选）→ 提交 → 轮询 → 下载 → 落盘。
@@ -820,8 +890,27 @@ func (h *AIGatewayHandler) runComfyTask(cfg config.ComfyUIConfig, taskID string,
 	// 4) 主链路：轮询 /history 直到完成
 	entry, err := waitComfyHistory(ctx, client, promptID)
 	if err != nil {
-		h.failComfyTask(taskID, err.Error())
-		return
+		// 等待窗口到了，但 ComfyUI 完全不受我们 ctx 约束（它在自己进程里跑）。
+		// 实测图生图首帧要加载模型，常常比 timeout_sec 更久才出图——此时判失败就是
+		// 「图已经生成、前端却收到失败」。所以不判死，换独立宽限窗继续等。
+		log.Printf("[comfy] 任务 %s 主等待窗口结束（%v），进入宽限续等", taskID, err)
+		comfyTasks.mutate(taskID, func(t *comfyTask) { t.Phase = "等待时间较长（ComfyUI 仍在执行）" })
+		graceCtx, cancelGrace := context.WithTimeout(context.Background(), comfyGraceWait)
+		// 宽限期内进度照旧要更新（模型加载完成后 KSampler 还会推 progress）
+		go client.watchProgress(graceCtx, promptID, func(pct int, phase string) {
+			comfyTasks.mutate(taskID, func(t *comfyTask) {
+				if pct > t.Progress {
+					t.Progress = pct
+				}
+				t.Phase = phase
+			})
+		})
+		entry, err = waitComfyHistory(graceCtx, client, promptID)
+		cancelGrace()
+		if err != nil {
+			h.failComfyTask(taskID, err.Error())
+			return
+		}
 	}
 	stopProgress()
 
@@ -1214,7 +1303,9 @@ func (h *AIGatewayHandler) ChatPlusImageTaskStream(c *gin.Context) {
 		case <-ctx.Done():
 			return // 客户端断开
 		case <-deadline:
-			_ = writer.write([]byte("data: {\"status\":\"failed\",\"error\":\"进度连接超时，请改用任务查询接口\"}\n\n"))
+			// 到期只结束这条 SSE（让前端转轮询），绝不写 failed：
+			// 任务可能仍在 ComfyUI 里跑着，写 failed 会让前端把已生成的图判成失败。
+			_ = writer.write([]byte(": stream-deadline\n\n"))
 			return
 		case <-heartbeat.C:
 			if err := writer.write([]byte(": ping\n\n")); err != nil {

@@ -101,7 +101,7 @@ const (
 	comfyDefaultSampler    = "euler"
 	comfyDefaultScheduler  = "simple"
 	comfyDefaultResolution = 1024
-	comfyDefaultTimeoutSec = 900
+	comfyDefaultTimeoutSec = 1800 // 图生图首帧要加载模型，900s 常不够，超时会被误判成失败
 	comfyDefaultUploadDir  = "aichat"
 )
 

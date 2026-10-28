@@ -700,6 +700,23 @@ function mergeServerMessages(convId, list) {
       if ((sm.reasoning || '').length > (existing.reasoning || '').length) { existing.reasoning = sm.reasoning; touched = true }
       if (imgs.length && !(existing.images || []).length) { existing.images = imgs; touched = true }
       if (sm.task_id && !existing.taskId) { existing.taskId = sm.task_id; touched = true }
+      // 出图消息：后端任务终态会自己落库（前端掉线时这是唯一的图来源），
+      // 服务端有图就补进 genImages 并清掉本地的「失败/中断」标记。
+      if (existing.kind === 'image' && imgs.length && !(existing.genImages || []).length) {
+        existing.genImages = imgs.map(im => ({ url: im.url, width: im.w, height: im.h, filename: '' }))
+        existing.generating = false
+        existing.genError = ''
+        existing.progress = 100
+        existing.phase = '完成'
+        touched = true
+      }
+      // 服务端给出真实失败原因时覆盖本地误判（比如「网络连接中断」其实是判早了）
+      if (existing.kind === 'image' && sm.status === 'failed' && sm.error_message
+        && existing.genError !== sm.error_message) {
+        existing.genError = sm.error_message
+        existing.generating = false
+        touched = true
+      }
       // 服务端说还在跑、本地又没有结果图：交给轮询接管（刷新/换设备/断网后回到页面时的主要路径）
       if (sm.status === 'running' && existing.kind === 'image'
         && !(existing.genImages || []).length && !existing.genError && !existing.generating) {
@@ -1158,7 +1175,9 @@ async function createChatTask(payload, signal) {
 const TASK_STREAM_RETRY_MAX = 4      // SSE 连续失败几次后改轮询
 const TASK_RECONNECT_BASE_MS = 600
 const IMAGE_TASK_POLL_MS = 2000      // 出图轮询间隔
-const IMAGE_TASK_MAX_MS = 15 * 60 * 1000  // 出图最长等待（ComfyUI 首次加载模型可能好几分钟）
+// 最长等待：后端主等待(timeout_sec, 默认 1800s) + 宽限续等(30min) 都要能覆盖，
+// 否则前端先放弃，用户就会觉得「图没出来」，其实 ComfyUI 还在跑。
+const IMAGE_TASK_MAX_MS = 60 * 60 * 1000
 
 function delay(ms) {
   return new Promise(r => setTimeout(r, ms))
@@ -1505,7 +1524,13 @@ async function runImageTask(msg) {
   scrollToBottom()
 
   try {
-    const body = { prompt: msg.prompt }
+    // conversation_id / message_id 一并上报：后端任务终态（成功图或失败原因）会直接
+    // 落成服务端消息，前端掉线、关页面、切设备都不影响结果落地。
+    const body = {
+      prompt: msg.prompt,
+      conversation_id: currentConvId.value || '',
+      message_id: msg.id || '',
+    }
     if (msg.refImage) body.image = msg.refImage
     const res = await fetch(`${API_BASE}/api/chat-plus/image/generate`, {
       method: 'POST',
@@ -1538,7 +1563,7 @@ async function runImageTask(msg) {
       msg.genError = '已取消生成'
       msg.taskId = '' // 用户主动取消：别再让后台接管把它拉起来
     } else {
-      msg.genError = netErrMsg(e)
+      msg.genError = e?.biz ? e.message : netErrMsg(e)
     }
   } finally {
     msg.reconnecting = false
@@ -1593,7 +1618,11 @@ async function pollImageTask(taskId, msg, signal) {
       headers: auth.authHeader(),
       signal,
     }).catch(() => null) // 单次抖动不致命，继续下一轮
-    if (res && res.status === 404) throw new Error('任务已丢失（服务端重启过），请点「重新生成」重试')
+    if (res && res.status === 404) {
+      const err = new Error('任务已丢失（服务端重启过），请点「重新生成」重试')
+      err.biz = true // 业务错误：别被 netErrMsg 包成「请求失败：…」
+      throw err
+    }
     if (!res || !res.ok) continue
     const task = await res.json().catch(() => null)
     if (!task) continue
@@ -1601,7 +1630,10 @@ async function pollImageTask(taskId, msg, signal) {
     scrollToBottom()
     if (state === 'succeeded' || state === 'failed') return
   }
-  msg.genError = '等了太久仍未出图，已停止同步（任务可能还在服务端跑，稍后回到这个会话可看到结果）'
+  // 不设 genError：任务没失败，只是我们等腻了。保留 taskId，下次进会话由
+  // resumePendingImageTasks 接着拉；服务端终态也会自己落库。
+  msg.generating = false
+  msg.phase = '仍在后台生成，稍后回到这个会话可看到结果'
 }
 
 // 接管仍在服务端跑的出图任务：出图是后台任务，页面刷新/切网/换设备都不该让它「消失」，
@@ -1618,7 +1650,7 @@ async function resumePendingImageTasks() {
   try {
     await pollImageTask(pending.taskId, pending, signal)
   } catch (e) {
-    if (e?.name !== 'AbortError') pending.genError = pending.genError || netErrMsg(e)
+    if (e?.name !== 'AbortError') pending.genError = pending.genError || (e?.biz ? e.message : netErrMsg(e))
   } finally {
     pending.generating = false
     pending.reconnecting = false
