@@ -124,14 +124,15 @@ grep -cE '^\| *[0-9]+ *\|' AGENTS.md    # 两个数必须相等（都读工作�
 ```bash
 REF=${REF:-origin/main}
 DOC=$(git show ${REF}:AGENTS.md)
+FAIL=/tmp/fin_doc_fail_$$.txt; : > "$FAIL"
 
 # A) routes 枚举树：AGENTS.md 枚举的 .go 文件名集合 == backend/routes/ 实际文件名集合
-sed -n '/^### 后端路由拆分/,/^### /p' <<<"$DOC" | grep -o '[a-z0-9_]*\.go' | sort -u > /tmp/enum_routes.txt
+printf '%s\n' "$DOC" | sed -n '/^### 后端路由拆分/,/^### /p' | grep -o '[a-z0-9_]*\.go' | sort -u > /tmp/enum_routes.txt
 git ls-tree -r --name-only ${REF} -- backend/routes/ | grep '\.go$' | xargs -n1 basename | sort -u > /tmp/real_routes.txt
 if diff -q /tmp/enum_routes.txt /tmp/real_routes.txt >/dev/null; then
   echo "A) routes 枚举闭合 ✅（$(wc -l < /tmp/enum_routes.txt) 项）"
 else
-  echo "A) routes 枚举不闭合 ❌"; diff /tmp/enum_routes.txt /tmp/real_routes.txt
+  echo "A) routes 枚举不闭合 ❌"; diff /tmp/enum_routes.txt /tmp/real_routes.txt; echo "A routes 枚举不闭合" >> "$FAIL"
 fi
 
 # B) Handler 分组「辅助（N）」：枚举项数 == 括号里的数，且每项在 backend/handlers/ 至少命中 1 个文件
@@ -139,10 +140,10 @@ auxline=$(printf '%s\n' "$DOC" | grep -E '^├── 辅助（')
 aux=$(printf '%s\n' "$auxline" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$')
 auxn=$(printf '%s\n' "$aux" | grep -c .)
 auxdecl=$(printf '%s\n' "$auxline" | grep -oE '[（(][0-9]+[）)]' | grep -oE '[0-9]+')
-echo "B) 辅助 枚举=$auxn 声明=$auxdecl（两者必须相等）"
+if [ "$auxn" = "$auxdecl" ]; then echo "B) 辅助 枚举=$auxn 声明=$auxdecl ✅"; else echo "B) 辅助 枚举=$auxn 声明=$auxdecl ❌ 不相等"; echo "B 辅助组 枚举项数 != 声明数" >> "$FAIL"; fi
 printf '%s\n' "$aux" | while read -r n; do
   c=$(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep -cE "/${n%\*}[^/]*\.go$")
-  [ "$c" -gt 0 ] && echo "   ✅ $n → $c 个文件" || echo "   ❌ $n 在 backend/handlers/ 下无对应文件"
+  if [ "$c" -gt 0 ]; then echo "   ✅ $n → $c 个文件"; else echo "   ❌ $n 在 backend/handlers/ 下无对应文件"; echo "B 辅助组 $n 无对应文件" >> "$FAIL"; fi
 done
 
 # C) per-category View 枚举：已列名数 + 「另 N 个」== 括号里的声明数，且每个名字真实存在
@@ -153,14 +154,24 @@ for d in ai dev life other; do
   names=$(printf '%s\n' "$line" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$' | grep -vE '^另[0-9]+个$')
   listed=$(printf '%s\n' "$names" | grep -c .)
   real=$(git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -c '\.vue$')
-  echo "C) $d 声明=$decl 已列=$listed 另=$rest 合计=$((listed + rest)) 真实=$real（声明必须 == 合计 == 真实）"
+  if [ "$decl" = "$((listed + rest))" ] && [ "$decl" = "$real" ]; then
+    echo "C) $d 声明=$decl 已列=$listed 另=$rest 合计=$((listed + rest)) 真实=$real ✅"
+  else
+    echo "C) $d 声明=$decl 已列=$listed 另=$rest 合计=$((listed + rest)) 真实=$real ❌"; echo "C $d 枚举数不闭合" >> "$FAIL"
+  fi
   printf '%s\n' "$names" | while read -r n; do
-    git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -q "/${n}\.vue$" || echo "   ❌ $d/$n 不存在"
+    git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -q "/${n}\.vue$" || { echo "   ❌ $d/$n 不存在"; echo "C $d/$n 不存在" >> "$FAIL"; }
   done
 done
 
-# D) 模块表：行数 == 标题数字（与「每次改完必跑」第 3 步同源，只是这里读 ${REF}:AGENTS.md）
-echo "D) 模块表行数=$(printf '%s\n' "$DOC" | grep -cE '^\| *[0-9]+ *\|') 标题=$(printf '%s\n' "$DOC" | grep -E '^## [0-9]+ 模块地图' | grep -oE '[0-9]+')"
+# D) 模块表：行数 == 标题数字
+rowN=$(printf '%s\n' "$DOC" | grep -cE '^\| *[0-9]+ *\|')
+titleN=$(printf '%s\n' "$DOC" | grep -E '^## [0-9]+ 模块地图' | grep -oE '[0-9]+')
+if [ "$rowN" = "$titleN" ]; then echo "D) 模块表行数=$rowN 标题=$titleN ✅"; else echo "D) 模块表行数=$rowN 标题=$titleN ❌"; echo "D 模块表行数 != 标题数字" >> "$FAIL"; fi
+
+# 汇总：有任一条不闭合 ⇒ 退出码 1（可直接当闸门用；交互 shell 里请写成脚本再跑）
+if [ -s "$FAIL" ]; then echo "枚举闭合判据未通过 ❌"; cat "$FAIL"; exit 1; fi
+echo "枚举闭合判据全部通过 ✅"
 ```
 
 ---
