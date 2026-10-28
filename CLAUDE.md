@@ -130,11 +130,14 @@ grep -cE '^\| *[0-9]+ *\|' AGENTS.md    # 两个数必须相等（都读工作�
 #
 # 并发安全：所有中间文件写进 mktemp -d 出来的唯一目录。
 # 中间文件用固定文件名会被并发 run 互撞 ⇒ 结果随机（E/N3 判据会拦住回退）。
+#
+# 退出码：0 = 全部闭合；1 = 有判据变红；2 = 判据没跑成（ref 写错 / git 读抖动），不是红。
 REF=${REF:-origin/main}
 TMPD=$(mktemp -d /tmp/doc_gate.XXXXXX)
 FAIL=$TMPD/fail.txt; : > "$FAIL"
+READFAIL=$TMPD/readfail.txt; : > "$READFAIL"
 
-# 读不到文档就中止（exit 2 = 判据没跑成，不是判据变红）：否则 ref 写错 / 对象读失败时
+# 读不到就中止（exit 2 = 判据没跑成，不是判据变红）：否则 ref 写错 / 对象读失败时
 # 每个判据都拿空文档去比，会散出一堆看不懂的 ❌（假红）。
 DOC=$(git show ${REF}:AGENTS.md)
 CDOC=$(git show ${REF}:CLAUDE.md)
@@ -142,9 +145,18 @@ if [ -z "$DOC" ] || [ -z "$CDOC" ]; then
   echo "❌ 读不到 ${REF}:AGENTS.md 或 ${REF}:CLAUDE.md（ref 写错？对象读失败？）—— 判据中止，exit 2"; exit 2
 fi
 
+# 读文件树一律走这两个 helper：git 读失败（SMB 抖动等）**绝不能**当成「0 个文件」，
+# 否则整片判据会因为读不到而变红 ⇒ 假红。失败先记一笔，汇总处统一 exit 2。
+gfiles() {  # gfiles <path>：递归列 ${REF} 下该路径的文件
+  git ls-tree -r --name-only ${REF} -- "$@" || echo "read-fail: git ls-tree -r --name-only ${REF} -- $*" >> "$READFAIL"
+}
+gtop() {    # gtop：列 ${REF}:backend/handlers/ 顶层文件名
+  git ls-tree --name-only ${REF}:backend/handlers/ || echo "read-fail: git ls-tree --name-only ${REF}:backend/handlers/" >> "$READFAIL"
+}
+
 # A) routes 枚举树：AGENTS.md 枚举的 .go 文件名集合 == backend/routes/ 实际文件名集合
 printf '%s\n' "$DOC" | sed -n '/^### 后端路由拆分/,/^### /p' | grep -o '[a-z0-9_]*\.go' | sort -u > "$TMPD/enum_routes.txt"
-git ls-tree -r --name-only ${REF} -- backend/routes/ | grep '\.go$' | xargs -n1 basename | sort -u > "$TMPD/real_routes.txt"
+gfiles backend/routes/ | grep '\.go$' | xargs -n1 basename | sort -u > "$TMPD/real_routes.txt"
 if diff -q "$TMPD/enum_routes.txt" "$TMPD/real_routes.txt" >/dev/null; then
   echo "A) routes 枚举闭合 ✅（$(wc -l < "$TMPD/enum_routes.txt") 项）"
 else
@@ -162,7 +174,7 @@ for g in 核心工具 订阅/代理 家庭/健康 实时功能 内容创作 开�
   decl=$(printf '%s\n' "$line" | grep -oE '（[0-9]+）' | grep -oE '[0-9]+')
   if [ "$n" = "$decl" ]; then echo "B1) $g 枚举=$n 声明=$decl ✅"; else echo "B1) $g 枚举=$n 声明=$decl ❌ 不相等"; echo "B1 $g 枚举项数 != 声明数" >> "$FAIL"; fi
   printf '%s\n' "$items" | while read -r it; do
-    c=$(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep '\.go$' | grep -v '_test\.go$' | grep -cE "/${it%\*}[^/]*\.go$")
+    c=$(gfiles backend/handlers/ | grep '\.go$' | grep -v '_test\.go$' | grep -cE "/${it%\*}[^/]*\.go$")
     if [ "$c" -gt 0 ]; then echo "   ✅ $it → $c 个文件"; else echo "   ❌ $it 在 backend/handlers/ 下无对应非测试文件"; echo "B1 $g/$it 无非测试文件" >> "$FAIL"; fi
   done
 done
@@ -173,10 +185,10 @@ ailine=$(printf '%s\n' "$DOC" | grep -E '^├── AI 网关（')
 aidecl=$(printf '%s\n' "$ailine" | grep -oE 'AI 网关（[0-9]+' | grep -oE '[0-9]+')
 aisub=$(printf '%s\n' "$ailine" | grep -oE 'ai_gateway\*（[0-9]+' | grep -oE '[0-9]+')
 mmsub=$(printf '%s\n' "$ailine" | grep -oE 'minimax_\*（[0-9]+' | grep -oE '[0-9]+')
-aireal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep '^ai_gateway' | grep -vc '_test\.go$')
-mmreal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep '^minimax_' | grep -vc '_test\.go$')
-iureal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep -cE '^image_understanding\.go$')
-pareal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep -cE '^planner_ai\.go$')
+aireal=$(gtop | grep '^ai_gateway' | grep -vc '_test\.go$')
+mmreal=$(gtop | grep '^minimax_' | grep -vc '_test\.go$')
+iureal=$(gtop | grep -cE '^image_understanding\.go$')
+pareal=$(gtop | grep -cE '^planner_ai\.go$')
 if [ "$aisub" = "$aireal" ]; then echo "B2) ai_gateway* 子计数=$aisub 实测=$aireal ✅"; else echo "B2) ai_gateway* 子计数=$aisub 实测=$aireal ❌"; echo "B2 ai_gateway* 子计数 != 实测" >> "$FAIL"; fi
 if [ "$mmsub" = "$mmreal" ]; then echo "B2) minimax_* 子计数=$mmsub 实测=$mmreal ✅"; else echo "B2) minimax_* 子计数=$mmsub 实测=$mmreal ❌"; echo "B2 minimax_* 子计数 != 实测" >> "$FAIL"; fi
 sum=$((aireal + iureal + mmreal + pareal))
@@ -191,7 +203,7 @@ fi
 # B3) Handler 分组「测试（N）」（glob 计数形态）：声明数 == backend/handlers/ 下 *_test.go 的实测数
 tline=$(printf '%s\n' "$DOC" | grep -E '^└── 测试（')
 tdecl=$(printf '%s\n' "$tline" | grep -oE '（[0-9]+）' | grep -oE '[0-9]+')
-treal=$(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep '\.go$' | grep -c '_test\.go$')
+treal=$(gfiles backend/handlers/ | grep '\.go$' | grep -c '_test\.go$')
 if [ "$tdecl" = "$treal" ]; then echo "B3) 测试组 声明=$tdecl 实测=$treal ✅"; else echo "B3) 测试组 声明=$tdecl 实测=$treal ❌"; echo "B3 测试组 声明数 != 实测 _test.go 数" >> "$FAIL"; fi
 
 # C) per-category View 枚举：已列名数 + 「另 N 个」== 括号里的声明数 == 实测 .vue 数；每个已列名真实存在
@@ -202,7 +214,7 @@ for d in ai collab convert dev draw home household life other share; do
   line=$(printf '%s\n' "$DOC" | grep -E "^(├──|└──) ${d}/")
   if [ -z "$line" ]; then echo "C) $d 在 AGENTS.md 里找不到 ❌"; echo "C $d 行缺失" >> "$FAIL"; continue; fi
   decl=$(printf '%s\n' "$line" | grep -oE '（[0-9]+' | grep -oE '[0-9]+')
-  real=$(git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -c '\.vue$')
+  real=$(gfiles "frontend/src/views/$d" | grep -c '\.vue$')
   if [ -z "$decl" ]; then echo "C) $d 无声明数（实测=$real）❌ 没有声明数就没得比"; echo "C $d 缺声明数" >> "$FAIL"; continue; fi
   rest=$(printf '%s\n' "$line" | grep -oE '另 [0-9]+ 个' | grep -oE '[0-9]+'); rest=${rest:-0}
   case "$line" in
@@ -224,8 +236,8 @@ for d in ai collab convert dev draw home household life other share; do
   #   convert/ draw/ 的枚举是短名（Base64 → Base64Tool.vue）；唯一性可断言 ⇒ 判据不会因短名恒红。
   printf '%s\n' "$names" | while read -r n; do
     [ -z "$n" ] && continue
-    exact=$(git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -cE "/${n}\.vue$")
-    glob=$(git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -cE "/${n}[^/]*\.vue$")
+    exact=$(gfiles "frontend/src/views/$d" | grep -cE "/${n}\.vue$")
+    glob=$(gfiles "frontend/src/views/$d" | grep -cE "/${n}[^/]*\.vue$")
     if [ "$exact" -eq 1 ] || [ "$glob" -eq 1 ]; then
       echo "   ✅ $d/$n（精确 $exact / 唯一前缀 $glob）"
     else
@@ -270,7 +282,10 @@ else
   echo "E/N4) 文档未说明未提交改动怎么跑（git write-tree 出现 0 次）❌"; echo "E N4 缺 git write-tree 用法" >> "$FAIL"
 fi
 
-# 汇总：有任一条不闭合 ⇒ 退出码 1（可直接当闸门用；交互 shell 里请写成脚本再跑）
+# 汇总：先判「读没读到」（exit 2），再判「闭合没闭合」（exit 1）
+if [ -s "$READFAIL" ]; then
+  echo "❌ 读文件树失败 —— 判据没跑成（不是变红），exit 2："; cat "$READFAIL"; exit 2
+fi
 if [ -s "$FAIL" ]; then echo "枚举闭合判据未通过 ❌"; cat "$FAIL"; exit 1; fi
 echo "枚举闭合判据全部通过 ✅"
 ```
