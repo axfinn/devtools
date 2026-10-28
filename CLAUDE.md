@@ -131,9 +131,16 @@ grep -cE '^\| *[0-9]+ *\|' AGENTS.md    # 两个数必须相等（都读工作�
 # 并发安全：所有中间文件写进 mktemp -d 出来的唯一目录。
 # 中间文件用固定文件名会被并发 run 互撞 ⇒ 结果随机（E/N3 判据会拦住回退）。
 REF=${REF:-origin/main}
-DOC=$(git show ${REF}:AGENTS.md)
 TMPD=$(mktemp -d /tmp/doc_gate.XXXXXX)
 FAIL=$TMPD/fail.txt; : > "$FAIL"
+
+# 读不到文档就中止（exit 2 = 判据没跑成，不是判据变红）：否则 ref 写错 / 对象读失败时
+# 每个判据都拿空文档去比，会散出一堆看不懂的 ❌（假红）。
+DOC=$(git show ${REF}:AGENTS.md)
+CDOC=$(git show ${REF}:CLAUDE.md)
+if [ -z "$DOC" ] || [ -z "$CDOC" ]; then
+  echo "❌ 读不到 ${REF}:AGENTS.md 或 ${REF}:CLAUDE.md（ref 写错？对象读失败？）—— 判据中止，exit 2"; exit 2
+fi
 
 # A) routes 枚举树：AGENTS.md 枚举的 .go 文件名集合 == backend/routes/ 实际文件名集合
 printf '%s\n' "$DOC" | sed -n '/^### 后端路由拆分/,/^### /p' | grep -o '[a-z0-9_]*\.go' | sort -u > "$TMPD/enum_routes.txt"
@@ -232,9 +239,8 @@ rowN=$(printf '%s\n' "$DOC" | grep -cE '^\| *[0-9]+ *\|')
 titleN=$(printf '%s\n' "$DOC" | grep -E '^## [0-9]+ 模块地图' | grep -oE '[0-9]+')
 if [ "$rowN" = "$titleN" ]; then echo "D) 模块表行数=$rowN 标题=$titleN ✅"; else echo "D) 模块表行数=$rowN 标题=$titleN ❌"; echo "D 模块表行数 != 标题数字" >> "$FAIL"; fi
 
-# E) 文本判据（N1 / N3 / N4）：必须**同时**读 ${REF}:AGENTS.md 与 ${REF}:CLAUDE.md，
+# E) 文本判据（N1 / N3 / N4）：必须**同时**读 ${REF}:AGENTS.md 与 ${REF}:CLAUDE.md（$DOC / $CDOC 已在上方读好），
 #    否则这三条只能看出「工作区」的措辞、在 ${REF} 上做不了反事实 ⇒ 恒真闸门。
-CDOC=$(git show ${REF}:CLAUDE.md)
 
 # N1 · AGENTS.md 不得写死 test helper / 测试脚手架 的个数，且必须给出「个数不写死」口径
 n1hard=$(printf '%s\n' "$DOC" | grep -cE '含 *[0-9]+ *个 *(test helper|测试脚手架)')
