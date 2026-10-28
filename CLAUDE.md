@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-DevTools 项目快速参考。详细架构和 API 文档见 `AGENTS.md`（42 模块地图、完整 handler/route 索引、详细 API 索引）。
+DevTools 项目快速参考。详细架构和 API 文档见 `AGENTS.md`（43 模块地图、完整 handler/route 索引、详细 API 索引）。
 
 ---
 
 ## 概览
 
-- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（86 个 View 组件 + 12 个公共组件）
+- **前端**：Vue 3 + Vite + Element Plus + TailwindCSS（88 个 View 组件 + 12 个公共组件）
 - **后端**：Go (Gin) + SQLite + **Redis（软依赖，失败自动降级内存存储）**
 - **辅助服务**：ocr-service (8000), asr-service (9000), tts-service (8083), diarize-service (9100, 可选)
 - **部署**：Docker Compose（4 服务）
@@ -31,12 +31,12 @@ docker compose up -d && docker compose logs -f devtools
 ## 项目结构速查
 
 ```
-frontend/src/views/       # 86 Vue 组件，按 category/ 分组
+frontend/src/views/       # 88 Vue 组件，按 category/ 分组
 backend/
 ├── main.go              # 入口：DB 初始化、中间件、每小时清理 goroutine
-├── routes/              # 40 个路由文件（routes.go 已拆分，含 index.go）
+├── routes/              # 43 个路由文件（routes.go 已拆分，含 index.go）
 │   └── index.go         # RouteHandlers struct + RegisterAllRoutes
-├── handlers/            # 118 个 handler 文件（按域分组）
+├── handlers/            # 130 个 handler 文件（按域分组）
 ├── models/              # SQLite 操作（自动建表）
 ├── middleware/          # RateLimiter、ContentSizeLimiter 等
 └── state/               # Redis/内存状态（Redis 软依赖）
@@ -49,7 +49,7 @@ backend/
 | 模式 | 说明 |
 |------|------|
 | **Redis 软依赖** | `state.New()` → Redis 失败返回 `MemoryStore`，进程不退出 |
-| **路由拆分** | `routes.go` → `routes/` 包（38 文件，34 分组） |
+| **路由拆分** | `routes.go` → `routes/` 包（43 文件，40 分组） |
 | **自动清理** | 每小时清理过期数据（pastes/shorturls/mdshares/excalidraws/photowalls/terminals） |
 | **SPA fallback** | 未匹配路由返回 `index.html` |
 | **配置** | YAML（`config.yaml`），环境变量覆盖 |
@@ -64,7 +64,55 @@ backend/
 3. `backend/handlers/yourtool.go`
 4. `backend/routes/yourtool.go`（`RegisterYourToolRoutes`）
 5. `backend/routes/index.go` → `RegisterAllRoutes` 中添加调用
-6. 更新 `AGENTS.md` 42 模块地图
+6. 更新 `AGENTS.md` 43 模块地图
+
+### 计数同步清单（改动前后各跑一次，按输出填文档）
+
+```bash
+REF=${REF:-origin/main}   # 校准文档时用 origin/main；改自己的分支时用 HEAD
+echo "模块表行数       : $(git show ${REF}:AGENTS.md | grep -cE '^\| *[0-9]+ *\|')"
+echo "View 组件        : $(git ls-tree -r --name-only ${REF} -- frontend/src/views/ | grep -c '\.vue$')"
+echo "公共组件         : $(git ls-tree -r --name-only ${REF} -- frontend/src/ | grep '\.vue$' | grep -vc '/views/')"
+echo "routes 文件      : $(git ls-tree -r --name-only ${REF} -- backend/routes/ | grep -c '\.go$')"
+echo "routes 分组      : $(git ls-tree --name-only ${REF}:backend/routes/ | grep '\.go$' | grep -v '_test\.go$' | grep -vc '^index\.go$')"
+echo "handlers 文件    : $(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep -c '\.go$')"
+echo "handlers 测试    : $(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep '\.go$' | grep -c '_test\.go$')"
+echo "ai_gateway 非测试: $(git ls-tree --name-only ${REF}:backend/handlers/ | grep '^ai_gateway' | grep -vc '_test\.go$')"
+echo "内置 skill 数     : $(git show ${REF}:backend/handlers/skills.go | grep -cE '^[[:space:]]*Name:[[:space:]]+\"')"
+for d in ai collab convert dev draw home household life other share; do
+  printf '%-10s %s\n' "$d" "$(git ls-tree -r --name-only ${REF} -- frontend/src/views/$d | grep -c '\.vue$')"
+done
+```
+
+口径速查（括号里的数 = 上面的输出，**不要手数**）：
+`View 组件` = `frontend/src/views/` 递归 `.vue`；`公共组件` = `frontend/src/` 下除 `views/` 外的 `.vue`（含 `App.vue`）；
+`routes 文件` = `backend/routes/` 全部 `.go`；`routes 分组` = 非测试、非 `index.go` 的路由文件数（每文件 1 个 `Register*Routes`）；
+`handlers 文件` = `backend/handlers/` 全部 `.go`；`handlers 测试` = 其中 `_test.go` 的数量；
+`ai_gateway 非测试` = `ai_gateway*` 去掉 `_test.go`（含 1 个 `ai_gateway_test_helpers.go` 脚手架）；
+模块表 `handlers/xxx*.go (N 文件)` 的 N 一律**排除 `_test.go`**。
+
+**触发条件 → 必须重算并同步的文档条目**：
+
+- 新增/删除 `frontend/src/views/` 下的 `.vue` → 同步 View 组件数 / 各 category 计数
+- 新增/删除 `frontend/src/` 下非 `views/` 的 `.vue` → 同步 `AGENTS.md` / `CLAUDE.md` 的「N 个公共组件」
+- 新增/删除 `backend/routes/` 下的 `.go` → 同步 routes 文件数 / routes 分组数
+- 新增/删除 `backend/handlers/` 下的 `.go` → 同步 `CLAUDE.md` 的「N 个 handler 文件」
+- 新增/删除 `backend/handlers/` 下的 `*_test.go` → 同步 `AGENTS.md` 的「测试（N）」
+- 新增/删除 `ai_gateway*` / `minimax_*` / `planner*` / `nfsshare*` / `askit*` / `skills*` handler → 同步模块表对应行的 `(N 文件)` 与「AI 网关（N）」
+- 新增/删除内置 skill → 同步 `AGENTS.md` 的「N 个 skill」
+- 新增/删除模块表的一行 → 同步模块表编号、`AGENTS.md` 标题数字、全部「N 模块地图」
+- 新增/删除 handler 分段（改 `// domain/sectionN` 横幅） → 同步模块表对应行的 `(N 分段)`
+
+**每次改完必跑**（防"改一半"）：
+
+```bash
+# 1) 现算（粘贴上面的命令块）
+# 2) 对照文档里的计数
+# 3) 一致性硬闸门：标题数字 == 模块表行数
+REF=${REF:-origin/main}
+grep -E '^## [0-9]+ 模块地图' AGENTS.md
+git show ${REF}:AGENTS.md | grep -cE '^\| *[0-9]+ *\|'   # 两个数必须相等
+```
 
 ---
 
