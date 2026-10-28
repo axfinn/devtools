@@ -32,7 +32,7 @@
 | 22 | **Household 家庭** | `handlers/household.go` (7 分段) | `routes/household.go` | `views/life/HouseholdTool.vue` | 物品/位置/模板管理，通知，AI 智能添加/分析，OCR |
 | 23 | **NFSShare** | `handlers/nfsshare*.go` (4 文件) | `routes/nfsshare.go` | `views/collab/NFSShareTool.vue` | SMB/NFS 文件共享，WebRTC 流媒体，HLS 分片 |
 | 24 | **ImageUnderstanding** | `handlers/image_understanding.go` | `routes/image_understanding.go` | `views/ai/ImageUnderstandingTool.vue` | 图像理解（VLM），Base64/URL 输入，返回描述 |
-| 25 | **AIGateway** | `handlers/ai_gateway*.go` (13 文件，含 1 个测试脚手架) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/DashScope，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
+| 25 | **AIGateway** | `handlers/ai_gateway*.go` (15 文件，含测试脚手架，个数不写死) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/DashScope，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
 | 26 | **Askit 同步** | `handlers/askit*.go` (3 文件) | `routes/askit.go` | `views/other/AskitInviteTool.vue` | 跨设备数据同步，邀请码，Blob 大文件，快照 |
 | 27 | **Screen 屏幕共享** | `handlers/screen.go` | `routes/screen.go` | `views/collab/ScreenShareTool.vue` | WebRTC 点对点屏幕共享，TURN 中继 |
 | 28 | **APIGateway** | `handlers/apigateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
@@ -101,11 +101,11 @@ docker compose logs -f devtools
 ```
 frontend/src/views/
 ├── ai/         # AI 相关（7）：AIChatTool, AIGatewayTool, EnglishTutorTool, ImageUnderstandingTool, MiniMaxStudioTool, PetTool, RolePlayTool
-├── collab/     # 协作（6）：ChatRoom, NFSShareTool, PasteBin, ScreenShare, ScreenView, ShortUrl, ...
-├── convert/    # 转换（7）：Base64, Dns, QrCode, Replace, Text, Timestamp, Url
+├── collab/     # 协作（6）：ChatRoom, NFSShareTool, PasteBin, ScreenShareTool, ScreenView, ShortUrl, ...
+├── convert/    # 转换（7）：Base64Tool, DnsTool, QrCodeTool, ReplaceTool, TextTool, TimestampTool, UrlTool
 ├── dev/        # 开发（22）：AutoDevTool, DiffTool, EdgeTTSTool, HermesTool, JsonTool, MockApi, RegexTool, TerminalTool, VirtualAvatarTool, 另 13 个
-├── draw/       # 绘图（4）：Excalidraw, Markdown, Mermaid, MindMap
-├── home/       # 首页
+├── draw/       # 绘图（4）：ExcalidrawTool, MarkdownTool, MermaidTool, MindMapTool
+├── home/       # 首页（1）
 ├── household/  # 家庭（10 个子组件）
 ├── life/       # 生活（13）：CounterTool, ExpenseTool, GameHall, GlucoseTool, HouseholdSpace3D, HouseholdTool, NewsTool, PhotoWallTool, PlannerTool, PregnancyTool, RecipeTool, TripTool, VoiceInboxTool
 ├── other/      # 其他（10）：AskitInviteTool, AskitMyDataTool, BackgroundTool, ConsoleTool, ImageViewerTool, MonitorTool, NPSTool, ProxyTool, SkillsTool, SsRuleTool
@@ -131,14 +131,14 @@ backend/routes/
 ```
 handlers/
 ├── 核心工具（8）：paste, shorturl, mockapi, mdshare, excalidraw, photowall, terminal, dns
-├── AI 网关（19）：ai_gateway*（13，含 1 个 test helper）, image_understanding, minimax_*（4）, planner_ai
+├── AI 网关（21）：ai_gateway*（15，含 test helper 脚手架，个数不写死）, image_understanding, minimax_*（4）, planner_ai
 ├── 订阅/代理（5）：proxy*, singbox*, gfwlist, nps, apigateway_proxy
 ├── 家庭/健康（5）：household, pregnancy, expense, glucose, recipe
 ├── 实时功能（4）：chat, voicememo, screen, nfsshare
 ├── 内容创作（3）：mermaid, game, hermes
 ├── 开发者（3）：autodev, analysis, console
 ├── 辅助（7）：background, monitoring, ocr, edge_tts, skills*, askit*, fileutils
-└── 测试（52）：*_test.go
+└── 测试（57）：*_test.go
 ```
 
 ---

@@ -36,7 +36,7 @@ backend/
 ├── main.go              # 入口：DB 初始化、中间件、每小时清理 goroutine
 ├── routes/              # 43 个路由文件（routes.go 已拆分，含 index.go）
 │   └── index.go         # RouteHandlers struct + RegisterAllRoutes
-├── handlers/            # 130 个 handler 文件（按域分组）
+├── handlers/            # 139 个 handler 文件（按域分组）
 ├── models/              # SQLite 操作（自动建表）
 ├── middleware/          # RateLimiter、ContentSizeLimiter 等
 └── state/               # Redis/内存状态（Redis 软依赖）
@@ -122,39 +122,92 @@ grep -cE '^\| *[0-9]+ *\|' AGENTS.md    # 两个数必须相等（都读工作�
 **枚举闭合判据**（每个被枚举的清单都要能算出「枚举项数 == 声明的数」；没有判据的清单迟早腐）：
 
 ```bash
+# ── 用法 ────────────────────────────────────────────────────────────────
+# REF 同时决定「文档来源」与「文件树来源」，两者必须是**同一棵树**，否则数会跨版本 ⇒ 原理上假红。
+#   REF=${REF:-origin/main}   # 默认（口径不变）：origin/main 的文档 + origin/main 的文件树
+#   REF=$(git write-tree)     # 文档有【未提交】改动时用：write-tree 产出 tree 对象，git show <tree>:AGENTS.md 可读
+#   REF=HEAD                  # 改自己的分支时用（改动已提交）
+#
+# 并发安全：所有中间文件写进 mktemp -d 出来的唯一目录。
+# 固定名（/tmp/enum_routes.txt、/tmp/real_routes.txt）会被并发 run 互撞 ⇒ 结果随机。
 REF=${REF:-origin/main}
 DOC=$(git show ${REF}:AGENTS.md)
-FAIL=/tmp/fin_doc_fail_$$.txt; : > "$FAIL"
+TMPD=$(mktemp -d /tmp/doc_gate.XXXXXX)
+FAIL=$TMPD/fail.txt; : > "$FAIL"
 
 # A) routes 枚举树：AGENTS.md 枚举的 .go 文件名集合 == backend/routes/ 实际文件名集合
-printf '%s\n' "$DOC" | sed -n '/^### 后端路由拆分/,/^### /p' | grep -o '[a-z0-9_]*\.go' | sort -u > /tmp/enum_routes.txt
-git ls-tree -r --name-only ${REF} -- backend/routes/ | grep '\.go$' | xargs -n1 basename | sort -u > /tmp/real_routes.txt
-if diff -q /tmp/enum_routes.txt /tmp/real_routes.txt >/dev/null; then
-  echo "A) routes 枚举闭合 ✅（$(wc -l < /tmp/enum_routes.txt) 项）"
+printf '%s\n' "$DOC" | sed -n '/^### 后端路由拆分/,/^### /p' | grep -o '[a-z0-9_]*\.go' | sort -u > "$TMPD/enum_routes.txt"
+git ls-tree -r --name-only ${REF} -- backend/routes/ | grep '\.go$' | xargs -n1 basename | sort -u > "$TMPD/real_routes.txt"
+if diff -q "$TMPD/enum_routes.txt" "$TMPD/real_routes.txt" >/dev/null; then
+  echo "A) routes 枚举闭合 ✅（$(wc -l < "$TMPD/enum_routes.txt") 项）"
 else
-  echo "A) routes 枚举不闭合 ❌"; diff /tmp/enum_routes.txt /tmp/real_routes.txt; echo "A routes 枚举不闭合" >> "$FAIL"
+  echo "A) routes 枚举不闭合 ❌"; diff "$TMPD/enum_routes.txt" "$TMPD/real_routes.txt"; echo "A routes 枚举不闭合" >> "$FAIL"
 fi
 
-# B) Handler 分组「辅助（N）」：枚举项数 == 括号里的数，且每项在 backend/handlers/ 至少命中 1 个文件
-auxline=$(printf '%s\n' "$DOC" | grep -E '^├── 辅助（')
-aux=$(printf '%s\n' "$auxline" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$')
-auxn=$(printf '%s\n' "$aux" | grep -c .)
-auxdecl=$(printf '%s\n' "$auxline" | grep -oE '[（(][0-9]+[）)]' | grep -oE '[0-9]+')
-if [ "$auxn" = "$auxdecl" ]; then echo "B) 辅助 枚举=$auxn 声明=$auxdecl ✅"; else echo "B) 辅助 枚举=$auxn 声明=$auxdecl ❌ 不相等"; echo "B 辅助组 枚举项数 != 声明数" >> "$FAIL"; fi
-printf '%s\n' "$aux" | while read -r n; do
-  c=$(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep -cE "/${n%\*}[^/]*\.go$")
-  if [ "$c" -gt 0 ]; then echo "   ✅ $n → $c 个文件"; else echo "   ❌ $n 在 backend/handlers/ 下无对应文件"; echo "B 辅助组 $n 无对应文件" >> "$FAIL"; fi
+# B1) Handler 分组（普通形态）：枚举项数 == 括号里的声明数，且每个枚举名在 backend/handlers/ 至少命中 1 个文件
+#     覆盖：核心工具 / 订阅/代理 / 家庭/健康 / 实时功能 / 内容创作 / 开发者 / 辅助
+for g in 核心工具 订阅/代理 家庭/健康 实时功能 内容创作 开发者 辅助; do
+  line=$(printf '%s\n' "$DOC" | grep -E "^├── ${g}（")
+  if [ -z "$line" ]; then echo "B1) 分组「$g」在 AGENTS.md 里找不到 ❌"; echo "B1 分组 $g 行缺失" >> "$FAIL"; continue; fi
+  items=$(printf '%s\n' "$line" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$')
+  n=$(printf '%s\n' "$items" | grep -c .)
+  decl=$(printf '%s\n' "$line" | grep -oE '（[0-9]+）' | grep -oE '[0-9]+')
+  if [ "$n" = "$decl" ]; then echo "B1) $g 枚举=$n 声明=$decl ✅"; else echo "B1) $g 枚举=$n 声明=$decl ❌ 不相等"; echo "B1 $g 枚举项数 != 声明数" >> "$FAIL"; fi
+  printf '%s\n' "$items" | while read -r it; do
+    c=$(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep -cE "/${it%\*}[^/]*\.go$")
+    if [ "$c" -gt 0 ]; then echo "   ✅ $it → $c 个文件"; else echo "   ❌ $it 在 backend/handlers/ 下无对应文件"; echo "B1 $g/$it 无对应文件" >> "$FAIL"; fi
+  done
 done
 
-# C) per-category View 枚举：已列名数 + 「另 N 个」== 括号里的声明数，且每个名字真实存在
-for d in ai dev life other; do
-  line=$(printf '%s\n' "$DOC" | grep -E "^├── $d/")
-  decl=$(printf '%s\n' "$line" | grep -oE '[（(][0-9]+[）)]' | grep -oE '[0-9]+')
-  rest=$(printf '%s\n' "$line" | grep -oE '另 [0-9]+ 个' | grep -oE '[0-9]+'); rest=${rest:-0}
-  names=$(printf '%s\n' "$line" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$' | grep -vE '^另[0-9]+个$')
-  listed=$(printf '%s\n' "$names" | grep -c .)
+# B2) Handler 分组「AI 网关」（复合子计数形态）：ai_gateway*（N）+ image_understanding（1）+ minimax_*（M）+ planner_ai（1） == 声明数
+#     ⚠ helper（脚手架）个数随文件增减变化，文档里**不得写死**；N / M 一律由子命令实测，不看文档里的旧数。
+ailine=$(printf '%s\n' "$DOC" | grep -E '^├── AI 网关（')
+aidecl=$(printf '%s\n' "$ailine" | grep -oE 'AI 网关（[0-9]+' | grep -oE '[0-9]+')
+aisub=$(printf '%s\n' "$ailine" | grep -oE 'ai_gateway\*（[0-9]+' | grep -oE '[0-9]+')
+mmsub=$(printf '%s\n' "$ailine" | grep -oE 'minimax_\*（[0-9]+' | grep -oE '[0-9]+')
+aireal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep '^ai_gateway' | grep -vc '_test\.go$')
+mmreal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep '^minimax_' | grep -vc '_test\.go$')
+iureal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep -cE '^image_understanding\.go$')
+pareal=$(git ls-tree --name-only ${REF}:backend/handlers/ | grep -cE '^planner_ai\.go$')
+if [ "$aisub" = "$aireal" ]; then echo "B2) ai_gateway* 子计数=$aisub 实测=$aireal ✅"; else echo "B2) ai_gateway* 子计数=$aisub 实测=$aireal ❌"; echo "B2 ai_gateway* 子计数 != 实测" >> "$FAIL"; fi
+if [ "$mmsub" = "$mmreal" ]; then echo "B2) minimax_* 子计数=$mmsub 实测=$mmreal ✅"; else echo "B2) minimax_* 子计数=$mmsub 实测=$mmreal ❌"; echo "B2 minimax_* 子计数 != 实测" >> "$FAIL"; fi
+sum=$((aireal + iureal + mmreal + pareal))
+if [ "$sum" = "$aidecl" ]; then echo "B2) 复合求和=$sum 声明=$aidecl ✅"; else echo "B2) 复合求和=$sum 声明=$aidecl ❌"; echo "B2 AI 网关复合求和 != 声明数" >> "$FAIL"; fi
+ailines=$(printf '%s\n' "$DOC" | grep -E '^(├── AI 网关（|\| 25 \| \*\*AIGateway\*\*)')
+if printf '%s\n' "$ailines" | grep -qE '含 *[0-9]+ *个 *(test helper|测试脚手架)'; then
+  echo "B2) ❌ 文档写死了 test helper 个数（helper 个数随文件增减变化，不得写死）"; echo "B2 AI 网关组写死 helper 个数" >> "$FAIL"
+else
+  echo "B2) test helper 个数未写死 ✅"
+fi
+
+# B3) Handler 分组「测试（N）」（glob 计数形态）：声明数 == backend/handlers/ 下 *_test.go 的实测数
+tline=$(printf '%s\n' "$DOC" | grep -E '^└── 测试（')
+tdecl=$(printf '%s\n' "$tline" | grep -oE '（[0-9]+）' | grep -oE '[0-9]+')
+treal=$(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep '\.go$' | grep -c '_test\.go$')
+if [ "$tdecl" = "$treal" ]; then echo "B3) 测试组 声明=$tdecl 实测=$treal ✅"; else echo "B3) 测试组 声明=$tdecl 实测=$treal ❌"; echo "B3 测试组 声明数 != 实测 _test.go 数" >> "$FAIL"; fi
+
+# C) per-category View 枚举：已列名数 + 「另 N 个」== 括号里的声明数 == 实测 .vue 数；每个已列名真实存在
+#    截断形态（行尾 `...`）：`...` 是「后面还有」的标记，不计入已列名数；
+#    没写「另 N 个」时，隐含的「另 N 个」= 声明数 − 已列名数（与 dev/ 的「另 N 个」写法同口径）。
+#    没有名字清单的 category（home / household / share）：只校验「声明数 == 实测数」，不校验名字。
+for d in ai collab convert dev draw home household life other share; do
+  line=$(printf '%s\n' "$DOC" | grep -E "^(├──|└──) ${d}/")
+  if [ -z "$line" ]; then echo "C) $d 在 AGENTS.md 里找不到 ❌"; echo "C $d 行缺失" >> "$FAIL"; continue; fi
+  decl=$(printf '%s\n' "$line" | grep -oE '（[0-9]+' | grep -oE '[0-9]+')
   real=$(git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -c '\.vue$')
-  if [ "$decl" = "$((listed + rest))" ] && [ "$decl" = "$real" ]; then
+  if [ -z "$decl" ]; then echo "C) $d 无声明数（实测=$real）⚠ 不判定"; continue; fi
+  rest=$(printf '%s\n' "$line" | grep -oE '另 [0-9]+ 个' | grep -oE '[0-9]+'); rest=${rest:-0}
+  case "$line" in
+    *：*) names=$(printf '%s\n' "$line" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$' | grep -vE '^另[0-9]+个$' | grep -vE '^\.\.\.$') ;;
+    *)    names="" ;;
+  esac
+  listed=$(printf '%s\n' "$names" | grep -c .)
+  if [ "$listed" -eq 0 ]; then
+    if [ "$decl" = "$real" ]; then echo "C) $d 声明=$decl 真实=$real ✅（无名字清单，只校验计数）"; else echo "C) $d 声明=$decl 真实=$real ❌"; echo "C $d 声明数 != 实测数" >> "$FAIL"; fi
+    continue
+  fi
+  if printf '%s\n' "$line" | grep -q '\.\.\.' && [ "$rest" -eq 0 ] && [ "$listed" -lt "$decl" ]; then rest=$((decl - listed)); fi
+  if [ "$((listed + rest))" = "$decl" ] && [ "$decl" = "$real" ]; then
     echo "C) $d 声明=$decl 已列=$listed 另=$rest 合计=$((listed + rest)) 真实=$real ✅"
   else
     echo "C) $d 声明=$decl 已列=$listed 另=$rest 合计=$((listed + rest)) 真实=$real ❌"; echo "C $d 枚举数不闭合" >> "$FAIL"
