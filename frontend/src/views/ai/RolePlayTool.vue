@@ -73,10 +73,16 @@
           <div class="pg-fill" :style="{ width: progressPct + '%' }"></div>
         </div>
         <span class="pg-text">
-          第 {{ Math.min(currentRound, totalRounds) }} / {{ totalRounds }} 轮
+          第 {{ Math.min(Math.max(currentRound, 1), totalRounds) }} / {{ totalRounds }} 轮
           <template v-if="showState === 'running' && currentRoleName"> · 正在发言：{{ currentRoleName }}</template>
           <template v-else-if="showState === 'paused'"> · 已暂停</template>
         </span>
+      </div>
+
+      <!-- ═══════════ 模型加载失败提示（点此重试） ═══════════ -->
+      <div v-if="modelsError" class="rp-models-err">
+        ⚠ {{ modelsError }}
+        <button class="rp-mini-btn" :disabled="modelsLoading" @click="loadModels">{{ modelsLoading ? '重试中…' : '重试' }}</button>
       </div>
 
       <!-- ═══════════ 舞台：聊天记录 ═══════════ -->
@@ -121,13 +127,13 @@
       <!-- ═══════════ 控制台 ═══════════ -->
       <footer class="rp-console">
         <div class="console-row main-row">
-          <button v-if="showState === 'idle'" class="rp-btn primary" :disabled="!canStart || modelsLoading" @click="startShow">
-            ▶ 开演（{{ totalRounds }} 轮）
-          </button>
-          <button v-else-if="showState === 'running'" class="rp-btn" @click="pauseShow">
+          <button v-if="showState === 'running'" class="rp-btn" @click="pauseShow">
             ⏸ 暂停（本条说完）
           </button>
-          <button v-else class="rp-btn primary" :disabled="!canStart" @click="resumeShow">▶ 继续</button>
+          <button v-else class="rp-btn primary" :disabled="!canStart || modelsLoading" @click="beginShow">
+            <template v-if="completedRounds > 0 && completedRounds < totalRounds">▶ 继续（剩 {{ totalRounds - completedRounds }} 轮）</template>
+            <template v-else>▶ 开演（{{ totalRounds }} 轮）</template>
+          </button>
           <button v-if="showState === 'running'" class="rp-btn ghost" @click="skipCurrent">跳过本条</button>
           <button v-if="showState !== 'idle'" class="rp-btn danger" @click="stopShow">■ 停止</button>
           <button v-if="showState === 'idle' && transcript.length" class="rp-btn danger ghost" @click="clearShow">清空重来</button>
@@ -246,8 +252,8 @@ const GROUPS_KEY = 'roleplay-groups-v2'
 const LEGACY_SCRIPT_KEY = 'roleplay-script'
 const LEGACY_TRANSCRIPT_KEY = 'roleplay-transcript'
 const MAX_ROUNDS = 200
-const CONTEXT_WINDOW = 30      // 每次请求只带最近 N 条对话，防上下文爆炸
-const MAX_REPLY_TOKENS = 700   // 单条发言上限，防单角色独白刷屏
+const CONTEXT_WINDOW = 24      // 每次请求只带最近 N 条对话，防上下文爆炸，也逼模型向前推进
+const MAX_REPLY_TOKENS = 700   // 单条发言上限；给推理模型留足"思考+说话"的 token，避免内容被截断
 
 const ROLE_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7']
 
@@ -393,6 +399,7 @@ const currentRoleId = ref('')
 const interruptedMsg = ref('')
 const panelOpen = ref(true)
 const modelsLoading = ref(false)
+const modelsError = ref('')
 const modelInfo = ref({ minimax: { available: false, models: [] }, ollama: { available: false, models: [], error: '' } })
 
 let abortController = null
@@ -596,16 +603,29 @@ const modelGroups = computed(() => {
 })
 
 async function loadModels() {
+  if (modelsLoading.value) return
   modelsLoading.value = true
+  modelsError.value = ''
   try {
     const res = await fetch(`${API_BASE}/api/chat-plus/models`, { headers: auth.authHeader() })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    modelInfo.value = await res.json()
-    if (!script.value.model || !modelGroups.value.some(g => g.items.some(m => m.value === script.value.model))) {
-      script.value.model = modelGroups.value.flatMap(g => g.items)[0]?.value || ''
+    const data = await res.json()
+    modelInfo.value = data
+    const all = modelGroups.value.flatMap(g => g.items)
+    if (!script.value.model || !all.some(m => m.value === script.value.model)) {
+      script.value.model = all[0]?.value || ''
     }
-  } catch { /* 模型加载失败不阻塞页面，开演时再校验 */ }
-  finally { modelsLoading.value = false }
+    if (!all.length) {
+      const ollErr = data?.ollama?.error || ''
+      modelsError.value = ollErr
+        ? `未获取到可用模型：Ollama 拉取失败（${ollErr}），且服务端未配置 MiniMax`
+        : '未获取到任何可用模型（检查服务端 Ollama 是否在线 / MiniMax 是否已配置）'
+    }
+  } catch (e) {
+    modelsError.value = `模型列表加载失败：${netErrMsg(e)}`
+  } finally {
+    modelsLoading.value = false
+  }
 }
 
 // ══════════════ 校验与模板 ══════════════
@@ -616,7 +636,7 @@ const startBlockReason = computed(() => {
   if (activeRoles.value.length < 2) return '至少需要 2 个启用且有名字的角色'
   return ''
 })
-const progressPct = computed(() => totalRounds.value ? Math.round((Math.min(currentRound.value - (currentRound.value > completedRounds.value ? 1 : 0), totalRounds.value) / totalRounds.value) * 100) : 0)
+const progressPct = computed(() => totalRounds.value ? Math.round((completedRounds.value / totalRounds.value) * 100) : 0)
 const totalRounds = computed(() => Math.min(Math.max(script.value.rounds || 10, 1), MAX_ROUNDS))
 const currentRoleName = computed(() => {
   const r = transcript.value[transcript.value.length - 1]
@@ -639,10 +659,10 @@ const polishing = ref({})          // { topic: bool, [roleId]: bool }
 const undo = ref({ topic: null, roles: {} })   // 润色前的原文（null = 无记录），供撤销
 
 // 复用 chat/stream 端点做一次性的"补全"，把 SSE 拼成完整文本
-async function callModel(system, user, maxTokens = 400) {
+async function callModel(system, user, maxTokens = 1000) {
   if (!script.value.model) throw new Error('请先选择模型')
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 90000) // 兜底超时，防止卡死在"润色中"
+  const timer = setTimeout(() => ctrl.abort(), 150000) // 推理模型先想后说，给足时间，别中途截断
   try {
     const res = await fetch(`${API_BASE}/api/chat-plus/chat/stream`, {
       method: 'POST',
@@ -650,9 +670,11 @@ async function callModel(system, user, maxTokens = 400) {
       body: JSON.stringify({
         model: script.value.model,
         messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-        temperature: 0.7,
+        temperature: 0.75,
         max_tokens: maxTokens,
         stream: true,
+        // 推理模型（如 nex-n2.5-mini）会先吐 reasoning 再吐正文，max_tokens 要留足，否则正文被挤掉、看起来"不完整"
+        extra_body: { frequency_penalty: 0.2, presence_penalty: 0.1 },
       }),
       signal: ctrl.signal,
     })
@@ -704,14 +726,14 @@ async function polishTopic() {
   const prev = script.value.topic
   polishing.value = { ...polishing.value, topic: true }
   try {
-    const system = '你是资深对话编剧，专门设计多角色模拟对话的"导演指令"。'
+    const system = '你是生活化的场景设计师，擅长把多角色对话放进一个真实可信的日常处境里。'
     const user = prev.trim()
-      ? `请润色下面这段多角色对话的场景设定，让几个真人凑在一起就"有事发生"：给出具体的时间地点或当下处境、明确的利益/立场冲突、有人急着要结论的压力。\n要求：1-3 句、不超过 150 字、只输出润色后的文本（不要解释、不要引号、不要分点）。\n\n角色阵容：${rolesBrief()}\n\n原设定：${prev}`
-      : `请根据下面的角色阵容，起草一段多角色对话的场景设定：具体处境 + 利益冲突 + 时间压力，让人一开口就有火药味或暗流。\n要求：1-3 句、不超过 150 字、只输出文本（不要解释、不要引号）。\n\n角色阵容：${rolesBrief()}`
-    const out = await callModel(system, user, 400)
+      ? `请润色下面这段多角色对话的场景设定，让它像真实生活里会自然发生的一幕：说清大概的时间地点、这些人为什么会凑在一起、彼此大概是什么关系或什么由头聊起来。自然、可信、接地气，不要硬编冲突或戏剧性。\n要求：2-4 句、不超过 200 字、只输出润色后的文本（不要解释、不要引号、不要分点）。\n\n角色阵容：${rolesBrief()}\n\n原设定：${prev}`
+      : `请根据下面的角色阵容，起草一段多角色对话的场景设定：一个具体、日常、可信的处境（谁、在哪、因为什么凑在一起聊）。不要刻意制造冲突或压力，就像真实生活。\n要求：2-4 句、不超过 200 字、只输出文本（不要解释、不要引号）。\n\n角色阵容：${rolesBrief()}`
+    const out = await callModel(system, user, 1200)
     if (!out) throw new Error('模型没有返回内容')
     undo.value = { ...undo.value, topic: prev }
-    script.value.topic = out.slice(0, 500)
+    script.value.topic = out.slice(0, 600)
     ElMessage.success(prev.trim() ? '场景已润色，不满意可点「撤销」' : '已为你起草场景')
   } catch (e) {
     ElMessage.error(`润色失败：${netErrMsg(e)}`)
@@ -727,14 +749,14 @@ async function polishRole(role) {
   polishing.value = { ...polishing.value, [role.id]: true }
   try {
     const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、') || '（暂无）'
-    const system = '你是角色设定师，擅长为人设写出可被 AI 稳定扮演的性格与说话风格。'
+    const system = '你是生活化的人设设计师，擅长为角色写出像身边真实的人一样的性格与说话方式。'
     const user = prev.trim()
-      ? `请润色下面这个角色的人设，让它在真人对话里"像个活人"：立场鲜明、性格有毛边（偏见/软肋/小毛病）、说话习惯具体（口头禅、语速、爱用什么词、什么时候会急），并能与其他角色形成摩擦。\n要求：1-2 句、不超过 120 字、只输出润色后的人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}\n现有人设：${prev}`
-      : `请为下面这个角色设计一段人设，要像真人：立场鲜明（哪怕有偏见）、性格有毛边、说话习惯具体（口头禅、语速、爱用什么词、什么时候急眼），与其他角色形成明显差异和张力。\n要求：1-2 句、不超过 120 字、只输出人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}`
-    const out = await callModel(system, user, 300)
+      ? `请润色下面这个角色的人设，让它在真人对话里"像个活人"：大概什么身份/背景、平时怎么说话（口头禅、语速、爱用什么词）、有什么小习惯或小固执、遇到什么会吐槽或较真。自然可信，不需要戏剧冲突。\n要求：1-2 句、不超过 130 字、只输出润色后的人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}\n现有人设：${prev}`
+      : `请为下面这个角色设计一段人设，要像真人：大概什么身份/背景、说话习惯具体（口头禅、语速、爱用什么词、什么时候会急或吐槽）、一点小固执。与其他角色有差异即可，不必刻意制造对立。\n要求：1-2 句、不超过 130 字、只输出人设文本（不要解释、不要引号、不要"人设："前缀）。\n\n角色名：${role.name}\n其他角色：${others}\n当前话题：${script.value.topic || '（未设定）'}`
+    const out = await callModel(system, user, 800)
     if (!out) throw new Error('模型没有返回内容')
     undo.value = { ...undo.value, roles: { ...undo.value.roles, [role.id]: prev } }
-    role.persona = out.slice(0, 200)
+    role.persona = out.slice(0, 300)
     ElMessage.success(prev.trim() ? `「${role.name}」人设已润色` : `已为「${role.name}」生成人设`)
   } catch (e) {
     ElMessage.error(`润色失败：${netErrMsg(e)}`)
@@ -759,19 +781,26 @@ function undoRole(role) {
   ElMessage.info('已恢复原人设')
 }
 
+// 真人闲聊：没有"剧情/阶段/冲突升级"的强行设定，顺着聊、会跑题、会有废话和小情绪
 function buildSystemPrompt(role) {
-  const others = activeRoles.value.filter(r => r.id !== role.id).map(r => r.name).join('、')
+  const others = activeRoles.value.filter(x => x.id !== role.id).map(x => x.name).join('、')
+  const hist = transcript.value.filter(m => !m.streaming)
+  const lastMsg = hist[hist.length - 1]
+  const lastLine = lastMsg
+    ? `上一条是「${lastMsg.roleName}」刚说的。自然接住就行——顺着聊、反问、吐槽、补一句、甚至突然岔开都行，不用硬接。`
+    : '你是第一个开口的，随便起个话头，别端着。'
   return [
-    `你就是「${role.name}」，此刻正和 ${others} 面对面说话。${role.persona || '（性格要鲜明，别当老好人）'}`,
-    script.value.topic ? `【眼下的处境】${script.value.topic}` : '',
-    '这是真实发生的对话，不是剧本、不是小说、也不是聊天记录整理稿。就像把你说出口的话原样打出来：',
-    '1. 只说你张嘴说出来的话。绝对不要写动作、神态、表情、心理活动，不要用括号或星号补充说明，不要旁白，不要"潜台词"，不要任何舞台提示。',
-    '2. 口语：短句为主，可以有语气词（嗯、诶、行吧、真的假的）、停顿、重复、自我纠正，话没说完被打断也行。',
-    '3. 有来有回：先接住对方刚说的那句（答应/反驳/追问/吐槽/被逗笑），再说自己的；可以抢话、追问、反问。',
-    '4. 带情绪和立场：会不耐烦、会惊讶、会被说动、也会死扛；别永远礼貌中立、别谁都不得罪。',
-    '5. 有人味：用自己的经历、行当里的比喻、一点口头禅，偶尔自嘲或开个小玩笑。',
-    '禁止：分点列举、"首先/其次/总之"、总结陈词、书面语长句、客服腔（"希望对你有帮助"）、替别人说话、复述上一条的句式。',
-    '长度：1-3 句、30-100 字，像语音转文字那样自然。只输出你说出口的那句话本身，不带名字前缀。',
+    `你就是「${role.name}」，正和 ${others} 聊天。${role.persona || '性格自然点，有点自己的小脾气就好'}`,
+    script.value.topic ? `【聊天的由头】${script.value.topic}（只是开场话题，聊歪了、跑题了都正常）` : '',
+    lastLine,
+    '说人话，就像真人面对面闲聊那样：',
+    '1. 只说你嘴里吐出来的话。别写动作、表情、心理、旁白，别用括号、星号、舞台提示。',
+    '2. 口语化：短句、语气词（嗯、诶、哈、行吧、哎哟）、可以卡壳、重复、改口、被逗笑接不上话。',
+    '3. 顺着聊：同意就附和，不同意就杠，好奇就追问，觉得好笑就笑；也可以聊着聊着突然想起别的事，很正常。',
+    '4. 有人的小毛病：会跑题、会啰嗦、会纠结小事、会被带偏、也会突然怼一句；别句句逻辑严密、别永远滴水不漏。',
+    '5. 别把天聊成汇报、别把话写成文章：不要分点、不要"首先/其次/总之"、不要总结陈词、不要书面长句、不要客服腔。',
+    '6. 偶尔重复、绕回老话题、冷场前的废话都是真聊天的一部分；但如果发现自己开始一字不差地复读刚才的话，就换个说法或者岔开。',
+    '长度：1-3 句、20-90 字，像微信语音转文字那样自然。只输出你这句话本身，别加名字前缀。',
   ].filter(Boolean).join('\n')
 }
 
@@ -812,17 +841,21 @@ function buildPayloadMessages(role) {
 }
 
 // ══════════════ 演出主循环（前端驱动，零后端改动） ══════════════
-async function startShow() {
+// 统一的"开始/继续"入口：无论全新开演还是从中断处恢复，都走这里。
+// 关键：每次进入都要把 pauseRequested / skipFlag / stopAll 这些中断标志复位，
+// 否则从暂停恢复时会立刻又被旧标志打断，表现为"莫名其妙结束"。
+function beginShow() {
   if (!canStart.value) { ElMessage.warning(startBlockReason.value); return }
-  stopAll = false; pauseRequested = false; interruptedMsg.value = ''
+  stopAll = false
+  pauseRequested = false
+  skipFlag = false
+  interruptedMsg.value = ''
   showState.value = 'running'
-  await runLoop()
+  runLoop()
 }
 
 function pauseShow() { pauseRequested = true; ElMessage.info('本条发言结束后暂停') }
-function resumeShow() {
-  if (showState.value !== 'running') { interruptedMsg.value = ''; showState.value = 'running'; runLoop() }
-}
+function resumeShow() { beginShow() }   // 与"开演"复用同一条复位逻辑
 function stopShow() {
   stopAll = true
   abortController?.abort() // 立即切断当前发言（partial 保留）
@@ -842,31 +875,46 @@ function clearShow() {
 
 async function runLoop() {
   interruptedMsg.value = ''
-  let stoppedByUser = false
   try {
+    // 续跑起点：已完成的轮数 +1 即"正在进行的这一轮"；该轮从 nextRoleIdx 指向的角色接着说
+    let startRound = completedRounds.value + 1
+    if (startRound > totalRounds.value) startRound = totalRounds.value
     outer:
-    for (let r = completedRounds.value + (nextRoleIdx.value === 0 ? 1 : 0); r <= totalRounds.value; r++) {
+    for (let r = startRound; r <= totalRounds.value; r++) {
       currentRound.value = r
       const roles = activeRoles.value
-      if (roles.length < 2) break
-      for (let i = nextRoleIdx.value; i < roles.length; i++) {
-        if (stopAll || pauseRequested) { stoppedByUser = !stopAll; break outer }
+      if (roles.length < 2) { interruptedMsg.value = '启用的角色不足 2 个，演出中止'; break outer }
+      // 恢复本轮时从 nextRoleIdx 继续；全新轮次从 0 开始
+      const startIdx = (r === startRound) ? nextRoleIdx.value : 0
+      for (let i = startIdx; i < roles.length; i++) {
+        if (stopAll || pauseRequested) break outer   // 用户主动暂停/停止
         nextRoleIdx.value = i
         currentRoleId.value = roles[i].id
         const ok = await speakRole(roles[i], r)
-        if (!ok) break outer // 网络失败已暂停
-        nextRoleIdx.value = (i + 1) % roles.length
-        if (i + 1 >= roles.length) {
+        if (!ok) break outer                          // 网络失败等 → 进入暂停态
+        if (i === roles.length - 1) {
           completedRounds.value = r
           nextRoleIdx.value = 0
+        } else {
+          nextRoleIdx.value = i + 1
         }
         saveTranscript()
       }
     }
+  } catch (e) {
+    // 任何未预期的异常都显式暴露，而不是静默停在"暂停"态
+    interruptedMsg.value = `演出异常中断：${netErrMsg(e)}`
   } finally {
-    showState.value = stopAll ? 'idle' : 'paused'
+    if (stopAll) {
+      showState.value = 'idle'
+      ElMessage.success(`演出已停止，共完成 ${completedRounds.value} 轮`)
+    } else if (completedRounds.value >= totalRounds.value) {
+      showState.value = 'idle'   // 自然跑完
+    } else {
+      showState.value = 'paused'
+      if (interruptedMsg.value) ElMessage.warning('演出已暂停，点「继续」可接着演')
+    }
     saveTranscript()
-    if (stopAll) ElMessage.success(`演出已停止，共完成 ${completedRounds.value} 轮`)
   }
 }
 
@@ -897,8 +945,11 @@ async function speakRole(role, round) {
           model: script.value.model,
           messages: buildPayloadMessages(role),
           temperature: 0.9,
+          top_p: 0.92,
           max_tokens: MAX_REPLY_TOKENS,
           stream: true,
+          // 轻度抑制复读即可，别太重——惩罚过重会让话变生硬、跳脱
+          extra_body: { frequency_penalty: 0.3, presence_penalty: 0.15 },
         }),
         signal: abortController.signal,
       })
@@ -1070,6 +1121,17 @@ watch(() => auth.isAuthenticated.value, (authed) => { if (authed && !modelsLoadi
 .pg-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-hover, #eee); overflow: hidden; }
 .pg-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #6366f1, #8b5cf6); transition: width 0.4s ease; }
 .pg-text { font-size: 13px; color: var(--text-secondary, #555); white-space: nowrap; }
+.pg-stage {
+  padding: 1px 8px; border-radius: 999px; font-size: 11.5px; margin-left: 2px;
+  color: #fff; background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+
+/* 模型加载失败提示 */
+.rp-models-err {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; border-radius: 12px; font-size: 13px;
+  color: #d97706; background: rgba(217, 119, 6, 0.1); border: 1px dashed rgba(217, 119, 6, 0.45);
+}
 
 /* 舞台 */
 .rp-stage {

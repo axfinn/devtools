@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -73,17 +75,20 @@ func (h *AIGatewayHandler) ChatPlusVerify(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-// ollamaTagsResponse /api/tags 响应结构（只取需要的字段）。
+// ollamaTagModel /api/tags 单条模型（只取需要的字段）。
+type ollamaTagModel struct {
+	Name    string `json:"name"`
+	Size    int64  `json:"size"`
+	Details struct {
+		ParameterSize     string `json:"parameter_size"`
+		QuantizationLevel string `json:"quantization_level"`
+		Family            string `json:"family"`
+	} `json:"details"`
+}
+
+// ollamaTagsResponse /api/tags 响应结构。
 type ollamaTagsResponse struct {
-	Models []struct {
-		Name       string `json:"name"`
-		Size       int64  `json:"size"`
-		Details    struct {
-			ParameterSize  string `json:"parameter_size"`
-			QuantizationLevel string `json:"quantization_level"`
-			Family         string `json:"family"`
-		} `json:"details"`
-	} `json:"models"`
+	Models []ollamaTagModel `json:"models"`
 }
 
 // fetchOllamaModels 拉取局域网 Ollama 的模型列表（短超时，不缓存——局域网服务可能随时增删模型）。
@@ -103,17 +108,86 @@ func (h *AIGatewayHandler) fetchOllamaModels(baseURL string) ([]gin.H, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
 		return nil, err
 	}
-	models := make([]gin.H, 0, len(tags.Models))
-	for _, m := range tags.Models {
-		models = append(models, gin.H{
-			"id":            "ollama:" + m.Name,
-			"name":          m.Name,
-			"parameter_size": m.Details.ParameterSize,
-			"family":        m.Details.Family,
-			"size_gb":       float64(m.Size) / (1024 * 1024 * 1024),
-		})
+	models := make([]gin.H, len(tags.Models))
+	var wg sync.WaitGroup
+	for i, m := range tags.Models {
+		wg.Add(1)
+		go func(i int, m ollamaTagModel) {
+			defer wg.Done()
+			models[i] = gin.H{
+				"id":             "ollama:" + m.Name,
+				"name":           m.Name,
+				"parameter_size": m.Details.ParameterSize,
+				"family":         m.Details.Family,
+				"size_gb":        float64(m.Size) / (1024 * 1024 * 1024),
+				"vision":         h.ollamaModelVision(baseURL, m.Name),
+			}
+		}(i, m)
 	}
+	wg.Wait()
 	return models, nil
+}
+
+// ollamaNameVisionKeywords 已知视觉/多模态模型的名称关键词（启发式兜底，避免 /api/show 探测失败）。
+var ollamaNameVisionKeywords = []string{
+	"llava", "bakllava", "moondream", "minicpm-v", "minicpm-o", "nanollava",
+	"qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "qwen3.5-vl", "qwen-image",
+	"llama3.1-vision", "llama3.2-vision", "llama4", "pixtral", "gemma3", "gemma-3",
+	"glm-4v", "internvl", "vision", "joyvasam", "xgen-mm", "deepseek-vl", "janus",
+	"phi-3-vision", "phi-4-multimodal", "phi-4-v", "mistral-small3.1", "granite-vision",
+	"smolvlm", "molmo", "eagle", "minicpm", "cogvlm", "cogagent", "yi-vl", "omnilmm",
+	"ovis", "mmproj", "awq-vision", "fuyu", "kosmos",
+}
+
+// ollamaNameLooksVision 仅按模型名启发式判断是否支持图片（兜底用）。
+func ollamaNameLooksVision(name string) bool {
+	lower := strings.ToLower(name)
+	for _, k := range ollamaNameVisionKeywords {
+		if strings.Contains(lower, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// ollamaModelVision 探测模型是否支持图片输入。
+// 优先用 Ollama /api/show 的 model_info.vision 字段（最可靠），探测失败则回退到名称启发式。
+func (h *AIGatewayHandler) ollamaModelVision(baseURL, name string) bool {
+	url := strings.TrimRight(baseURL, "/") + "/api/show"
+	body, _ := json.Marshal(map[string]string{"name": name})
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err == nil {
+		defer resp.Body.Close()
+		var out struct {
+			Capabilities  []string               `json:"capabilities"`
+			ModelInfo     map[string]interface{} `json:"model_info"`
+			ProjectorInfo map[string]interface{} `json:"projector_info"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&out) == nil {
+			// 1) 首选（最权威）：Ollama 0.6+ 的 capabilities 数组，含 "vision" 即支持图片。
+			//    注意：capabilities 非空时不含 vision = 明确不支持，不要再被名称启发式误判。
+			if len(out.Capabilities) > 0 {
+				for _, cap := range out.Capabilities {
+					if strings.EqualFold(strings.TrimSpace(cap), "vision") {
+						return true
+					}
+				}
+				return false
+			}
+			// 2) 老版本 Ollama 无 capabilities：有 projector_info（多模态投影器）即支持。
+			if len(out.ProjectorInfo) > 0 {
+				return true
+			}
+			// 3) 兜底：model_info 里若有显式 vision 标记。
+			if v, ok := out.ModelInfo["vision"]; ok {
+				if b, ok2 := v.(bool); ok2 {
+					return b
+				}
+			}
+		}
+	}
+	return ollamaNameLooksVision(name)
 }
 
 // ChatPlusModels GET /api/chat-plus/models —— 聚合双引擎可用模型列表
