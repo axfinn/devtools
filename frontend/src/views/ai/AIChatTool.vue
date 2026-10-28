@@ -1626,10 +1626,15 @@ watch(
       loadImageStatus()
       // 拉到服务端会话列表（多端共用同一份），再对齐当前会话消息
       syncConversationsFromServer().then(() => {
-        if (!currentConvId.value) {
-          const lastConv = localStorage.getItem(CURRENT_CONV_KEY) || ''
-          if (lastConv && conversations.value.some(c => c.id === lastConv)) switchConversation(lastConv)
+        if (currentConvId.value) return
+        const lastConv = localStorage.getItem(CURRENT_CONV_KEY) || ''
+        if (lastConv && conversations.value.some(c => c.id === lastConv)) {
+          switchConversation(lastConv)
+          return
         }
+        // 本设备第一次打开（没有"上次会话"记录）：直接进最近一条，
+        // 否则新设备进来是张白纸，很容易被当成"历史全丢了"。
+        if (!lastConv && conversations.value.length) switchConversation(conversations.value[0].id)
       })
       // 首次进入/输密码后：恢复上次未看到的生成结果（成功内容 / 失败原因）
       reconcileChatTasks()
