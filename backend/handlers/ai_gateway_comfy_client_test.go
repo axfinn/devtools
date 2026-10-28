@@ -137,7 +137,7 @@ func TestComfyTask_TextToImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("参数收敛失败: %v", err)
 	}
-	task := h.startComfyTask(cfg, comfyImageRequest{Prompt: "a red apple"}, "a red apple", "", opts, "t2i")
+	task := h.startComfyTask(cfg, comfyImageRequest{Prompt: "a red apple"}, "a red apple", "", opts, "t2i", "")
 
 	final, err := waitComfyTask(waitCtx(t), task.ID)
 	if err != nil {
@@ -178,7 +178,7 @@ func TestComfyTask_EditMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("参数收敛失败: %v", err)
 	}
-	task := h.startComfyTask(cfg, req, "make it sunset", "", opts, "edit")
+	task := h.startComfyTask(cfg, req, "make it sunset", "", opts, "edit", "")
 	final, err := waitComfyTask(waitCtx(t), task.ID)
 	if err != nil {
 		t.Fatalf("等待任务失败: %v", err)
@@ -210,7 +210,7 @@ func TestComfyTask_QueueRejected(t *testing.T) {
 	h := &AIGatewayHandler{}
 	cfg := f.cfg()
 	opts, _ := comfyResolveParams(cfg, comfyImageRequest{Prompt: "x"})
-	task := h.startComfyTask(cfg, comfyImageRequest{Prompt: "x"}, "x", "", opts, "t2i")
+	task := h.startComfyTask(cfg, comfyImageRequest{Prompt: "x"}, "x", "", opts, "t2i", "")
 	final, err := waitComfyTask(waitCtx(t), task.ID)
 	if err != nil {
 		t.Fatalf("等待任务失败: %v", err)
@@ -232,7 +232,7 @@ func TestComfyTask_ExecutionError(t *testing.T) {
 	h := &AIGatewayHandler{}
 	cfg := f.cfg()
 	opts, _ := comfyResolveParams(cfg, comfyImageRequest{Prompt: "x"})
-	task := h.startComfyTask(cfg, comfyImageRequest{Prompt: "x"}, "x", "", opts, "t2i")
+	task := h.startComfyTask(cfg, comfyImageRequest{Prompt: "x"}, "x", "", opts, "t2i", "")
 	final, err := waitComfyTask(waitCtx(t), task.ID)
 	if err != nil {
 		t.Fatalf("等待任务失败: %v", err)

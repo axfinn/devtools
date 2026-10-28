@@ -140,6 +140,7 @@
                       <figcaption>
                         <a :href="im.url" target="_blank" rel="noopener" :download="im.filename || 'aichat.png'">下载原图</a>
                         <span v-if="im.width && im.height">{{ im.width }}×{{ im.height }}</span>
+                        <span v-if="msg.genModel" class="gen-model-tag">{{ msg.genModel }}</span>
                       </figcaption>
                     </figure>
                   </div>
@@ -235,8 +236,30 @@
               <el-icon><Promotion /></el-icon>
             </button>
           </div>
-          <div class="composer-hint">
-            <template v-if="imageMode">🎨 本地出图：{{ imageStatus.model }} · {{ imageStatus.steps }} 步 · 单张约 3~5 分钟，可先附一张图做编辑 · </template>
+          <div class="composer-hint" :class="{ 'has-image': imageMode }">
+            <template v-if="imageMode">🎨 本地出图：
+              <el-select
+                v-model="settings.imageModel"
+                class="img-model-select"
+                size="small"
+                :loading="imageModelsLoading"
+                placeholder="模型"
+              >
+                <el-option
+                  v-for="m in imageModels"
+                  :key="m.id"
+                  :label="m.label"
+                  :value="m.id"
+                  :disabled="m.available === false"
+                >
+                  <span class="mo-label">{{ m.label }}</span>
+                  <span class="mo-meta">{{ m.available === false ? '不可用' : m.speed_hint }}</span>
+                </el-option>
+              </el-select>
+              · {{ currentImageModel?.steps || imageStatus.steps }} 步<template v-if="currentImageModel?.speed_hint"> · {{ currentImageModel.speed_hint }}</template>
+              <template v-if="!currentImageModel?.supports_edit"> · 不支持改图</template>
+              <template v-if="imageNeedsRef"> · 需附参考图</template>
+              · </template>
             <template v-else-if="selectedModelVision">📷 已启用视觉：图片将压缩至最长边 ≤{{ IMG_MAX_DIM }}px 后发送 · </template>
             内容由 AI 生成，请仔细甄别 · MiniMax 密钥保存在服务端，不会暴露给浏览器
           </div>
@@ -327,7 +350,7 @@ function handleContentClick(e) {
 const conversations = ref([])   // [{id,title,createdAt,updatedAt}]
 const currentConvId = ref('')
 const messages = ref([])        // 当前会话消息 [{id,role,content,reasoning,model,ts}]
-const settings = ref({ model: '', systemPrompt: '', temperature: 0.7, imageMode: false })
+const settings = ref({ model: '', systemPrompt: '', temperature: 0.7, imageMode: false, imageModel: '' })
 const userInput = ref('')
 const composerFocused = ref(false)
 const streaming = ref(false)
@@ -358,6 +381,16 @@ const imageGenerating = ref(false)    // 有出图任务在跑（用于禁用发
 const imageStatus = ref({ available: false, model: '', steps: 0, resolution: 0, error: '' })
 let imageAbort = null                 // 出图任务的 AbortController
 const MAX_REF_IMAGES = 1              // 出图模式只支持一张参考图（编辑那张图）
+
+// 可切换的出图模型（后端 GET /image/models）。一个模型 = 一整套工作流参数
+// （unet + 文本编码器 + VAE + 采样步数），所以切换就等于换「换脑」，
+// flux2 klein 4 步 20 秒出图，qwen-image 25 步质量更好但要 3~5 分钟。
+const imageModels = ref([])
+const imageModelsLoading = ref(false)
+const currentImageModel = computed(() => imageModels.value.find(m => m.id === settings.value.imageModel) || null)
+const usableImageModels = computed(() => imageModels.value.filter(m => m.available !== false))
+// 只能改图、不能凭空生成的模型（qwen_edit 家族）必须带参考图才能发
+const imageNeedsRef = computed(() => !!currentImageModel.value && currentImageModel.value.supports_t2i === false)
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }
 
@@ -689,7 +722,7 @@ function mergeServerMessages(convId, list) {
     // 「重新生成」替换掉的旧回复：服务端还留着，别又合并回来
     if (hidden.has(sm.id) || (sm.task_id && hidden.has(sm.task_id))) continue
     const imgs = Array.isArray(sm.images)
-      ? sm.images.map(im => ({ id: im.id, url: im.url, w: im.w, h: im.h }))
+      ? sm.images.map(im => ({ id: im.id, url: im.url, w: im.w, h: im.h, model: im.model }))
       : []
     const existing = messages.value.find(m => m && (m.id === sm.id || (sm.task_id && m.taskId === sm.task_id)))
     if (existing) {
@@ -704,6 +737,10 @@ function mergeServerMessages(convId, list) {
       // 服务端有图就补进 genImages 并清掉本地的「失败/中断」标记。
       if (existing.kind === 'image' && imgs.length && !(existing.genImages || []).length) {
         existing.genImages = imgs.map(im => ({ url: im.url, width: im.w, height: im.h, filename: '' }))
+        if (!existing.genModel && imgs[0].model) {
+          existing.genModelId = imgs[0].model
+          existing.genModel = imageModelLabel(imgs[0].model)
+        }
         existing.generating = false
         existing.genError = ''
         existing.progress = 100
@@ -791,6 +828,8 @@ function loadSettings() {
       temperature: typeof s.temperature === 'number' ? s.temperature : 0.7,
       // 重启后默认回到对话模式：出图是否可用要等探活结果，先不自动进去
       imageMode: false,
+      // 上次选的出图模型（id）。服务端预设校验不过会自动回落到默认预设
+      imageModel: s.imageModel || '',
     }
   } catch { /* 保持默认 */ }
 }
@@ -866,7 +905,12 @@ const composerPlaceholder = computed(() => (imageMode.value
   : '输入消息…（Enter 发送，Shift + Enter 换行；可粘贴/拖拽图片）'))
 
 const sendDisabled = computed(() => {
-  if (imageMode.value) return imageGenerating.value || !userInput.value.trim()
+  if (imageMode.value) {
+    if (imageGenerating.value || !userInput.value.trim()) return true
+    // 只装/选了「只能改图」的模型时，必须附参考图
+    if (imageNeedsRef.value && !pendingImages.value.length) return true
+    return false
+  }
   return (!userInput.value.trim() && pendingImages.value.length === 0) || modelsLoading.value
 })
 
@@ -878,6 +922,7 @@ async function loadImageStatus() {
     if (!res.ok) return
     imageStatus.value = await res.json()
     if (!imageStatus.value.available) imageMode.value = false
+    else loadImageModels()
   } catch {
     // 探活失败不打断页面：出图按钮保持禁用即可
   }
@@ -893,6 +938,56 @@ function toggleImageMode() {
   imageMode.value = !imageMode.value
   // 切回对话模式时，参考图可能超出视觉模型张数上限，直接清空更直观
   if (!imageMode.value) pendingImages.value = []
+  else if (!imageModels.value.length) loadImageModels()
+}
+
+// 模型 id → 展示名；清单还没拉到时先显示 id，别把标签空着
+function imageModelLabel(id) {
+  if (!id) return ''
+  return imageModels.value.find(m => m.id === id)?.label || id
+}
+
+// 拉取可切换的出图模型清单。失败不打断页面：沿用后端默认模型即可。
+async function loadImageModels() {
+  if (imageModelsLoading.value) return
+  imageModelsLoading.value = true
+  try {
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/models`, { headers: auth.authHeader() })
+    if (!res.ok) return
+    const data = await res.json()
+    imageModels.value = Array.isArray(data.models) ? data.models : []
+    const stillValid = imageModels.value.some(m => m.id === settings.value.imageModel && m.available !== false)
+    if (!stillValid) {
+      const def = imageModels.value.find(m => m.id === data.default_model && m.available !== false)
+      const fallback = def || usableImageModels.value[0] || imageModels.value[0]
+      settings.value.imageModel = fallback ? fallback.id : ''
+    }
+  } catch {
+    // 模型清单拿不到就退回后端默认（请求里不传 model）
+  } finally {
+    imageModelsLoading.value = false
+  }
+}
+
+// 参考图与模型能力对齐：flux2 只做文生图，附了参考图就必须换到支持改图的模型。
+// 返回 false 表示当前是不可自动修复的情况（例如只装了改图模型却没附图）。
+function ensureModelMatchesRef(hasRef) {
+  const cur = currentImageModel.value
+  if (!cur) return true
+  if (hasRef && cur.supports_edit === false) {
+    const alt = usableImageModels.value.find(m => m.supports_edit !== false)
+    if (!alt) {
+      ElMessage.warning(`模型「${cur.label}」不支持参考图编辑，且没有其它可用模型`)
+      return false
+    }
+    settings.value.imageModel = alt.id
+    ElMessage.info(`「${cur.label}」不支持改图，已切换到「${alt.label}」`)
+  }
+  if (!hasRef && cur.supports_t2i === false) {
+    ElMessage.warning(`模型「${cur.label}」只能改图，请先附一张参考图`)
+    return false
+  }
+  return true
 }
 
 async function loadModels() {
@@ -1491,6 +1586,11 @@ async function sendImageTask(text) {
     return
   }
   const ref = pendingImages.value[0]
+  // 先确认模型能力与「有没有附参考图」匹配：不匹配会在这里就被拦下或自动换模型，
+  // 免得任务跑到服务端才因为 flux2 不支持改图而失败。
+  if (!ensureModelMatchesRef(!!ref)) return
+  const modelId = settings.value.imageModel || ''
+  const modelLabel = currentImageModel.value?.label || ''
   const imgs = ref ? [{ id: ref.id, dataUrl: ref.dataUrl, w: ref.w, h: ref.h }] : []
   userInput.value = ''
   pendingImages.value = []
@@ -1500,6 +1600,7 @@ async function sendImageTask(text) {
   const msg = {
     id: uid(), role: 'assistant', kind: 'image',
     prompt: text, refImage: ref?.dataUrl || '',
+    genModelId: modelId, genModel: modelLabel,
     content: '', genImages: [], genError: '',
     progress: 0, phase: '排队中', generating: true, ts: Date.now(),
   }
@@ -1532,6 +1633,8 @@ async function runImageTask(msg) {
       message_id: msg.id || '',
     }
     if (msg.refImage) body.image = msg.refImage
+    // 模型预设：空 = 用服务端默认。老消息（没有 genModelId）保持后端默认行为。
+    if (msg.genModelId) body.model = msg.genModelId
     const res = await fetch(`${API_BASE}/api/chat-plus/image/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
@@ -1992,6 +2095,10 @@ onActivated(() => {
 }
 .gen-item figcaption a { color: var(--color-primary); text-decoration: none; }
 .gen-error { margin-top: 6px; font-size: 12px; color: #f56c6c; }
+.gen-model-tag {
+  padding: 0 6px; border-radius: 999px; font-size: 11px;
+  color: var(--text-secondary, #555); background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+}
 .composer-box.dragover { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent); }
 
 .img-thumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px 0; }
@@ -2113,6 +2220,19 @@ onActivated(() => {
   max-width: 820px; margin: 8px auto 0; text-align: center;
   font-size: 11.5px; color: var(--text-quaternary);
 }
+/* 出图模型切换：做成行内小下拉，别把提示行撑成一条工具栏 */
+.img-model-select {
+  width: auto; min-width: 132px; display: inline-block; vertical-align: middle;
+  margin: 0 2px;
+}
+.img-model-select :deep(.el-select__wrapper) {
+  min-height: 22px; padding: 1px 6px; border-radius: 8px;
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04)); box-shadow: none;
+  font-size: 11.5px;
+}
+.img-model-select :deep(.el-select__placeholder) { color: var(--text-secondary, #555); }
+.mo-label { float: left; }
+.mo-meta { float: right; margin-left: 14px; font-size: 11px; color: var(--text-quaternary, #999); }
 
 /* 窄屏适配：侧栏改抽屉、模型选择器收缩、输入区安全区、防 iOS 聚焦缩放 */
 @media (max-width: 768px) {
@@ -2146,6 +2266,8 @@ onActivated(() => {
   .composer-box { padding: 8px 8px 8px 10px; border-radius: 14px; }
   .composer-input :deep(.el-textarea__inner) { font-size: 16px; } /* <16px 会触发 iOS 聚焦自动放大 */
   .composer-hint { display: none; }
+  /* 出图模式必须留着这一行：模型切换就挂在这里，藏了手机上就没法换模型 */
+  .composer-hint.has-image { display: block; font-size: 11px; line-height: 1.9; }
   .msg-content :deep(pre.hljs) { font-size: 12.5px; }
 }
 
