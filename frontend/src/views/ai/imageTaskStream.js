@@ -39,6 +39,9 @@ export function applyTaskEvent(msg, task) {
 
   if (typeof task.progress === 'number') msg.progress = task.progress
   if (task.phase) msg.phase = task.phase
+  // 出图常常几分钟没有进度变化（上传参考图/排队/首次加载模型），
+  // 有 elapsed_ms 就能让用户看到「确实在跑」，不至于以为卡死。
+  if (typeof task.elapsed_ms === 'number') msg.elapsedMs = task.elapsed_ms
 
   if (task.status === 'succeeded') {
     msg.genImages = Array.isArray(task.images) ? task.images : []
