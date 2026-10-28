@@ -717,15 +717,27 @@ func (h *AIGatewayHandler) proxyAnthropicStream(c *gin.Context, provider *config
 	if providerEmitsThinkingBlocks(provider) {
 		bodyReader = newSSEThinkingFilter(resp.Body)
 	}
+	// 弱网看门狗：同上，长时间零字节即判定断流，取消上游并回 error 事件。
+	guard := newStallGuard(outboundPolicy.streamIdle, cancel)
+	defer guard.stop()
 	for {
+		guard.touch()
 		n, readErr := bodyReader.Read(buf)
 		if n > 0 {
+			guard.touch()
 			if err := writer.write(buf[:n]); err != nil {
 				cancel() // 客户端断开，取消上游请求
 				return http.StatusOK, context.Canceled
 			}
 		}
 		if readErr != nil {
+			if guard.stop() {
+				if c.Request.Context().Err() == nil {
+					log.Printf("[outbound] anthropic 上游流式响应静默超过 %s，判定断流，已中断", outboundPolicy.streamIdle)
+					writeSSEErrorFrame(writer, http.StatusGatewayTimeout, stallMessage(outboundPolicy.streamIdle))
+				}
+				return http.StatusOK, context.DeadlineExceeded
+			}
 			if readErr != io.EOF {
 				// 上游读取错误：若是 context 取消（客户端断开），统一返回 context.Canceled
 				if c.Request.Context().Err() != nil {
