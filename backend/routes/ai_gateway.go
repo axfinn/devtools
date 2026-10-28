@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"time"
+
 	"devtools/middleware"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +35,8 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 		aigw.POST("/v1/image/understanding/sse", h.AiGatewayHandler.ImageUnderstandingSSE)
 		aigw.POST("/v1/image/understanding/sse/file", h.AiGatewayHandler.ImageUnderstandingSSEFile)
 		aigw.GET("/v1/image/understanding/stream/:id", h.AiGatewayHandler.ImageUnderstandingStream)
+		// OpenAI 兼容出图：本地 ComfyUI（Qwen-Image），同步返回，鉴权走 AI Gateway API Key
+		aigw.POST("/v1/images/generations", createRateLimiter.Middleware(), h.AiGatewayHandler.OpenAIImagesGenerations)
 	}
 
 	api.POST("/internal/chat", createRateLimiter.Middleware(), h.AiGatewayHandler.InternalChat)
@@ -45,6 +49,30 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 	api.POST("/chat-plus/verify", h.AiGatewayHandler.ChatPlusVerify)
 	api.GET("/chat-plus/models", h.AiGatewayHandler.ChatPlusModels)
 	api.POST("/chat-plus/chat/stream", createRateLimiter.Middleware(), h.AiGatewayHandler.ChatPlusStream)
+
+	// 异步任务化聊天（弱网断线续传）：创建任务 → 订阅 SSE(from=seq) → 刷新后按会话对齐
+	// 建任务用独立限流桶（60/分钟）：createRateLimiter 是 10/分钟，多端同用一个公网 IP 时
+	// 正常聊天很快就撞 429，表现成"莫名其妙发送失败"。
+	chatTaskLimiter := middleware.NewRateLimiter(60, time.Minute, nil)
+	api.POST("/chat-plus/tasks", chatTaskLimiter.Middleware(), h.AiGatewayHandler.ChatPlusTaskCreate)
+	api.GET("/chat-plus/tasks", h.AiGatewayHandler.ChatPlusTaskList)
+	api.GET("/chat-plus/tasks/:id", h.AiGatewayHandler.ChatPlusTaskGet)
+	api.GET("/chat-plus/tasks/:id/stream", h.AiGatewayHandler.ChatPlusTaskStream)
+	api.POST("/chat-plus/tasks/:id/stop", h.AiGatewayHandler.ChatPlusTaskStop)
+
+	// 会话/消息同步（多端一致）：服务端是唯一真相，localStorage 只是离线缓存
+	api.GET("/chat-plus/conversations", h.AiGatewayHandler.ChatPlusConversations)
+	api.POST("/chat-plus/conversations", h.AiGatewayHandler.ChatPlusConversations)
+	api.DELETE("/chat-plus/conversations/:id", h.AiGatewayHandler.ChatPlusConversationDelete)
+	api.GET("/chat-plus/conversations/:id/messages", h.AiGatewayHandler.ChatPlusMessages)
+	api.POST("/chat-plus/conversations/:id/messages", h.AiGatewayHandler.ChatPlusMessages)
+	// <img src> 带不了自定义 header，故不带密码门；文件名是 16 字节随机 hex
+	api.GET("/chat-plus/images/:name", h.AiGatewayHandler.ChatPlusImage)
+	// 本地出图（局域网 ComfyUI）：异步任务 + SSE 进度，密码门复用 chat_plus.password
+	api.GET("/chat-plus/image/status", h.AiGatewayHandler.ChatPlusImageStatus)
+	api.POST("/chat-plus/image/generate", createRateLimiter.Middleware(), h.AiGatewayHandler.ChatPlusImageGenerate)
+	api.GET("/chat-plus/image/tasks/:id", h.AiGatewayHandler.ChatPlusImageTask)
+	api.GET("/chat-plus/image/tasks/:id/stream", h.AiGatewayHandler.ChatPlusImageTaskStream)
 	api.GET("/english-tutor/meta", h.AiGatewayHandler.EnglishTutorMeta)
 	api.POST("/english-tutor", h.AiGatewayHandler.EnglishTutor)
 

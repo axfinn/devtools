@@ -109,7 +109,7 @@
           <div v-if="messages.length === 0 && !streaming" class="cp-welcome">
             <div class="welcome-logo">✦</div>
             <h2>有什么可以帮你？</h2>
-            <p class="welcome-sub">本地 Ollama 模型与 MiniMax 云端模型随时切换，对话仅保存在你的浏览器本地</p>
+            <p class="welcome-sub">本地 Ollama 与 MiniMax 云端模型随时切换 · 对话已同步到服务端，换设备打开也是同一份</p>
             <div class="welcome-chips">
               <button v-for="s in SUGGESTIONS" :key="s" class="chip" @click="quickAsk(s)">{{ s }}</button>
             </div>
@@ -125,19 +125,56 @@
                   <summary>思考过程</summary>
                   <div class="reasoning-content">{{ msg.reasoning }}</div>
                 </details>
+                <div v-if="msg.images && msg.images.length" class="msg-images">
+                  <img v-for="im in msg.images" :key="im.id" :src="im.url || im.dataUrl" alt="" />
+                </div>
+                <!-- 本地出图（ComfyUI）：进度条 + 结果图 -->
+                <div v-if="msg.kind === 'image'" class="msg-gen">
+                  <div v-if="msg.generating" class="gen-progress">
+                    <div class="gen-bar"><i :style="{ width: Math.max(2, msg.progress || 0) + '%' }"></i></div>
+                    <span class="gen-phase">{{ msg.phase || '准备中' }} · {{ msg.progress || 0 }}%</span>
+                  </div>
+                  <div v-if="msg.genImages && msg.genImages.length" class="gen-grid">
+                    <figure v-for="im in msg.genImages" :key="im.url" class="gen-item">
+                      <img :src="im.url" :alt="msg.prompt || 'AI 生成图片'" loading="lazy" @click="previewImage(im.url)" />
+                      <figcaption>
+                        <a :href="im.url" target="_blank" rel="noopener" :download="im.filename || 'aichat.png'">下载原图</a>
+                        <span v-if="im.width && im.height">{{ im.width }}×{{ im.height }}</span>
+                      </figcaption>
+                    </figure>
+                  </div>
+                  <div v-if="msg.genError" class="gen-error">⚠ {{ msg.genError }}</div>
+                </div>
                 <div class="msg-content" :class="{ streaming: msg.streaming }" v-html="renderMarkdown(msg.content)"></div>
                 <!-- 中断标记 + 续写入口 -->
-                <div v-if="msg.interrupted" class="msg-interrupted">
+                <div v-if="msg.interrupted && !msg.failed" class="msg-interrupted">
                   <span>⚠ 连接中断，回复不完整</span>
                   <button v-if="msg === lastAssistant && !streaming && msg.content" class="continue-btn" @click="continueGeneration">继续生成</button>
                 </div>
+                <!-- 弱网自动重连提示 -->
+                <div v-if="msg.reconnecting" class="msg-interrupted">
+                  <span>⚠ 网络不稳，正在自动续传…</span>
+                </div>
+                <!-- 任务失败：把服务端的原因如实显示出来，可一键重试 -->
+                <div v-if="msg.failed" class="msg-failed">
+                  <span>⚠ 生成失败：{{ msg.failed }}</span>
+                  <button v-if="msg === lastAssistant && !streaming" class="continue-btn" @click="regenerate">重试</button>
+                </div>
                 <!-- 操作行 -->
-                <div v-if="!msg.streaming" class="msg-actions">
-                  <button v-if="msg.role === 'assistant'" class="action-btn" title="复制回复" @click="copyMessage(msg)">
+                <div v-if="!msg.streaming && !msg.generating" class="msg-actions">
+                  <button v-if="msg.role === 'assistant' && msg.kind !== 'image'" class="action-btn" title="复制回复" @click="copyMessage(msg)">
                     <el-icon><CopyDocument /></el-icon>
                   </button>
                   <button
-                    v-if="msg.role === 'assistant' && msg === lastAssistant && !streaming"
+                    v-if="msg.role === 'assistant' && msg.kind === 'image' && !streaming"
+                    class="action-btn"
+                    title="重新生成这张图"
+                    @click="regenerateImage(msg)"
+                  >
+                    <el-icon><RefreshRight /></el-icon>
+                  </button>
+                  <button
+                    v-if="msg.role === 'assistant' && msg.kind !== 'image' && msg === lastAssistant && !streaming"
                     class="action-btn"
                     title="重新生成"
                     @click="regenerate"
@@ -151,32 +188,59 @@
         </div>
 
         <!-- 输入区 -->
-        <footer class="cp-composer">
+        <footer class="cp-composer" @drop="onDrop" @dragover.prevent="dragOver = true" @dragleave="dragOver = false">
           <div v-if="errorMsg" class="cp-error">
             <el-icon><WarningFilled /></el-icon>
             <span>{{ errorMsg }}</span>
             <button class="err-close" @click="errorMsg = ''">✕</button>
           </div>
-          <div class="composer-box" :class="{ focused: composerFocused }">
+
+          <!-- 待发送图片缩略图 -->
+          <div v-if="pendingImages.length" class="img-thumbs">
+            <div v-for="im in pendingImages" :key="im.id" class="img-thumb">
+              <img :src="im.dataUrl" alt="" />
+              <span class="img-kb">{{ im.kb }}KB</span>
+              <button class="img-del" title="移除" @click="removePendingImage(im.id)">✕</button>
+            </div>
+            <span class="img-count">{{ pendingImages.length }}/{{ MAX_IMAGES }}</span>
+          </div>
+          <div v-if="imageContextWarn" class="img-warn">⚠ 图片总体积较大（约 {{ pendingImagesKB }}KB），视觉模型上下文可能吃紧，建议减少图片或换更大显存的模型</div>
+
+          <div class="composer-box" :class="{ focused: composerFocused, dragover: dragOver }" @paste="onPaste">
+            <button
+              class="gen-btn"
+              :class="{ active: imageMode }"
+              :disabled="!imageAvailable"
+              :title="imageAvailable ? (imageMode ? '退出本地出图，回到对话' : '本地出图（ComfyUI · 局域网）') : '本地出图不可用：' + (imageStatus.error || '未配置')"
+              @click="toggleImageMode"
+            >🎨</button>
+            <button class="img-btn" :class="{ active: canAttachImage }" :disabled="!canAttachImage" :title="attachTitle" @click="openImagePicker">
+              <el-icon><Picture /></el-icon>
+            </button>
             <el-input
               v-model="userInput"
               type="textarea"
               :autosize="{ minRows: 1, maxRows: 8 }"
-              placeholder="输入消息…（Enter 发送，Shift + Enter 换行）"
+              :placeholder="composerPlaceholder"
               resize="none"
               @focus="composerFocused = true"
               @blur="composerFocused = false"
               @keydown="onKeydown"
               class="composer-input"
             />
-            <button v-if="streaming" class="send-btn stop" title="停止生成" @click="stopGeneration">
+            <button v-if="streaming || imageGenerating" class="send-btn stop" title="停止生成" @click="stopGeneration">
               <span class="stop-square"></span>
             </button>
-            <button v-else class="send-btn" :disabled="!userInput.trim() || modelsLoading" title="发送" @click="sendMessage">
+            <button v-else class="send-btn" :disabled="sendDisabled" title="发送" @click="sendMessage">
               <el-icon><Promotion /></el-icon>
             </button>
           </div>
-          <div class="composer-hint">内容由 AI 生成，请仔细甄别 · MiniMax 密钥保存在服务端，不会暴露给浏览器</div>
+          <div class="composer-hint">
+            <template v-if="imageMode">🎨 本地出图：{{ imageStatus.model }} · {{ imageStatus.steps }} 步 · 单张约 3~5 分钟，可先附一张图做编辑 · </template>
+            <template v-else-if="selectedModelVision">📷 已启用视觉：图片将压缩至最长边 ≤{{ IMG_MAX_DIM }}px 后发送 · </template>
+            内容由 AI 生成，请仔细甄别 · MiniMax 密钥保存在服务端，不会暴露给浏览器
+          </div>
+          <input ref="imageInputRef" type="file" accept="image/*" multiple hidden @change="e => { addImageFiles(e.target.files); e.target.value = '' }" />
         </footer>
       </main>
     </div>
@@ -184,9 +248,9 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, CopyDocument, RefreshRight, Promotion, WarningFilled } from '@element-plus/icons-vue'
+import { Delete, CopyDocument, RefreshRight, Promotion, WarningFilled, Picture } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import hljs from '../../utils/highlight'
 import 'highlight.js/styles/github-dark.css'
@@ -195,11 +259,13 @@ import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { API_BASE } from '../../api'
 import { useAdminAuth } from '../../composables/useAdminAuth'
+import { drainTaskFrames, applyTaskEvent } from './imageTaskStream'
 
 // ══════════════ 常量 ══════════════
 const CONV_LIST_KEY = 'chat-plus-conv-list'
 const MSGS_KEY_PREFIX = 'chat-plus-msgs-'
 const SETTINGS_KEY = 'chat-plus-settings'
+const CURRENT_CONV_KEY = 'chat-plus-current-conv'
 
 const SUGGESTIONS = [
   '用通俗的语言解释一下 Transformer 的注意力机制',
@@ -256,10 +322,12 @@ function handleContentClick(e) {
 }
 
 // ══════════════ 会话与消息存储 ══════════════
+// 架构（多端同步）：服务端 SQLite 是唯一真相，localStorage 只是「离线缓存 + 首屏秒开」。
+// 之前全部只存 localStorage，等于每个浏览器一份私有历史，换设备打开就是空白。
 const conversations = ref([])   // [{id,title,createdAt,updatedAt}]
 const currentConvId = ref('')
 const messages = ref([])        // 当前会话消息 [{id,role,content,reasoning,model,ts}]
-const settings = ref({ model: '', systemPrompt: '', temperature: 0.7 })
+const settings = ref({ model: '', systemPrompt: '', temperature: 0.7, imageMode: false })
 const userInput = ref('')
 const composerFocused = ref(false)
 const streaming = ref(false)
@@ -269,19 +337,422 @@ const isMobileViewport = ref(false)
 const modelsLoading = ref(false)
 const modelInfo = ref({ minimax: { available: false, models: [] }, ollama: { available: false, models: [], error: '' } })
 
+// ══════════════ 图片输入（视觉模型） ══════════════
+const MAX_IMAGES = 4            // 单条消息最多图片数
+const IMG_MAX_DIM = 1024       // 压缩后最长边上限（控制视觉 token 体积，防上下文爆）
+const IMG_QUALITY = 0.8        // JPEG 压缩质量
+const IMG_TOTAL_BUDGET = 4     // 单次请求最多携带的历史+当前图片总数（硬上限，防多轮累积爆上下文）
+const pendingImages = ref([])  // [{ id, dataUrl, w, h, kb }] 待发送图片（已压缩）
+const dragOver = ref(false)
+const imageInputRef = ref(null)
+
+// ══════════════ 本地出图（局域网 ComfyUI） ══════════════
+// 与对话是两条独立链路：对话走 Ollama/MiniMax，出图走 ComfyUI 的扩散模型，
+// 后端做成了「提交任务 + SSE 进度」，因为单张 1024² 要 3~5 分钟，同步等必超时。
+// imageMode 挂在 settings 上，随设置一起持久化，刷新后仍是上次的模式。
+const imageMode = computed({
+  get: () => !!settings.value.imageMode,
+  set: (v) => { settings.value.imageMode = !!v },
+})
+const imageGenerating = ref(false)    // 有出图任务在跑（用于禁用发送/显示停止）
+const imageStatus = ref({ available: false, model: '', steps: 0, resolution: 0, error: '' })
+let imageAbort = null                 // 出图任务的 AbortController
+const MAX_REF_IMAGES = 1              // 出图模式只支持一张参考图（编辑那张图）
+
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }
+
+// 读取图片文件/URL → 用 canvas 等比压缩到 IMG_MAX_DIM 以内 → 输出 JPEG dataURL
+function compressImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      let { width: w, height: h } = img
+      const scale = Math.min(1, IMG_MAX_DIM / Math.max(w, h))
+      w = Math.max(1, Math.round(w * scale))
+      h = Math.max(1, Math.round(h * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, w, h)
+      ctx.drawImage(img, 0, 0, w, h)
+      const dataUrl = canvas.toDataURL('image/jpeg', IMG_QUALITY)
+      const kb = Math.round((dataUrl.length * 3) / 4 / 1024)
+      resolve({ id: uid(), dataUrl, w, h, kb })
+    }
+    img.onerror = () => reject(new Error('图片读取失败'))
+    img.src = src
+  })
+}
+
+// 当前模式允许的最大图片数：出图模式只接受 1 张参考图，对话模式最多 MAX_IMAGES 张
+const imageLimit = computed(() => (imageMode.value ? MAX_REF_IMAGES : MAX_IMAGES))
+
+async function addImageFiles(fileList) {
+  const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/'))
+  if (!files.length) return
+  if (!canAttachImage.value) {
+    ElMessage.warning(imageMode.value
+      ? `本地出图不可用：${imageStatus.value.error || '未配置 ComfyUI'}`
+      : '当前模型不支持图片，请先选一个视觉模型（如 llava / qwen-vl）')
+    return
+  }
+  for (const f of files) {
+    if (pendingImages.value.length >= imageLimit.value) {
+      ElMessage.warning(imageMode.value
+        ? '出图模式只支持 1 张参考图（作为编辑对象）'
+        : `最多同时附加 ${MAX_IMAGES} 张图片`)
+      break
+    }
+    try {
+      const url = URL.createObjectURL(f)
+      const comp = await compressImage(url)
+      URL.revokeObjectURL(url)
+      pendingImages.value.push(comp)
+    } catch (e) {
+      ElMessage.error(e.message || '图片处理失败')
+    }
+  }
+}
+
+function removePendingImage(id) {
+  pendingImages.value = pendingImages.value.filter(x => x.id !== id)
+}
+
+function openImagePicker() {
+  if (!canAttachImage.value) {
+    ElMessage.warning(imageMode.value
+      ? `本地出图不可用：${imageStatus.value.error || '未配置 ComfyUI'}`
+      : '当前模型不支持图片，请先选一个视觉模型（如 llava / qwen-vl）')
+    return
+  }
+  imageInputRef.value?.click()
+}
+
+function onPaste(e) {
+  const items = e.clipboardData?.items || []
+  const imgs = []
+  for (const it of items) {
+    if (it.type.startsWith('image/')) {
+      const f = it.getAsFile()
+      if (f) imgs.push(f)
+    }
+  }
+  if (imgs.length) { e.preventDefault(); addImageFiles(imgs) }
+}
+
+function onDrop(e) {
+  dragOver.value = false
+  if (e.dataTransfer?.files?.length) {
+    e.preventDefault()
+    addImageFiles(e.dataTransfer.files)
+  }
+}
+
+// 估算当前待发送图片总体积（KB），用于上下文风险提示
+const pendingImagesKB = computed(() => pendingImages.value.reduce((s, x) => s + (x.kb || 0), 0))
+const imageContextWarn = computed(() => pendingImagesKB.value > 1200) // 单条图片过重时提醒
 
 function loadConversations() {
   try { conversations.value = JSON.parse(localStorage.getItem(CONV_LIST_KEY) || '[]') } catch { conversations.value = [] }
 }
 function saveConversations() {
-  localStorage.setItem(CONV_LIST_KEY, JSON.stringify(conversations.value))
+  try { localStorage.setItem(CONV_LIST_KEY, JSON.stringify(conversations.value)) } catch { /* 忽略配额 */ }
 }
 function loadMessages(convId) {
-  try { messages.value = JSON.parse(localStorage.getItem(MSGS_KEY_PREFIX + convId) || '[]') } catch { messages.value = [] }
+  messages.value = loadMessagesFor(convId)
+  // 刷新/重启页面时，出图任务已经不在内存里了：把残留的「生成中」就地收尾，
+  // 否则进度条会永远停在半截让人以为还在跑。
+  for (const m of messages.value) {
+    if (m && m.generating) {
+      m.generating = false
+      m.genError = m.genError || '页面已刷新，本次生成中断（可点「重新生成」）'
+    }
+  }
+  // 先把本地缓存画出来（秒开），再去服务端对齐（另一台设备发的消息也能拉下来）
+  if (convId) refreshMessagesFromServer(convId)
+}
+function loadMessagesFor(convId) {
+  try { return JSON.parse(localStorage.getItem(MSGS_KEY_PREFIX + convId) || '[]') } catch { return [] }
 }
 function saveMessages() {
-  if (currentConvId.value) localStorage.setItem(MSGS_KEY_PREFIX + currentConvId.value, JSON.stringify(messages.value))
+  saveMessagesFor(currentConvId.value, messages.value)
+  scheduleMessagesSync(currentConvId.value, messages.value)
+}
+function saveMessagesFor(convId, list) {
+  if (!convId) return
+  try {
+    localStorage.setItem(MSGS_KEY_PREFIX + convId, JSON.stringify(list))
+  } catch {
+    // 含图片的历史可能超过 localStorage 配额，静默降级（服务端那份是完整的）
+  }
+}
+
+// ── 服务端同步（会话 / 消息）─────────────────────────────────────────────
+function authHeaders(extra) {
+  return { ...(extra || {}), ...auth.authHeader() }
+}
+
+async function apiJSON(path, opts = {}) {
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers: authHeaders(opts.headers) })
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`
+    try {
+      const d = await res.json()
+      if (d?.error) msg = d.error
+    } catch { /* 非 JSON 响应 */ }
+    const err = new Error(msg)
+    err.status = res.status
+    throw err
+  }
+  return res.json().catch(() => ({}))
+}
+
+// 会话：本地有、服务端没有的（升级前的老会话 / 离线期间新建的）补传上去，避免"升级后历史消失"
+async function syncConversationsFromServer() {
+  if (!auth.isAuthenticated.value) return
+  let data
+  try {
+    data = await apiJSON('/api/chat-plus/conversations')
+  } catch {
+    return // 服务端不可达：继续用本地缓存
+  }
+  const server = Array.isArray(data?.conversations) ? data.conversations : []
+  const tombstones = deletedConvIds()
+  // 已删除但服务端还留着的会话：补删，别让它回到列表
+  for (const c of server) {
+    if (!tombstones.has(c.id)) continue
+    deleteConversationOnServer(c.id).then(() => unmarkConvDeleted(c.id)).catch(() => {})
+  }
+  const live = server.filter(c => !tombstones.has(c.id))
+  const serverIds = new Set(live.map(c => c.id))
+  const merged = live.map(c => ({
+    id: c.id,
+    title: c.title || '新对话',
+    createdAt: Date.parse(c.created_at) || Date.now(),
+    updatedAt: Date.parse(c.updated_at) || Date.now(),
+  }))
+  for (const c of conversations.value) {
+    if (!c?.id || serverIds.has(c.id) || tombstones.has(c.id)) continue
+    merged.push(c)
+    pushConversation(c).catch(() => {})
+    backfillMessages(c.id)
+  }
+  merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+  conversations.value = merged
+  saveConversations()
+}
+
+async function pushConversation(conv) {
+  if (!conv?.id || !auth.isAuthenticated.value) return
+  await apiJSON('/api/chat-plus/conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: conv.id, title: conv.title || '' }),
+  })
+}
+
+async function deleteConversationOnServer(convId) {
+  if (!convId || !auth.isAuthenticated.value) return
+  await apiJSON(`/api/chat-plus/conversations/${encodeURIComponent(convId)}`, { method: 'DELETE' })
+}
+
+// 删除墓碑：删掉的会话记在本地，避免服务端列表下一轮同步又把它拉回来
+// （弱网/离线时 DELETE 可能没到达，下次同步会重试）。
+const DELETED_CONVS_KEY = 'chat-plus-deleted-convs'
+function deletedConvIds() {
+  try { return new Set(JSON.parse(localStorage.getItem(DELETED_CONVS_KEY) || '[]')) } catch { return new Set() }
+}
+function markConvDeleted(id) {
+  const s = deletedConvIds()
+  s.add(id)
+  try { localStorage.setItem(DELETED_CONVS_KEY, JSON.stringify([...s].slice(-200))) } catch { /* 忽略 */ }
+}
+function unmarkConvDeleted(id) {
+  const s = deletedConvIds()
+  if (!s.delete(id)) return
+  try { localStorage.setItem(DELETED_CONVS_KEY, JSON.stringify([...s])) } catch { /* 忽略 */ }
+}
+
+function toServerMessage(m) {
+  const status = m.genError ? 'failed'
+    : m.failed ? 'failed'
+      : (m.interrupted ? 'canceled' : (m.streaming ? 'running' : 'ok'))
+  const out = {
+    id: m.id,
+    role: m.role,
+    content: m.kind === 'image' ? (m.prompt || '') : (m.content || ''),
+    reasoning: m.reasoning || '',
+    task_id: m.taskId || '',
+    kind: m.kind || 'text',
+    status,
+    error_message: m.failed || m.genError || '',
+    ts: m.ts || Date.now(),
+  }
+  // 出图消息：结果图本身在服务端（ComfyUI 任务产物），只需同步 URL
+  if (m.kind === 'image') {
+    if (Array.isArray(m.genImages) && m.genImages.length) {
+      out.images = m.genImages.map(gi => ({
+        id: gi.url, dataUrl: '', url: gi.url, w: gi.width || 0, h: gi.height || 0,
+      }))
+    }
+    return out
+  }
+  if (Array.isArray(m.images) && m.images.length) {
+    out.images = m.images.map(im => ({
+      id: im.id || '',
+      dataUrl: im.dataUrl || '',
+      url: im.url || '',
+      w: im.w || 0,
+      h: im.h || 0,
+    }))
+  }
+  return out
+}
+
+// 图片一旦上了服务端就只保留 URL：base64 存 localStorage 很容易撞 5MB 配额，
+// 撞了之后「新消息干脆存不进去」，表现成刷新后消息丢失。
+function adoptServerImages(list, saved) {
+  const byId = new Map((saved || []).map(s => [s.id, s]))
+  for (const m of list) {
+    const s = byId.get(m.id)
+    if (!s || !Array.isArray(s.images) || !s.images.length) continue
+    const hasDataUrl = (m.images || []).some(im => im.dataUrl)
+    if (!hasDataUrl) continue
+    m.images = s.images.map(im => ({ id: im.id, url: im.url, w: im.w, h: im.h }))
+  }
+}
+
+async function pushMessages(convId, list) {
+  if (!convId || !list?.length || !auth.isAuthenticated.value) return
+  try {
+    const data = await apiJSON(`/api/chat-plus/conversations/${encodeURIComponent(convId)}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: list.map(toServerMessage) }),
+    })
+    adoptServerImages(list, data?.messages)
+    // 用 url 版覆盖本地缓存（不再往 localStorage 塞 base64）
+    saveMessagesFor(convId, convId === currentConvId.value ? messages.value : list)
+  } catch {
+    // 同步失败不打断聊天：本地缓存还在，下次保存会重试
+  }
+}
+
+// 消息同步节流：流式过程中正文一直在变，400ms 合并一次就够
+const msgSyncTimers = new Map()
+function scheduleMessagesSync(convId, list) {
+  if (!convId || !auth.isAuthenticated.value) return
+  const snapshot = [...list]
+  clearTimeout(msgSyncTimers.get(convId))
+  msgSyncTimers.set(convId, setTimeout(() => {
+    msgSyncTimers.delete(convId)
+    pushMessages(convId, snapshot)
+  }, 400))
+}
+
+// 把本地（离线期间产生/升级前的老消息）补到服务端
+async function backfillMessages(convId) {
+  const local = loadMessagesFor(convId)
+  if (!local.length) return
+  let server
+  try {
+    server = await pullMessages(convId, 0)
+  } catch {
+    return
+  }
+  const ids = new Set(server.map(m => m.id))
+  const missing = local.filter(m => m?.id && !ids.has(m.id))
+  if (missing.length) await pushMessages(convId, missing)
+}
+
+async function pullMessages(convId, sinceTs) {
+  const data = await apiJSON(`/api/chat-plus/conversations/${encodeURIComponent(convId)}/messages?since_ts=${sinceTs || 0}`)
+  return Array.isArray(data?.messages) ? data.messages : []
+}
+
+function lastMessageTs() {
+  let max = 0
+  for (const m of messages.value) if (m?.ts > max) max = m.ts
+  return max
+}
+
+// mergeServerMessages 把服务端消息并进当前列表：
+// 同 id 用服务端内容补全（流式结束后以服务端为准），新的追加，最后按时间排序。
+function mergeServerMessages(convId, list) {
+  if (convId !== currentConvId.value || !Array.isArray(list) || !list.length) return false
+  let changed = false
+  const hidden = hiddenTaskIds(convId)
+  for (const sm of list) {
+    if (!sm?.id) continue
+    // 「重新生成」替换掉的旧回复：服务端还留着，别又合并回来
+    if (hidden.has(sm.id) || (sm.task_id && hidden.has(sm.task_id))) continue
+    const imgs = Array.isArray(sm.images)
+      ? sm.images.map(im => ({ id: im.id, url: im.url, w: im.w, h: im.h }))
+      : []
+    const existing = messages.value.find(m => m && (m.id === sm.id || (sm.task_id && m.taskId === sm.task_id)))
+    if (existing) {
+      // 正在流式接收的那条不要被服务端旧快照覆盖
+      if (streamMsg.value === existing) continue
+      let touched = false
+      if ((sm.content || '').length > (existing.content || '').length) { existing.content = sm.content; touched = true }
+      if ((sm.reasoning || '').length > (existing.reasoning || '').length) { existing.reasoning = sm.reasoning; touched = true }
+      if (imgs.length && !(existing.images || []).length) { existing.images = imgs; touched = true }
+      if (sm.status === 'failed' && !existing.failed) { existing.failed = sm.error_message || '生成失败'; touched = true }
+      if (sm.status === 'canceled' && !existing.interrupted) { existing.interrupted = true; touched = true }
+      if (touched) changed = true
+      continue
+    }
+    if (sm.role !== 'assistant' && sm.role !== 'user') continue
+    // 出图消息：正文是提示词，图片在 images 里（服务端产物 URL）
+    if (sm.kind === 'image') {
+      messages.value.push(reactive({
+        id: sm.id,
+        role: sm.role,
+        kind: 'image',
+        prompt: sm.content || '',
+        refImage: '',
+        content: '',
+        genImages: imgs.map(im => ({ url: im.url, width: im.w, height: im.h, filename: '' })),
+        genError: sm.status === 'failed' ? (sm.error_message || '生成失败') : '',
+        progress: 0,
+        phase: '',
+        generating: false,
+        ts: sm.ts || Date.now(),
+      }))
+      changed = true
+      continue
+    }
+    messages.value.push(reactive({
+      id: sm.id,
+      role: sm.role,
+      content: sm.content || '',
+      reasoning: sm.reasoning || '',
+      images: imgs,
+      model: sm.model || '',
+      ts: sm.ts || Date.now(),
+      taskId: sm.task_id || undefined,
+      kind: sm.kind || 'text',
+      interrupted: sm.status === 'canceled' || undefined,
+      failed: sm.status === 'failed' ? (sm.error_message || '生成失败') : undefined,
+    }))
+    changed = true
+  }
+  if (changed) {
+    messages.value.sort((a, b) => (a.ts || 0) - (b.ts || 0))
+    saveMessagesFor(convId, messages.value)
+    scrollToBottom()
+  }
+  return changed
+}
+
+// refreshMessagesFromServer 全量对齐（进入会话 / 多端轮询 / reconcile 时调用）
+async function refreshMessagesFromServer(convId) {
+  if (!convId || !auth.isAuthenticated.value) return
+  try {
+    const list = await pullMessages(convId, 0)
+    mergeServerMessages(convId, list)
+  } catch { /* 离线：保持本地缓存 */ }
 }
 function loadSettings() {
   try {
@@ -290,6 +761,8 @@ function loadSettings() {
       model: s.model || '',
       systemPrompt: s.systemPrompt || '',
       temperature: typeof s.temperature === 'number' ? s.temperature : 0.7,
+      // 重启后默认回到对话模式：出图是否可用要等探活结果，先不自动进去
+      imageMode: false,
     }
   } catch { /* 保持默认 */ }
 }
@@ -308,6 +781,7 @@ const modelGroups = computed(() => {
         value: m.id,
         label: m.name,
         tag: m.parameter_size || (m.size_gb ? `${m.size_gb.toFixed(1)}GB` : ''),
+        vision: !!m.vision,
       })),
     })
   }
@@ -329,14 +803,69 @@ const currentModelLabel = computed(() => {
   return settings.value.model || '选择模型'
 })
 
+// 当前模型是否支持图片输入（仅 Ollama 视觉模型为 true）
+const selectedModelVision = computed(() => {
+  for (const g of modelGroups.value) {
+    const found = g.items.find(m => m.value === settings.value.model)
+    if (found) return !!found.vision
+  }
+  return false
+})
+
 const engineStatus = computed(() => {
   const { minimax, ollama } = modelInfo.value
   const parts = []
   if (ollama.available) parts.push(`Ollama ${ollama.models.length}`)
   if (minimax.available) parts.push('MiniMax')
+  if (imageStatus.value.available && imageMode.value) parts.push('本地出图')
   if (parts.length === 0) return { type: 'off', text: ollama.error ? '引擎不可用' : '加载中…' }
   return { type: 'on', text: parts.join(' · ') }
 })
+
+// 出图能力是否可用（后端探活 ComfyUI 的结果）
+const imageAvailable = computed(() => !!imageStatus.value.available)
+
+// 能否附加图片：出图模式 = 当参考图用；对话模式 = 当视觉模型输入用
+const canAttachImage = computed(() => (imageMode.value ? imageAvailable.value : selectedModelVision.value))
+
+const attachTitle = computed(() => {
+  if (imageMode.value) return imageAvailable.value ? '附加参考图（按指令修改这张图）' : '本地出图不可用'
+  return selectedModelVision.value ? '附加图片（视觉模型）' : '当前模型不支持图片'
+})
+
+const composerPlaceholder = computed(() => (imageMode.value
+  ? '描述你想要的画面…（附一张图则改成「按指令修改这张图」）'
+  : '输入消息…（Enter 发送，Shift + Enter 换行；可粘贴/拖拽图片）'))
+
+const sendDisabled = computed(() => {
+  if (imageMode.value) return imageGenerating.value || !userInput.value.trim()
+  return (!userInput.value.trim() && pendingImages.value.length === 0) || modelsLoading.value
+})
+
+// 出图能力探活。后端未配置或 ComfyUI 没启动时自动退出出图模式，
+// 避免用户写完提示词点发送才看到报错。
+async function loadImageStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/status`, { headers: auth.authHeader() })
+    if (!res.ok) return
+    imageStatus.value = await res.json()
+    if (!imageStatus.value.available) imageMode.value = false
+  } catch {
+    // 探活失败不打断页面：出图按钮保持禁用即可
+  }
+}
+
+function toggleImageMode() {
+  if (!imageAvailable.value) {
+    ElMessage.warning(imageStatus.value.error
+      ? `本地出图不可用：${imageStatus.value.error}`
+      : '本地出图不可用')
+    return
+  }
+  imageMode.value = !imageMode.value
+  // 切回对话模式时，参考图可能超出视觉模型张数上限，直接清空更直观
+  if (!imageMode.value) pendingImages.value = []
+}
 
 async function loadModels() {
   modelsLoading.value = true
@@ -390,12 +919,20 @@ function switchConversation(id) {
     return
   }
   currentConvId.value = id
+  try { localStorage.setItem(CURRENT_CONV_KEY, id) } catch { /* 忽略配额异常 */ }
   loadMessages(id)
+  // 刷新/切回会话后，把服务端已跑完（或仍在跑）的任务对上来
+  reconcileChatTasks()
 }
 function deleteConversation(id) {
   conversations.value = conversations.value.filter(c => c.id !== id)
   localStorage.removeItem(MSGS_KEY_PREFIX + id)
+  localStorage.removeItem(HIDDEN_TASKS_PREFIX + id)
   saveConversations()
+  // 服务端也要删，否则另一台设备/下次刷新会把这条会话又拉回来；
+  // 先立墓碑，DELETE 没送达（离线）时下次同步会重试。
+  markConvDeleted(id)
+  deleteConversationOnServer(id).then(() => unmarkConvDeleted(id)).catch(() => {})
   if (currentConvId.value === id) switchConversation('__draft__')
 }
 function ensureConversation(firstUserText) {
@@ -409,6 +946,7 @@ function ensureConversation(firstUserText) {
   conversations.value.unshift(conv)
   currentConvId.value = conv.id
   saveConversations()
+  pushConversation(conv).catch(() => {})
 }
 function touchConversation() {
   const conv = conversations.value.find(c => c.id === currentConvId.value)
@@ -449,9 +987,39 @@ function buildPayloadMessages(extra = []) {
   if (settings.value.systemPrompt.trim()) {
     msgs.push({ role: 'system', content: settings.value.systemPrompt.trim() })
   }
-  for (const m of messages.value) {
-    if (m.content && m.content.trim()) msgs.push({ role: m.role, content: m.content })
+  // 先算本次请求实际要带哪些图片：从最新消息往回取，总张数不超过 IMG_TOTAL_BUDGET；
+  // 更早的图片整组丢弃、改成文字占位——硬性防止多轮累积把上下文撑爆。
+  const sendImgs = new Map() // index -> images[]
+  let budget = IMG_TOTAL_BUDGET
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const imgs = messages.value[i].images || []
+    if (!imgs.length) continue
+    if (imgs.length <= budget) {
+      sendImgs.set(i, imgs)
+      budget -= imgs.length
+    }
   }
+  messages.value.forEach((m, i) => {
+    const text = m.content || ''
+    const imgs = sendImgs.get(i) || []
+    if (imgs.length) {
+      // 视觉模型：content 用 OpenAI 多模态数组格式（文本 + image_url）。
+      // 历史消息同步过来的图片只有 url（base64 没跟着同步），后端转发给 Ollama 前会自己内联成 base64。
+      const content = []
+      if (text.trim()) content.push({ type: 'text', text })
+      for (const im of imgs) {
+        const src = im.dataUrl || im.url
+        if (src) content.push({ type: 'image_url', image_url: { url: src } })
+      }
+      msgs.push({ role: m.role, content })
+    } else if (text.trim() || (m.images && m.images.length)) {
+      // 图片被丢弃的历史消息：留一句占位，让模型知道"这里原本有图"
+      const note = (m.images && m.images.length)
+        ? `${text}${text.trim() ? '\n' : ''}（此前的图片已省略以节省上下文）`
+        : text
+      if (note.trim()) msgs.push({ role: m.role, content: note })
+    }
+  })
   for (const e of extra) msgs.push(e) // 隐藏指令：只进本次请求，不进界面也不进历史
   return msgs
 }
@@ -470,15 +1038,26 @@ function onKeydown(e) {
 
 async function sendMessage() {
   const text = userInput.value.trim()
-  if (!text || streaming.value) return
+  // 出图模式走完全不同的链路（ComfyUI），先分流再走对话逻辑
+  if (imageMode.value) {
+    await sendImageTask(text)
+    return
+  }
+  if ((!text && pendingImages.value.length === 0) || streaming.value) return
   if (!settings.value.model) {
     ElMessage.warning('请先选择模型')
     return
   }
+  if (pendingImages.value.length && !selectedModelVision.value) {
+    ElMessage.warning('当前模型不支持图片，请先选一个视觉模型，或移除已附加的图片')
+    return
+  }
   errorMsg.value = ''
+  const imgs = pendingImages.value.map(x => ({ id: x.id, dataUrl: x.dataUrl, w: x.w, h: x.h }))
   userInput.value = ''
-  ensureConversation(text)
-  messages.value.push({ id: uid(), role: 'user', content: text, ts: Date.now() })
+  pendingImages.value = []
+  ensureConversation(text || (imgs.length ? '[图片]' : ''))
+  messages.value.push({ id: uid(), role: 'user', content: text, images: imgs, ts: Date.now() })
   saveMessages()
   scrollToBottom(true)
   await doStream()
@@ -488,7 +1067,11 @@ async function regenerate() {
   if (streaming.value) return
   // 去掉最后一条 assistant 消息后重发
   const idx = messages.value.map(m => m.role).lastIndexOf('assistant')
-  if (idx >= 0) messages.value.splice(idx, 1)
+  if (idx >= 0) {
+    // 记住被替换掉的任务，避免刷新后被 reconcile 又补回来
+    hideTaskId(currentConvId.value, messages.value[idx]?.taskId)
+    messages.value.splice(idx, 1)
+  }
   saveMessages()
   await doStream()
 }
@@ -496,80 +1079,484 @@ async function regenerate() {
 async function doStream(extra = []) {
   streaming.value = true
   stickToBottom = true
-  streamMsg.value = { id: uid(), role: 'assistant', content: '', reasoning: '', model: settings.value.model, ts: Date.now(), streaming: true }
+  const convId = currentConvId.value
+  const msg = reactive({ id: uid(), role: 'assistant', content: '', reasoning: '', model: settings.value.model, ts: Date.now(), streaming: true, convId })
+  streamMsg.value = msg
   scrollToBottom(true)
 
   abortController = new AbortController()
-  let stopped = false
-  let interrupted = false
-  abortController.signal.addEventListener('abort', () => { stopped = true })
+  const signal = abortController.signal
 
   try {
-    const res = await fetch(`${API_BASE}/api/chat-plus/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
-      body: JSON.stringify({
-        model: settings.value.model,
-        messages: buildPayloadMessages(extra),
-        temperature: settings.value.temperature,
-        stream: true,
-      }),
-      signal: abortController.signal,
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data.error || `HTTP ${res.status}`)
+    // 弱网架构：先建"服务端任务"，再订阅它的输出。
+    // 连接断了/页面刷新都不影响服务端继续生成，重连时凭 from=<seq> 只补增量。
+    const task = await createChatTask({
+      model: settings.value.model,
+      messages: buildPayloadMessages(extra),
+      temperature: settings.value.temperature,
+      stream: true,
+      conversation_id: convId,
+    }, signal)
+    msg.taskId = task.task_id
+    // 消息 id 直接沿用任务 id：服务端落库用的是同一个 id，多端合并时不会出现一条回复两份
+    if (task.task_id) msg.id = task.task_id
+    await watchChatTask(msg, task.task_id, 0, signal)
+  } catch (e) {
+    if (!signal.aborted) {
+      const reason = netErrMsg(e)
+      errorMsg.value = reason
+      if (!msg.content && !msg.reasoning) msg.failed = reason
+      else msg.interrupted = true
     }
+  } finally {
+    finalizeStream(msg)
+  }
+}
 
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop()
-      for (const raw of lines) {
-        const line = raw.trim()
-        if (!line.startsWith('data:')) continue        // 心跳注释行 / 空行跳过
-        const data = line.slice(5).trim()
-        if (data === '[DONE]') continue
-        let chunk
-        try { chunk = JSON.parse(data) } catch { continue }
-        const delta = chunk?.choices?.[0]?.delta || {}
-        const reasoningPiece = delta.reasoning || delta.reasoning_content || ''
-        if (reasoningPiece) streamMsg.value.reasoning += reasoningPiece
-        if (delta.content) {
-          streamMsg.value.content += delta.content
-          scrollToBottom()
-        } else if (reasoningPiece) {
-          scrollToBottom()
-        }
+// createChatTask 建任务。这一跳是整个链路的入口，一次 TCP 抖动就判失败太脆：
+// 网络错误 / 5xx / 429 各重试一次以上（4xx 参数错误不重试，重试也没用）。
+async function createChatTask(payload, signal) {
+  let lastErr = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+    try {
+      const res = await fetch(`${API_BASE}/api/chat-plus/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
+        body: JSON.stringify(payload),
+        signal,
+      })
+      if (res.ok) return res.json()
+      const data = await res.json().catch(() => ({}))
+      const err = new Error(data.error || `HTTP ${res.status}`)
+      err.status = res.status
+      // 4xx（除 429 限流外）都是"重试也没用"的确定性错误
+      if (res.status < 500 && res.status !== 429) throw err
+      lastErr = err
+    } catch (e) {
+      if (signal?.aborted) throw e
+      if (e.status && e.status < 500 && e.status !== 429) throw e
+      lastErr = e
+    }
+    await delay(700 * (attempt + 1))
+  }
+  throw lastErr || new Error('创建任务失败')
+}
+
+// ══════════════ 任务订阅（断线续传） ══════════════
+const TASK_STREAM_RETRY_MAX = 4      // SSE 连续失败几次后改轮询
+const TASK_RECONNECT_BASE_MS = 600
+
+function delay(ms) {
+  return new Promise(r => setTimeout(r, ms))
+}
+
+// consumeChatTaskStream 解析任务 SSE：id: 行是片段序号（续传游标），
+// data: 行是 OpenAI chunk；服务端判定断流/失败时会发 error chunk。
+async function consumeChatTaskStream(res, msg, startSeq) {
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  let seq = startSeq
+  let done = false
+  let error = ''
+  let errorType = ''
+  while (true) {
+    const { done: readDone, value } = await reader.read()
+    if (readDone) break
+    buf += decoder.decode(value, { stream: true })
+    const lines = buf.split('\n')
+    buf = lines.pop()
+    for (const raw of lines) {
+      const line = raw.trim()
+      if (!line) continue
+      if (line.startsWith('id:')) {
+        const n = parseInt(line.slice(3).trim(), 10)
+        if (!Number.isNaN(n)) seq = n
+        continue
+      }
+      if (!line.startsWith('data:')) continue   // 心跳注释行
+      const data = line.slice(5).trim()
+      if (data === '[DONE]') { done = true; continue }
+      let chunk
+      try { chunk = JSON.parse(data) } catch { continue }
+      if (chunk?.error) {
+        error = chunk.error.message || String(chunk.error)
+        errorType = chunk.error.type || chunk.error.code || ''
+        continue
+      }
+      const delta = chunk?.choices?.[0]?.delta || {}
+      const reasoningPiece = delta.reasoning || delta.reasoning_content || ''
+      if (reasoningPiece) msg.reasoning += reasoningPiece
+      if (delta.content) {
+        msg.content += delta.content
+        scrollToBottom()
+      } else if (reasoningPiece) {
+        scrollToBottom()
       }
     }
+    if (done) break
+  }
+  return { seq, done, error, errorType }
+}
+
+async function fetchChatTask(taskId, signal) {
+  const res = await fetch(`${API_BASE}/api/chat-plus/tasks/${encodeURIComponent(taskId)}`, {
+    headers: auth.authHeader(),
+    signal,
+  })
+  if (!res.ok) return null
+  return res.json().catch(() => null)
+}
+
+// applyTaskSnapshot 用服务端权威内容覆盖本地（轮询/过期兜底时用）。
+function applyTaskSnapshot(msg, snap) {
+  if (!snap) return
+  if (typeof snap.content === 'string' && snap.content.length >= msg.content.length) msg.content = snap.content
+  if (typeof snap.reasoning === 'string' && snap.reasoning.length >= msg.reasoning.length) msg.reasoning = snap.reasoning
+  scrollToBottom()
+}
+
+// pollChatTask 兜底：SSE 被代理掐断/弱网反复抖动时退化为轮询快照，保证结果不丢。
+async function pollChatTask(msg, taskId, signal) {
+  for (let i = 0; i < 800; i++) {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+    const snap = await fetchChatTask(taskId, signal)
+    if (snap) {
+      applyTaskSnapshot(msg, snap)
+      if (snap.done) {
+        if (snap.status === 'failed') {
+          msg.failed = snap.error_message || '生成失败'
+          errorMsg.value = `生成失败：${msg.failed}`
+        } else if (snap.status === 'canceled') {
+          msg.interrupted = true
+        }
+        return
+      }
+    }
+    await delay(1500)
+  }
+  msg.interrupted = true
+  errorMsg.value = '生成仍在后台进行，稍后重新进入本对话即可看到结果'
+}
+
+// watchChatTask 订阅任务输出；断线自动按 seq 续传，连续失败退化为轮询。
+async function watchChatTask(msg, taskId, fromSeq, signal) {
+  let cursor = fromSeq || 0
+  let failures = 0
+  let finalError = ''
+
+  while (true) {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+    try {
+      const res = await fetch(`${API_BASE}/api/chat-plus/tasks/${encodeURIComponent(taskId)}/stream?from=${cursor}`, {
+        headers: auth.authHeader(),
+        signal,
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      msg.reconnecting = false   // 重新连上了，先收起"续传中"提示
+      const out = await consumeChatTaskStream(res, msg, cursor)
+      cursor = out.seq
+      failures = 0
+      if (out.error) {
+        // "已停止生成"不是失败：用户自己点的停止，不能弹成红色 error
+        if (out.errorType === 'task_canceled' || /已停止/.test(out.error)) {
+          msg.interrupted = true
+          return
+        }
+        finalError = out.error
+        break
+      }
+      if (out.done) return
+      // 流结束但任务没完成 = 链路被掐断，立刻带上游标重连
+      throw new Error('stream interrupted')
+    } catch (e) {
+      if (signal?.aborted) throw e
+      failures++
+      if (failures >= TASK_STREAM_RETRY_MAX) {
+        await pollChatTask(msg, taskId, signal)
+        return
+      }
+      msg.reconnecting = true
+      await delay(Math.min(TASK_RECONNECT_BASE_MS * failures, 4000))
+    }
+  }
+
+  if (finalError) {
+    msg.failed = finalError
+    errorMsg.value = `生成失败：${finalError}`
+  }
+}
+
+// resumeChatTask 页面刷新/切回后，接管仍在后台跑的任务。
+async function resumeChatTask(msg, taskId, fromSeq) {
+  if (streaming.value) return
+  streaming.value = true
+  stickToBottom = true
+  streamMsg.value = msg
+  abortController = new AbortController()
+  const signal = abortController.signal
+  try {
+    await watchChatTask(msg, taskId, fromSeq, signal)
   } catch (e) {
-    if (!stopped) {
-      interrupted = true
+    if (!signal.aborted) {
+      msg.interrupted = true
       errorMsg.value = netErrMsg(e)
     }
   } finally {
-    const sm = streamMsg.value
-    const hasContent = sm && (sm.content || sm.reasoning)
-    if (sm && hasContent) {
-      messages.value.push({ id: sm.id, role: 'assistant', content: sm.content, reasoning: sm.reasoning, model: sm.model, ts: Date.now(), interrupted: interrupted || undefined })
+    finalizeStream(msg)
+  }
+}
+
+// finalizeStream 收尾：把流式消息落进所属会话（即使期间切换了会话也不会写错地方）。
+function finalizeStream(msg) {
+  msg.streaming = false
+  msg.reconnecting = false
+  const convId = msg.convId || currentConvId.value
+  const hasSomething = msg.content || msg.reasoning || msg.failed
+  if (hasSomething) {
+    if (convId && convId === currentConvId.value) {
+      if (!messages.value.includes(msg)) messages.value.push(msg)
       saveMessages()
-      touchConversation()
+    } else if (convId) {
+      const list = loadMessagesFor(convId)
+      if (!list.some(m => m && m.taskId && m.taskId === msg.taskId)) list.push(msg)
+      saveMessagesFor(convId, list)
+      scheduleMessagesSync(convId, list)
     }
-    streamMsg.value = null
-    streaming.value = false
-    abortController = null
-    scrollToBottom()
+    touchConversation()
+  }
+  streamMsg.value = null
+  streaming.value = false
+  abortController = null
+  scrollToBottom()
+}
+
+// reconcileChatTasks 刷新/重进页面后按会话对齐任务：
+// 已完成 → 补上回复；失败 → 显示失败原因；仍在跑 → 重新接管并续传。
+async function reconcileChatTasks() {
+  const convId = currentConvId.value
+  if (!convId || !auth.isAuthenticated.value) return
+  // 先按服务端消息对齐（另一台设备发的内容、以及服务端已经落库的回复都在这里）
+  await refreshMessagesFromServer(convId)
+  try {
+    const res = await fetch(`${API_BASE}/api/chat-plus/tasks?conversation_id=${encodeURIComponent(convId)}&limit=20`, {
+      headers: auth.authHeader(),
+    })
+    if (!res.ok) return
+    const data = await res.json()
+    const tasks = Array.isArray(data?.tasks) ? data.tasks : []
+    if (!tasks.length) return
+
+    let changed = false
+    const hidden = hiddenTaskIds(convId)
+    for (const t of tasks.slice().reverse()) {
+      if (!t?.task_id) continue
+      if (hidden.has(t.task_id)) continue
+      if (messages.value.some(m => m && m.taskId === t.task_id)) continue
+      if (streamMsg.value && streamMsg.value.taskId === t.task_id) continue
+
+      if (t.status === 'running') {
+        if (streaming.value) continue
+        const msg = reactive({
+          id: t.task_id, role: 'assistant', content: t.content || '', reasoning: t.reasoning || '',
+          model: t.model, ts: Date.parse(t.created_at) || Date.now(),
+          streaming: true, taskId: t.task_id, convId,
+        })
+        resumeChatTask(msg, t.task_id, t.seq || 0)
+        continue
+      }
+
+      messages.value.push(reactive({
+        id: t.task_id,
+        role: 'assistant',
+        content: t.content || '',
+        reasoning: t.reasoning || '',
+        model: t.model,
+        ts: Date.parse(t.created_at) || Date.now(),
+        taskId: t.task_id,
+        interrupted: t.status === 'canceled' || undefined,
+        failed: t.status === 'failed' ? (t.error_message || '生成失败，请重试') : undefined,
+      }))
+      changed = true
+    }
+    if (changed) saveMessages()
+    // 本地有、服务端没有的消息（离线期间发的）补传上去
+    backfillMessages(convId)
+  } catch {
+    // 只是恢复增强，失败不影响正常使用
+  }
+}
+
+// ══════════════ 多端同步轮询 ══════════════
+// 另一台设备发的问题 / 生成好的回复，最多 8 秒内出现在这里。
+// 只拉增量（since_ts）且流式期间跳过——此时同一条消息正在本地被逐字写入。
+let syncTimer = null
+
+function startSyncPolling() {
+  stopSyncPolling()
+  syncTimer = setInterval(async () => {
+    if (document.visibilityState !== 'visible') return
+    if (!auth.isAuthenticated.value || !currentConvId.value || streaming.value) return
+    const convId = currentConvId.value
+    try {
+      const list = await pullMessages(convId, lastMessageTs())
+      if (list.length) {
+        if (mergeServerMessages(convId, list)) syncConversationsFromServer()
+      }
+    } catch { /* 离线/服务重启：下个周期再试 */ }
+  }, 8000)
+}
+
+function stopSyncPolling() {
+  if (syncTimer) {
+    clearInterval(syncTimer)
+    syncTimer = null
   }
 }
 
 function stopGeneration() {
+  // 异步任务必须显式停服务端，否则关掉页面它还在跑（白烧 token）
+  const taskId = streamMsg.value?.taskId
+  if (streamMsg.value) streamMsg.value.interrupted = true
+  if (taskId) {
+    fetch(`${API_BASE}/api/chat-plus/tasks/${encodeURIComponent(taskId)}/stop`, {
+      method: 'POST',
+      headers: auth.authHeader(),
+    }).catch(() => {})
+  }
   abortController?.abort()
+  imageAbort?.abort()
+}
+
+// 被"重新生成"替换掉的旧任务：记住它，避免刷新后被 reconcile 补回来
+const HIDDEN_TASKS_PREFIX = 'chat-plus-hidden-tasks-'
+
+function hiddenTaskIds(convId) {
+  try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_TASKS_PREFIX + convId) || '[]')) } catch { return new Set() }
+}
+
+function hideTaskId(convId, taskId) {
+  if (!convId || !taskId) return
+  const ids = hiddenTaskIds(convId)
+  ids.add(taskId)
+  try {
+    const list = [...ids]
+    localStorage.setItem(HIDDEN_TASKS_PREFIX + convId, JSON.stringify(list.slice(-100)))
+  } catch { /* 忽略 */ }
+}
+
+// ══════════════ 本地出图（ComfyUI） ══════════════
+// 后端是「提交任务 → SSE 推进度」的异步模型，前端只负责把进度画在消息里。
+async function sendImageTask(text) {
+  if (imageGenerating.value) return
+  if (!text) {
+    ElMessage.warning('本地出图需要先写一句画面描述')
+    return
+  }
+  if (!imageAvailable.value) {
+    ElMessage.warning(`本地出图不可用：${imageStatus.value.error || '未配置 ComfyUI'}`)
+    return
+  }
+  const ref = pendingImages.value[0]
+  const imgs = ref ? [{ id: ref.id, dataUrl: ref.dataUrl, w: ref.w, h: ref.h }] : []
+  userInput.value = ''
+  pendingImages.value = []
+  ensureConversation(text)
+  messages.value.push({ id: uid(), role: 'user', content: text, images: imgs, ts: Date.now() })
+
+  const msg = {
+    id: uid(), role: 'assistant', kind: 'image',
+    prompt: text, refImage: ref?.dataUrl || '',
+    content: '', genImages: [], genError: '',
+    progress: 0, phase: '排队中', generating: true, ts: Date.now(),
+  }
+  messages.value.push(msg)
+  saveMessages()
+  scrollToBottom(true)
+  await runImageTask(msg)
+  touchConversation()
+}
+
+// 跑（或重跑）一次出图任务，进度直接写在 msg 上
+async function runImageTask(msg) {
+  if (imageGenerating.value) return
+  imageGenerating.value = true
+  msg.generating = true
+  msg.genImages = []
+  msg.genError = ''
+  msg.progress = 0
+  msg.phase = '排队中'
+  imageAbort = new AbortController()
+  scrollToBottom()
+
+  try {
+    const body = { prompt: msg.prompt }
+    if (msg.refImage) body.image = msg.refImage
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
+      body: JSON.stringify(body),
+      signal: imageAbort.signal,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+    await followImageTask(data.task_id, msg)
+  } catch (e) {
+    msg.genError = e?.name === 'AbortError' ? '已取消生成' : netErrMsg(e)
+  } finally {
+    msg.generating = false
+    imageGenerating.value = false
+    imageAbort = null
+    saveMessages()
+    scrollToBottom()
+  }
+}
+
+// 订阅任务进度。事件体统一是任务 JSON（见后端 ChatPlusImageTaskStream），
+// 因此这里只需按 status 分派，不用处理多种事件类型。
+async function followImageTask(taskId, msg) {
+  const res = await fetch(`${API_BASE}/api/chat-plus/image/tasks/${encodeURIComponent(taskId)}/stream`, {
+    headers: { Accept: 'text/event-stream', ...auth.authHeader() },
+    signal: imageAbort.signal,
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `进度连接失败 HTTP ${res.status}`)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    const { tasks, rest } = drainTaskFrames(buf)
+    buf = rest
+    for (const task of tasks) {
+      const state = applyTaskEvent(msg, task)
+      if (state === 'succeeded') {
+        scrollToBottom()
+        return
+      }
+      if (state === 'failed') return
+      scrollToBottom()
+    }
+  }
+  // 流提前结束（服务重启/连接被掐）但任务没给终态
+  if (!msg.genImages.length && !msg.genError) {
+    msg.genError = '进度连接中断，请用「重新生成」重试'
+  }
+}
+
+async function regenerateImage(msg) {
+  if (imageGenerating.value) return
+  await runImageTask(msg)
+  touchConversation()
+}
+
+function previewImage(url) {
+  if (url) window.open(url, '_blank', 'noopener')
 }
 
 // 从被网络中断的 assistant 消息处续写：截断内容已在历史里，
@@ -613,12 +1600,19 @@ onMounted(async () => {
   if (mqMobile.addEventListener) mqMobile.addEventListener('change', handleViewportChange)
   loadSettings()
   loadConversations()
+  startSyncPolling()
+  // 回到上次看的那条对话（刷新后能立刻看到刚生成/失败的结果，而不是空白草稿）
+  try {
+    const lastConv = localStorage.getItem(CURRENT_CONV_KEY) || ''
+    if (lastConv && conversations.value.some(c => c.id === lastConv)) switchConversation(lastConv)
+  } catch { /* 忽略 */ }
   await auth.tryStored() // 成功后由上面的 watch 触发 loadModels，避免重复请求
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', handleContentClick)
   deactivateChatShell()
+  stopSyncPolling()
   if (mqMobile && mqMobile.removeEventListener) mqMobile.removeEventListener('change', handleViewportChange)
 })
 // 未登录时隐藏全局宠物，避免宠物窗口压在密码卡片/输入框上；
@@ -627,13 +1621,29 @@ watch(
   () => auth.isAuthenticated.value,
   (authed) => {
     document.body.classList.toggle('chatplus-gate', !authed)
-    if (authed) loadModels()
+    if (authed) {
+      loadModels()
+      loadImageStatus()
+      // 拉到服务端会话列表（多端共用同一份），再对齐当前会话消息
+      syncConversationsFromServer().then(() => {
+        if (!currentConvId.value) {
+          const lastConv = localStorage.getItem(CURRENT_CONV_KEY) || ''
+          if (lastConv && conversations.value.some(c => c.id === lastConv)) switchConversation(lastConv)
+        }
+      })
+      // 首次进入/输密码后：恢复上次未看到的生成结果（成功内容 / 失败原因）
+      reconcileChatTasks()
+    }
   },
   { immediate: true }
 )
 
+// 设置持久化（模型、系统提示词、温度、出图模式）
+watch(settings, saveSettings, { deep: true })
+
 onDeactivated(() => {
   deactivateChatShell()
+  stopSyncPolling()
   if (mqMobile && mqMobile.removeEventListener) mqMobile.removeEventListener('change', handleViewportChange)
 })
 onActivated(() => {
@@ -642,8 +1652,13 @@ onActivated(() => {
     isMobileViewport.value = mqMobile.matches
     if (mqMobile.addEventListener) mqMobile.addEventListener('change', handleViewportChange)
   }
+  startSyncPolling()
   // 回到本页时若模型列表为空（如首次登录时接口失败），补拉一次
   if (auth.isAuthenticated.value && modelGroups.value.length === 0) loadModels()
+  // 出图能力可能随 ComfyUI 启停变化，每次回到页面都重新探活
+  if (auth.isAuthenticated.value) loadImageStatus()
+  // 切回来时把另一台设备的新消息对一次
+  if (auth.isAuthenticated.value && currentConvId.value) refreshMessagesFromServer(currentConvId.value)
 })
 </script>
 
@@ -809,6 +1824,66 @@ onActivated(() => {
   border: 1px solid var(--border-base); padding: 6px 12px; font-size: 13px;
 }
 .msg-content :deep(a) { color: var(--link-color); }
+
+/* 消息内图片 */
+.msg-images { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.msg-images img {
+  max-width: 240px; max-height: 240px; border-radius: 10px; border: 1px solid var(--border-base);
+  object-fit: cover; background: var(--bg-secondary);
+}
+
+/* 输入区图片按钮 + 缩略图 */
+.img-btn {
+  flex-shrink: 0; width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--border-base);
+  background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; display: flex;
+  align-items: center; justify-content: center; font-size: 18px; transition: all 0.15s;
+}
+.img-btn:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
+.img-btn.active { color: var(--color-primary); }
+.img-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ═══════════ 本地出图（ComfyUI） ═══════════ */
+.gen-btn {
+  flex-shrink: 0; width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--border-base);
+  background: var(--bg-primary); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; font-size: 17px; line-height: 1; transition: all 0.15s;
+}
+.gen-btn:hover:not(:disabled) { border-color: var(--color-primary); }
+.gen-btn.active {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+.gen-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.msg-gen { margin-bottom: 8px; }
+.gen-progress {
+  display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  border-radius: 10px; background: var(--bg-secondary); border: 1px solid var(--border-base);
+}
+.gen-bar { height: 6px; border-radius: 3px; background: var(--border-base); overflow: hidden; }
+.gen-bar i {
+  display: block; height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, #409eff, #7c5cff); transition: width 0.4s ease;
+}
+.gen-phase { font-size: 12px; color: var(--text-secondary); }
+.gen-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.gen-item { margin: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--border-base); background: var(--bg-secondary); }
+.gen-item img { display: block; max-width: min(420px, 100%); height: auto; cursor: zoom-in; }
+.gen-item figcaption {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 6px 10px; font-size: 12px; color: var(--text-secondary);
+}
+.gen-item figcaption a { color: var(--color-primary); text-decoration: none; }
+.gen-error { margin-top: 6px; font-size: 12px; color: #f56c6c; }
+.composer-box.dragover { border-color: var(--color-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent); }
+
+.img-thumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px 0; }
+.img-thumb { position: relative; width: 64px; height: 64px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border-base); background: var(--bg-secondary); }
+.img-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.img-thumb .img-kb { position: absolute; left: 0; right: 0; bottom: 0; font-size: 10px; text-align: center; color: #fff; background: rgba(0,0,0,0.5); padding: 1px 0; }
+.img-thumb .img-del { position: absolute; top: 1px; right: 1px; width: 16px; height: 16px; border: none; border-radius: 50%; background: rgba(0,0,0,0.6); color: #fff; font-size: 10px; line-height: 1; cursor: pointer; }
+.img-count { font-size: 12px; color: var(--text-tertiary); }
+.img-warn { margin: 6px 12px 0; font-size: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; padding: 6px 10px; border-radius: 8px; }
 .msg-content :deep(code:not(.hljs)) {
   background: var(--code-inline-bg); padding: 2px 6px; border-radius: 5px;
   font-size: 13px; font-family: 'SF Mono', Menlo, Consolas, monospace;
@@ -874,6 +1949,16 @@ onActivated(() => {
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
 }
 .continue-btn:hover { filter: brightness(1.1); }
+
+/* 生成失败（异步任务终态） */
+.msg-failed {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 6px; padding: 5px 10px;
+  font-size: 12.5px; color: var(--danger-color, #dc2626);
+  background: color-mix(in srgb, #dc2626 9%, transparent);
+  border: 1px dashed color-mix(in srgb, #dc2626 40%, transparent);
+  border-radius: 8px; width: fit-content;
+}
 
 /* 输入区 */
 .cp-composer { padding: 10px 24px 14px; }
