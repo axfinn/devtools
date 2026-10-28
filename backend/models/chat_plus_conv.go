@@ -161,7 +161,9 @@ func (db *DB) UpsertChatPlusMessage(m *ChatPlusMessage) error {
 		ON CONFLICT(id) DO UPDATE SET
 			content = excluded.content,
 			reasoning = excluded.reasoning,
-			images = excluded.images,
+			-- 空 images 不覆盖已有图片：出图任务由后端落库图片，而前端在还没拿到结果时
+			-- 会带着空 genImages 反复推同一条消息，不防就会刚写进去的图又被冲掉。
+			images = CASE WHEN excluded.images = '' THEN chat_plus_messages.images ELSE excluded.images END,
 			task_id = excluded.task_id,
 			kind = excluded.kind,
 			status = excluded.status,
