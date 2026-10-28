@@ -2,17 +2,12 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"syscall"
 	"time"
 
 	"devtools/config"
@@ -670,9 +665,12 @@ func (h *AIGatewayHandler) doMiniMaxAnthropicRequest(url, apiKey string, bodyMap
 		}
 		defer resp.Body.Close()
 
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := readResponseBody(resp)
 		payload = nil
 		_ = json.Unmarshal(respBody, &payload)
+		if readErr != nil {
+			return readErr // 响应体被截断（弱网断流）→ 交给 doWithRetry 重试
+		}
 		if resp.StatusCode >= 400 {
 			return fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
 		}
@@ -768,14 +766,20 @@ func (h *AIGatewayHandler) doJSONRequest(url, apiKey string, bodyMap map[string]
 			return err
 		}
 		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := readResponseBody(resp)
 		payload = nil
 		_ = json.Unmarshal(respBody, &payload)
+		if readErr != nil {
+			return readErr // 弱网断流：响应体不完整，重试而不是当成"空响应"
+		}
 		if resp.StatusCode >= 400 {
 			return fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
 		}
 		return nil
 	})
+	if err == nil && payload == nil {
+		err = fmt.Errorf("上游返回了空响应或非 JSON 内容（可能是弱网断流，请重试）")
+	}
 	return payload, err
 }
 
@@ -816,6 +820,7 @@ func (h *AIGatewayHandler) doMediaRequestWithResp(url, apiKey, method string, bo
 func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey, method string, body []byte, headers http.Header, anthropicMode bool) ([]byte, string, error) {
 	var respBody []byte
 	var contentType string
+	var readErr error
 	err := doWithRetry(func() error {
 		req, err := http.NewRequest(method, url, bytes.NewReader(body))
 		if err != nil {
@@ -864,8 +869,11 @@ func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey,
 			return err
 		}
 		defer resp.Body.Close()
-		respBody, _ = io.ReadAll(resp.Body)
+		respBody, readErr = readResponseBody(resp)
 		contentType = resp.Header.Get("Content-Type")
+		if readErr != nil {
+			return readErr // 弱网断流：body 不完整，触发重试
+		}
 		if resp.StatusCode >= 400 {
 			return fmt.Errorf("上游返回错误(%d): %s", resp.StatusCode, truncateString(string(respBody), 400))
 		}
@@ -874,44 +882,33 @@ func (h *AIGatewayHandler) doRequestWithClient(client *http.Client, url, apiKey,
 	return respBody, contentType, err
 }
 
-// transientRetryAttempts 瞬时网络错误的最大尝试次数（含首次）。
-const transientRetryAttempts = 2
-
-// doWithRetry 对瞬时连接级错误做有限重试（最多 2 次，间隔 200/300ms）。
-// 只在请求尚未成功建立响应时重试：连接被拒/重置/管道破裂/拨号握手超时等。
-// HTTP 状态码错误（429/5xx 等）不属于瞬时连接错误，直接返回，避免重复计费。
+// doWithRetry 对瞬时网络故障做有限重试（弱网加固）。
+// 策略由 outboundPolicy 控制：默认最多 4 次尝试、250ms 起指数退避 + 抖动，
+// 且整体重试耗时不超过 budget（避免一次 5 分钟的推理请求被放大成 20 分钟）。
+// 只在"请求没有拿到可用响应"时重试：连接被拒/重置/中断、DNS 抖动、握手超时、
+// 上游响应体被截断（弱网断流）等。
+// HTTP 状态码错误（429/5xx 等）不属于瞬时网络错误，直接返回，避免重复计费。
 func doWithRetry(fn func() error) error {
+	start := time.Now()
 	var err error
-	for attempt := 0; attempt < transientRetryAttempts; attempt++ {
+	for attempt := 0; attempt < outboundPolicy.attempts; attempt++ {
 		err = fn()
 		if err == nil || !isTransientConnErr(err) {
 			return err
 		}
-		if attempt < transientRetryAttempts-1 {
-			time.Sleep(time.Duration(attempt+1) * 200 * time.Millisecond)
+		if attempt == outboundPolicy.attempts-1 {
+			break
 		}
+		wait := backoffFor(attempt)
+		if time.Since(start)+wait > outboundPolicy.budget {
+			log.Printf("[outbound] 重试预算已用尽(%s)，放弃重试: %v", outboundPolicy.budget, err)
+			break
+		}
+		log.Printf("[outbound] 第 %d/%d 次尝试遇到瞬时网络错误，%s 后重试: %v",
+			attempt+1, outboundPolicy.attempts, wait.Round(time.Millisecond), err)
+		time.Sleep(wait)
 	}
 	return err
-}
-
-// isTransientConnErr 判断错误是否属于"可安全重试"的瞬时连接级错误。
-// 客户端主动取消（context.Canceled）不算瞬时错误，不应重试。
-func isTransientConnErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	// 连接建立/复用阶段失败：拒绝、重置、管道破裂
-	if errors.Is(err, syscall.ECONNREFUSED) ||
-		errors.Is(err, syscall.ECONNRESET) ||
-		errors.Is(err, syscall.EPIPE) {
-		return true
-	}
-	// 拨号 / TLS 握手 / 响应头超时（net.Error.Timeout 统一覆盖 *url.Error 与 *net.OpError）
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func (h *AIGatewayHandler) resolveChatProvider(model string) string {

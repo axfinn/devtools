@@ -41,25 +41,41 @@ func (s *sseWriter) write(p []byte) error {
 	return nil
 }
 
-// doStreamRequest 执行流式上游请求，对瞬时连接级错误做一次安全重试。
-// 重试只发生在"尚未拿到任何响应"（client.Do 失败）之前，已开始读到响应体后不重试。
-// 客户端已断开（context 取消）时返回原始错误，不重试。
+// doStreamRequest 执行流式上游请求，对瞬时网络故障做有限重试（弱网加固）。
+// 重试只发生在"尚未拿到任何响应"（client.Do 失败）之前，已开始读到响应体后不重试，
+// 因为此时上游可能已经开始计费/产出，重发会重复扣费且内容会错乱。
+// 客户端已断开（context 取消）时立即返回，不重试。
 func doStreamRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+	start := time.Now()
 	resp, err := client.Do(req)
 	if err == nil {
 		return resp, nil
 	}
-	if !isTransientConnErr(err) || req.GetBody == nil {
-		return nil, err
+	for attempt := 0; attempt < outboundPolicy.attempts-1; attempt++ {
+		if !isTransientConnErr(err) || req.GetBody == nil {
+			return nil, err
+		}
+		wait := backoffFor(attempt)
+		if time.Since(start)+wait > outboundPolicy.budget {
+			log.Printf("[outbound] 流式请求重试预算已用尽(%s)，放弃: %v", outboundPolicy.budget, err)
+			return nil, err
+		}
+		log.Printf("[outbound] 流式请求第 %d/%d 次尝试遇到瞬时网络错误，%s 后重试: %v",
+			attempt+1, outboundPolicy.attempts, wait.Round(time.Millisecond), err)
+		time.Sleep(wait)
+
+		body, bodyErr := req.GetBody()
+		if bodyErr != nil {
+			return nil, err
+		}
+		clone := req.Clone(req.Context())
+		clone.Body = body
+		resp, err = client.Do(clone)
+		if err == nil {
+			return resp, nil
+		}
 	}
-	body, bodyErr := req.GetBody()
-	if bodyErr != nil {
-		return nil, err
-	}
-	clone := req.Clone(req.Context())
-	clone.Body = body
-	time.Sleep(300 * time.Millisecond)
-	return client.Do(clone)
+	return nil, err
 }
 
 // StreamChatCompletions 处理 OpenAI 兼容格式的流式聊天请求
@@ -217,19 +233,53 @@ func (h *AIGatewayHandler) streamOpenAICompatibleWithClient(c *gin.Context, req 
 		heartbeatWG.Wait()
 	}()
 
+	// 弱网看门狗：SSE 不能设总超时，但"半途静默"必须能判定。
+	// 静默超过 streamIdle（默认 120s）时取消上游请求，并向客户端发一条明确的错误帧，
+	// 而不是让它对着无限心跳一直等。
+	guard := newStallGuard(outboundPolicy.streamIdle, cancel)
+	defer guard.stop()
+
 	buf := make([]byte, 1024)
 	for {
+		guard.touch()
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			guard.touch()
 			if err := writer.write(buf[:n]); err != nil {
 				cancel() // 客户端断开，取消上游请求
 				return
 			}
 		}
 		if readErr != nil {
+			if guard.stop() {
+				if c.Request.Context().Err() == nil {
+					log.Printf("[outbound] 上游流式响应静默超过 %s，判定断流，已中断", outboundPolicy.streamIdle)
+					writeOpenAISSEError(writer, stallMessage(outboundPolicy.streamIdle), "upstream_stalled")
+				}
+				return
+			}
+			if readErr != io.EOF && c.Request.Context().Err() == nil {
+				// 上游中途断开（弱网掉线）：明确告知，避免前端把半截内容当完整回复
+				log.Printf("[outbound] 上游流式读取中断: %v", readErr)
+				writeOpenAISSEError(writer, "上游连接中断（弱网）："+readErr.Error(), "upstream_disconnected")
+			}
 			return
 		}
 	}
+}
+
+// writeOpenAISSEError 以 OpenAI 兼容的 error chunk 结束流。
+// 流已经开始（200 + 数据）后无法再改状态码，只能靠 error 事件让客户端感知失败，
+// 否则弱网断流看起来就像"模型只答了一半"。
+func writeOpenAISSEError(writer *sseWriter, message, errType string) {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    errType,
+			"code":    errType,
+		},
+	})
+	_ = writer.write([]byte("data: " + string(payload) + "\n\n"))
 }
 
 // streamMiniMaxChat 通过 MiniMax Anthropic 兼容端点实现流式输出，

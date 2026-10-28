@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -179,10 +180,23 @@ type TTSRequest struct {
 }
 
 func NewAIGatewayHandler(db *models.DB, cfg *config.Config, imageHandler *ImageUnderstandingHandler, enc *utils.EncryptionService) *AIGatewayHandler {
+	// 弱网重试策略（尝试次数/退避/预算/静默阈值）来自配置，缺省用代码内安全默认值。
+	if cfg != nil {
+		applyOutboundRetryConfig(cfg.AIGateway.Retry)
+	}
+	// 上次进程异常退出时遗留的 running 聊天任务：标成失败并写明原因，
+	// 否则用户重进 /ai-chat 会看到一个永远转圈的任务。
+	if db != nil {
+		if n, err := db.FailStaleChatPlusTasks(chatTaskStaleReason); err == nil && n > 0 {
+			log.Printf("[chat-task] 启动清理：%d 个上次未完成的聊天任务已标记为失败", n)
+		}
+	}
 	// 上游 HTTP 传输统一显式配置拨号/TLS 超时与连接池。零值 Transport 下
 	// TLSHandshakeTimeout / ResponseHeaderTimeout 均为 0（无限等待），上游"连上但
 	// 不回响应头"会永久卡死请求 goroutine 并泄漏连接 —— 这是代理连接不稳定的主因之一。
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	// KeepAlive 15s：弱网/移动路由下 NAT 超时很短，靠 TCP keepalive 尽早发现"半死"连接，
+	// 而不是把请求发出去后一直等到读超时。IdleConnTimeout 45s 同理（避免复用已失效的空闲连接）。
+	dialer := &net.Dialer{Timeout: outboundPolicy.dialTimeout, KeepAlive: 15 * time.Second}
 	buildTransport := func(disableCompression bool, responseHeaderTimeout time.Duration) *http.Transport {
 		return &http.Transport{
 			Proxy:                 nil,
@@ -190,7 +204,8 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, imageHandler *ImageU
 			ForceAttemptHTTP2:     false,
 			MaxIdleConns:          100,
 			MaxIdleConnsPerHost:   16,
-			IdleConnTimeout:       90 * time.Second,
+			MaxConnsPerHost:       32,
+			IdleConnTimeout:       45 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: responseHeaderTimeout,
 			// DisableCompression=true：不发 Accept-Encoding，上游返回原始未压缩数据。
@@ -250,7 +265,7 @@ func NewAIGatewayHandler(db *models.DB, cfg *config.Config, imageHandler *ImageU
 // headerTimeoutSec <= 0 时 fallback 到默认 60s(老的全局 streamClient 行为)。
 // 与 NewAIGatewayHandler 里的 buildTransport 同源,但独立暴露给 pickStreamClient 用。
 func buildStreamTransport(headerTimeoutSec int) *http.Transport {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	dialer := &net.Dialer{Timeout: outboundPolicy.dialTimeout, KeepAlive: 15 * time.Second}
 	timeout := time.Duration(headerTimeoutSec) * time.Second
 	if headerTimeoutSec <= 0 {
 		timeout = 60 * time.Second
@@ -261,7 +276,8 @@ func buildStreamTransport(headerTimeoutSec int) *http.Transport {
 		ForceAttemptHTTP2:     false,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   16,
-		IdleConnTimeout:       90 * time.Second,
+		MaxConnsPerHost:       32,
+		IdleConnTimeout:       45 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: timeout,
 		// 流式上游不接收压缩:本地 Ollama 不支持 Brotli,云厂商 SSE 一般也不压缩

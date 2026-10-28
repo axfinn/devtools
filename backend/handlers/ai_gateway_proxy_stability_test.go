@@ -103,7 +103,8 @@ func TestDoJSONRequestRetriesOnTransient(t *testing.T) {
 
 // doJSONRequest 对客户端取消（context.Canceled）不应重试。
 func TestDoJSONRequestNoRetryOnCanceled(t *testing.T) {
-	rt := &flakyRoundTripper{failFirstAttempts: 1}
+	// 首次请求就直接返回 context.Canceled（failFirstAttempts=0，否则第一次是 ECONNREFUSED 会先重试一轮）
+	rt := &flakyRoundTripper{failFirstAttempts: 0}
 	rt.responder = func(*http.Request) (*http.Response, error) {
 		return nil, context.Canceled
 	}
