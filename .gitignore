@@ -84,9 +84,13 @@ coverage/
 
 # Archives
 scripts/archive/
-news_archive/  # WorkBuddy 智能体本地采编的每日新闻存档(本地备份,不入库)
+# WorkBuddy 智能体本地采编的每日新闻存档（本地备份，不入库）
+news_archive/
 .env
 backend/expense_csv_import
+
+# WorkBuddy 本地工作目录（个人记忆/会话数据，不入库）
+.workbuddy/
 
 # Python cache
 __pycache__/
