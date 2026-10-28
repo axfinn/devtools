@@ -70,6 +70,8 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 	api.GET("/chat-plus/images/:name", h.AiGatewayHandler.ChatPlusImage)
 	// 本地出图（局域网 ComfyUI）：异步任务 + SSE 进度，密码门复用 chat_plus.password
 	api.GET("/chat-plus/image/status", h.AiGatewayHandler.ChatPlusImageStatus)
+	// 可切换的出图模型清单（含 ComfyUI 上真实存在的文件探活结果）
+	api.GET("/chat-plus/image/models", h.AiGatewayHandler.ChatPlusImageModels)
 	api.POST("/chat-plus/image/generate", createRateLimiter.Middleware(), h.AiGatewayHandler.ChatPlusImageGenerate)
 	api.GET("/chat-plus/image/tasks/:id", h.AiGatewayHandler.ChatPlusImageTask)
 	api.GET("/chat-plus/image/tasks/:id/stream", h.AiGatewayHandler.ChatPlusImageTaskStream)

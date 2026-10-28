@@ -88,6 +88,35 @@ type ComfyUIConfig struct {
 	TimeoutSec     int     `yaml:"timeout_sec"`     // 单张出图总超时（含排队与模型首次加载）
 	UploadDir      string  `yaml:"upload_dir"`      // 参考图上传到 ComfyUI 的子目录，默认 aichat
 	PublicBaseURL  string  `yaml:"public_base_url"` // 可选：对外返回绝对图片 URL 的前缀，空=相对路径
+
+	// 以下是「多模型切换」相关字段。留空即沿用上面的单模型行为（qwen21 家族）。
+	Family       string `yaml:"family"`        // 工作流家族：qwen21（默认）| flux2 | qwen_edit
+	ClipLoader   string `yaml:"clip_loader"`   // 文本编码器加载节点：CLIPLoader（默认）| CLIPLoaderGGUF
+	DefaultModel string `yaml:"default_model"` // 默认出图预设 id；留空=内置默认（qwen-image-2.1）
+	Models       []ComfyImageModelPreset `yaml:"models"` // 出图预设；同 id 覆盖内置预设
+}
+
+// ComfyImageModelPreset 一组完整的出图模型参数。
+//
+// 光换 UNET 文件名是不够的：不同家族的文本编码器、CLIP type、VAE、latent 构造方式
+// 都不一样（Qwen-Image 用 TextEncodeQwenImage21 一个节点同时出正负+latent；Flux2 用
+// CLIPTextEncode + EmptyFlux2LatentImage；Qwen-Image-Edit 用 EditPlus 编码 + VAEEncode 源图）。
+// 所以预设以「家族 + 配套文件 + 采样参数」为最小单位，前端只选 id，后端据此拼整张图。
+type ComfyImageModelPreset struct {
+	ID          string  `yaml:"id" json:"id"`
+	Label       string  `yaml:"label" json:"label"`
+	Family      string  `yaml:"family" json:"family"`
+	Unet        string  `yaml:"unet" json:"unet"`
+	Clip        string  `yaml:"clip" json:"clip"`
+	ClipLoader  string  `yaml:"clip_loader" json:"clip_loader"`
+	ClipType    string  `yaml:"clip_type" json:"clip_type"`
+	Vae         string  `yaml:"vae" json:"vae"`
+	Steps       int     `yaml:"steps" json:"steps"`
+	CFG         float64 `yaml:"cfg" json:"cfg"`
+	Sampler     string  `yaml:"sampler" json:"sampler"`
+	Scheduler   string  `yaml:"scheduler" json:"scheduler"`
+	Resolution  int     `yaml:"resolution" json:"resolution"`
+	SpeedHint   string  `yaml:"speed_hint" json:"speed_hint"` // 给前端展示的耗时提示，纯文案
 }
 
 // ComfyUI 各字段的兜底默认值（配置只写 base_url 也能直接跑）。
@@ -103,6 +132,8 @@ const (
 	comfyDefaultResolution = 1024
 	comfyDefaultTimeoutSec = 1800 // 图生图首帧要加载模型，900s 常不够，超时会被误判成失败
 	comfyDefaultUploadDir  = "aichat"
+	comfyDefaultFamily     = "qwen21"
+	comfyDefaultClipLoader = "CLIPLoader"
 )
 
 // Normalized 返回补齐默认值并做合法性收敛后的副本。
@@ -114,6 +145,8 @@ func (c ComfyUIConfig) Normalized() ComfyUIConfig {
 	out.Clip = defaultIfBlank(out.Clip, comfyDefaultClip)
 	out.Vae = defaultIfBlank(out.Vae, comfyDefaultVae)
 	out.ClipType = defaultIfBlank(out.ClipType, comfyDefaultClipType)
+	out.Family = defaultIfBlank(out.Family, comfyDefaultFamily)
+	out.ClipLoader = defaultIfBlank(out.ClipLoader, comfyDefaultClipLoader)
 	out.Sampler = defaultIfBlank(out.Sampler, comfyDefaultSampler)
 	out.Scheduler = defaultIfBlank(out.Scheduler, comfyDefaultScheduler)
 	out.UploadDir = defaultIfBlank(out.UploadDir, comfyDefaultUploadDir)

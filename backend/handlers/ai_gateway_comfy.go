@@ -118,6 +118,7 @@ type comfyTask struct {
 	Phase     string       `json:"phase"`    // 人类可读的阶段说明
 	Progress  int          `json:"progress"` // 0~100，采样阶段由 WebSocket 驱动
 	Mode      string       `json:"mode"`     // t2i | edit
+	Model     string       `json:"model"`    // 出图模型预设 id（前端下拉框选的那个）
 	Prompt    string       `json:"prompt"`
 	ImageURL  string       `json:"image_url,omitempty"`
 	Images    []comfyImage `json:"images,omitempty"`
@@ -595,6 +596,12 @@ type comfyGenOptions struct {
 // 注意：编辑模式的参考图必须写成扁平键名 "images.image_1"。唐 该节点的 images 输入是
 // Autogrow 类型，写成嵌套 dict 会被执行器静默丢弃，表现为"图没接上、模型凭空生成"。
 func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o comfyGenOptions) map[string]interface{} {
+	switch cfg.Family {
+	case comfyFamilyFlux2:
+		return buildFlux2Workflow(cfg, prompt, negative, o)
+	case comfyFamilyQwenEdit:
+		return buildQwenEditWorkflow(cfg, prompt, negative, o)
+	}
 	// TextEncodeQwenImage21 只吃一个 resolution，内部自行推导 latent 尺寸，
 	// 所以这里不单独传宽高（非正方形需求见 comfyResolveParams 的短边收敛）。
 	encoder := map[string]interface{}{
@@ -609,14 +616,7 @@ func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 			"class_type": "UnetLoaderGGUF",
 			"inputs":     map[string]interface{}{"unet_name": cfg.Model},
 		},
-		"2": map[string]interface{}{
-			"class_type": "CLIPLoader",
-			"inputs": map[string]interface{}{
-				"clip_name": cfg.Clip,
-				"type":      cfg.ClipType,
-				"device":    "default",
-			},
-		},
+		"2": comfyClipLoaderNode(cfg),
 		"3": map[string]interface{}{
 			"class_type": "VAELoader",
 			"inputs":     map[string]interface{}{"vae_name": cfg.Vae},
@@ -662,6 +662,155 @@ func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 		}
 		// Autogrow 输入的扁平键名，见函数注释
 		encoder["images.image_1"] = []interface{}{"4", 0}
+	}
+	return workflow
+}
+
+// comfyClipLoaderNode 按配置选 CLIPLoader（safetensors）或 CLIPLoaderGGUF（.gguf）。
+// 两者的输入名一致，只有 device 这个可选字段仅前者支持。
+func comfyClipLoaderNode(cfg config.ComfyUIConfig) map[string]interface{} {
+	inputs := map[string]interface{}{
+		"clip_name": cfg.Clip,
+		"type":      cfg.ClipType,
+	}
+	if cfg.ClipLoader == "CLIPLoaderGGUF" {
+		return map[string]interface{}{"class_type": "CLIPLoaderGGUF", "inputs": inputs}
+	}
+	inputs["device"] = "default"
+	return map[string]interface{}{"class_type": "CLIPLoader", "inputs": inputs}
+}
+
+// buildFlux2Workflow 生成 FLUX.2（Klein 等）的工作流。
+//
+//	1 UnetLoaderGGUF  2 CLIPLoaderGGUF  3 VAELoader
+//	4 CLIPTextEncode（正向） 6 CLIPTextEncode（负向） 5 EmptyFlux2LatentImage
+//	8 KSampler  9 VAEDecode  10 SaveImage
+//
+// 与 qwen21 的差别：正向/负向分开两个节点，latent 由 EmptyFlux2LatentImage 直接给
+// 宽高（不走 resolution 收敛）。节点号沿用 8=KSampler / 10=SaveImage 的约定，
+// watchProgress 的进度百分比映射才继续有效。
+func buildFlux2Workflow(cfg config.ComfyUIConfig, prompt, negative string, o comfyGenOptions) map[string]interface{} {
+	side := o.Resolution
+	if side < 256 {
+		side = 256
+	}
+	return map[string]interface{}{
+		"1": map[string]interface{}{
+			"class_type": "UnetLoaderGGUF",
+			"inputs":     map[string]interface{}{"unet_name": cfg.Model},
+		},
+		"2": comfyClipLoaderNode(cfg),
+		"3": map[string]interface{}{
+			"class_type": "VAELoader",
+			"inputs":     map[string]interface{}{"vae_name": cfg.Vae},
+		},
+		"4": map[string]interface{}{
+			"class_type": "CLIPTextEncode",
+			"inputs":     map[string]interface{}{"clip": []interface{}{"2", 0}, "text": prompt},
+		},
+		"6": map[string]interface{}{
+			"class_type": "CLIPTextEncode",
+			"inputs":     map[string]interface{}{"clip": []interface{}{"2", 0}, "text": negative},
+		},
+		"5": map[string]interface{}{
+			"class_type": "EmptyFlux2LatentImage",
+			"inputs": map[string]interface{}{
+				"width": side, "height": side, "batch_size": 1,
+			},
+		},
+		"8": map[string]interface{}{
+			"class_type": "KSampler",
+			"inputs": map[string]interface{}{
+				"model":        []interface{}{"1", 0},
+				"positive":     []interface{}{"4", 0},
+				"negative":     []interface{}{"6", 0},
+				"latent_image": []interface{}{"5", 0},
+				"seed":         o.Seed,
+				"steps":        o.Steps,
+				"cfg":          o.CFG,
+				"sampler_name": cfg.Sampler,
+				"scheduler":    cfg.Scheduler,
+				"denoise":      1.0,
+			},
+		},
+		"9": map[string]interface{}{
+			"class_type": "VAEDecode",
+			"inputs":     map[string]interface{}{"samples": []interface{}{"8", 0}, "vae": []interface{}{"3", 0}},
+		},
+		"10": map[string]interface{}{
+			"class_type": "SaveImage",
+			"inputs":     map[string]interface{}{"images": []interface{}{"9", 0}, "filename_prefix": "aichat"},
+		},
+	}
+}
+
+// buildQwenEditWorkflow 生成 Qwen-Image-Edit（如 2511）专用的编辑工作流。
+//
+//	1 UnetLoaderGGUF  2 CLIPLoader(GGUF)  3 VAELoader  4 LoadImage
+//	5 TextEncodeQwenImageEditPlus（吃参考图出条件） 6 CLIPTextEncode（负向）
+//	7 VAEEncode（把参考图编码成 latent，编辑的起点） 8 KSampler  9 VAEDecode  10 SaveImage
+//
+// 与 qwen21 的差别：Edit 家族没有 TextEncodeQwenImage21 这种「一个节点出正负+latent」的
+// 编码器，latent 必须自己 VAEEncode 源图；且文本编码器维度必须匹配（Qwen2.5-VL 3584 维），
+// 用错会直接报 "normalized_shape" 不匹配。
+func buildQwenEditWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o comfyGenOptions) map[string]interface{} {
+	workflow := map[string]interface{}{
+		"1": map[string]interface{}{
+			"class_type": "UnetLoaderGGUF",
+			"inputs":     map[string]interface{}{"unet_name": cfg.Model},
+		},
+		"2": comfyClipLoaderNode(cfg),
+		"3": map[string]interface{}{
+			"class_type": "VAELoader",
+			"inputs":     map[string]interface{}{"vae_name": cfg.Vae},
+		},
+		"6": map[string]interface{}{
+			"class_type": "CLIPTextEncode",
+			"inputs":     map[string]interface{}{"clip": []interface{}{"2", 0}, "text": negative},
+		},
+		"8": map[string]interface{}{
+			"class_type": "KSampler",
+			"inputs": map[string]interface{}{
+				"model":        []interface{}{"1", 0},
+				"positive":     []interface{}{"5", 0},
+				"negative":     []interface{}{"6", 0},
+				"latent_image": []interface{}{"7", 0},
+				"seed":         o.Seed,
+				"steps":        o.Steps,
+				"cfg":          o.CFG,
+				"sampler_name": cfg.Sampler,
+				"scheduler":    cfg.Scheduler,
+				"denoise":      1.0,
+			},
+		},
+		"9": map[string]interface{}{
+			"class_type": "VAEDecode",
+			"inputs":     map[string]interface{}{"samples": []interface{}{"8", 0}, "vae": []interface{}{"3", 0}},
+		},
+		"10": map[string]interface{}{
+			"class_type": "SaveImage",
+			"inputs":     map[string]interface{}{"images": []interface{}{"9", 0}, "filename_prefix": "aichat"},
+		},
+	}
+	if o.ImageName == "" {
+		return workflow // 缺参考图时由调用方拦在前面，这里保持图结构不残缺即可
+	}
+	workflow["4"] = map[string]interface{}{
+		"class_type": "LoadImage",
+		"inputs":     map[string]interface{}{"image": o.ImageName},
+	}
+	workflow["5"] = map[string]interface{}{
+		"class_type": "TextEncodeQwenImageEditPlus",
+		"inputs": map[string]interface{}{
+			"clip":   []interface{}{"2", 0},
+			"vae":    []interface{}{"3", 0},
+			"prompt": prompt,
+			"image1": []interface{}{"4", 0},
+		},
+	}
+	workflow["7"] = map[string]interface{}{
+		"class_type": "VAEEncode",
+		"inputs":     map[string]interface{}{"pixels": []interface{}{"4", 0}, "vae": []interface{}{"3", 0}},
 	}
 	return workflow
 }
@@ -743,13 +892,14 @@ func randomSeed() int64 {
 
 // startComfyTask 建任务并起后台 goroutine 执行，立即返回。
 // 必须用独立 context（不继承请求 context）——POST 一返回，请求 context 就取消了。
-func (h *AIGatewayHandler) startComfyTask(cfg config.ComfyUIConfig, req comfyImageRequest, prompt, negative string, opts comfyGenOptions, mode string) comfyTask {
+func (h *AIGatewayHandler) startComfyTask(cfg config.ComfyUIConfig, req comfyImageRequest, prompt, negative string, opts comfyGenOptions, mode, modelID string) comfyTask {
 	task := &comfyTask{
 		ID:        "img_" + comfyRandomHex(8),
 		Status:    "queued",
 		Phase:     "排队中",
 		Prompt:    prompt,
 		Mode:      mode,
+		Model:     modelID,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -814,6 +964,8 @@ func (h *AIGatewayHandler) persistComfyTaskOutcome(taskID string, req comfyImage
 		for _, img := range task.Images {
 			imgs = append(imgs, map[string]interface{}{
 				"id": img.URL, "url": img.URL, "w": img.Width, "h": img.Height,
+				// 带上模型 id，换设备/刷新后也能看出这张图是哪个模型出的
+				"model": task.Model,
 			})
 		}
 		raw, err := json.Marshal(imgs)
@@ -1161,6 +1313,10 @@ func (h *AIGatewayHandler) ChatPlusImageStatus(c *gin.Context) {
 		"modes":       []string{"t2i", "edit"},
 		"image_model": comfyImageModel,
 		"max_batch":   comfyMaxBatch,
+		// 多模型：默认预设 + 可选预设 id 列表。模型详情（耗时/能力/可用性）走
+		// GET /api/chat-plus/image/models，那里会额外探活 ComfyUI 上真实存在的文件。
+		"default_model": comfyDefaultPresetID(cfg),
+		"models":        comfyPresetIDs(cfg),
 	}
 	if !cfg.Enabled() {
 		resp["error"] = "未配置 comfyui.base_url"
@@ -1209,12 +1365,6 @@ func (h *AIGatewayHandler) ChatPlusImageGenerate(c *gin.Context) {
 		return
 	}
 
-	opts, err := comfyResolveParams(cfg, req)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
 	negative := strings.TrimSpace(req.NegativePrompt)
 	if negative == "" {
 		negative = cfg.NegativePrompt
@@ -1224,11 +1374,45 @@ func (h *AIGatewayHandler) ChatPlusImageGenerate(c *gin.Context) {
 		mode = "edit"
 	}
 
-	task := h.startComfyTask(cfg, req, prompt, negative, opts, mode)
+	// 模型切换：前端传预设 id（空 = 用默认预设），后端把整条工作流参数换掉。
+	preset, ok := comfyPresetByID(cfg, req.Model)
+	if !ok {
+		ids := make([]string, 0, len(comfyPresets(cfg)))
+		for _, p := range comfyPresets(cfg) {
+			ids = append(ids, p.ID)
+		}
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("不支持的模型: %s（可选：%s）", req.Model, strings.Join(ids, "、")),
+		})
+		return
+	}
+	if mode == "edit" && !comfySupportsEdit(preset) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("模型「%s」不支持参考图编辑，请换成支持改图的模型", preset.Label),
+		})
+		return
+	}
+	if mode == "t2i" && !comfySupportsT2I(preset) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("模型「%s」只能改图，请先附一张参考图", preset.Label),
+		})
+		return
+	}
+	// 先把预设叠进配置再算参数：这样 flux2 的 4 步、各家族的分辨率都能生效，
+	// 而请求里显式给的 steps/cfg/size 仍然优先（comfyResolveParams 内部就是这个优先级）。
+	cfg = comfyApplyPreset(cfg, preset)
+	opts, err := comfyResolveParams(cfg, req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	task := h.startComfyTask(cfg, req, prompt, negative, opts, mode, preset.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"task_id": task.ID,
 		"status":  task.Status,
 		"mode":    task.Mode,
+		"model":   task.Model,
 		"seed":    opts.Seed,
 		"steps":   opts.Steps,
 	})
@@ -1345,11 +1529,6 @@ func (h *AIGatewayHandler) OpenAIImagesGenerations(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// 超管认证时 key 为 nil（不限制），此时不能进模型白名单校验
-	if key != nil && !h.ensureModelAllowed(c, key, comfyImageModel) {
-		return
-	}
-
 	cfg, ok := h.comfyRuntime(c)
 	if !ok {
 		return
@@ -1360,13 +1539,21 @@ func (h *AIGatewayHandler) OpenAIImagesGenerations(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
 		return
 	}
-	// 本地只挂了一个扩散模型：模型名对不上就直接拒，避免调用方误以为换了模型
-	if m := strings.TrimSpace(req.Model); m != "" && m != comfyImageModel {
+	// 与聊天页共用同一套预设：调用方传的 model 就是预设 id，空则用默认预设。
+	preset, ok := comfyPresetByID(cfg, req.Model)
+	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("不支持的模型: %s（本地仅有 %s）", m, comfyImageModel),
+			"error": fmt.Sprintf("不支持的模型: %s（本地可选 %s）", strings.TrimSpace(req.Model), strings.Join(comfyPresetIDs(cfg), "、")),
 		})
 		return
 	}
+	// 模型白名单按「实际要用的预设」校验，而不是写死默认模型：
+	// 否则限制了 qwen-image-2.1 的 key 也能偷偷用 flux-2-klein。
+	// 超管认证时 key 为 nil（不限制），此时跳过校验。
+	if key != nil && !h.ensureModelAllowed(c, key, preset.ID) {
+		return
+	}
+	cfg = comfyApplyPreset(cfg, preset)
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "prompt 不能为空"})
@@ -1396,21 +1583,21 @@ func (h *AIGatewayHandler) OpenAIImagesGenerations(c *gin.Context) {
 	}
 
 	start := time.Now()
-	task := h.startComfyTask(cfg, req, prompt, negative, opts, mode)
+	task := h.startComfyTask(cfg, req, prompt, negative, opts, mode, preset.ID)
 	// 同步等结果：直接复用任务表，避免两套执行路径
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.TimeoutSec)*time.Second)
 	defer cancel()
 	final, err := waitComfyTask(ctx, task.ID)
 	latency := time.Since(start)
 	if err != nil {
-		h.logAPIRequest(key, comfyImageModel, "comfyui", "/api/ai-gateway/v1/images/generations",
+		h.logAPIRequest(key, preset.ID, "comfyui", "/api/ai-gateway/v1/images/generations",
 			"image_generation", http.StatusGatewayTimeout, false, err.Error(),
 			truncateString(prompt, 500), "", c.ClientIP(), latency, usageSummary{})
 		c.JSON(http.StatusGatewayTimeout, gin.H{"error": err.Error()})
 		return
 	}
 	if final.Status != "succeeded" {
-		h.logAPIRequest(key, comfyImageModel, "comfyui", "/api/ai-gateway/v1/images/generations",
+		h.logAPIRequest(key, preset.ID, "comfyui", "/api/ai-gateway/v1/images/generations",
 			"image_generation", http.StatusBadGateway, false, final.Error,
 			truncateString(prompt, 500), truncateString(final.Error, 500), c.ClientIP(), latency, usageSummary{})
 		c.JSON(http.StatusBadGateway, gin.H{"error": final.Error})
@@ -1440,14 +1627,14 @@ func (h *AIGatewayHandler) OpenAIImagesGenerations(c *gin.Context) {
 		return
 	}
 
-	h.logAPIRequest(key, comfyImageModel, "comfyui", "/api/ai-gateway/v1/images/generations",
+	h.logAPIRequest(key, preset.ID, "comfyui", "/api/ai-gateway/v1/images/generations",
 		"image_generation", http.StatusOK, true, "",
 		truncateString(prompt, 500), truncateString(fmt.Sprintf("%+v", data), 500),
 		c.ClientIP(), latency, usageSummary{})
 
 	c.JSON(http.StatusOK, gin.H{
 		"created": time.Now().Unix(),
-		"model":   comfyImageModel,
+		"model":   preset.ID,
 		"seed":    opts.Seed,
 		"data":    data,
 	})
