@@ -125,7 +125,8 @@ grep -cE '^\| *[0-9]+ *\|' AGENTS.md    # 两个数必须相等（都读工作�
 # ── 用法 ────────────────────────────────────────────────────────────────
 # REF 同时决定「文档来源」与「文件树来源」，两者必须是**同一棵树**，否则数会跨版本 ⇒ 原理上假红。
 #   REF=${REF:-origin/main}   # 默认（口径不变）：origin/main 的文档 + origin/main 的文件树
-#   REF=$(git write-tree)     # 文档有【未提交】改动时用：write-tree 产出 tree 对象，git show <tree>:AGENTS.md 可读
+#   git add AGENTS.md CLAUDE.md && REF=$(git write-tree)   # 文档有【未提交】改动时用：**必须先 `git add` 再取树** —— `write-tree` 只读 **index**，未 stage 的改动不会进树
+#                                                          #   ⇒ 不 add 就取树 = 读到旧文档，闸门拿旧文档自比 ⇒ 假绿 RC=0；改完文档先 add，再取树
 #   REF=HEAD                  # 改自己的分支时用（改动已提交）
 #
 # 并发安全：所有中间文件写进 mktemp -d 出来的唯一目录。
