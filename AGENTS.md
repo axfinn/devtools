@@ -4,7 +4,7 @@
 
 ---
 
-## 43 模块地图
+## 45 模块地图
 
 | # | 模块 | Handler 文件 | Route 文件 | View 组件 | 主要功能 |
 |---|------|------------|----------|---------|---------|
@@ -48,9 +48,11 @@
 | 38 | **OCR** | `handlers/ocr.go` | `routes/ocr.go` | — | 二维码识别 + OCR，Python RapidOCR |
 | 39 | **Health** | 内联 | `routes/health.go` | — | `GET /api/health` 健康检查 |
 | 40 | **Avatar 虚拟形象** | `handlers/avatar.go` | `routes/avatar.go` | `views/dev/VirtualAvatarTool/VirtualAvatarTool.vue` (+ 13 子组件) | three.js 虚拟形象调试：SkinnedMesh + Skeleton + 姿态预设；模型库 CRUD + me_asset 标记；姿态片段（pose JSON）上传/导出/分享；glb / pose.json / 视频三选一导出（MediaRecorder + WebCodecs → 降级关键帧 JSON → 复制）；摄像头调试（getUserMedia 四态降级：granted/denied/unsupported/no_device）；R5 双因子鉴权（creator_key + bcrypt password）；R10 帧数上限 60000；分享短链 16 字符 hex；CSS 变量跟随全局主题 (`--color-accent` 全局命名） |
-| 41 | **Trip 旅游行程** | `backend/trip/*.go` + `backend/cmd/trip/main.go` | — (CLI-only) | — | DDD bounded context：聚合根 `Trip` → 实体 `DayPlan` → 实体 `Activity`；值对象 `Destination` + `ActivityKind`(transport/sight/food/lodging/shopping/note)；仓储 `Repository` 接口 + SQLiteRepository；服务 `Service.RenderMarkdown` 输出可读 14 天攻略；CLI `trip create/list/show/delete/add-day/add-activity/seed/init`；第一个真实行程 fixture = 国庆 2026 粤港澳潮汕 14 日深度游（已 seed）；默认 SQLite `./data/trip.db`（`--db` 覆盖） |
+| 41 | **Trip 旅游行程** | `backend/trip/*.go` + `backend/handlers/trip.go` + `backend/cmd/trip/main.go` | `routes/trip.go` | `views/life/TripTool.vue` | DDD bounded context：聚合根 `Trip` → 实体 `DayPlan` → 实体 `Activity`；值对象 `Destination` + `ActivityKind`(transport/sight/food/lodging/shopping/note)；仓储 `Repository` 接口 + SQLiteRepository；服务 `Service.RenderMarkdown` 输出可读 14 天攻略；HTTP 端点 `/api/trips/*`（列表/详情/Markdown/Summary、增删改行程·日程·活动、预算、费用账本、提醒、`seed`/`process-now`）；CLI `trip create/list/show/delete/add-day/add-activity/seed/init`；第一个真实行程 fixture = 国庆 2026 粤港澳潮汕 14 日深度游（已 seed）；默认 SQLite `./data/trip.db`（`--db` 覆盖） |
 | 42 | **SSRules 规则文件** | `handlers/ssrule.go` + `handlers/ssrule_rules.go` | `routes/ssrule.go` | `views/other/SsRuleTool.vue` | Shadowsocks ACL 规则文件生成与公开分发：管理端（`/api/ssrules/*`）走 header `X-Super-Admin-Password` 密码门（未配密码 = 模块关闭）；域名列表 → ACL 正文（`(^\|\.)example\.com$` 正则形式，libev/rust/android 通吃）；32 位随机 token 公开链接 `GET /ss/:token/:filename` 分发；按端点分桶限流（verify/换发 10、读 30、写 20、分发 120 次/分钟/IP，独立计数桶）；`:filename` 白名单精确相等 + 全程不碰文件系统（路径穿越面为零）；未匹配 `/ss/` 一律 404「规则文件不存在」，不回落 SPA |
 | 43 | **RolePlay 角色剧场** | —（零后端，复用 `/api/chat-plus/*`） | — | `views/ai/RolePlayTool.vue` | 多角色模拟对话：2-6 个角色（名字/人设/颜色）围绕导演话题轮流圆桌发言；前端驱动循环——每条发言一次独立 `/api/chat-plus/chat/stream` 请求（同一 `X-Chat-Password` 密码门），网络故障只损失单条；轮数 1-200（1 轮 = 每角色各说一次），上下文滑动窗口（最近 30 条）+ 单条 max_tokens 700 防 token 爆炸；暂停（本条说完）/跳过/停止、失败自动重试 1 次后进暂停态可续演、localStorage 持久化剧本与记录、4 个内置剧本模板、导出 Markdown |
+| 44 | **News 每日新闻** | `handlers/news.go` | `routes/news.go` | `views/life/NewsTool.vue` | 每日新闻模块：RSS/Atom 订阅源抓取 → HTML 标签剥离 → 按内容哈希去重 → 可选 AI 精编 → 存库归档；默认 6 个内置公开订阅源（可用 `config.yaml` 的 `news.feeds` 覆盖）；`/api/news/latest`、`/api/news/list`（日期索引）、`/api/news/config`、`/api/news/:date`（按日取稿）、`POST /api/news/generate`（生成当日）、`POST /api/news/publish`（智能体采编后发布/归档） |
+| 45 | **Chat+ 新版聊天页** | `handlers/chat_plus.go` | `routes/ai_gateway.go`（`/api/chat-plus/*` 注册在此文件） | `views/ai/AIChatTool.vue` | Open WebUI 风格新版 AI 聊天页：密码门（密码存服务端 `config.yaml` 的 `chat_plus.password`，为空 = 模块整体禁用 fail-closed；`models`/`stream` 走 header `X-Chat-Password`，`verify` 走 body，常量时间比较）；双引擎——局域网 Ollama（OpenAI 兼容 `/v1/chat/completions`，模型列表运行时从 `/api/tags` 动态拉取）+ MiniMax（复用 AI Gateway 的 key，key 全程不出服务端）；SSE 流式 `/api/chat-plus/chat/stream` |
 
 ---
 
@@ -98,15 +100,15 @@ docker compose logs -f devtools
 ### 前端（88 View 组件）
 ```
 frontend/src/views/
-├── ai/         # AI 相关（7）：AIGatewayTool, AIChatTool, PetTool, EnglishTutor, ImageUnderstanding, MiniMaxStudio
+├── ai/         # AI 相关（7）：AIChatTool, AIGatewayTool, EnglishTutorTool, ImageUnderstandingTool, MiniMaxStudioTool, PetTool, RolePlayTool
 ├── collab/     # 协作（6）：ChatRoom, NFSShareTool, PasteBin, ScreenShare, ScreenView, ShortUrl, ...
 ├── convert/    # 转换（7）：Base64, Dns, QrCode, Replace, Text, Timestamp, Url
-├── dev/        # 开发（22）：AutoDev, Diff, EdgeTTS, Hermes, Json, MockApi, Regex, Terminal, VirtualAvatar
+├── dev/        # 开发（22）：AutoDevTool, DiffTool, EdgeTTSTool, HermesTool, JsonTool, MockApi, RegexTool, TerminalTool, VirtualAvatarTool, 另 13 个
 ├── draw/       # 绘图（4）：Excalidraw, Markdown, Mermaid, MindMap
 ├── home/       # 首页
 ├── household/  # 家庭（10 个子组件）
-├── life/       # 生活（13）：Counter, Expense, GameHall, Glucose, HouseholdSpace3D, HouseholdTool, PhotoWall, Planner, Pregnancy, Recipe, VoiceInbox
-├── other/      # 其他（10）：Askit, Background, Console, ImageViewer, Monitor, Neon, NPS, Proxy, Skills, VibeMotion
+├── life/       # 生活（13）：CounterTool, ExpenseTool, GameHall, GlucoseTool, HouseholdSpace3D, HouseholdTool, NewsTool, PhotoWallTool, PlannerTool, PregnancyTool, RecipeTool, TripTool, VoiceInboxTool
+├── other/      # 其他（10）：AskitInviteTool, AskitMyDataTool, BackgroundTool, ConsoleTool, ImageViewerTool, MonitorTool, NPSTool, ProxyTool, SkillsTool, SsRuleTool
 └── share/      # 分享视图（8）
 ```
 
@@ -121,6 +123,8 @@ backend/routes/
 ├── ai_gateway.go / askit.go / screen.go / apigateway.go / autodev.go / mermaid.go
 ├── proxy.go / nps.go / hermes.go / bg.go / monitor.go / console.go / skills.go
 ├── ocr.go / health.go / avatar.go
+├── news.go / trip.go / ssrule.go
+└── ssrule_test.go / ssrule_qa_test.go    # ssrule 路由测试
 ```
 
 ### Handler 文件分组
@@ -133,7 +137,7 @@ handlers/
 ├── 实时功能（4）：chat, voicememo, screen, nfsshare
 ├── 内容创作（3）：mermaid, game, hermes
 ├── 开发者（3）：autodev, analysis, console
-├── 辅助（7）：background, monitoring, ocr, edge_tts, skills*, askit*, fileutils, security_enhance, content_parser
+├── 辅助（7）：background, monitoring, ocr, edge_tts, skills*, askit*, fileutils
 └── 测试（52）：*_test.go
 ```
 
@@ -220,7 +224,7 @@ handlers/
 3. 创建 Handler：`backend/handlers/yourtool.go`
 4. 添加路由文件：`backend/routes/yourtool.go`（注册 `RegisterYourToolRoutes`）
 5. 在 `backend/routes/index.go` 的 `RegisterAllRoutes` 中添加调用
-6. 更新本文件 `43 模块地图` 表格
+6. 更新本文件 `45 模块地图` 表格
 
 ---
 
