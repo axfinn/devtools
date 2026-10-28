@@ -132,7 +132,7 @@
                 <div v-if="msg.kind === 'image'" class="msg-gen">
                   <div v-if="msg.generating" class="gen-progress">
                     <div class="gen-bar"><i :style="{ width: Math.max(2, msg.progress || 0) + '%' }"></i></div>
-                    <span class="gen-phase">{{ msg.phase || '准备中' }} · {{ msg.progress || 0 }}%</span>
+                    <span class="gen-phase">{{ msg.phase || '准备中' }} · {{ msg.progress || 0 }}%<template v-if="msg.elapsedMs"> · 已等 {{ Math.round(msg.elapsedMs / 1000) }}s</template></span>
                   </div>
                   <div v-if="msg.genImages && msg.genImages.length" class="gen-grid">
                     <figure v-for="im in msg.genImages" :key="im.url" class="gen-item">
@@ -461,16 +461,17 @@ function saveConversations() {
 }
 function loadMessages(convId) {
   messages.value = loadMessagesFor(convId)
-  // 刷新/重启页面时，出图任务已经不在内存里了：把残留的「生成中」就地收尾，
-  // 否则进度条会永远停在半截让人以为还在跑。
+  // 刷新/重启页面后，出图任务仍在服务端后台跑（任务表保留 2 小时）。
+  // 有 task_id 的就交给轮询接管；没有的才收尾，避免进度条永远停在半截。
   for (const m of messages.value) {
-    if (m && m.generating) {
+    if (m && m.generating && !m.taskId) {
       m.generating = false
       m.genError = m.genError || '页面已刷新，本次生成中断（可点「重新生成」）'
     }
   }
   // 先把本地缓存画出来（秒开），再去服务端对齐（另一台设备发的消息也能拉下来）
   if (convId) refreshMessagesFromServer(convId)
+  resumePendingImageTasks()
 }
 function loadMessagesFor(convId) {
   try { return JSON.parse(localStorage.getItem(MSGS_KEY_PREFIX + convId) || '[]') } catch { return [] }
@@ -577,7 +578,7 @@ function unmarkConvDeleted(id) {
 function toServerMessage(m) {
   const status = m.genError ? 'failed'
     : m.failed ? 'failed'
-      : (m.interrupted ? 'canceled' : (m.streaming ? 'running' : 'ok'))
+      : (m.interrupted ? 'canceled' : (m.streaming || m.generating ? 'running' : 'ok'))
   const out = {
     id: m.id,
     role: m.role,
@@ -698,6 +699,13 @@ function mergeServerMessages(convId, list) {
       if ((sm.content || '').length > (existing.content || '').length) { existing.content = sm.content; touched = true }
       if ((sm.reasoning || '').length > (existing.reasoning || '').length) { existing.reasoning = sm.reasoning; touched = true }
       if (imgs.length && !(existing.images || []).length) { existing.images = imgs; touched = true }
+      if (sm.task_id && !existing.taskId) { existing.taskId = sm.task_id; touched = true }
+      // 服务端说还在跑、本地又没有结果图：交给轮询接管（刷新/换设备/断网后回到页面时的主要路径）
+      if (sm.status === 'running' && existing.kind === 'image'
+        && !(existing.genImages || []).length && !existing.genError && !existing.generating) {
+        existing.generating = true
+        touched = true
+      }
       if (sm.status === 'failed' && !existing.failed) { existing.failed = sm.error_message || '生成失败'; touched = true }
       if (sm.status === 'canceled' && !existing.interrupted) { existing.interrupted = true; touched = true }
       if (touched) changed = true
@@ -717,7 +725,9 @@ function mergeServerMessages(convId, list) {
         genError: sm.status === 'failed' ? (sm.error_message || '生成失败') : '',
         progress: 0,
         phase: '',
-        generating: false,
+        // 任务还在服务端排队/跑：立刻生成中，由 resumePendingImageTasks 轮询取结果
+        generating: sm.status === 'running' && !!sm.task_id,
+        taskId: sm.task_id || undefined,
         ts: sm.ts || Date.now(),
       }))
       changed = true
@@ -742,6 +752,7 @@ function mergeServerMessages(convId, list) {
     messages.value.sort((a, b) => (a.ts || 0) - (b.ts || 0))
     saveMessagesFor(convId, messages.value)
     scrollToBottom()
+    resumePendingImageTasks()
   }
   return changed
 }
@@ -1146,6 +1157,8 @@ async function createChatTask(payload, signal) {
 // ══════════════ 任务订阅（断线续传） ══════════════
 const TASK_STREAM_RETRY_MAX = 4      // SSE 连续失败几次后改轮询
 const TASK_RECONNECT_BASE_MS = 600
+const IMAGE_TASK_POLL_MS = 2000      // 出图轮询间隔
+const IMAGE_TASK_MAX_MS = 15 * 60 * 1000  // 出图最长等待（ComfyUI 首次加载模型可能好几分钟）
 
 function delay(ms) {
   return new Promise(r => setTimeout(r, ms))
@@ -1486,6 +1499,7 @@ async function runImageTask(msg) {
   msg.genImages = []
   msg.genError = ''
   msg.progress = 0
+  msg.elapsedMs = 0
   msg.phase = '排队中'
   imageAbort = new AbortController()
   scrollToBottom()
@@ -1501,28 +1515,53 @@ async function runImageTask(msg) {
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-    await followImageTask(data.task_id, msg)
+    // 立刻把 task_id 落到消息里：刷新页面/换设备后靠它把后台任务的结果拉回来
+    msg.taskId = data.task_id
+    saveMessages()
+    // 任务已经进了服务端队列，接下来只是「听进度」。
+    // SSE 是快通道，任何一跳链路抖动（NAT/反代空闲超时、切网、锁屏）都可能把它掐掉，
+    // 但任务本身还在后台跑 —— 所以断了就转轮询，不能直接判失败。
+    let settled = false
+    try {
+      settled = await streamImageTask(data.task_id, msg, imageAbort.signal)
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e
+      if (e?.httpStatus === 404) throw e // 任务真没了，轮询也没意义
+      msg.reconnecting = true            // 仅链路断，后台照跑
+    }
+    if (!settled) {
+      msg.reconnecting = true
+      await pollImageTask(data.task_id, msg, imageAbort.signal)
+    }
   } catch (e) {
-    msg.genError = e?.name === 'AbortError' ? '已取消生成' : netErrMsg(e)
+    if (e?.name === 'AbortError') {
+      msg.genError = '已取消生成'
+      msg.taskId = '' // 用户主动取消：别再让后台接管把它拉起来
+    } else {
+      msg.genError = netErrMsg(e)
+    }
   } finally {
+    msg.reconnecting = false
     msg.generating = false
     imageGenerating.value = false
     imageAbort = null
     saveMessages()
     scrollToBottom()
+    resumePendingImageTasks() // 还有别的后台任务在跑就接着接管
   }
 }
 
-// 订阅任务进度。事件体统一是任务 JSON（见后端 ChatPlusImageTaskStream），
-// 因此这里只需按 status 分派，不用处理多种事件类型。
-async function followImageTask(taskId, msg) {
+// SSE 快通道。返回 true = 已拿到终态（成功/失败）；false = 流正常结束但没终态。
+async function streamImageTask(taskId, msg, signal) {
   const res = await fetch(`${API_BASE}/api/chat-plus/image/tasks/${encodeURIComponent(taskId)}/stream`, {
     headers: { Accept: 'text/event-stream', ...auth.authHeader() },
-    signal: imageAbort.signal,
+    signal,
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
-    throw new Error(data.error || `进度连接失败 HTTP ${res.status}`)
+    const err = new Error(data.error || `进度连接失败 HTTP ${res.status}`)
+    err.httpStatus = res.status
+    throw err
   }
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -1535,17 +1574,58 @@ async function followImageTask(taskId, msg) {
     buf = rest
     for (const task of tasks) {
       const state = applyTaskEvent(msg, task)
-      if (state === 'succeeded') {
-        scrollToBottom()
-        return
-      }
-      if (state === 'failed') return
       scrollToBottom()
+      if (state === 'succeeded' || state === 'failed') return true
     }
   }
-  // 流提前结束（服务重启/连接被掐）但任务没给终态
-  if (!msg.genImages.length && !msg.genError) {
-    msg.genError = '进度连接中断，请用「重新生成」重试'
+  return false
+}
+
+// 轮询兜底：出图是服务端后台任务，连接怎么断都不影响它跑完，
+// 只要拿 task_id 反复拉快照就能把结果取回来。
+async function pollImageTask(taskId, msg, signal) {
+  const deadline = Date.now() + IMAGE_TASK_MAX_MS
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+    await delay(IMAGE_TASK_POLL_MS)
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/tasks/${encodeURIComponent(taskId)}`, {
+      headers: auth.authHeader(),
+      signal,
+    }).catch(() => null) // 单次抖动不致命，继续下一轮
+    if (res && res.status === 404) throw new Error('任务已丢失（服务端重启过），请点「重新生成」重试')
+    if (!res || !res.ok) continue
+    const task = await res.json().catch(() => null)
+    if (!task) continue
+    const state = applyTaskEvent(msg, task)
+    scrollToBottom()
+    if (state === 'succeeded' || state === 'failed') return
+  }
+  msg.genError = '等了太久仍未出图，已停止同步（任务可能还在服务端跑，稍后回到这个会话可看到结果）'
+}
+
+// 接管仍在服务端跑的出图任务：出图是后台任务，页面刷新/切网/换设备都不该让它「消失」，
+// 只要有 task_id 就轮询到终态。
+async function resumePendingImageTasks() {
+  if (imageGenerating.value) return
+  const pending = messages.value.find(m => m && m.kind === 'image'
+    && m.taskId && m.generating && !(m.genImages || []).length && !m.genError)
+  if (!pending) return
+  imageGenerating.value = true
+  imageAbort = new AbortController()
+  const signal = imageAbort.signal
+  pending.reconnecting = true
+  try {
+    await pollImageTask(pending.taskId, pending, signal)
+  } catch (e) {
+    if (e?.name !== 'AbortError') pending.genError = pending.genError || netErrMsg(e)
+  } finally {
+    pending.generating = false
+    pending.reconnecting = false
+    imageGenerating.value = false
+    imageAbort = null
+    saveMessages()
+    scrollToBottom()
   }
 }
 

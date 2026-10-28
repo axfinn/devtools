@@ -161,7 +161,13 @@ func (s *comfyTaskStore) get(id string) (comfyTask, bool) {
 	if !ok {
 		return comfyTask{}, false
 	}
-	return *t, true
+	snap := *t
+	// 排队/上传参考图/首次加载模型这几个阶段可能几分钟没有 mutate，
+	// elapsed 在这里实时算，前端「已等待 Ns」才会真的在走。
+	if !t.started.IsZero() && t.Status != "queued" && t.Status != "succeeded" && t.Status != "failed" {
+		snap.ElapsedMS = time.Since(t.started).Milliseconds()
+	}
+	return snap, true
 }
 
 // gcLocked 清理过期任务。调用方必须已持有写锁。
@@ -1193,12 +1199,16 @@ func (h *AIGatewayHandler) ChatPlusImageTaskStream(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	ticker := time.NewTicker(comfyStreamTick)
-	heartbeat := time.NewTicker(20 * time.Second)
+	// 心跳要密：出图在「上传参考图/排队/加载模型」阶段可能几分钟没有进度变化，
+	// 而移动网络 NAT 与反代的空闲超时常见只有 15~30s，20s 一跳会被掐断，
+	// 前端就会误报「请求未到达服务器」。这里 4s 一跳，远低于任何空闲超时。
+	heartbeat := time.NewTicker(4 * time.Second)
 	deadline := time.After(comfyStreamMaxIdle)
 	defer ticker.Stop()
 	defer heartbeat.Stop()
 
 	last := ""
+	lastSend := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -1216,13 +1226,15 @@ func (h *AIGatewayHandler) ChatPlusImageTaskStream(c *gin.Context) {
 				_ = writer.write([]byte("data: {\"status\":\"failed\",\"error\":\"任务不存在或已过期\"}\n\n"))
 				return
 			}
-			// 只在内容变化时推送，减少无意义流量（elapsed_ms 单独看，避免每秒都变）
+			// 只在内容变化时推送，减少无意义流量（elapsed_ms 单独看，避免每秒都变）；
+			// 但无变化超过 3s 也要补一帧，让 elapse 前进、链路保持活跃
 			sig := fmt.Sprintf("%s|%d|%s|%d", task.Status, task.Progress, task.Phase, len(task.Images))
-			if sig != last {
+			if sig != last || time.Since(lastSend) >= 3*time.Second {
 				last = sig
 				if !send(task) {
 					return
 				}
+				lastSend = time.Now()
 			}
 			if task.Status == "succeeded" || task.Status == "failed" {
 				return
