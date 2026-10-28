@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-DevTools 项目快速参考。详细架构和 API 文档见 `AGENTS.md`（43 模块地图、完整 handler/route 索引、详细 API 索引）。
+DevTools 项目快速参考。详细架构和 API 文档见 `AGENTS.md`（45 模块地图、完整 handler/route 索引、详细 API 索引）。
 
 ---
 
@@ -64,7 +64,7 @@ backend/
 3. `backend/handlers/yourtool.go`
 4. `backend/routes/yourtool.go`（`RegisterYourToolRoutes`）
 5. `backend/routes/index.go` → `RegisterAllRoutes` 中添加调用
-6. 更新 `AGENTS.md` 43 模块地图
+6. 更新 `AGENTS.md` 45 模块地图
 
 ### 计数同步清单（改动前后各跑一次，按输出填文档）
 
@@ -88,7 +88,7 @@ done
 `View 组件` = `frontend/src/views/` 递归 `.vue`；`公共组件` = `frontend/src/` 下除 `views/` 外的 `.vue`（含 `App.vue`）；
 `routes 文件` = `backend/routes/` 全部 `.go`；`routes 分组` = 非测试、非 `index.go` 的路由文件数（每文件 1 个 `Register*Routes`）；
 `handlers 文件` = `backend/handlers/` 全部 `.go`；`handlers 测试` = 其中 `_test.go` 的数量；
-`ai_gateway 非测试` = `ai_gateway*` 去掉 `_test.go`（含 1 个 `ai_gateway_test_helpers.go` 脚手架）；
+`ai_gateway 非测试` = `ai_gateway*` 去掉 `_test.go`（`ai_gateway_test_helpers.go` 是测试脚手架、**仍计入**该数；脚手架个数随文件增减变化，**不要写死个数**，以命令块里 `ai_gateway 非测试` 那一行的输出为准）；
 模块表 `handlers/xxx*.go (N 文件)` 的 N 一律**排除 `_test.go`**。
 
 **触发条件 → 必须重算并同步的文档条目**：
@@ -102,16 +102,65 @@ done
 - 新增/删除内置 skill → 同步 `AGENTS.md` 的「N 个 skill」
 - 新增/删除模块表的一行 → 同步模块表编号、`AGENTS.md` 标题数字、全部「N 模块地图」
 - 新增/删除 handler 分段（改 `// domain/sectionN` 横幅） → 同步模块表对应行的 `(N 分段)`
+- 新增/删除 backend/routes/ 下的 *.go → 同步 AGENTS.md「后端路由拆分」枚举树 与「routes/ N 个文件」
+- 新增/删除 backend/handlers/ 下的 *.go → 同步 AGENTS.md「Handler 文件分组」各分组的枚举
+- 新增/删除 frontend/src/views/<cat>/ 下的 *.vue → 同步 AGENTS.md「View 组件」per-category 枚举
+- 新增/删除 backend/handlers/ 下的模块（模块级） → 同步 AGENTS.md「N 模块地图」的模块行
 
 **每次改完必跑**（防"改一半"）：
 
 ```bash
-# 1) 现算（粘贴上面的命令块）
+# 1) 现算（粘贴上面的命令块，`REF` 在那里定义）
 # 2) 对照文档里的计数
 # 3) 一致性硬闸门：标题数字 == 模块表行数
-REF=${REF:-origin/main}
+#    两行**必须同源**（都读工作区 AGENTS.md）：一读工作区、一读 ${REF}:AGENTS.md 时，
+#    工作区有未提交改动就会让两个数来自不同版本 ⇒ 原理上假红。
 grep -E '^## [0-9]+ 模块地图' AGENTS.md
-git show ${REF}:AGENTS.md | grep -cE '^\| *[0-9]+ *\|'   # 两个数必须相等
+grep -cE '^\| *[0-9]+ *\|' AGENTS.md    # 两个数必须相等（都读工作区 AGENTS.md）
+```
+
+**枚举闭合判据**（每个被枚举的清单都要能算出「枚举项数 == 声明的数」；没有判据的清单迟早腐）：
+
+```bash
+REF=${REF:-origin/main}
+DOC=$(git show ${REF}:AGENTS.md)
+
+# A) routes 枚举树：AGENTS.md 枚举的 .go 文件名集合 == backend/routes/ 实际文件名集合
+sed -n '/^### 后端路由拆分/,/^### /p' <<<"$DOC" | grep -o '[a-z0-9_]*\.go' | sort -u > /tmp/enum_routes.txt
+git ls-tree -r --name-only ${REF} -- backend/routes/ | grep '\.go$' | xargs -n1 basename | sort -u > /tmp/real_routes.txt
+if diff -q /tmp/enum_routes.txt /tmp/real_routes.txt >/dev/null; then
+  echo "A) routes 枚举闭合 ✅（$(wc -l < /tmp/enum_routes.txt) 项）"
+else
+  echo "A) routes 枚举不闭合 ❌"; diff /tmp/enum_routes.txt /tmp/real_routes.txt
+fi
+
+# B) Handler 分组「辅助（N）」：枚举项数 == 括号里的数，且每项在 backend/handlers/ 至少命中 1 个文件
+auxline=$(printf '%s\n' "$DOC" | grep -E '^├── 辅助（')
+aux=$(printf '%s\n' "$auxline" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$')
+auxn=$(printf '%s\n' "$aux" | grep -c .)
+auxdecl=$(printf '%s\n' "$auxline" | grep -oE '[（(][0-9]+[）)]' | grep -oE '[0-9]+')
+echo "B) 辅助 枚举=$auxn 声明=$auxdecl（两者必须相等）"
+printf '%s\n' "$aux" | while read -r n; do
+  c=$(git ls-tree -r --name-only ${REF} -- backend/handlers/ | grep -cE "/${n%\*}[^/]*\.go$")
+  [ "$c" -gt 0 ] && echo "   ✅ $n → $c 个文件" || echo "   ❌ $n 在 backend/handlers/ 下无对应文件"
+done
+
+# C) per-category View 枚举：已列名数 + 「另 N 个」== 括号里的声明数，且每个名字真实存在
+for d in ai dev life other; do
+  line=$(printf '%s\n' "$DOC" | grep -E "^├── $d/")
+  decl=$(printf '%s\n' "$line" | grep -oE '[（(][0-9]+[）)]' | grep -oE '[0-9]+')
+  rest=$(printf '%s\n' "$line" | grep -oE '另 [0-9]+ 个' | grep -oE '[0-9]+'); rest=${rest:-0}
+  names=$(printf '%s\n' "$line" | sed 's/.*：//' | tr ',' '\n' | sed 's/ //g' | grep -v '^$' | grep -vE '^另[0-9]+个$')
+  listed=$(printf '%s\n' "$names" | grep -c .)
+  real=$(git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -c '\.vue$')
+  echo "C) $d 声明=$decl 已列=$listed 另=$rest 合计=$((listed + rest)) 真实=$real（声明必须 == 合计 == 真实）"
+  printf '%s\n' "$names" | while read -r n; do
+    git ls-tree -r --name-only ${REF} -- "frontend/src/views/$d" | grep -q "/${n}\.vue$" || echo "   ❌ $d/$n 不存在"
+  done
+done
+
+# D) 模块表：行数 == 标题数字（与「每次改完必跑」第 3 步同源，只是这里读 ${REF}:AGENTS.md）
+echo "D) 模块表行数=$(printf '%s\n' "$DOC" | grep -cE '^\| *[0-9]+ *\|') 标题=$(printf '%s\n' "$DOC" | grep -E '^## [0-9]+ 模块地图' | grep -oE '[0-9]+')"
 ```
 
 ---
