@@ -60,8 +60,103 @@ type Config struct {
 // 双引擎：局域网 Ollama（OpenAI 兼容端点，模型列表运行时动态拉取）+ MiniMax（复用 minimax.api_key，key 不下发前端）。
 // Password 为空 = 模块整体禁用（fail-closed），与其他模块的密码门惯例一致。
 type ChatPlusConfig struct {
-	Password      string `yaml:"password"`        // 页面访问密码；为空则禁用本模块
-	OllamaBaseURL string `yaml:"ollama_base_url"` // 局域网 Ollama 服务地址，如 http://192.168.31.147:11434
+	Password      string        `yaml:"password"`        // 页面访问密码；为空则禁用本模块
+	OllamaBaseURL string        `yaml:"ollama_base_url"` // 局域网 Ollama 服务地址，如 http://192.168.31.147:11434
+	ComfyUI       ComfyUIConfig `yaml:"comfyui"`         // 局域网 ComfyUI（自建扩散模型）出图能力
+}
+
+// ComfyUIConfig 局域网 ComfyUI 接入配置（/ai-chat 的「画图」模式 + OpenAI 兼容出图接口）。
+//
+// 定位：Ollama 只跑语言模型，出图必须由扩散模型完成，两者是两条独立链路。
+// 因此这里单独配置一个 ComfyUI 实例（同一台 Mac 或局域网另一台机器均可）。
+//
+// BaseURL 为空 = 出图能力整体禁用（fail-closed），与 chat_plus.password 的惯例一致。
+// 注意：ComfyUI 必须用 `--listen 0.0.0.0` 启动，否则只监听 127.0.0.1，
+// 容器内（本服务）与局域网其他设备都连不上。
+type ComfyUIConfig struct {
+	BaseURL        string  `yaml:"base_url"`        // 如 http://192.168.31.147:8188（容器内也可写 http://host.docker.internal:8188）
+	Model          string  `yaml:"model"`           // 扩散模型文件名（GGUF / safetensors）
+	Clip           string  `yaml:"clip"`            // 文本编码器文件名
+	Vae            string  `yaml:"vae"`             // VAE 文件名
+	ClipType       string  `yaml:"clip_type"`       // CLIPLoader 的 type；Qwen-Image 系列为 qwen_image
+	Steps          int     `yaml:"steps"`           // 采样步数（turbo 模型 4~8，常规模型 20~30）
+	CFG            float64 `yaml:"cfg"`             // CFG scale（Qwen-Image 官方 1.0）
+	Sampler        string  `yaml:"sampler"`         // 采样器，如 euler
+	Scheduler      string  `yaml:"scheduler"`       // 调度器，如 simple
+	Resolution     int     `yaml:"resolution"`      // 出图边长（正方形，短边基准）
+	NegativePrompt string  `yaml:"negative_prompt"` // 默认负向提示词
+	TimeoutSec     int     `yaml:"timeout_sec"`     // 单张出图总超时（含排队与模型首次加载）
+	UploadDir      string  `yaml:"upload_dir"`      // 参考图上传到 ComfyUI 的子目录，默认 aichat
+	PublicBaseURL  string  `yaml:"public_base_url"` // 可选：对外返回绝对图片 URL 的前缀，空=相对路径
+}
+
+// ComfyUI 各字段的兜底默认值（配置只写 base_url 也能直接跑）。
+const (
+	comfyDefaultModel      = "qwen-image-2.1-UC-Q4_K_M.gguf"
+	comfyDefaultClip       = "qwen3vl_8b_int8_convrot.safetensors"
+	comfyDefaultVae        = "qwen_image_2.1_vae_bf16.safetensors"
+	comfyDefaultClipType   = "qwen_image"
+	comfyDefaultSteps      = 25
+	comfyDefaultCFG        = 1.0
+	comfyDefaultSampler    = "euler"
+	comfyDefaultScheduler  = "simple"
+	comfyDefaultResolution = 1024
+	comfyDefaultTimeoutSec = 900
+	comfyDefaultUploadDir  = "aichat"
+)
+
+// Normalized 返回补齐默认值并做合法性收敛后的副本。
+// 调用方（handler）只处理收敛后的值，避免把 0 步 / 0 分辨率这种非法参数送进 ComfyUI。
+func (c ComfyUIConfig) Normalized() ComfyUIConfig {
+	out := c
+	out.BaseURL = strings.TrimRight(strings.TrimSpace(out.BaseURL), "/")
+	out.Model = defaultIfBlank(out.Model, comfyDefaultModel)
+	out.Clip = defaultIfBlank(out.Clip, comfyDefaultClip)
+	out.Vae = defaultIfBlank(out.Vae, comfyDefaultVae)
+	out.ClipType = defaultIfBlank(out.ClipType, comfyDefaultClipType)
+	out.Sampler = defaultIfBlank(out.Sampler, comfyDefaultSampler)
+	out.Scheduler = defaultIfBlank(out.Scheduler, comfyDefaultScheduler)
+	out.UploadDir = defaultIfBlank(out.UploadDir, comfyDefaultUploadDir)
+	out.PublicBaseURL = strings.TrimRight(strings.TrimSpace(out.PublicBaseURL), "/")
+	if out.Steps <= 0 {
+		out.Steps = comfyDefaultSteps
+	}
+	if out.Steps > 150 {
+		out.Steps = 150
+	}
+	if out.CFG <= 0 {
+		out.CFG = comfyDefaultCFG
+	}
+	if out.Resolution <= 0 {
+		out.Resolution = comfyDefaultResolution
+	}
+	// 扩散模型的 latent 必须能被 64 整除后才能稳定出图，超出范围直接夹紧
+	if out.Resolution < 256 {
+		out.Resolution = 256
+	}
+	if out.Resolution > 2048 {
+		out.Resolution = 2048
+	}
+	out.Resolution = out.Resolution / 64 * 64
+	if out.TimeoutSec <= 0 {
+		out.TimeoutSec = comfyDefaultTimeoutSec
+	}
+	if out.TimeoutSec > 3600 {
+		out.TimeoutSec = 3600
+	}
+	return out
+}
+
+// Enabled 是否配置了可用的 ComfyUI 地址。
+func (c ComfyUIConfig) Enabled() bool {
+	return strings.TrimSpace(c.BaseURL) != ""
+}
+
+func defaultIfBlank(v, fallback string) string {
+	if strings.TrimSpace(v) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(v)
 }
 
 // NewsConfig 每日新闻模块配置。
@@ -645,6 +740,21 @@ func DefaultConfig() *Config {
 		},
 		ChatPlus: ChatPlusConfig{
 			OllamaBaseURL: "http://192.168.31.147:11434",
+			ComfyUI: ComfyUIConfig{
+				BaseURL:        "http://192.168.31.147:8188",
+				Model:          comfyDefaultModel,
+				Clip:           comfyDefaultClip,
+				Vae:            comfyDefaultVae,
+				ClipType:       comfyDefaultClipType,
+				Steps:          comfyDefaultSteps,
+				CFG:            comfyDefaultCFG,
+				Sampler:        comfyDefaultSampler,
+				Scheduler:      comfyDefaultScheduler,
+				Resolution:     comfyDefaultResolution,
+				NegativePrompt: "",
+				TimeoutSec:     comfyDefaultTimeoutSec,
+				UploadDir:      comfyDefaultUploadDir,
+			},
 		},
 		Proxy: ProxyConfig{
 			SubscriptionRefresh: ProxySubscriptionRefreshConfig{
@@ -754,6 +864,32 @@ func Load(path string) (*Config, error) {
 	}
 	if upstreamModel := os.Getenv("AI_GATEWAY_PROXY_UPSTREAM_MODEL"); upstreamModel != "" {
 		cfg.AIGateway.Proxy.UpstreamModel = upstreamModel
+	}
+	// 局域网 ComfyUI（aichat 出图）支持环境变量覆盖：docker 部署不必改 config.yaml
+	if v := os.Getenv("COMFYUI_BASE_URL"); v != "" {
+		cfg.ChatPlus.ComfyUI.BaseURL = v
+	}
+	if v := os.Getenv("COMFYUI_MODEL"); v != "" {
+		cfg.ChatPlus.ComfyUI.Model = v
+	}
+	if v := os.Getenv("COMFYUI_CLIP"); v != "" {
+		cfg.ChatPlus.ComfyUI.Clip = v
+	}
+	if v := os.Getenv("COMFYUI_VAE"); v != "" {
+		cfg.ChatPlus.ComfyUI.Vae = v
+	}
+	if v := os.Getenv("COMFYUI_STEPS"); v != "" {
+		if steps, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.ChatPlus.ComfyUI.Steps = steps
+		}
+	}
+	if v := os.Getenv("COMFYUI_TIMEOUT_SEC"); v != "" {
+		if sec, convErr := strconv.Atoi(v); convErr == nil {
+			cfg.ChatPlus.ComfyUI.TimeoutSec = sec
+		}
+	}
+	if v := os.Getenv("COMFYUI_PUBLIC_BASE_URL"); v != "" {
+		cfg.ChatPlus.ComfyUI.PublicBaseURL = v
 	}
 	// AutoDev 配置支持环境变量覆盖
 	if autodevPassword := os.Getenv("AUTODEV_ADMIN_PASSWORD"); autodevPassword != "" {

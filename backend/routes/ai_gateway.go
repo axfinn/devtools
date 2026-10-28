@@ -33,6 +33,8 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 		aigw.POST("/v1/image/understanding/sse", h.AiGatewayHandler.ImageUnderstandingSSE)
 		aigw.POST("/v1/image/understanding/sse/file", h.AiGatewayHandler.ImageUnderstandingSSEFile)
 		aigw.GET("/v1/image/understanding/stream/:id", h.AiGatewayHandler.ImageUnderstandingStream)
+		// OpenAI 兼容出图：本地 ComfyUI（Qwen-Image），同步返回，鉴权走 AI Gateway API Key
+		aigw.POST("/v1/images/generations", createRateLimiter.Middleware(), h.AiGatewayHandler.OpenAIImagesGenerations)
 	}
 
 	api.POST("/internal/chat", createRateLimiter.Middleware(), h.AiGatewayHandler.InternalChat)
@@ -45,6 +47,11 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 	api.POST("/chat-plus/verify", h.AiGatewayHandler.ChatPlusVerify)
 	api.GET("/chat-plus/models", h.AiGatewayHandler.ChatPlusModels)
 	api.POST("/chat-plus/chat/stream", createRateLimiter.Middleware(), h.AiGatewayHandler.ChatPlusStream)
+	// 本地出图（局域网 ComfyUI）：异步任务 + SSE 进度，密码门复用 chat_plus.password
+	api.GET("/chat-plus/image/status", h.AiGatewayHandler.ChatPlusImageStatus)
+	api.POST("/chat-plus/image/generate", createRateLimiter.Middleware(), h.AiGatewayHandler.ChatPlusImageGenerate)
+	api.GET("/chat-plus/image/tasks/:id", h.AiGatewayHandler.ChatPlusImageTask)
+	api.GET("/chat-plus/image/tasks/:id/stream", h.AiGatewayHandler.ChatPlusImageTaskStream)
 	api.GET("/english-tutor/meta", h.AiGatewayHandler.EnglishTutorMeta)
 	api.POST("/english-tutor", h.AiGatewayHandler.EnglishTutor)
 
