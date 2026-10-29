@@ -32,10 +32,10 @@
 | 22 | **Household 家庭** | `handlers/household.go` (7 分段) | `routes/household.go` | `views/life/HouseholdTool.vue` | 物品/位置/模板管理，通知，AI 智能添加/分析，OCR |
 | 23 | **NFSShare** | `handlers/nfsshare*.go` (4 文件) | `routes/nfsshare.go` | `views/collab/NFSShareTool.vue` | SMB/NFS 文件共享，WebRTC 流媒体，HLS 分片 |
 | 24 | **ImageUnderstanding** | `handlers/image_understanding.go` | `routes/image_understanding.go` | `views/ai/ImageUnderstandingTool.vue` | 图像理解（VLM），Base64/URL 输入，返回描述 |
-| 25 | **AIGateway** | `handlers/ai_gateway*.go` (13 文件，含 1 个测试脚手架) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/DashScope，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
+| 25 | **AIGateway** | `handlers/ai_gateway*.go` (16 文件，含测试脚手架，个数不写死) | `routes/ai_gateway.go` | `views/ai/AIGatewayTool.vue` | 统一 AI 网关：OpenAI/Anthropic/MiniMax/DashScope，Token 计划，费用分析；`EnglishTutor` 端点 (`handlers/english_tutor.go`) 归属此网关的服务端受限代理 |
 | 26 | **Askit 同步** | `handlers/askit*.go` (3 文件) | `routes/askit.go` | `views/other/AskitInviteTool.vue` | 跨设备数据同步，邀请码，Blob 大文件，快照 |
 | 27 | **Screen 屏幕共享** | `handlers/screen.go` | `routes/screen.go` | `views/collab/ScreenShareTool.vue` | WebRTC 点对点屏幕共享，TURN 中继 |
-| 28 | **APIGateway** | `handlers/apigateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
+| 28 | **APIGateway** | `handlers/api_gateway.go` | `routes/apigateway.go` | — | API 网关路由（代理） |
 | 29 | **AutoDev** | `handlers/autodev.go` (6 分段) | `routes/autodev.go` | `views/dev/AutoDevTool.vue` | Claude Code / Codex CLI 集成，Ask/Extend/Submit/List |
 | 30 | **Mermaid** | `handlers/mermaid.go` | `routes/mermaid.go` | `views/draw/MermaidTool.vue` | Mermaid 图表，实时渲染，导出 SVG/PNG |
 | 31 | **Proxy 代理** | `handlers/proxy.go` (4 分段) | `routes/proxy.go` | `views/other/ProxyTool.vue` | sing-box 嵌入式代理，节点订阅/测速/选优，NPS 隧道 |
@@ -52,7 +52,7 @@
 | 42 | **SSRules 规则文件** | `handlers/ssrule.go` + `handlers/ssrule_rules.go` | `routes/ssrule.go` | `views/other/SsRuleTool.vue` | Shadowsocks ACL 规则文件生成与公开分发：管理端（`/api/ssrules/*`）走 header `X-Super-Admin-Password` 密码门（未配密码 = 模块关闭）；域名列表 → ACL 正文（`(^\|\.)example\.com$` 正则形式，libev/rust/android 通吃）；32 位随机 token 公开链接 `GET /ss/:token/:filename` 分发；按端点分桶限流（verify/换发 10、读 30、写 20、分发 120 次/分钟/IP，独立计数桶）；`:filename` 白名单精确相等 + 全程不碰文件系统（路径穿越面为零）；未匹配 `/ss/` 一律 404「规则文件不存在」，不回落 SPA |
 | 43 | **RolePlay 角色剧场** | —（零后端，复用 `/api/chat-plus/*`） | — | `views/ai/RolePlayTool.vue` | 多角色模拟对话：2-6 个角色（名字/人设/颜色）围绕导演话题轮流圆桌发言；前端驱动循环——每条发言一次独立 `/api/chat-plus/chat/stream` 请求（同一 `X-Chat-Password` 密码门），网络故障只损失单条；轮数 1-200（1 轮 = 每角色各说一次），上下文滑动窗口（最近 30 条）+ 单条 max_tokens 700 防 token 爆炸；暂停（本条说完）/跳过/停止、失败自动重试 1 次后进暂停态可续演、localStorage 持久化剧本与记录、4 个内置剧本模板、导出 Markdown |
 | 44 | **News 每日新闻** | `handlers/news.go` | `routes/news.go` | `views/life/NewsTool.vue` | 每日新闻模块：RSS/Atom 订阅源抓取 → HTML 标签剥离 → 按内容哈希去重 → 可选 AI 精编 → 存库归档；默认 6 个内置公开订阅源（可用 `config.yaml` 的 `news.feeds` 覆盖）；`/api/news/latest`、`/api/news/list`（日期索引）、`/api/news/config`、`/api/news/:date`（按日取稿）、`POST /api/news/generate`（生成当日）、`POST /api/news/publish`（智能体采编后发布/归档） |
-| 45 | **Chat+ 新版聊天页** | `handlers/chat_plus.go` | `routes/ai_gateway.go`（`/api/chat-plus/*` 注册在此文件） | `views/ai/AIChatTool.vue` | Open WebUI 风格新版 AI 聊天页：密码门（密码存服务端 `config.yaml` 的 `chat_plus.password`，为空 = 模块整体禁用 fail-closed；`models`/`stream` 走 header `X-Chat-Password`，`verify` 走 body，常量时间比较）；双引擎——局域网 Ollama（OpenAI 兼容 `/v1/chat/completions`，模型列表运行时从 `/api/tags` 动态拉取）+ MiniMax（复用 AI Gateway 的 key，key 全程不出服务端）；SSE 流式 `/api/chat-plus/chat/stream`；出图提示词优化 `handlers/chat_plus_prompt.go`（`POST /api/chat-plus/image/prompt/optimize`，t2i/edit/describe 三模式，结果只回填输入框由用户采纳或再改） |
+| 45 | **Chat+ 新版聊天页** | `handlers/chat_plus*.go` (4 文件) | `routes/ai_gateway.go`（`/api/chat-plus/*` 注册在此文件） | `views/ai/AIChatTool.vue` | Open WebUI 风格新版 AI 聊天页：密码门（密码存服务端 `config.yaml` 的 `chat_plus.password`，为空 = 模块整体禁用 fail-closed；`models`/`stream` 走 header `X-Chat-Password`，`verify` 走 body，常量时间比较）；双引擎——局域网 Ollama（OpenAI 兼容 `/v1/chat/completions`，模型列表运行时从 `/api/tags` 动态拉取）+ MiniMax（复用 AI Gateway 的 key，key 全程不出服务端）；SSE 流式 `/api/chat-plus/chat/stream`；出图提示词优化 `handlers/chat_plus_prompt.go`（`POST /api/chat-plus/image/prompt/optimize`，t2i/edit/describe 三模式，结果只回填输入框由用户采纳或再改） |
 
 ---
 
@@ -105,7 +105,7 @@ frontend/src/views/
 ├── convert/    # 转换（7）：Base64, Dns, QrCode, Replace, Text, Timestamp, Url
 ├── dev/        # 开发（22）：AutoDevTool, DiffTool, EdgeTTSTool, HermesTool, JsonTool, MockApi, RegexTool, TerminalTool, VirtualAvatarTool, 另 13 个
 ├── draw/       # 绘图（4）：Excalidraw, Markdown, Mermaid, MindMap
-├── home/       # 首页
+├── home/       # 首页（1）
 ├── household/  # 家庭（10 个子组件）
 ├── life/       # 生活（13）：CounterTool, ExpenseTool, GameHall, GlucoseTool, HouseholdSpace3D, HouseholdTool, NewsTool, PhotoWallTool, PlannerTool, PregnancyTool, RecipeTool, TripTool, VoiceInboxTool
 ├── other/      # 其他（10）：AskitInviteTool, AskitMyDataTool, BackgroundTool, ConsoleTool, ImageViewerTool, MonitorTool, NPSTool, ProxyTool, SkillsTool, SsRuleTool
@@ -131,14 +131,14 @@ backend/routes/
 ```
 handlers/
 ├── 核心工具（8）：paste, shorturl, mockapi, mdshare, excalidraw, photowall, terminal, dns
-├── AI 网关（19）：ai_gateway*（13，含 1 个 test helper）, image_understanding, minimax_*（4）, planner_ai
-├── 订阅/代理（5）：proxy*, singbox*, gfwlist, nps, apigateway_proxy
+├── AI 网关（22）：ai_gateway*（16，含 test helper 脚手架，个数不写死）, image_understanding, minimax_*（4）, planner_ai
+├── 订阅/代理（5）：proxy*, singbox*, gfwlist, nps, api_gateway*
 ├── 家庭/健康（5）：household, pregnancy, expense, glucose, recipe
 ├── 实时功能（4）：chat, voicememo, screen, nfsshare
 ├── 内容创作（3）：mermaid, game, hermes
 ├── 开发者（3）：autodev, analysis, console
 ├── 辅助（7）：background, monitoring, ocr, edge_tts, skills*, askit*, fileutils
-└── 测试（52）：*_test.go
+└── 测试（57）：*_test.go
 ```
 
 ---
