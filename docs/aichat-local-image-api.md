@@ -129,6 +129,7 @@ curl -X POST http://127.0.0.1:8082/api/chat-plus/image/prompt/optimize \
 |---|---|
 | `prompt` | 用户原话（≤2000 字）。`describe` 模式可为空 |
 | `model` | 用于改写的**文本**模型，一般传聊天页当前选中的模型；空/不可用时回落服务端默认 |
+| `strict` | `true` = 用户在弹窗里明确选了模型，不可用时直接报错而不是回落到默认（避免「选了 A 拿到 B」） |
 | `mode` | `t2i` 文生图 / `edit` 图生图 / `describe` 只有参考图没写要求；留空按有没有 `prompt`、`image` 推断 |
 | `image_model` | 目标出图模型名，只用于让模型知道写法偏好（FLUX 系偏好英文） |
 | `image` | 参考图 dataURL（≤8MB）。**只有** 局域网 Ollama 的视觉模型会真的看图，其它模型静默降级为纯文字改写 |

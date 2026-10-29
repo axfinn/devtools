@@ -45,6 +45,7 @@ const (
 type imagePromptOptimizeRequest struct {
 	Prompt      string `json:"prompt"`
 	Model       string `json:"model"`        // 优化用的文本模型（空 = 服务端默认）
+	Strict      bool   `json:"strict"`       // true = 用户在弹窗里明确选了模型，不可用时必须报错而不是偷偷换
 	Mode        string `json:"mode"`         // t2i | edit | describe（空则按有没有 prompt/image 推断）
 	ImageModel  string `json:"image_model"`  // 目标出图模型名，仅用于让模型知道写法偏好
 	ImageFamily string `json:"image_family"` // qwen21 | flux2 | qwen_edit
@@ -84,9 +85,18 @@ func (h *AIGatewayHandler) ChatPlusImagePromptOptimize(c *gin.Context) {
 	}
 
 	model := strings.TrimSpace(req.Model)
-	// 前端传的是聊天页当前选中的模型。它可能已经被换成不可用的引擎（Ollama 掉线等），
-	// 这种情况回落到服务端默认，别让「优化提示词」跟着聊天模型一起挂掉。
+	// 前端传的模型有两种来源：
+	//   1) 用户在优化弹窗里明确选的（strict=true）→ 不可用就报错，不能偷偷换，
+	//      否则「我选了 A 却拿到 B 的结果」，排查起来像见鬼；
+	//   2) 跟随聊天页当前模型（strict=false）→ 聊天模型可能已被换成不可用引擎
+	//      （Ollama 掉线等），这种情况回落到服务端默认，别让「优化提示词」跟着一起挂。
 	if model != "" && h.resolveChatProvider(model) == "" {
+		if req.Strict {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("所选优化模型当前不可用：%s（请换一个，或选「跟随聊天模型」）", model),
+			})
+			return
+		}
 		model = ""
 	}
 
@@ -95,7 +105,7 @@ func (h *AIGatewayHandler) ChatPlusImagePromptOptimize(c *gin.Context) {
 
 	out, usedModel, usedImage, err := h.optimizeImagePrompt(ctx, model, prompt, mode, req, image)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "优化失败：" + err.Error()})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "优化失败：" + strings.TrimSpace(err.Error())})
 		return
 	}
 
@@ -153,6 +163,17 @@ func (h *AIGatewayHandler) optimizeImagePrompt(
 
 	raw, err := h.completeChatOnce(ctx, usedModel, system, user, "")
 	if err != nil {
+		// 跟随聊天模型时（非 strict），本地 Ollama 可能刚好被删/掉线，上游直接 404。
+		// 这种「跟随」场景不该让用户看一条上游原始报错，悄悄用服务端默认再试一次。
+		if !req.Strict && strings.HasPrefix(usedModel, "ollama:") {
+			if fallback := fallbackString(h.cfg.MiniMax.Model, "MiniMax-M2.5"); strings.TrimSpace(h.cfg.MiniMax.APIKey) != "" {
+				if raw2, err2 := h.completeChatOnce(ctx, fallback, system, user, ""); err2 == nil {
+					if cleaned := cleanOptimizedPrompt(raw2); cleaned != "" {
+						return cleaned, fallback, false, nil
+					}
+				}
+			}
+		}
 		return "", usedModel, false, err
 	}
 	cleaned := cleanOptimizedPrompt(raw)

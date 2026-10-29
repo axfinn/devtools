@@ -287,9 +287,37 @@
         @closed="cancelPromptOptimize"
       >
         <div class="po-body">
-          <div class="po-origin">
-            <span class="po-label">你的原话</span>
-            <span class="po-origin-text">{{ promptOptOriginal || '（只附了参考图，让 AI 先看懂画面再写）' }}</span>
+          <div class="po-head">
+            <div class="po-model">
+              <span class="po-label">优化模型</span>
+              <el-select
+                v-model="settings.promptOptimizeModel"
+                class="po-model-select"
+                size="small"
+                placeholder="跟随聊天模型"
+                @change="onPromptOptModelChange"
+              >
+                <el-option value="" label="跟随聊天模型" />
+                <el-option-group v-for="g in modelGroups" :key="g.label" :label="g.label">
+                  <el-option
+                    v-for="m in g.items"
+                    :key="m.value"
+                    :value="m.value"
+                    :label="m.label"
+                  >
+                    <span class="model-option-label">{{ m.label }}</span>
+                    <span v-if="m.tag" class="model-option-tag">{{ m.tag }}</span>
+                  </el-option>
+                </el-option-group>
+              </el-select>
+              <span class="po-model-hint">
+                当前：{{ promptOptEffectiveModelLabel }}<template v-if="promptOptWillSeeImage"> · 会看图</template>
+              </span>
+            </div>
+            <div class="po-origin">
+              <span class="po-label">你的原话</span>
+              <span class="po-origin-text">{{ promptOptOriginal || '（只附了参考图，让 AI 先看懂画面再写）' }}</span>
+            </div>
           </div>
 
           <div v-if="promptOptLoading" class="po-loading">
@@ -411,7 +439,7 @@ function handleContentClick(e) {
 const conversations = ref([])   // [{id,title,createdAt,updatedAt}]
 const currentConvId = ref('')
 const messages = ref([])        // 当前会话消息 [{id,role,content,reasoning,model,ts}]
-const settings = ref({ model: '', systemPrompt: '', temperature: 0.7, imageMode: false, imageModel: '' })
+const settings = ref({ model: '', systemPrompt: '', temperature: 0.7, imageMode: false, imageModel: '', promptOptimizeModel: '' })
 const userInput = ref('')
 const composerFocused = ref(false)
 const streaming = ref(false)
@@ -891,6 +919,8 @@ function loadSettings() {
       imageMode: false,
       // 上次选的出图模型（id）。服务端预设校验不过会自动回落到默认预设
       imageModel: s.imageModel || '',
+      // 提示词优化用的模型（'' = 跟随聊天模型）；选过就记住，别每次都重选
+      promptOptimizeModel: s.promptOptimizeModel || '',
     }
   } catch { /* 保持默认 */ }
 }
@@ -1658,6 +1688,27 @@ const promptOptDisabledReason = computed(() => {
   return ''
 })
 
+// 优化模型：'' = 跟随聊天页当前模型；选过就记住（settings 有 deep watch 自动存 localStorage）
+const chatModelItems = computed(() => modelGroups.value.flatMap(g => g.items))
+const promptOptEffectiveModel = computed(() => settings.value.promptOptimizeModel || settings.value.model || '')
+const promptOptEffectiveEntry = computed(
+  () => chatModelItems.value.find(m => m.value === promptOptEffectiveModel.value) || null
+)
+const promptOptEffectiveModelLabel = computed(() => {
+  if (!promptOptEffectiveModel.value) return '服务端默认（MiniMax）'
+  return promptOptEffectiveEntry.value?.label || promptOptEffectiveModel.value
+})
+// 和后端规则保持一致：只有「局域网 Ollama + 视觉模型」会真的把参考图喂进去
+const promptOptWillSeeImage = computed(() => {
+  const id = promptOptEffectiveModel.value
+  return !!promptOptImage.value && id.startsWith('ollama:') && !!promptOptEffectiveEntry.value?.vision
+})
+
+// 换模型后立刻用新模型重跑一次：不然弹窗里显示的文案来自旧模型，很容易看混
+function onPromptOptModelChange() {
+  if (promptOptOpen.value && !promptOptLoading.value) runPromptOptimize()
+}
+
 function openPromptOptimize() {
   const text = userInput.value.trim()
   const ref = pendingImages.value[0]
@@ -1690,7 +1741,10 @@ async function runPromptOptimize() {
     // 模式由「有没有原话 / 有没有图」推断，用户不用理解 t2i / edit 的区别
     const body = {
       prompt: text,
-      model: settings.value.model || '',
+      // 弹窗里明确选过就按选的来（strict：不可用要报错，不许偷偷换模型）；
+      // 没选则跟随聊天页当前模型，后端在它不可用时会回落到服务端默认。
+      model: promptOptEffectiveModel.value,
+      strict: !!settings.value.promptOptimizeModel,
       image_model: currentImageModel.value?.label || '',
       image_family: currentImageModel.value?.family || '',
       mode: !image ? 't2i' : (text ? 'edit' : 'describe'),
@@ -2429,6 +2483,15 @@ onActivated(() => {
 /* ═══════════ AI 优化提示词弹窗 ═══════════ */
 /* 弹窗被 append-to-body，所以这里用独立类名 + 扁平选择器，不依赖父级作用域 */
 .po-body { display: flex; flex-direction: column; gap: 14px; }
+.po-head { display: flex; flex-direction: column; gap: 12px; }
+/* 优化模型一行：模型名往往很长，给下拉固定上限，剩下的交给「当前：xxx」自动省略 */
+.po-model { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.po-model .po-label { margin-bottom: 0; flex-shrink: 0; }
+.po-model-select { width: 200px; }
+.po-model-hint {
+  font-size: 11.5px; color: var(--text-quaternary, #999); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .po-label {
   display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600;
   color: var(--text-tertiary, #888);
