@@ -187,6 +187,17 @@ func comfySupportsEdit(p config.ComfyImageModelPreset) bool {
 	return p.Family != comfyFamilyFlux2 && p.Family != comfyFamilyZImage
 }
 
+// comfyPresetByFamily 取第一个属于指定家族的预设（用于按模式自动切模型：
+// 遮罩重绘/修复→qwen_edit，多图内容结合→qwen21），无需前端手动换模型。
+func comfyPresetByFamily(cfg config.ComfyUIConfig, family string) (config.ComfyImageModelPreset, bool) {
+	for _, p := range comfyPresets(cfg) {
+		if p.Family == family {
+			return p, true
+		}
+	}
+	return config.ComfyImageModelPreset{}, false
+}
+
 // comfyDefaultPresetID 取配置里的默认预设；配了不存在的 id 就退回第一个。
 func comfyDefaultPresetID(cfg config.ComfyUIConfig) string {
 	def := strings.TrimSpace(cfg.DefaultModel)
