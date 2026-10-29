@@ -26,43 +26,85 @@ import (
 //   qwen21   → 文生图 + 参考图编辑（TextEncodeQwenImage21 单节点出正负+latent）
 //   flux2    → 仅文生图（CLIPTextEncode + EmptyFlux2LatentImage）
 //   qwen_edit→ 仅参考图编辑（EditPlus 编码 + VAEEncode 源图）
+//   zimage   → 仅文生图（Z-Image Turbo：lumina2 编码器 + ModelSamplingAuraFlow）
 const (
 	comfyFamilyQwen21   = "qwen21"
 	comfyFamilyFlux2    = "flux2"
 	comfyFamilyQwenEdit = "qwen_edit"
+	comfyFamilyZImage   = "zimage"
 )
 
-// builtinComfyPresets 内置预设。实测耗时来自本机 ComfyUI 的真实 history 记录。
+// 采样方式：只有 Z-Image 需要额外的 ModelSamplingAuraFlow 包一层。
+const comfySamplingAuraFlow = "aura_flow"
+
+// builtinComfyPresets 内置预设。实测耗时来自本机 ComfyUI（192.168.31.111:8188）的真实 history。
+//
+// 选型分工（按「日常 / 极限 / 最快 / 人像 / 改图」五档）。第一条即默认：
+//
+//	qwen-image-2.1-turbo  日常主力。标准模型挂 turbo LoRA，8 步就能出接近 25 步的质量。
+//	qwen-image-2.1        极限质量。25 步慢但细节最足。
+//	flux-2-klein          最快。4 步，参数最少。
+//	z-image-turbo         亚洲人像。肤质与人脸结构明显更稳（8 步）。
+//	qwen-image-edit-2511  改图。2511 是蒸馏版，4 步即可，25 步是纯浪费。
 var builtinComfyPresets = []config.ComfyImageModelPreset{
+	{
+		// 同一套模型 + turbo 蒸馏 LoRA：8 步出图，质量损失很小，所以放第一位当默认。
+		// LoRA 只作用于 unet（LoraLoaderModelOnly），CLIP/VAE 不用换。
+		ID: "qwen-image-2.1-turbo", Label: "Qwen-Image 2.1 Turbo", Family: comfyFamilyQwen21,
+		Unet:       "qwen-image-2.1-UC-Q4_K_M.gguf",
+		Clip:       "qwen3vl_8b_w4a8.safetensors",
+		ClipLoader: "CLIPLoader", ClipType: "qwen_image",
+		Vae:          "qwen_image_2.1_vae_bf16.safetensors",
+		Lora:         "qwen_image_2.1_turbo_lora_avg_rank_178_bf16.safetensors",
+		LoraStrength: 1.0,
+		Steps:        8, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		SpeedHint: "日常首选，约 30 秒",
+	},
 	{
 		ID: "qwen-image-2.1", Label: "Qwen-Image 2.1", Family: comfyFamilyQwen21,
 		Unet:       "qwen-image-2.1-UC-Q4_K_M.gguf",
 		Clip:       "qwen3vl_8b_w4a8.safetensors",
 		ClipLoader: "CLIPLoader", ClipType: "qwen_image",
-		Vae:        "qwen_image_2.1_vae_bf16.safetensors",
-		Steps:      25, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
-		SpeedHint: "文生图约 3.5 分钟，改图约 5 分钟",
+		Vae:    "qwen_image_2.1_vae_bf16.safetensors",
+		Steps:  25, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		SpeedHint: "极限质量，约 75 秒",
 	},
 	{
 		ID: "flux-2-klein", Label: "FLUX.2 Klein 4B", Family: comfyFamilyFlux2,
 		Unet:       "flux-2-klein-4b-Q5_K_M.gguf",
 		Clip:       "qwen_3_4b_fp8_mixed.safetensors",
 		ClipLoader: "CLIPLoaderGGUF", ClipType: "flux2",
-		Vae:        "flux2-vae.safetensors",
-		Steps:      4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
-		SpeedHint: "约 20~30 秒，只要文生图",
+		Vae:    "flux2-vae.safetensors",
+		Steps:  4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		SpeedHint: "最快，约 20 秒（仅文生图）",
+	},
+	{
+		// Z-Image Turbo：6B 蒸馏模型，文本编码器是 Qwen3-4B（lumina2 类型），
+		// VAE 用 Flux 的 ae.safetensors（16 通道，别换成 qwen 的 VAE）。
+		// 模型必须先过 ModelSamplingAuraFlow(shift=3)，否则采样轨迹不对。
+		// 注意 ClipLoader 必须是 CLIPLoader：实测同一份 safetensors 用 CLIPLoaderGGUF
+		// 加载会在 CLIPTextEncode 里报 "mat1 and mat2 shapes cannot be multiplied
+		// (8x2560 and 1280x4096)" —— GGUF loader 走 lumina2 分支时维度解析是错的。
+		ID: "z-image-turbo", Label: "Z-Image Turbo", Family: comfyFamilyZImage,
+		Unet:       "z-image-turbo-Q4_K_M.gguf",
+		Clip:       "qwen_3_4b_fp8_mixed.safetensors",
+		ClipLoader: "CLIPLoader", ClipType: "lumina2",
+		Vae:      "ae.safetensors",
+		Steps:    8, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		Sampling: comfySamplingAuraFlow, Shift: 3.0,
+		SpeedHint: "亚洲人像，约 40 秒",
 	},
 	{
 		// 专用图生图（参考图编辑）模型：Qwen-Image-Edit 2511 本体，配 Qwen2.5-VL 文本编码器。
 		// 官方工作流用 TextEncodeQwenImageEditPlus + VAEEncode 源图，本家族走 buildQwenEditWorkflow。
-		// 只支持 edit 模式（supports_t2i=false），文生图请用上面两个预设。
+		// 2511 是蒸馏版：4 步就够，跑 25 步只是白等 6 倍时间。
 		ID: "qwen-image-edit-2511", Label: "Qwen-Image-Edit 2511", Family: comfyFamilyQwenEdit,
 		Unet:       "qwen-image-edit-2511-uncensored-Q4_K_M.gguf",
 		Clip:       "Qwen2.5-VL-7B-Instruct-q4_0.gguf",
 		ClipLoader: "CLIPLoaderGGUF", ClipType: "qwen_image",
-		Vae:        "qwen_image_vae.safetensors",
-		Steps:      25, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
-		SpeedHint: "参考图编辑专用（图生图），约 5 分钟",
+		Vae:    "qwen_image_vae.safetensors",
+		Steps:  4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		SpeedHint: "改图专用，约 40 秒（需附参考图）",
 	},
 }
 
@@ -124,6 +166,14 @@ func comfyFillPresetDefaults(p config.ComfyImageModelPreset) config.ComfyImageMo
 	if p.ClipType == "" {
 		p.ClipType = "qwen_image"
 	}
+	p.Lora = strings.TrimSpace(p.Lora)
+	if p.Lora != "" && p.LoraStrength == 0 {
+		p.LoraStrength = 1.0
+	}
+	p.Sampling = strings.TrimSpace(p.Sampling)
+	if p.Sampling == comfySamplingAuraFlow && p.Shift <= 0 {
+		p.Shift = 3.0
+	}
 	return p
 }
 
@@ -132,8 +182,9 @@ func comfySupportsT2I(p config.ComfyImageModelPreset) bool {
 	return p.Family != comfyFamilyQwenEdit
 }
 
+// comfySupportsEdit：Z-Image 与 FLUX.2 都没有参考图编辑通道。
 func comfySupportsEdit(p config.ComfyImageModelPreset) bool {
-	return p.Family != comfyFamilyFlux2
+	return p.Family != comfyFamilyFlux2 && p.Family != comfyFamilyZImage
 }
 
 // comfyDefaultPresetID 取配置里的默认预设；配了不存在的 id 就退回第一个。
@@ -191,6 +242,10 @@ func comfyApplyPreset(cfg config.ComfyUIConfig, p config.ComfyImageModelPreset) 
 	out.Sampler = p.Sampler
 	out.Scheduler = p.Scheduler
 	out.Resolution = p.Resolution
+	out.Lora = p.Lora
+	out.LoraStrength = p.LoraStrength
+	out.Sampling = p.Sampling
+	out.Shift = p.Shift
 	return out
 }
 
@@ -262,6 +317,12 @@ func (h *AIGatewayHandler) comfyProbeFiles(ctx context.Context, cfg config.Comfy
 		return nil
 	}
 	out["vae"] = comfyToSet(vaes)
+	// LoRA 只给挂了 lora 的预设用；拿不到就记空集合，让 comfyPresetMissing 报缺失而不是误判可用。
+	if loras, err := client.nodeChoices(ctx, "LoraLoaderModelOnly", "lora_name"); err == nil {
+		out["lora"] = comfyToSet(loras)
+	} else {
+		out["lora"] = map[string]bool{}
+	}
 	return out
 }
 
@@ -288,6 +349,10 @@ func comfyPresetMissing(p config.ComfyImageModelPreset, files map[string]map[str
 	if !files["vae"][p.Vae] {
 		missing = append(missing, p.Vae)
 	}
+	// LoRA 是可选的，只有预设声明了才检查；缺了这条预设就不可用（挂不上 LoRA 却按 8 步跑会糊）。
+	if p.Lora != "" && !files["lora"][p.Lora] {
+		missing = append(missing, p.Lora)
+	}
 	return missing
 }
 
@@ -313,6 +378,7 @@ func (h *AIGatewayHandler) ChatPlusImageModels(c *gin.Context) {
 				"steps":         p.Steps,
 				"cfg":           p.CFG,
 				"resolution":    p.Resolution,
+				"lora":          p.Lora,
 				"supports_t2i":  comfySupportsT2I(p),
 				"supports_edit": comfySupportsEdit(p),
 				"speed_hint":    p.SpeedHint,
@@ -326,7 +392,8 @@ func (h *AIGatewayHandler) ChatPlusImageModels(c *gin.Context) {
 			list = append(list, gin.H{
 				"id": p.ID, "label": p.Label, "family": p.Family,
 				"steps": p.Steps, "cfg": p.CFG, "resolution": p.Resolution,
-				"supports_t2i": comfySupportsT2I(p), "supports_edit": comfySupportsEdit(p),
+				"lora":          p.Lora,
+				"supports_t2i":  comfySupportsT2I(p), "supports_edit": comfySupportsEdit(p),
 				"speed_hint": p.SpeedHint, "available": false, "missing": []string{}, "probed": false,
 			})
 		}

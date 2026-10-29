@@ -601,6 +601,8 @@ func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 		return buildFlux2Workflow(cfg, prompt, negative, o)
 	case comfyFamilyQwenEdit:
 		return buildQwenEditWorkflow(cfg, prompt, negative, o)
+	case comfyFamilyZImage:
+		return buildZImageWorkflow(cfg, prompt, negative, o)
 	}
 	// TextEncodeQwenImage21 只吃一个 resolution，内部自行推导 latent 尺寸，
 	// 所以这里不单独传宽高（非正方形需求见 comfyResolveParams 的短边收敛）。
@@ -628,7 +630,7 @@ func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 		"8": map[string]interface{}{
 			"class_type": "KSampler",
 			"inputs": map[string]interface{}{
-				"model":        []interface{}{"1", 0},
+				"model":        []interface{}{comfyModelNodeID(cfg), 0},
 				"positive":     []interface{}{"5", 0},
 				"negative":     []interface{}{"5", 1},
 				"latent_image": []interface{}{"5", 2},
@@ -655,6 +657,7 @@ func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 			},
 		},
 	}
+	comfyAttachLora(workflow, cfg)
 	if o.ImageName != "" {
 		workflow["4"] = map[string]interface{}{
 			"class_type": "LoadImage",
@@ -664,6 +667,36 @@ func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 		encoder["images.image_1"] = []interface{}{"4", 0}
 	}
 	return workflow
+}
+
+// comfyModelNodeID 决定 KSampler 的 model 从哪个节点取：
+// 挂了蒸馏 LoRA 就先过 LoRA 节点（11），否则直接用 unet（1）。
+func comfyModelNodeID(cfg config.ComfyUIConfig) string {
+	if strings.TrimSpace(cfg.Lora) != "" {
+		return "11"
+	}
+	return "1"
+}
+
+// comfyAttachLora 把 LoRA 节点补进工作流。
+// 只用 LoraLoaderModelOnly：CLIP/VAE 不需要 LoRA 改动（turbo LoRA 只训练了 unet），
+// 用 LoraLoader 反而会去改文本编码器，可能让中文理解变差。
+func comfyAttachLora(workflow map[string]interface{}, cfg config.ComfyUIConfig) {
+	if comfyModelNodeID(cfg) != "11" {
+		return
+	}
+	strength := cfg.LoraStrength
+	if strength == 0 {
+		strength = 1.0
+	}
+	workflow["11"] = map[string]interface{}{
+		"class_type": "LoraLoaderModelOnly",
+		"inputs": map[string]interface{}{
+			"model":          []interface{}{"1", 0},
+			"lora_name":      cfg.Lora,
+			"strength_model": strength,
+		},
+	}
 }
 
 // comfyClipLoaderNode 按配置选 CLIPLoader（safetensors）或 CLIPLoaderGGUF（.gguf）。
@@ -694,7 +727,7 @@ func buildFlux2Workflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 	if side < 256 {
 		side = 256
 	}
-	return map[string]interface{}{
+	workflow := map[string]interface{}{
 		"1": map[string]interface{}{
 			"class_type": "UnetLoaderGGUF",
 			"inputs":     map[string]interface{}{"unet_name": cfg.Model},
@@ -721,7 +754,7 @@ func buildFlux2Workflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 		"8": map[string]interface{}{
 			"class_type": "KSampler",
 			"inputs": map[string]interface{}{
-				"model":        []interface{}{"1", 0},
+				"model":        []interface{}{comfyModelNodeID(cfg), 0},
 				"positive":     []interface{}{"4", 0},
 				"negative":     []interface{}{"6", 0},
 				"latent_image": []interface{}{"5", 0},
@@ -742,6 +775,88 @@ func buildFlux2Workflow(cfg config.ComfyUIConfig, prompt, negative string, o com
 			"inputs":     map[string]interface{}{"images": []interface{}{"9", 0}, "filename_prefix": "aichat"},
 		},
 	}
+	comfyAttachLora(workflow, cfg)
+	return workflow
+}
+
+// buildZImageWorkflow 生成 Z-Image Turbo 的工作流。
+//
+//	1 UnetLoaderGGUF  2 CLIPLoader(lumina2)  3 VAELoader(Flux 的 ae)
+//	7 ModelSamplingAuraFlow(shift=3)  4/6 CLIPTextEncode 正负
+//	5 EmptySD3LatentImage  8 KSampler  9 VAEDecode  10 SaveImage
+//
+// 两个必须遵守的点（都是实测踩出来的）：
+//   - **ClipLoader 必须是 CLIPLoader**：同一份 qwen_3_4b safetensors 用 CLIPLoaderGGUF
+//     加载会在 CLIPTextEncode 里报 "mat1 and mat2 shapes cannot be multiplied
+//     (8x2560 and 1280x4096)"，GGUF loader 走 lumina2 分支时维度解析不对。
+//   - 模型必须过一次 ModelSamplingAuraFlow(shift=3)，这是 Z-Image 的采样轨迹要求，
+//     少了要么糊要么报错。cfg 固定 1.0（蒸馏模型，负向提示词基本无效）。
+func buildZImageWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o comfyGenOptions) map[string]interface{} {
+	side := o.Resolution
+	if side < 256 {
+		side = 256
+	}
+	shift := cfg.Shift
+	if shift <= 0 {
+		shift = 3.0
+	}
+	workflow := map[string]interface{}{
+		"1": map[string]interface{}{
+			"class_type": "UnetLoaderGGUF",
+			"inputs":     map[string]interface{}{"unet_name": cfg.Model},
+		},
+		"2": comfyClipLoaderNode(cfg),
+		"3": map[string]interface{}{
+			"class_type": "VAELoader",
+			"inputs":     map[string]interface{}{"vae_name": cfg.Vae},
+		},
+		"4": map[string]interface{}{
+			"class_type": "CLIPTextEncode",
+			"inputs":     map[string]interface{}{"clip": []interface{}{"2", 0}, "text": prompt},
+		},
+		"6": map[string]interface{}{
+			"class_type": "CLIPTextEncode",
+			"inputs":     map[string]interface{}{"clip": []interface{}{"2", 0}, "text": negative},
+		},
+		"7": map[string]interface{}{
+			"class_type": "ModelSamplingAuraFlow",
+			"inputs": map[string]interface{}{
+				"model": []interface{}{comfyModelNodeID(cfg), 0},
+				"shift": shift,
+			},
+		},
+		"5": map[string]interface{}{
+			"class_type": "EmptySD3LatentImage",
+			"inputs": map[string]interface{}{
+				"width": side, "height": side, "batch_size": 1,
+			},
+		},
+		"8": map[string]interface{}{
+			"class_type": "KSampler",
+			"inputs": map[string]interface{}{
+				"model":        []interface{}{"7", 0},
+				"positive":     []interface{}{"4", 0},
+				"negative":     []interface{}{"6", 0},
+				"latent_image": []interface{}{"5", 0},
+				"seed":         o.Seed,
+				"steps":        o.Steps,
+				"cfg":          o.CFG,
+				"sampler_name": cfg.Sampler,
+				"scheduler":    cfg.Scheduler,
+				"denoise":      1.0,
+			},
+		},
+		"9": map[string]interface{}{
+			"class_type": "VAEDecode",
+			"inputs":     map[string]interface{}{"samples": []interface{}{"8", 0}, "vae": []interface{}{"3", 0}},
+		},
+		"10": map[string]interface{}{
+			"class_type": "SaveImage",
+			"inputs":     map[string]interface{}{"images": []interface{}{"9", 0}, "filename_prefix": "aichat"},
+		},
+	}
+	comfyAttachLora(workflow, cfg)
+	return workflow
 }
 
 // buildQwenEditWorkflow 生成 Qwen-Image-Edit（如 2511）专用的编辑工作流。
@@ -771,7 +886,7 @@ func buildQwenEditWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o 
 		"8": map[string]interface{}{
 			"class_type": "KSampler",
 			"inputs": map[string]interface{}{
-				"model":        []interface{}{"1", 0},
+				"model":        []interface{}{comfyModelNodeID(cfg), 0},
 				"positive":     []interface{}{"5", 0},
 				"negative":     []interface{}{"6", 0},
 				"latent_image": []interface{}{"7", 0},
@@ -792,6 +907,7 @@ func buildQwenEditWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o 
 			"inputs":     map[string]interface{}{"images": []interface{}{"9", 0}, "filename_prefix": "aichat"},
 		},
 	}
+	comfyAttachLora(workflow, cfg)
 	if o.ImageName == "" {
 		return workflow // 缺参考图时由调用方拦在前面，这里保持图结构不残缺即可
 	}

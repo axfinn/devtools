@@ -90,10 +90,17 @@ type ComfyUIConfig struct {
 	PublicBaseURL  string  `yaml:"public_base_url"` // 可选：对外返回绝对图片 URL 的前缀，空=相对路径
 
 	// 以下是「多模型切换」相关字段。留空即沿用上面的单模型行为（qwen21 家族）。
-	Family       string `yaml:"family"`        // 工作流家族：qwen21（默认）| flux2 | qwen_edit
+	Family       string `yaml:"family"`        // 工作流家族：qwen21（默认）| flux2 | qwen_edit | zimage
 	ClipLoader   string `yaml:"clip_loader"`   // 文本编码器加载节点：CLIPLoader（默认）| CLIPLoaderGGUF
 	DefaultModel string `yaml:"default_model"` // 默认出图预设 id；留空=内置默认（qwen-image-2.1）
 	Models       []ComfyImageModelPreset `yaml:"models"` // 出图预设；同 id 覆盖内置预设
+
+	// 蒸馏加速 LoRA（如 qwen-image-2.1 turbo）。配合少步数把 25 步压到 8 步。
+	Lora         string  `yaml:"lora"`          // LoRA 文件名；空=不挂 LoRA
+	LoraStrength float64 `yaml:"lora_strength"` // 默认 1.0
+	// Z-Image 家族专用：模型必须过一遍 ModelSamplingAuraFlow 才能正常出图。
+	Sampling string  `yaml:"sampling"` // "" | aura_flow
+	Shift    float64 `yaml:"shift"`    // aura_flow 的 shift，官方推荐 3
 }
 
 // ComfyImageModelPreset 一组完整的出图模型参数。
@@ -117,6 +124,12 @@ type ComfyImageModelPreset struct {
 	Scheduler   string  `yaml:"scheduler" json:"scheduler"`
 	Resolution  int     `yaml:"resolution" json:"resolution"`
 	SpeedHint   string  `yaml:"speed_hint" json:"speed_hint"` // 给前端展示的耗时提示，纯文案
+	// 蒸馏加速 LoRA：挂上之后可以用 4~8 步跑出接近全步数的质量。
+	Lora         string  `yaml:"lora" json:"lora"`
+	LoraStrength float64 `yaml:"lora_strength" json:"lora_strength"`
+	// Z-Image 家族必须过 ModelSamplingAuraFlow（否则出糊图/报错），shift 官方推荐 3。
+	Sampling string  `yaml:"sampling" json:"sampling"`
+	Shift    float64 `yaml:"shift" json:"shift"`
 }
 
 // ComfyUI 各字段的兜底默认值（配置只写 base_url 也能直接跑）。

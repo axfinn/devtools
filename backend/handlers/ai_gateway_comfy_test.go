@@ -396,3 +396,127 @@ func TestComfyErrorDetail(t *testing.T) {
 		t.Fatal("非 JSON 错误体应回退为原文")
 	}
 }
+
+// ── 内置预设的工作流骨架 ────────────────────────────────────────────────────
+// 每个预设都必须能独立拼出一条形状正确的 ComfyUI 工作流：
+// 节点号对应关系一旦错（比如 KSampler 还指着 unet 而不是 LoRA/AuraFlow），
+// 表现是出图质量莫名其妙变差或采样直接报错，很难从日志看出原因。
+
+func wfNode(t *testing.T, wf map[string]interface{}, id string) map[string]interface{} {
+	t.Helper()
+	n, ok := wf[id].(map[string]interface{})
+	if !ok {
+		t.Fatalf("工作流缺少节点 %s", id)
+	}
+	return n
+}
+
+func wfClass(t *testing.T, wf map[string]interface{}, id string) string {
+	t.Helper()
+	c, _ := wfNode(t, wf, id)["class_type"].(string)
+	return c
+}
+
+func wfModelSource(t *testing.T, wf map[string]interface{}) string {
+	t.Helper()
+	inputs := wfNode(t, wf, "8")["inputs"].(map[string]interface{})
+	ref, ok := inputs["model"].([]interface{})
+	if !ok || len(ref) == 0 {
+		t.Fatal("KSampler 缺少 model 输入")
+	}
+	src, _ := ref[0].(string)
+	return src
+}
+
+func TestBuiltinPresetWorkflowShape(t *testing.T) {
+	for _, p := range builtinComfyPresets {
+		p = comfyFillPresetDefaults(p)
+		cfg := comfyApplyPreset(config.ComfyUIConfig{}, p)
+		opts := comfyGenOptions{
+			Steps: p.Steps, CFG: p.CFG, Seed: 1, Resolution: 1024,
+			ImageName: "ref.png", // 给上参考图，让 edit 家族能拼出完整图
+		}
+		t.Run(p.ID, func(t *testing.T) {
+			wf := buildComfyWorkflow(cfg, "一只猫", "", opts)
+
+			if got := wfClass(t, wf, "8"); got != "KSampler" {
+				t.Fatalf("节点 8 应是 KSampler，实际 %s", got)
+			}
+
+			switch p.Family {
+			case comfyFamilyZImage:
+				// 关键：model 必须先过 ModelSamplingAuraFlow，且编码器走 CLIPLoader（非 GGUF）
+				if got := wfClass(t, wf, "7"); got != "ModelSamplingAuraFlow" {
+					t.Fatalf("zimage 节点 7 应是 ModelSamplingAuraFlow，实际 %q", got)
+				}
+				if src := wfModelSource(t, wf); src != "7" {
+					t.Fatalf("zimage 的 KSampler.model 应指向 7，实际 %s", src)
+				}
+				if got := wfClass(t, wf, "2"); got != "CLIPLoader" {
+					t.Fatalf("zimage 必须用 CLIPLoader（GGUF loader 会导致维度不匹配），实际 %q", got)
+				}
+				if got := wfClass(t, wf, "5"); got != "EmptySD3LatentImage" {
+					t.Fatalf("zimage latent 应是 EmptySD3LatentImage，实际 %q", got)
+				}
+				if cfg.Vae != "ae.safetensors" {
+					t.Fatalf("zimage 必须配 Flux 的 ae.safetensors，实际 %q", cfg.Vae)
+				}
+			case comfyFamilyQwenEdit:
+				if got := wfClass(t, wf, "5"); got != "TextEncodeQwenImageEditPlus" {
+					t.Fatalf("edit 家族节点 5 应是 TextEncodeQwenImageEditPlus，实际 %q", got)
+				}
+				if got := wfClass(t, wf, "7"); got != "VAEEncode" {
+					t.Fatalf("edit 家族的 latent 应来自 VAEEncode，实际 %q", got)
+				}
+			}
+
+			if p.Lora != "" {
+				if got := wfClass(t, wf, "11"); got != "LoraLoaderModelOnly" {
+					t.Fatalf("挂了 LoRA 的预设应有 LoraLoaderModelOnly 节点，实际 %q", got)
+				}
+				if src := wfModelSource(t, wf); src != "11" {
+					t.Fatalf("挂 LoRA 时 KSampler.model 应指向 11，实际 %s", src)
+				}
+			} else {
+				if _, ok := wf["11"]; ok {
+					t.Fatal("没声明 LoRA 的预设不该出现 LoRA 节点")
+				}
+				if p.Family != comfyFamilyZImage {
+					if src := wfModelSource(t, wf); src != "1" {
+						t.Fatalf("无 LoRA 时 KSampler.model 应指向 1，实际 %s", src)
+					}
+				}
+			}
+		})
+	}
+}
+
+// 蒸馏版模型必须用少步数，否则白等 3~6 倍时间。
+func TestPresetStepsMatchModelKind(t *testing.T) {
+	want := map[string]int{
+		"qwen-image-2.1-turbo":   8,
+		"qwen-image-2.1":         25,
+		"flux-2-klein":           4,
+		"z-image-turbo":          8,
+		"qwen-image-edit-2511":   4,
+	}
+	seen := map[string]bool{}
+	for _, p := range builtinComfyPresets {
+		if w, ok := want[p.ID]; ok {
+			if p.Steps != w {
+				t.Errorf("%s 步数 = %d，应为 %d", p.ID, p.Steps, w)
+			}
+			seen[p.ID] = true
+		}
+	}
+	if len(seen) != len(want) {
+		t.Errorf("内置预设缺少: 期望 %d 个，命中 %d 个", len(want), len(seen))
+	}
+}
+
+// 默认预设必须是「日常」那档，不能让人默认撞上 75 秒的 25 步。
+func TestDefaultPresetIsTurbo(t *testing.T) {
+	if got := comfyDefaultPresetID(config.ComfyUIConfig{}); got != "qwen-image-2.1-turbo" {
+		t.Fatalf("默认预设 = %q，应为 qwen-image-2.1-turbo", got)
+	}
+}
