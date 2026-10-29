@@ -207,6 +207,38 @@ tdecl=$(printf '%s\n' "$tline" | grep -oE '（[0-9]+）' | grep -oE '[0-9]+')
 treal=$(gfiles backend/handlers/ | grep '\.go$' | grep -c '_test\.go$')
 if [ "$tdecl" = "$treal" ]; then echo "B3) 测试组 声明=$tdecl 实测=$treal ✅"; else echo "B3) 测试组 声明=$tdecl 实测=$treal ❌"; echo "B3 测试组 声明数 != 实测 _test.go 数" >> "$FAIL"; fi
 
+# B4) 文档声明的计数 ↔ 实测树计数（6 项：handler / View / 公共组件 / 路由）
+#     声明值一律**运行时从文档解析** —— 写死 = 下次漂移时判据恒绿（恒真闸门）= 本段要修的缺陷本身。
+#     正则 `([0-9]+) *个 *<短语>`：两个空格位都可选 ——「个」后接中文时**无**空格（公共组件 / 路由文件），
+#     接拉丁词时**有**空格（View 组件 / handler 文件）；若要求「个」后必有空格 ⇒ 0 命中 ⇒ 判据永远静默 ⇒ 假绿。
+#     必须要求数字 ⇒ 挡掉占位符「N 个 handler 文件」；命中 0 个或 ≥2 个 = 歧义 ⇒ 判红，不静默取第一个。
+#     ⚠ 本段**只报差不改数**：handler 文件一项的红属存量漂移（由 FINN-238 / FINN-242 校准），不归本段缺陷。
+b4check() {  # b4check <文档名> <文档正文> <声明短语> <实测值>
+  b4doc="$1"; b4body="$2"; b4phrase="$3"; b4real="$4"
+  b4hits=$(printf '%s\n' "$b4body" | grep -oE "([0-9]+) *个 *${b4phrase}" | grep -oE '^[0-9]+')
+  b4n=$(printf '%s\n' "$b4hits" | grep -c .)
+  if [ "$b4n" -eq 1 ]; then
+    b4decl=$(printf '%s\n' "$b4hits" | head -n 1)
+    if [ "$b4decl" = "$b4real" ]; then
+      echo "B4) $b4doc $b4phrase 声明=$b4decl 实测=$b4real ✅"
+    else
+      echo "B4) $b4doc $b4phrase 声明=$b4decl 实测=$b4real ❌"; echo "B4 $b4doc $b4phrase 声明数 != 实测数" >> "$FAIL"
+    fi
+  else
+    echo "B4) $b4doc $b4phrase 声明数解析歧义（命中 $b4n 个）❌"; echo "B4 $b4doc $b4phrase 声明数解析歧义" >> "$FAIL"
+  fi
+}
+b4real_handlers=$(gfiles backend/handlers/ | grep '\.go$' | grep -c .)
+b4real_views=$(gfiles frontend/src/views/ | grep '\.vue$' | grep -c .)
+b4real_common=$(gfiles frontend/src/ | grep '\.vue$' | grep -vc '/views/')
+b4real_routes=$(gfiles backend/routes/ | grep '\.go$' | grep -c .)
+b4check "CLAUDE.md" "$CDOC" "handler 文件" "$b4real_handlers"
+b4check "CLAUDE.md" "$CDOC" "View 组件" "$b4real_views"
+b4check "CLAUDE.md" "$CDOC" "公共组件" "$b4real_common"
+b4check "CLAUDE.md" "$CDOC" "路由文件" "$b4real_routes"
+b4check "AGENTS.md" "$DOC" "View 组件" "$b4real_views"
+b4check "AGENTS.md" "$DOC" "公共组件" "$b4real_common"
+
 # C) per-category View 枚举：已列名数 + 「另 N 个」== 括号里的声明数 == 实测 .vue 数；每个已列名真实存在
 #    截断形态（行尾 `...`）：`...` 是「后面还有」的标记，不计入已列名数；
 #    没写「另 N 个」时，隐含的「另 N 个」= 声明数 − 已列名数（与 dev/ 的「另 N 个」写法同口径）。
