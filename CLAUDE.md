@@ -36,7 +36,7 @@ backend/
 ├── main.go              # 入口：DB 初始化、中间件、每小时清理 goroutine
 ├── routes/              # 43 个路由文件（routes.go 已拆分，含 index.go）
 │   └── index.go         # RouteHandlers struct + RegisterAllRoutes
-├── handlers/            # 140 个 handler 文件（按域分组）
+├── handlers/            # 142 个 handler 文件（按域分组）
 ├── models/              # SQLite 操作（自动建表）
 ├── middleware/          # RateLimiter、ContentSizeLimiter 等
 └── state/               # Redis/内存状态（Redis 软依赖）
