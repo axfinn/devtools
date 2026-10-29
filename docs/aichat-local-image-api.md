@@ -54,9 +54,9 @@ chat_plus:
   password: "123654789"
   ollama_base_url: "http://192.168.31.147:11434"
   comfyui:
-    base_url: "http://192.168.31.147:8188"   # 留空 = 关闭本地出图
+    base_url: "http://192.168.31.111:8188"   # 留空 = 关闭本地出图
     model: "qwen-image-2.1-UC-Q4_K_M.gguf"
-    clip: "qwen3vl_8b_int8_convrot.safetensors"
+    clip: "qwen3vl_8b_w4a8.safetensors"
     vae: "qwen_image_2.1_vae_bf16.safetensors"
     clip_type: "qwen_image"
     steps: 25
@@ -83,7 +83,10 @@ chat_plus:
 | POST | `/api/chat-plus/image/generate` | 提交任务，立即返回 `task_id` |
 | GET | `/api/chat-plus/image/tasks/:id` | 轮询任务状态 |
 | GET | `/api/chat-plus/image/tasks/:id/stream` | SSE 推送进度，直到终态 |
-| POST | `/api/chat-plus/image/prompt/optimize` | 让文本大模型把一句大白话改写成可出图的提示词（30 次/分钟/IP） |
+| POST | `/api/chat-plus/image/prompt/optimize` | 同步版：让文本大模型把一句大白话改写成可出图的提示词（30 次/分钟/IP）。受网关超时约束，脚本调试用 |
+| POST | `/api/chat-plus/image/prompt/optimize/tasks` | **页面走这条**：建任务，立即返回 `task_id`（202），不受网关超时约束 |
+| GET | `/api/chat-plus/image/prompt/optimize/tasks/:id` | 轮询优化结果：`running` / `done` / `failed` / `canceled` |
+| POST | `/api/chat-plus/image/prompt/optimize/tasks/:id/cancel` | 停止优化（关弹窗、换模型重跑时调用） |
 
 提交任务：
 
@@ -141,6 +144,34 @@ curl -X POST http://127.0.0.1:8082/api/chat-plus/image/prompt/optimize \
 - `describe`：先看懂参考图，再写可复现该画面与风格的提示词。
 
 系统提示词还硬性禁止「8K/杰作/masterpiece」这类对现代扩散模型无意义的堆砌词，以及负面提示词与参数。
+
+### 为什么要异步（历史上的 524）
+
+同步接口要等模型把话说完整。本地大模型带参考图动辄 40~120 秒，慢起来会顶破网关的响应超时：
+
+- Cloudflare 等不到上游响应 → 第 100 秒返回 **524**；
+- nginx `proxy_read_timeout` 默认 60 秒 → 返回 504。
+
+网关一断，浏览器只看到一句 524，而后端其实还在算、结果白扔。所以页面改走任务化接口，
+每次请求只持续几十毫秒，代理层超时不再生效：
+
+```bash
+# 1) 建任务（202）
+curl -X POST http://127.0.0.1:8082/api/chat-plus/image/prompt/optimize/tasks \
+  -H 'Content-Type: application/json' -H 'X-Chat-Password: 123654789' \
+  -d '{"prompt":"把背景换成海边","mode":"edit","model":"ollama:qwen3:14b"}'
+# {"task_id":"popt_9f1c...","status":"running","mode":"edit"}
+
+# 2) 轮询（前端前 10 秒 0.8s 一次，之后 1.5s）
+curl http://127.0.0.1:8082/api/chat-plus/image/prompt/optimize/tasks/popt_9f1c... \
+  -H 'X-Chat-Password: 123654789'
+# {"status":"done","prompt":"保持人物五官、姿态与白色连衣裙不变……","model":"ollama:qwen3:14b",
+#  "mode":"edit","used_image":false,"elapsed_ms":4180}
+```
+
+状态值：`running` / `done` / `failed` / `canceled`。任务在服务端跑，**总时限 300 秒**；
+终态结果在内存里保留 15 分钟（不落库，优化结果本就是一次性的）。
+关弹窗或换模型重跑时前端会调 `/cancel`，避免白烧一次上游算力。
 
 ## OpenAI 兼容接口
 

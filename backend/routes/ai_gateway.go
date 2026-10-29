@@ -77,6 +77,13 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 	// （30/分钟）——调提示词常要反复试几次，10/分钟的全局桶会误伤正常使用。
 	promptOptimizeLimiter := middleware.NewRateLimiter(30, time.Minute, nil)
 	api.POST("/chat-plus/image/prompt/optimize", promptOptimizeLimiter.Middleware(), h.AiGatewayHandler.ChatPlusImagePromptOptimize)
+	// 页面实际走这一条：异步任务 + 短轮询。
+	// 同步接口要等模型把话说完整，本地大模型慢起来会顶破网关超时（Cloudflare 100s → 524），
+	// 浏览器只看到一句 524，而后端还在算、结果作废。任务化后每次请求都只有几十毫秒。
+	// 轮询接口不挂限流：它只读内存 map，且一次优化会打好几次，挂上 30/分钟会被自己限死。
+	api.POST("/chat-plus/image/prompt/optimize/tasks", promptOptimizeLimiter.Middleware(), h.AiGatewayHandler.ChatPlusImagePromptOptimizeTaskCreate)
+	api.GET("/chat-plus/image/prompt/optimize/tasks/:id", h.AiGatewayHandler.ChatPlusImagePromptOptimizeTaskGet)
+	api.POST("/chat-plus/image/prompt/optimize/tasks/:id/cancel", h.AiGatewayHandler.ChatPlusImagePromptOptimizeTaskCancel)
 	api.GET("/chat-plus/image/tasks/:id", h.AiGatewayHandler.ChatPlusImageTask)
 	api.GET("/chat-plus/image/tasks/:id/stream", h.AiGatewayHandler.ChatPlusImageTaskStream)
 	api.GET("/english-tutor/meta", h.AiGatewayHandler.EnglishTutorMeta)

@@ -3,6 +3,9 @@ package handlers
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"devtools/utils"
 )
 
 func TestCleanOptimizedPrompt(t *testing.T) {
@@ -118,5 +121,97 @@ func TestImagePromptOptimizeSystemRules(t *testing.T) {
 		if !strings.Contains(sys, must) {
 			t.Fatalf("系统提示词缺少 %q:\n%s", must, sys)
 		}
+	}
+}
+
+// ── 异步任务化的内存生命周期 ────────────────────────────────────────────────
+// 这些用例只覆盖状态机本身（不碰上游模型）：任务表是包级 map，
+// 读写在锁内、状态只能单向收敛，是「轮询永远卡在 running」这类问题的根源。
+
+func putPromptOptimizeTaskForTest(t *testing.T, status string, createdAt time.Time) *promptOptimizeTask {
+	t.Helper()
+	task := &promptOptimizeTask{
+		ID:        "popt_test_" + utils.GenerateHexKey(4),
+		Status:    status,
+		CreatedAt: createdAt,
+	}
+	promptOptimizeTasksMu.Lock()
+	promptOptimizeTasks[task.ID] = task
+	promptOptimizeTasksMu.Unlock()
+	t.Cleanup(func() {
+		promptOptimizeTasksMu.Lock()
+		delete(promptOptimizeTasks, task.ID)
+		promptOptimizeTasksMu.Unlock()
+	})
+	return task
+}
+
+func TestFinishPromptOptimizeTask(t *testing.T) {
+	h := &AIGatewayHandler{}
+	task := putPromptOptimizeTaskForTest(t, promptOptimizeStatusRunning, time.Now().Add(-3*time.Second))
+
+	h.finishPromptOptimizeTask(task.ID, promptOptimizeStatusDone, "一只橘猫趴在窗台上", "MiniMax-M2.5", false, "")
+
+	promptOptimizeTasksMu.Lock()
+	got := *promptOptimizeTasks[task.ID]
+	promptOptimizeTasksMu.Unlock()
+
+	if got.Status != promptOptimizeStatusDone {
+		t.Fatalf("status = %q, want done", got.Status)
+	}
+	if got.Prompt != "一只橘猫趴在窗台上" {
+		t.Fatalf("prompt = %q", got.Prompt)
+	}
+	if got.Model != "MiniMax-M2.5" {
+		t.Fatalf("model = %q", got.Model)
+	}
+	if got.ElapsedMS < 2000 {
+		t.Fatalf("elapsed_ms = %d，应该覆盖任务已跑的时长", got.ElapsedMS)
+	}
+	if got.cancel != nil {
+		t.Fatal("终态任务不该继续持有 cancel")
+	}
+}
+
+// 取消接口只对 running 的任务生效：已终态的任务被打上 canceled 会让前端显示错状态
+func TestPromptOptimizeCancelOnlyWhenRunning(t *testing.T) {
+	h := &AIGatewayHandler{}
+
+	done := putPromptOptimizeTaskForTest(t, promptOptimizeStatusDone, time.Now())
+	_, _ = markPromptOptimizeCanceled(done.ID)
+	if h.promptOptimizeTaskCanceled(done.ID) {
+		t.Fatal("已完成的任务不该被标记为取消")
+	}
+
+	running := putPromptOptimizeTaskForTest(t, promptOptimizeStatusRunning, time.Now())
+	_, _ = markPromptOptimizeCanceled(running.ID)
+	if !h.promptOptimizeTaskCanceled(running.ID) {
+		t.Fatal("运行中的任务应该被标记为取消")
+	}
+}
+
+func TestPrunePromptOptimizeTasks(t *testing.T) {
+	now := time.Now()
+	expired := putPromptOptimizeTaskForTest(t, promptOptimizeStatusDone, now.Add(-2*time.Hour))
+	expired.finishedAt = now.Add(-promptOptimizeTaskTTL - time.Minute)
+	fresh := putPromptOptimizeTaskForTest(t, promptOptimizeStatusDone, now)
+	fresh.finishedAt = now.Add(-time.Minute)
+	running := putPromptOptimizeTaskForTest(t, promptOptimizeStatusRunning, now.Add(-2*time.Hour))
+
+	promptOptimizeTasksMu.Lock()
+	prunePromptOptimizeTasksLocked(now)
+	_, expiredLeft := promptOptimizeTasks[expired.ID]
+	_, freshLeft := promptOptimizeTasks[fresh.ID]
+	_, runningLeft := promptOptimizeTasks[running.ID]
+	promptOptimizeTasksMu.Unlock()
+
+	if expiredLeft {
+		t.Fatal("过期终态任务应被清理")
+	}
+	if !freshLeft {
+		t.Fatal("未过期的终态任务不该被清理")
+	}
+	if !runningLeft {
+		t.Fatal("运行中的任务无论多久都不能被清理（否则前端轮询会 404）")
 	}
 }

@@ -2,11 +2,15 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
+
+	"devtools/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,7 +36,19 @@ const (
 	// promptOptimizeMaxImageBytes 参考图 base64 体积上限。前端已压到 1024px/0.8，
 	// 这里只是防有人直接塞原图把请求体撑爆。
 	promptOptimizeMaxImageBytes = 8 << 20
-	promptOptimizeTimeout       = 150 * time.Second
+	// promptOptimizeTimeout 同步接口的等待上限。它被网关卡着（Cloudflare 100s 就 524），
+	// 所以只能给这么长；真正的长等待走异步任务。
+	promptOptimizeTimeout = 150 * time.Second
+	// promptOptimizeTaskTimeout 异步任务的总时长上限。任务在服务端跑，浏览器的连接
+	// 早就结束了，因此不受网关超时约束，可以给本地大模型留足时间。
+	promptOptimizeTaskTimeout = 300 * time.Second
+	// promptOptimizeTaskTTL 终态任务在内存里保留多久：够前端轮询到结果即可。
+	promptOptimizeTaskTTL = 15 * time.Minute
+
+	promptOptimizeStatusRunning  = "running"
+	promptOptimizeStatusDone     = "done"
+	promptOptimizeStatusFailed   = "failed"
+	promptOptimizeStatusCanceled = "canceled"
 )
 
 // 提示词优化模式。前端按「有没有附参考图 / 有没有写要求」自动决定，用户不用选。
@@ -52,7 +68,56 @@ type imagePromptOptimizeRequest struct {
 	Image       string `json:"image"`        // 参考图 dataURL（可选）
 }
 
+// preparedPromptOptimize 校验通过后的入参快照。
+// 抽出来是为了让「同步接口」和「异步任务」共用同一套校验，不会一边允许一边拒绝。
+type preparedPromptOptimize struct {
+	Prompt string
+	Image  string
+	Mode   string
+	Model  string
+	Req    imagePromptOptimizeRequest
+}
+
+// prepareImagePromptOptimize 做与传输层无关的校验，返回 (快照, httpStatus, 错误文案)。
+// 校验不通过时快照为 nil。
+func (h *AIGatewayHandler) prepareImagePromptOptimize(req imagePromptOptimizeRequest) (*preparedPromptOptimize, int, string) {
+	prompt := strings.TrimSpace(req.Prompt)
+	if utf8.RuneCountInString(prompt) > promptOptimizeMaxInput {
+		return nil, http.StatusBadRequest, fmt.Sprintf("原话过长（上限 %d 字），先精简一下再优化", promptOptimizeMaxInput)
+	}
+
+	// 参考图只接受 dataURL，且体积要可控；不合格就当没附图（降级而不是报错）
+	image := strings.TrimSpace(req.Image)
+	if !strings.HasPrefix(image, "data:image/") || len(image) > promptOptimizeMaxImageBytes {
+		image = ""
+	}
+
+	mode := normalizePromptOptimizeMode(req.Mode, prompt, image)
+	if mode == promptModeT2I && prompt == "" {
+		return nil, http.StatusBadRequest, "先写一句你想画什么，或者附一张参考图"
+	}
+
+	model := strings.TrimSpace(req.Model)
+	// 前端传的模型有两种来源：
+	//   1) 用户在优化弹窗里明确选的（strict=true）→ 不可用就报错，不能偷偷换，
+	//      否则「我选了 A 却拿到 B 的结果」，排查起来像见鬼；
+	//   2) 跟随聊天页当前模型（strict=false）→ 聊天模型可能已被换成不可用引擎
+	//      （Ollama 掉线等），这种情况回落到服务端默认，别让「优化提示词」跟着一起挂。
+	if model != "" && h.resolveChatProvider(model) == "" {
+		if req.Strict {
+			return nil, http.StatusBadRequest,
+				fmt.Sprintf("所选优化模型当前不可用：%s（请换一个，或选「跟随聊天模型」）", model)
+		}
+		model = ""
+	}
+
+	req.Prompt = prompt
+	return &preparedPromptOptimize{Prompt: prompt, Image: image, Mode: mode, Model: model, Req: req}, 0, ""
+}
+
 // ChatPlusImagePromptOptimize POST /api/chat-plus/image/prompt/optimize
+// 同步版本：保留给「前端来不及改造」和脚本调试用。它受网关超时约束（Cloudflare 100s 会 524），
+// 页面实际走的是下面的异步任务版本。
 func (h *AIGatewayHandler) ChatPlusImagePromptOptimize(c *gin.Context) {
 	if !h.checkChatPlusPassword(c) {
 		return
@@ -64,46 +129,16 @@ func (h *AIGatewayHandler) ChatPlusImagePromptOptimize(c *gin.Context) {
 		return
 	}
 
-	prompt := strings.TrimSpace(req.Prompt)
-	if utf8.RuneCountInString(prompt) > promptOptimizeMaxInput {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("原话过长（上限 %d 字），先精简一下再优化", promptOptimizeMaxInput),
-		})
+	prep, status, msg := h.prepareImagePromptOptimize(req)
+	if prep == nil {
+		c.JSON(status, gin.H{"error": msg})
 		return
-	}
-
-	// 参考图只接受 dataURL，且体积要可控；不合格就当没附图（降级而不是报错）
-	image := strings.TrimSpace(req.Image)
-	if !strings.HasPrefix(image, "data:image/") || len(image) > promptOptimizeMaxImageBytes {
-		image = ""
-	}
-
-	mode := normalizePromptOptimizeMode(req.Mode, prompt, image)
-	if mode == promptModeT2I && prompt == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "先写一句你想画什么，或者附一张参考图"})
-		return
-	}
-
-	model := strings.TrimSpace(req.Model)
-	// 前端传的模型有两种来源：
-	//   1) 用户在优化弹窗里明确选的（strict=true）→ 不可用就报错，不能偷偷换，
-	//      否则「我选了 A 却拿到 B 的结果」，排查起来像见鬼；
-	//   2) 跟随聊天页当前模型（strict=false）→ 聊天模型可能已被换成不可用引擎
-	//      （Ollama 掉线等），这种情况回落到服务端默认，别让「优化提示词」跟着一起挂。
-	if model != "" && h.resolveChatProvider(model) == "" {
-		if req.Strict {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("所选优化模型当前不可用：%s（请换一个，或选「跟随聊天模型」）", model),
-			})
-			return
-		}
-		model = ""
 	}
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), promptOptimizeTimeout)
 	defer cancel()
 
-	out, usedModel, usedImage, err := h.optimizeImagePrompt(ctx, model, prompt, mode, req, image)
+	out, usedModel, usedImage, err := h.optimizeImagePrompt(ctx, prep.Model, prep.Prompt, prep.Mode, prep.Req, prep.Image)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "优化失败：" + strings.TrimSpace(err.Error())})
 		return
@@ -112,9 +147,242 @@ func (h *AIGatewayHandler) ChatPlusImagePromptOptimize(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"prompt":     out,
 		"model":      usedModel,
-		"mode":       mode,
+		"mode":       prep.Mode,
 		"used_image": usedImage,
 	})
+}
+
+// ── 异步任务化（解决网关 524） ──────────────────────────────────────────────
+//
+// 为什么必须异步：优化要等一个大模型把话说完整，本地 27B 视觉模型带图动辄 40~120s，
+// 慢起来直接顶破网关的响应超时（Cloudflare 100s → 524、nginx 60s → 504）。
+// 网关一断，浏览器只看到一句 "524"，后端其实还在算、结果白扔。
+// 把任务搬到服务端后台跑，浏览器改成短轮询，连接时长永远只有几十毫秒，代理层超时彻底失效。
+
+type promptOptimizeTask struct {
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	Prompt    string    `json:"prompt,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	Mode      string    `json:"mode,omitempty"`
+	UsedImage bool      `json:"used_image"`
+	Error     string    `json:"error,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ElapsedMS int64     `json:"elapsed_ms"`
+
+	cancel     context.CancelFunc
+	// cancelRequested 用户主动点了停止。单独记一个标记而不是只看 ctx.Err()：
+	// 上游 SDK 可能把取消包成自己的错误，用 ctx.Err() 判断会漏判，变成显示「失败」。
+	cancelRequested bool
+	finishedAt      time.Time
+}
+
+var (
+	promptOptimizeTasksMu sync.Mutex
+	promptOptimizeTasks   = make(map[string]*promptOptimizeTask)
+)
+
+// prunePromptOptimizeTasksLocked 丢掉过期的终态任务。调用方必须已持锁。
+// 优化任务是内存态、生命周期短，不需要落库；但也因此必须有清理，否则 map 只增不减。
+func prunePromptOptimizeTasksLocked(now time.Time) {
+	for id, t := range promptOptimizeTasks {
+		if t.Status == promptOptimizeStatusRunning {
+			continue
+		}
+		if now.Sub(t.finishedAt) > promptOptimizeTaskTTL {
+			delete(promptOptimizeTasks, id)
+		}
+	}
+}
+
+// ChatPlusImagePromptOptimizeTaskCreate POST /api/chat-plus/image/prompt/optimize/tasks
+// 立刻返回 task_id，真正的改写放到后台 goroutine。
+func (h *AIGatewayHandler) ChatPlusImagePromptOptimizeTaskCreate(c *gin.Context) {
+	if !h.checkChatPlusPassword(c) {
+		return
+	}
+
+	var req imagePromptOptimizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
+		return
+	}
+
+	prep, status, msg := h.prepareImagePromptOptimize(req)
+	if prep == nil {
+		c.JSON(status, gin.H{"error": msg})
+		return
+	}
+
+	task := &promptOptimizeTask{
+		ID:        "popt_" + utils.GenerateHexKey(12),
+		Status:    promptOptimizeStatusRunning,
+		Mode:      prep.Mode,
+		CreatedAt: time.Now(),
+	}
+
+	promptOptimizeTasksMu.Lock()
+	prunePromptOptimizeTasksLocked(task.CreatedAt)
+	promptOptimizeTasks[task.ID] = task
+	promptOptimizeTasksMu.Unlock()
+
+	go h.runPromptOptimizeTask(task, prep)
+
+	// 202：任务已受理，但结果还没出来。前端拿到 task_id 开始轮询。
+	c.JSON(http.StatusAccepted, gin.H{
+		"task_id": task.ID,
+		"status":  promptOptimizeStatusRunning,
+		"mode":    prep.Mode,
+	})
+}
+
+// runPromptOptimizeTask 后台执行改写。注意：这里绝不能碰 gin.Context
+// （请求早已结束，Context 会被回收），只用快照数据 + 独立的 context。
+func (h *AIGatewayHandler) runPromptOptimizeTask(task *promptOptimizeTask, prep *preparedPromptOptimize) {
+	ctx, cancel := context.WithTimeout(context.Background(), promptOptimizeTaskTimeout)
+	defer cancel()
+
+	promptOptimizeTasksMu.Lock()
+	if cur, ok := promptOptimizeTasks[task.ID]; ok {
+		cur.cancel = cancel // 供取消接口中断上游请求
+	}
+	promptOptimizeTasksMu.Unlock()
+
+	// 上游 panic 不能把整个进程带走：单个任务失败就够了。
+	defer func() {
+		if r := recover(); r != nil {
+			h.finishPromptOptimizeTask(task.ID, promptOptimizeStatusFailed, "", "", false, fmt.Sprintf("内部错误：%v", r))
+		}
+	}()
+
+	out, usedModel, usedImage, err := h.optimizeImagePrompt(ctx, prep.Model, prep.Prompt, prep.Mode, prep.Req, prep.Image)
+	if err != nil {
+		// 用户主动取消和上游超时要分开说：前者不该显示成"失败"
+		if h.promptOptimizeTaskCanceled(task.ID) || errors.Is(ctx.Err(), context.Canceled) {
+			h.finishPromptOptimizeTask(task.ID, promptOptimizeStatusCanceled, "", usedModel, false, "已停止优化")
+			return
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			h.finishPromptOptimizeTask(task.ID, promptOptimizeStatusFailed, "", usedModel, false,
+				fmt.Sprintf("模型超过 %d 秒没给结果，请换一个更快的模型重试", int(promptOptimizeTaskTimeout.Seconds())))
+			return
+		}
+		h.finishPromptOptimizeTask(task.ID, promptOptimizeStatusFailed, "", usedModel, false, "优化失败："+strings.TrimSpace(err.Error()))
+		return
+	}
+
+	h.finishPromptOptimizeTask(task.ID, promptOptimizeStatusDone, out, usedModel, usedImage, "")
+}
+
+func (h *AIGatewayHandler) promptOptimizeTaskCanceled(id string) bool {
+	promptOptimizeTasksMu.Lock()
+	defer promptOptimizeTasksMu.Unlock()
+	if t, ok := promptOptimizeTasks[id]; ok {
+		return t.cancelRequested
+	}
+	return false
+}
+
+func (h *AIGatewayHandler) finishPromptOptimizeTask(id, status, out, model string, usedImage bool, errMsg string) {
+	promptOptimizeTasksMu.Lock()
+	defer promptOptimizeTasksMu.Unlock()
+
+	t, ok := promptOptimizeTasks[id]
+	if !ok {
+		return
+	}
+	// 终态不可被覆盖：取消之后上游可能还在飞，它回来时不能再把状态改回 done，
+	// 否则用户已经关掉的结果会「复活」。
+	if t.Status != promptOptimizeStatusRunning {
+		return
+	}
+	t.Status = status
+	t.Prompt = out
+	t.Model = model
+	t.UsedImage = usedImage
+	t.Error = errMsg
+	t.ElapsedMS = time.Since(t.CreatedAt).Milliseconds()
+	t.finishedAt = time.Now()
+	t.cancel = nil
+}
+
+// ChatPlusImagePromptOptimizeTaskGet GET /api/chat-plus/image/prompt/optimize/tasks/:id
+// 前端轮询这个接口。响应体故意做小（不含参考图），轮询代价可以忽略。
+func (h *AIGatewayHandler) ChatPlusImagePromptOptimizeTaskGet(c *gin.Context) {
+	if !h.checkChatPlusPassword(c) {
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("id"))
+
+	promptOptimizeTasksMu.Lock()
+	prunePromptOptimizeTasksLocked(time.Now())
+	t, ok := promptOptimizeTasks[id]
+	var snap promptOptimizeTask
+	if ok {
+		snap = *t
+		if snap.Status == promptOptimizeStatusRunning {
+			snap.ElapsedMS = time.Since(snap.CreatedAt).Milliseconds()
+		}
+	}
+	promptOptimizeTasksMu.Unlock()
+
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在或已过期，请重新优化"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"task_id":    snap.ID,
+		"status":     snap.Status,
+		"prompt":     snap.Prompt,
+		"model":      snap.Model,
+		"mode":       snap.Mode,
+		"used_image": snap.UsedImage,
+		"error":      snap.Error,
+		"elapsed_ms": snap.ElapsedMS,
+	})
+}
+
+// ChatPlusImagePromptOptimizeTaskCancel POST /api/chat-plus/image/prompt/optimize/tasks/:id/cancel
+// 用户关掉弹窗/重开一次时调用：停掉上游请求，省得白等一个不会再被看的结果。
+func (h *AIGatewayHandler) ChatPlusImagePromptOptimizeTaskCancel(c *gin.Context) {
+	if !h.checkChatPlusPassword(c) {
+		return
+	}
+
+	id := strings.TrimSpace(c.Param("id"))
+
+	cancel, ok := markPromptOptimizeCanceled(id)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在或已过期"})
+		return
+	}
+	if cancel != nil {
+		cancel()
+	}
+	// 立刻落终态：executeChatRequest 没有 ctx 参数，上游请求断不干净，
+	// 不能等它回来才把状态改掉，否则这段时间轮询一直是 running，像是没停掉。
+	h.finishPromptOptimizeTask(id, promptOptimizeStatusCanceled, "", "", false, "已停止优化")
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+// markPromptOptimizeCanceled 打上取消标记并返回中断函数。
+// 只有 running 的任务会被标记：已终态的任务再打标记，只会让前端显示成「已停止」。
+// 返回 (cancel, 任务是否存在)。
+func markPromptOptimizeCanceled(id string) (context.CancelFunc, bool) {
+	promptOptimizeTasksMu.Lock()
+	defer promptOptimizeTasksMu.Unlock()
+
+	t, ok := promptOptimizeTasks[id]
+	if !ok {
+		return nil, false
+	}
+	if t.Status != promptOptimizeStatusRunning {
+		return nil, true
+	}
+	t.cancelRequested = true
+	return t.cancel, true
 }
 
 // normalizePromptOptimizeMode 归一化模式：非法值一律按「有没有原话」推断，
@@ -229,6 +497,12 @@ func (h *AIGatewayHandler) completeChatOnce(ctx context.Context, model, system, 
 	})
 	if err != nil {
 		return "", err
+	}
+	// executeChatRequest 目前没有 ctx 参数（下面几个 provider 各自设了读超时），
+	// 所以取消/超时打断不了已经在飞的上游请求；但它回来时必须让结果作废——
+	// 否则用户已经关掉弹窗/换了一次优化，旧结果还会被当成成功写进任务。
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return "", ctxErr
 	}
 	if result == nil {
 		return "", fmt.Errorf("上游无响应")

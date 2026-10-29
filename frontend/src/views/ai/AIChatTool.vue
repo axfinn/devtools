@@ -322,7 +322,12 @@
 
           <div v-if="promptOptLoading" class="po-loading">
             <span class="po-spinner"></span>
-            正在改写提示词…{{ promptOptSlow ? '（本地大模型较慢，先别关这个框）' : '' }}
+            <span class="po-loading-main">
+              正在改写提示词<span v-if="promptOptElapsed >= 2"> · 已等 {{ promptOptElapsed }}s</span>…
+            </span>
+            <span v-if="promptOptSlow" class="po-loading-sub">
+              本地大模型偏慢，常见 30~120 秒。任务在服务端跑，现在关掉这个框也不会再报 524，会直接停掉。
+            </span>
           </div>
           <div v-else-if="promptOptError" class="po-error">
             <span>⚠ {{ promptOptError }}</span>
@@ -346,7 +351,8 @@
         </div>
         <template #footer>
           <div class="po-footer">
-            <button class="po-btn ghost" :disabled="promptOptLoading" @click="runPromptOptimize">重新优化</button>
+            <button v-if="promptOptLoading" class="po-btn ghost" @click="stopPromptOptimize">停止</button>
+            <button v-else class="po-btn ghost" @click="runPromptOptimize">重新优化</button>
             <div class="po-footer-right">
               <button class="po-btn" @click="promptOptOpen = false">放弃</button>
               <button class="po-btn" :disabled="!promptOptResult.trim()" @click="applyPromptOptimize">采纳到输入框</button>
@@ -1676,9 +1682,13 @@ const promptOptImage = ref('')        // 打开时快照参考图，避免优化
 const promptOptModelLabel = ref('')
 const promptOptUsedImage = ref(false)
 const promptOptError = ref('')
-const promptOptSlow = ref(false)      // 本地大模型首字节慢，超过 8s 给一句提示
+const promptOptElapsed = ref(0)       // 已等待秒数：慢模型时给用户一个「它还在跑」的实感
+const promptOptSlow = ref(false)      // 超过 8s 补一句解释
 let promptOptSeq = 0                  // 连点「重新优化」时只认最后一次响应
-let promptOptSlowTimer = null
+let promptOptTaskId = ''              // 服务端任务号（异步化后前端不再死等一个长连接）
+let promptOptPollTimer = null
+let promptOptElapsedTimer = null
+let promptOptSleepResolve = null
 
 const promptOptDisabled = computed(() => promptOptLoading.value || imageGenerating.value || streaming.value)
 
@@ -1731,11 +1741,18 @@ async function runPromptOptimize() {
   const seq = ++promptOptSeq
   const text = promptOptOriginal.value
   const image = promptOptImage.value
+  const startedAt = Date.now()
+  stopPromptOptPolling()
+  cancelPromptOptTask() // 上一轮还在服务端跑就喊停，别让它白烧算力、也别抢本地模型
   promptOptLoading.value = true
   promptOptSlow.value = false
   promptOptError.value = ''
-  clearTimeout(promptOptSlowTimer)
-  promptOptSlowTimer = setTimeout(() => { if (seq === promptOptSeq) promptOptSlow.value = true }, 8000)
+  promptOptElapsed.value = 0
+  promptOptElapsedTimer = setInterval(() => {
+    if (seq !== promptOptSeq) return
+    promptOptElapsed.value = Math.round((Date.now() - startedAt) / 1000)
+    if (promptOptElapsed.value >= 8) promptOptSlow.value = true
+  }, 500)
 
   try {
     // 模式由「有没有原话 / 有没有图」推断，用户不用理解 t2i / edit 的区别
@@ -1750,11 +1767,23 @@ async function runPromptOptimize() {
       mode: !image ? 't2i' : (text ? 'edit' : 'describe'),
     }
     if (image) body.image = image
-    const res = await fetch(`${API_BASE}/api/chat-plus/image/prompt/optimize`, {
+
+    // 异步任务：先建单，再短轮询。
+    // 之前是一个长连接死等模型返回，而优化动辄 40~120s，会被网关按「响应超时」掐断
+    // （Cloudflare 100s 直接回 524），用户只看到一句 524，其实后端还在算。
+    // 现在每个请求都只有几十毫秒，代理层超时彻底不生效。
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/prompt/optimize/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
       body: JSON.stringify(body),
     })
+
+    // 旧后端没有任务接口：退回同步接口，别让功能直接不可用
+    if (res.status === 404) {
+      await runPromptOptimizeSync(seq, body, startedAt)
+      return
+    }
+
     const data = await res.json().catch(() => ({}))
     if (seq !== promptOptSeq) return
     if (!res.ok) {
@@ -1762,18 +1791,17 @@ async function runPromptOptimize() {
       err.biz = true // 服务端已经给了人话，别再被 netErrMsg 包一层「请求失败」
       throw err
     }
-    promptOptResult.value = data.prompt || ''
-    promptOptModelLabel.value = data.model || ''
-    promptOptUsedImage.value = !!data.used_image
-    if (!promptOptResult.value) {
-      const err = new Error('AI 没有返回可用的提示词，请重试')
+    if (!data.task_id) {
+      const err = new Error('服务端没有返回任务号，请重试')
       err.biz = true
       throw err
     }
+    promptOptTaskId = data.task_id
+    await pollPromptOptimizeTask(seq, data.task_id)
   } catch (e) {
     if (seq === promptOptSeq) promptOptError.value = e?.biz ? e.message : netErrMsg(e)
   } finally {
-    clearTimeout(promptOptSlowTimer)
+    stopPromptOptPolling()
     if (seq === promptOptSeq) {
       promptOptLoading.value = false
       promptOptSlow.value = false
@@ -1781,11 +1809,122 @@ async function runPromptOptimize() {
   }
 }
 
+// 服务端任务上限 300s，这里留点余量；超过就明确告诉用户别再干等
+const PROMPT_OPT_MAX_WAIT_MS = 6 * 60 * 1000
+
+function bizError(msg) {
+  const err = new Error(msg)
+  err.biz = true
+  return err
+}
+
+// 可被 stopPromptOptPolling 提前唤醒的等待：直接 clearTimeout 会留下一个永远不 resolve 的 Promise
+function sleepPromptOpt(ms) {
+  return new Promise(resolve => {
+    promptOptSleepResolve = resolve
+    promptOptPollTimer = setTimeout(() => {
+      promptOptPollTimer = null
+      promptOptSleepResolve = null
+      resolve()
+    }, ms)
+  })
+}
+
+function stopPromptOptPolling() {
+  if (promptOptPollTimer) clearTimeout(promptOptPollTimer)
+  promptOptPollTimer = null
+  if (promptOptElapsedTimer) clearInterval(promptOptElapsedTimer)
+  promptOptElapsedTimer = null
+  if (promptOptSleepResolve) {
+    const resolve = promptOptSleepResolve
+    promptOptSleepResolve = null
+    resolve()
+  }
+}
+
+// 通知服务端别再算了（关弹窗 / 重新优化时）。不 await：不该为了省算力卡住界面
+function cancelPromptOptTask() {
+  const id = promptOptTaskId
+  promptOptTaskId = ''
+  if (!id) return
+  fetch(`${API_BASE}/api/chat-plus/image/prompt/optimize/tasks/${id}/cancel`, {
+    method: 'POST',
+    headers: { ...auth.authHeader() },
+  }).catch(() => {})
+}
+
+async function pollPromptOptimizeTask(seq, taskId) {
+  const deadline = Date.now() + PROMPT_OPT_MAX_WAIT_MS
+  // 前 10 秒密一点（快的模型几百毫秒就回），之后放宽，避免无谓打请求
+  while (seq === promptOptSeq) {
+    await sleepPromptOpt(promptOptElapsed.value < 10 ? 800 : 1500)
+    if (seq !== promptOptSeq) return
+    if (Date.now() > deadline) throw bizError('等太久了，换一个更快的优化模型再试')
+
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/prompt/optimize/tasks/${taskId}`, {
+      headers: { ...auth.authHeader() },
+    })
+    if (seq !== promptOptSeq) return
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      if (res.status === 404) throw bizError('任务已过期（可能服务重启了），请重新点一次优化')
+      throw bizError(data.error || `HTTP ${res.status}`)
+    }
+
+    if (data.status === 'done') {
+      promptOptResult.value = data.prompt || ''
+      promptOptModelLabel.value = data.model || ''
+      promptOptUsedImage.value = !!data.used_image
+      if (!promptOptResult.value) throw bizError('AI 没有返回可用的提示词，请重试')
+      return
+    }
+    if (data.status === 'failed') throw bizError(data.error || '优化失败，请重试')
+    if (data.status === 'canceled') throw bizError('已停止优化')
+    // running：继续轮询
+  }
+}
+
+// 兼容老后端的同步路径（正常情况下不会走到）。同样用 AbortController 兜住网关超时。
+async function runPromptOptimizeSync(seq, body, startedAt) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), PROMPT_OPT_MAX_WAIT_MS)
+  try {
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/prompt/optimize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (seq !== promptOptSeq) return
+    if (!res.ok) throw bizError(data.error || `HTTP ${res.status}`)
+    promptOptResult.value = data.prompt || ''
+    promptOptModelLabel.value = data.model || ''
+    promptOptUsedImage.value = !!data.used_image
+    if (!promptOptResult.value) throw bizError('AI 没有返回可用的提示词，请重试')
+  } catch (e) {
+    if (seq !== promptOptSeq) return
+    if (e?.name === 'AbortError') {
+      throw bizError(`等了 ${Math.round((Date.now() - startedAt) / 1000)} 秒还没结果，请换一个更快的模型`)
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // 关闭弹窗：作废还在飞的请求，避免它晚到又把结果塞进来
 function cancelPromptOptimize() {
   promptOptSeq++
   promptOptLoading.value = false
-  clearTimeout(promptOptSlowTimer)
+  stopPromptOptPolling()
+  cancelPromptOptTask()
+}
+
+// 弹窗里的「停止」：和关弹窗的区别只是留在原地并给一句反馈
+function stopPromptOptimize() {
+  cancelPromptOptimize()
+  promptOptError.value = '已停止优化'
 }
 
 function applyPromptOptimize() {
@@ -2503,8 +2642,13 @@ onActivated(() => {
   background: var(--bg-secondary, rgba(0, 0, 0, 0.03)); display: block;
 }
 .po-loading {
-  display: flex; align-items: center; gap: 8px; font-size: 13px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px;
   color: var(--text-secondary, #555); padding: 14px 4px;
+}
+/* 慢的时候多给一句解释，独占一行，别把主文案挤变形 */
+.po-loading-sub {
+  flex-basis: 100%; font-size: 11.5px; line-height: 1.6;
+  color: var(--text-quaternary, #999); padding-left: 22px;
 }
 .po-spinner {
   width: 14px; height: 14px; border-radius: 50%;
