@@ -74,7 +74,7 @@ type ChatPlusConfig struct {
 // 注意：ComfyUI 必须用 `--listen 0.0.0.0` 启动，否则只监听 127.0.0.1，
 // 容器内（本服务）与局域网其他设备都连不上。
 type ComfyUIConfig struct {
-	BaseURL        string  `yaml:"base_url"`        // 如 http://192.168.31.147:8188（容器内也可写 http://host.docker.internal:8188）
+	BaseURL        string  `yaml:"base_url"`        // 如 http://192.168.31.111:8188（容器内也可写 http://host.docker.internal:8188）
 	Model          string  `yaml:"model"`           // 扩散模型文件名（GGUF / safetensors）
 	Clip           string  `yaml:"clip"`            // 文本编码器文件名
 	Vae            string  `yaml:"vae"`             // VAE 文件名
@@ -122,7 +122,7 @@ type ComfyImageModelPreset struct {
 // ComfyUI 各字段的兜底默认值（配置只写 base_url 也能直接跑）。
 const (
 	comfyDefaultModel      = "qwen-image-2.1-UC-Q4_K_M.gguf"
-	comfyDefaultClip       = "qwen3vl_8b_int8_convrot.safetensors"
+	comfyDefaultClip       = "qwen3vl_8b_w4a8.safetensors"
 	comfyDefaultVae        = "qwen_image_2.1_vae_bf16.safetensors"
 	comfyDefaultClipType   = "qwen_image"
 	comfyDefaultSteps      = 25
@@ -794,7 +794,7 @@ func DefaultConfig() *Config {
 		ChatPlus: ChatPlusConfig{
 			OllamaBaseURL: "http://192.168.31.147:11434",
 			ComfyUI: ComfyUIConfig{
-				BaseURL:        "http://192.168.31.147:8188",
+				BaseURL:        "http://192.168.31.111:8188",
 				Model:          comfyDefaultModel,
 				Clip:           comfyDefaultClip,
 				Vae:            comfyDefaultVae,

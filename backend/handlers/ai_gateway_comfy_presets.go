@@ -37,7 +37,7 @@ var builtinComfyPresets = []config.ComfyImageModelPreset{
 	{
 		ID: "qwen-image-2.1", Label: "Qwen-Image 2.1", Family: comfyFamilyQwen21,
 		Unet:       "qwen-image-2.1-UC-Q4_K_M.gguf",
-		Clip:       "qwen3vl_8b_int8_convrot.safetensors",
+		Clip:       "qwen3vl_8b_w4a8.safetensors",
 		ClipLoader: "CLIPLoader", ClipType: "qwen_image",
 		Vae:        "qwen_image_2.1_vae_bf16.safetensors",
 		Steps:      25, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
@@ -45,12 +45,24 @@ var builtinComfyPresets = []config.ComfyImageModelPreset{
 	},
 	{
 		ID: "flux-2-klein", Label: "FLUX.2 Klein 4B", Family: comfyFamilyFlux2,
-		Unet:       "flux-2-klein-4b-Q4_K_M.gguf",
-		Clip:       "qwen3-4b-te-q5_k_m.gguf",
+		Unet:       "flux-2-klein-4b-Q5_K_M.gguf",
+		Clip:       "qwen_3_4b_fp8_mixed.safetensors",
 		ClipLoader: "CLIPLoaderGGUF", ClipType: "flux2",
-		Vae:        "flux2_ae.safetensors",
+		Vae:        "flux2-vae.safetensors",
 		Steps:      4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
 		SpeedHint: "约 20~30 秒，只要文生图",
+	},
+	{
+		// 专用图生图（参考图编辑）模型：Qwen-Image-Edit 2511 本体，配 Qwen2.5-VL 文本编码器。
+		// 官方工作流用 TextEncodeQwenImageEditPlus + VAEEncode 源图，本家族走 buildQwenEditWorkflow。
+		// 只支持 edit 模式（supports_t2i=false），文生图请用上面两个预设。
+		ID: "qwen-image-edit-2511", Label: "Qwen-Image-Edit 2511", Family: comfyFamilyQwenEdit,
+		Unet:       "qwen-image-edit-2511-uncensored-Q4_K_M.gguf",
+		Clip:       "Qwen2.5-VL-7B-Instruct-q4_0.gguf",
+		ClipLoader: "CLIPLoaderGGUF", ClipType: "qwen_image",
+		Vae:        "qwen_image_vae.safetensors",
+		Steps:      25, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		SpeedHint: "参考图编辑专用（图生图），约 5 分钟",
 	},
 }
 
