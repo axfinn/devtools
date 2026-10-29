@@ -83,6 +83,7 @@ chat_plus:
 | POST | `/api/chat-plus/image/generate` | 提交任务，立即返回 `task_id` |
 | GET | `/api/chat-plus/image/tasks/:id` | 轮询任务状态 |
 | GET | `/api/chat-plus/image/tasks/:id/stream` | SSE 推送进度，直到终态 |
+| POST | `/api/chat-plus/image/prompt/optimize` | 让文本大模型把一句大白话改写成可出图的提示词（30 次/分钟/IP） |
 
 提交任务：
 
@@ -109,6 +110,36 @@ SSE 事件体统一是任务 JSON，按 `status` 判断即可：
 data: {"task_id":"img_3f2a","status":"running","phase":"采样中 12/25","progress":48,...}
 data: {"task_id":"img_3f2a","status":"succeeded","progress":100,"images":[{"url":"/api/chat/uploads/ai/20261028/ab12.png","width":1024,"height":1024}]}
 ```
+
+## AI 帮写提示词
+
+前端出图模式里的「✨ 优化提示词」走这个接口。它只是**改写建议**：结果回填到输入框，
+用户可以继续改、也可以直接丢掉，不会自动开始出图。
+
+```bash
+curl -X POST http://127.0.0.1:8082/api/chat-plus/image/prompt/optimize \
+  -H 'Content-Type: application/json' \
+  -H 'X-Chat-Password: 123654789' \
+  -d '{"prompt":"把背景换成海边","mode":"edit","model":"ollama:qwen3:14b",
+       "image_model":"Qwen-Image 2.1","image":"data:image/jpeg;base64,..."}'
+# {"prompt":"保持人物五官、姿态与白色连衣裙不变……","model":"ollama:qwen3:14b","mode":"edit","used_image":true}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `prompt` | 用户原话（≤2000 字）。`describe` 模式可为空 |
+| `model` | 用于改写的**文本**模型，一般传聊天页当前选中的模型；空/不可用时回落服务端默认 |
+| `mode` | `t2i` 文生图 / `edit` 图生图 / `describe` 只有参考图没写要求；留空按有没有 `prompt`、`image` 推断 |
+| `image_model` | 目标出图模型名，只用于让模型知道写法偏好（FLUX 系偏好英文） |
+| `image` | 参考图 dataURL（≤8MB）。**只有** 局域网 Ollama 的视觉模型会真的看图，其它模型静默降级为纯文字改写 |
+
+三种模式的写法要求不同，这是「图生图效果差」的主要修复点：
+
+- `edit`：必须写成「编辑指令 + 保持不变清单」，否则模型会把整张图重画；
+- `t2i`：按「主体与动作 → 场景 → 光线 → 镜头 → 风格」组织；
+- `describe`：先看懂参考图，再写可复现该画面与风格的提示词。
+
+系统提示词还硬性禁止「8K/杰作/masterpiece」这类对现代扩散模型无意义的堆砌词，以及负面提示词与参数。
 
 ## OpenAI 兼容接口
 

@@ -73,6 +73,10 @@ func RegisterAIGatewayRoutes(api *gin.RouterGroup, h *RouteHandlers, createRateL
 	// 可切换的出图模型清单（含 ComfyUI 上真实存在的文件探活结果）
 	api.GET("/chat-plus/image/models", h.AiGatewayHandler.ChatPlusImageModels)
 	api.POST("/chat-plus/image/generate", createRateLimiter.Middleware(), h.AiGatewayHandler.ChatPlusImageGenerate)
+	// AI 帮写出图提示词：结果只落回输入框，用户可改可弃，因此给独立限流桶
+	// （30/分钟）——调提示词常要反复试几次，10/分钟的全局桶会误伤正常使用。
+	promptOptimizeLimiter := middleware.NewRateLimiter(30, time.Minute, nil)
+	api.POST("/chat-plus/image/prompt/optimize", promptOptimizeLimiter.Middleware(), h.AiGatewayHandler.ChatPlusImagePromptOptimize)
 	api.GET("/chat-plus/image/tasks/:id", h.AiGatewayHandler.ChatPlusImageTask)
 	api.GET("/chat-plus/image/tasks/:id/stream", h.AiGatewayHandler.ChatPlusImageTaskStream)
 	api.GET("/english-tutor/meta", h.AiGatewayHandler.EnglishTutorMeta)

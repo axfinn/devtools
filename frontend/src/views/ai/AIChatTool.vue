@@ -259,13 +259,74 @@
               · {{ currentImageModel?.steps || imageStatus.steps }} 步<template v-if="currentImageModel?.speed_hint"> · {{ currentImageModel.speed_hint }}</template>
               <template v-if="!currentImageModel?.supports_edit"> · 不支持改图</template>
               <template v-if="imageNeedsRef"> · 需附参考图</template>
-              · </template>
+              ·
+              <button
+                class="opt-pill"
+                :class="{ busy: promptOptLoading }"
+                :disabled="promptOptDisabled"
+                :title="promptOptDisabledReason || '让 AI 把这句话改写成更适合出图的提示词，结果可再改'"
+                @click="openPromptOptimize"
+              >✨ {{ promptOptLoading ? '优化中…' : '优化提示词' }}</button>
+            </template>
             <template v-else-if="selectedModelVision">📷 已启用视觉：图片将压缩至最长边 ≤{{ IMG_MAX_DIM }}px 后发送 · </template>
             内容由 AI 生成，请仔细甄别 · MiniMax 密钥保存在服务端，不会暴露给浏览器
           </div>
           <input ref="imageInputRef" type="file" accept="image/*" multiple hidden @change="e => { addImageFiles(e.target.files); e.target.value = '' }" />
         </footer>
       </main>
+
+      <!-- ═══════════ AI 优化提示词 ═══════════ -->
+      <!-- 只是「改写建议」：结果永远落回输入框，用户可以随便改、也可以直接放弃 -->
+      <el-dialog
+        v-model="promptOptOpen"
+        title="AI 优化提示词"
+        width="min(620px, 92vw)"
+        append-to-body
+        :close-on-click-modal="false"
+        class="prompt-opt-dialog"
+        @closed="cancelPromptOptimize"
+      >
+        <div class="po-body">
+          <div class="po-origin">
+            <span class="po-label">你的原话</span>
+            <span class="po-origin-text">{{ promptOptOriginal || '（只附了参考图，让 AI 先看懂画面再写）' }}</span>
+          </div>
+
+          <div v-if="promptOptLoading" class="po-loading">
+            <span class="po-spinner"></span>
+            正在改写提示词…{{ promptOptSlow ? '（本地大模型较慢，先别关这个框）' : '' }}
+          </div>
+          <div v-else-if="promptOptError" class="po-error">
+            <span>⚠ {{ promptOptError }}</span>
+          </div>
+          <div v-else class="po-result">
+            <span class="po-label">优化结果 · 可直接改</span>
+            <el-input
+              v-model="promptOptResult"
+              type="textarea"
+              :autosize="{ minRows: 4, maxRows: 12 }"
+              resize="none"
+              placeholder="AI 改写后的提示词会出现在这里"
+            />
+            <div class="po-meta">
+              <span v-if="promptOptModelLabel">由 {{ promptOptModelLabel }} 生成</span>
+              <span v-if="promptOptUsedImage"> · 已参考你附的图</span>
+              <span v-else-if="promptOptImage"> · 当前模型看不了图，仅按文字改写</span>
+              <span class="po-count">{{ promptOptResult.length }} 字</span>
+            </div>
+          </div>
+        </div>
+        <template #footer>
+          <div class="po-footer">
+            <button class="po-btn ghost" :disabled="promptOptLoading" @click="runPromptOptimize">重新优化</button>
+            <div class="po-footer-right">
+              <button class="po-btn" @click="promptOptOpen = false">放弃</button>
+              <button class="po-btn" :disabled="!promptOptResult.trim()" @click="applyPromptOptimize">采纳到输入框</button>
+              <button class="po-btn primary" :disabled="!promptOptResult.trim()" @click="applyPromptOptimizeAndSend">采纳并生成</button>
+            </div>
+          </div>
+        </template>
+      </el-dialog>
     </div>
   </div>
 </template>
@@ -1573,6 +1634,123 @@ function hideTaskId(convId, taskId) {
   } catch { /* 忽略 */ }
 }
 
+// ══════════════ AI 帮写提示词 ══════════════
+// 出图效果八成看提示词，但真实使用里用户只会写「把背景换成海边」这种一句大白话。
+// 这里把原话（+ 可选参考图）交给文本大模型，改写成扩散模型能吃的结构化提示词，
+// 结果只落回输入框：用户可以先改再采纳，也可以直接放弃 —— 决定权始终在用户手上。
+const promptOptOpen = ref(false)
+const promptOptLoading = ref(false)
+const promptOptResult = ref('')
+const promptOptOriginal = ref('')
+const promptOptImage = ref('')        // 打开时快照参考图，避免优化过程中图片被移除
+const promptOptModelLabel = ref('')
+const promptOptUsedImage = ref(false)
+const promptOptError = ref('')
+const promptOptSlow = ref(false)      // 本地大模型首字节慢，超过 8s 给一句提示
+let promptOptSeq = 0                  // 连点「重新优化」时只认最后一次响应
+let promptOptSlowTimer = null
+
+const promptOptDisabled = computed(() => promptOptLoading.value || imageGenerating.value || streaming.value)
+
+const promptOptDisabledReason = computed(() => {
+  if (imageGenerating.value) return '正在出图，等这张画完再优化'
+  if (!userInput.value.trim() && !pendingImages.value.length) return '先写一句想画什么/怎么改，或附一张参考图'
+  return ''
+})
+
+function openPromptOptimize() {
+  const text = userInput.value.trim()
+  const ref = pendingImages.value[0]
+  if (!text && !ref) {
+    ElMessage.warning('先写一句你想画什么/怎么改，或者附一张参考图')
+    return
+  }
+  promptOptOpen.value = true
+  promptOptOriginal.value = text
+  promptOptImage.value = ref?.dataUrl || ''
+  promptOptResult.value = ''
+  promptOptError.value = ''
+  promptOptModelLabel.value = ''
+  promptOptUsedImage.value = false
+  runPromptOptimize()
+}
+
+async function runPromptOptimize() {
+  if (promptOptLoading.value) return
+  const seq = ++promptOptSeq
+  const text = promptOptOriginal.value
+  const image = promptOptImage.value
+  promptOptLoading.value = true
+  promptOptSlow.value = false
+  promptOptError.value = ''
+  clearTimeout(promptOptSlowTimer)
+  promptOptSlowTimer = setTimeout(() => { if (seq === promptOptSeq) promptOptSlow.value = true }, 8000)
+
+  try {
+    // 模式由「有没有原话 / 有没有图」推断，用户不用理解 t2i / edit 的区别
+    const body = {
+      prompt: text,
+      model: settings.value.model || '',
+      image_model: currentImageModel.value?.label || '',
+      image_family: currentImageModel.value?.family || '',
+      mode: !image ? 't2i' : (text ? 'edit' : 'describe'),
+    }
+    if (image) body.image = image
+    const res = await fetch(`${API_BASE}/api/chat-plus/image/prompt/optimize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...auth.authHeader() },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (seq !== promptOptSeq) return
+    if (!res.ok) {
+      const err = new Error(data.error || `HTTP ${res.status}`)
+      err.biz = true // 服务端已经给了人话，别再被 netErrMsg 包一层「请求失败」
+      throw err
+    }
+    promptOptResult.value = data.prompt || ''
+    promptOptModelLabel.value = data.model || ''
+    promptOptUsedImage.value = !!data.used_image
+    if (!promptOptResult.value) {
+      const err = new Error('AI 没有返回可用的提示词，请重试')
+      err.biz = true
+      throw err
+    }
+  } catch (e) {
+    if (seq === promptOptSeq) promptOptError.value = e?.biz ? e.message : netErrMsg(e)
+  } finally {
+    clearTimeout(promptOptSlowTimer)
+    if (seq === promptOptSeq) {
+      promptOptLoading.value = false
+      promptOptSlow.value = false
+    }
+  }
+}
+
+// 关闭弹窗：作废还在飞的请求，避免它晚到又把结果塞进来
+function cancelPromptOptimize() {
+  promptOptSeq++
+  promptOptLoading.value = false
+  clearTimeout(promptOptSlowTimer)
+}
+
+function applyPromptOptimize() {
+  const text = promptOptResult.value.trim()
+  if (!text) return
+  userInput.value = text
+  promptOptOpen.value = false
+  ElMessage.success('已放入输入框，可以继续修改')
+}
+
+async function applyPromptOptimizeAndSend() {
+  const text = promptOptResult.value.trim()
+  if (!text) return
+  userInput.value = text
+  promptOptOpen.value = false
+  await nextTick()
+  sendMessage()
+}
+
 // ══════════════ 本地出图（ComfyUI） ══════════════
 // 后端是「提交任务 → SSE 推进度」的异步模型，前端只负责把进度画在消息里。
 async function sendImageTask(text) {
@@ -2233,6 +2411,69 @@ onActivated(() => {
 .img-model-select :deep(.el-select__placeholder) { color: var(--text-secondary, #555); }
 .mo-label { float: left; }
 .mo-meta { float: right; margin-left: 14px; font-size: 11px; color: var(--text-quaternary, #999); }
+
+/* 出图模式下的「优化提示词」小按钮：和模型下拉同一行的轻量 pill，
+   不做成大按钮是因为它属于「辅助」而不是主流程（主流程仍然是写完就发）。 */
+.opt-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  margin: 2px 2px; padding: 1px 9px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary); font-size: 11.5px; line-height: 18px;
+  cursor: pointer; transition: all 0.15s; vertical-align: middle;
+}
+.opt-pill:hover:not(:disabled) { background: color-mix(in srgb, var(--color-primary) 18%, transparent); }
+.opt-pill:disabled { opacity: 0.5; cursor: not-allowed; }
+.opt-pill.busy { opacity: 1; cursor: progress; }
+
+/* ═══════════ AI 优化提示词弹窗 ═══════════ */
+/* 弹窗被 append-to-body，所以这里用独立类名 + 扁平选择器，不依赖父级作用域 */
+.po-body { display: flex; flex-direction: column; gap: 14px; }
+.po-label {
+  display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600;
+  color: var(--text-tertiary, #888);
+}
+.po-origin { font-size: 13px; }
+.po-origin-text {
+  color: var(--text-secondary, #555); line-height: 1.6; word-break: break-word;
+  padding: 8px 10px; border-radius: 8px; border-left: 3px solid var(--border-base);
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.03)); display: block;
+}
+.po-loading {
+  display: flex; align-items: center; gap: 8px; font-size: 13px;
+  color: var(--text-secondary, #555); padding: 14px 4px;
+}
+.po-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
+  border-top-color: var(--color-primary); animation: po-spin 0.8s linear infinite;
+}
+@keyframes po-spin { to { transform: rotate(360deg); } }
+.po-error {
+  font-size: 13px; line-height: 1.6; color: var(--danger-color, #dc2626);
+  padding: 10px 12px; border-radius: 8px;
+  background: color-mix(in srgb, #dc2626 8%, transparent);
+  border: 1px dashed color-mix(in srgb, #dc2626 35%, transparent);
+}
+.po-meta {
+  display: flex; align-items: center; gap: 2px; margin-top: 6px;
+  font-size: 11.5px; color: var(--text-quaternary, #999);
+}
+.po-count { margin-left: auto; }
+.po-footer { display: flex; align-items: center; gap: 8px; }
+.po-footer-right { display: flex; gap: 8px; margin-left: auto; }
+.po-btn {
+  padding: 7px 14px; border-radius: 9px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border-base); background: var(--bg-primary, #fff);
+  color: var(--text-primary); transition: all 0.15s;
+}
+.po-btn:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
+.po-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.po-btn.ghost { border-style: dashed; color: var(--text-secondary, #555); }
+.po-btn.primary {
+  border: none; color: #fff; background: linear-gradient(135deg, #409eff, #7c5cff);
+}
+.po-btn.primary:hover:not(:disabled) { color: #fff; filter: brightness(1.06); }
 
 /* 窄屏适配：侧栏改抽屉、模型选择器收缩、输入区安全区、防 iOS 聚焦缩放 */
 @media (max-width: 768px) {
