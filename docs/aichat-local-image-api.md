@@ -73,6 +73,31 @@ chat_plus:
 `COMFYUI_BASE_URL`、`COMFYUI_MODEL`、`COMFYUI_CLIP`、`COMFYUI_VAE`、`COMFYUI_STEPS`、
 `COMFYUI_TIMEOUT_SEC`、`COMFYUI_PUBLIC_BASE_URL`。
 
+## 出图模型五档
+
+内置五个预设（`handlers/ai_gateway_comfy_presets.go` 的 `builtinComfyPresets`），
+前端下拉框按这个顺序展示，**第一条是默认**。耗时是 192.168.31.111 上 1024×1024 的实测值：
+
+| 预设 id | 用途 | 步数 | 实测 | 说明 |
+|---|---|---|---|---|
+| `qwen-image-2.1-turbo` | 日常（默认） | 8 | ~30s | 标准模型挂 turbo 蒸馏 LoRA，质量接近 25 步 |
+| `qwen-image-2.1` | 极限质量 | 25 | ~75s | 细节最足，慢 3 倍 |
+| `flux-2-klein` | 最快 | 4 | ~20s | 参数最少，仅文生图 |
+| `z-image-turbo` | 亚洲人像 | 8 | ~40s | 肤质与人脸结构更稳，仅文生图 |
+| `qwen-image-edit-2511` | 改图 | 4 | ~40s | 蒸馏版，4 步足够；必须附参考图 |
+
+几个换模型时最容易踩的坑：
+
+- **换模型 ≠ 只换 unet**。CLIP 编码器与 VAE 必须同家族配套：
+  qwen21 用 `qwen3vl_8b` + `qwen_image_2.1_vae`；flux2 用 `qwen_3_4b` + `flux2-vae`；
+  qwen_edit 用 `Qwen2.5-VL` + `qwen_image_vae`；zimage 用 `qwen_3_4b` + **Flux 的 `ae.safetensors`**。
+- **LoRA 只挂 unet**（`LoraLoaderModelOnly`）。用 `LoraLoader` 会顺带改文本编码器，中文理解反而变差。
+- **Z-Image 的 ClipLoader 必须是 `CLIPLoader`**。同一份 `qwen_3_4b_fp8_mixed.safetensors`
+  用 `CLIPLoaderGGUF` 加载会在 `CLIPTextEncode` 报
+  `mat1 and mat2 shapes cannot be multiplied (8x2560 and 1280x4096)`。
+- **Z-Image 必须过一次 `ModelSamplingAuraFlow`（shift=3）**，否则采样轨迹不对。
+- 蒸馏模型（flux2 / z-image / edit-2511 / turbo LoRA）都别跑 25 步，纯浪费时间。
+
 ## 聊天页接口
 
 鉴权：`X-Chat-Password: <chat_plus.password>`（与聊天页同一套密码门）。
