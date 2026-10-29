@@ -138,7 +138,7 @@ handlers/
 ├── 内容创作（3）：mermaid, game, hermes
 ├── 开发者（3）：autodev, analysis, console
 ├── 辅助（7）：background, monitoring, ocr, edge_tts, skills*, askit*, fileutils
-└── 测试（57）：*_test.go
+└── 测试（58）：*_test.go
 ```
 
 ---
