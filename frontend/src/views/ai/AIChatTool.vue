@@ -1714,9 +1714,13 @@ const promptOptWillSeeImage = computed(() => {
   return !!promptOptImage.value && id.startsWith('ollama:') && !!promptOptEffectiveEntry.value?.vision
 })
 
-// 换模型后立刻用新模型重跑一次：不然弹窗里显示的文案来自旧模型，很容易看混
+// 换模型后立刻用新模型重跑一次：不然弹窗里显示的文案来自旧模型，很容易看混。
+// 正在跑也要重跑——本地模型慢的时候，用户换模型就是想赶紧拿到结果，
+// 不能让它先把旧模型那一次等完。
 function onPromptOptModelChange() {
-  if (promptOptOpen.value && !promptOptLoading.value) runPromptOptimize()
+  if (!promptOptOpen.value) return
+  if (promptOptLoading.value) cancelPromptOptimize()
+  runPromptOptimize()
 }
 
 function openPromptOptimize() {
