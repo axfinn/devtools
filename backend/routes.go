@@ -49,6 +49,7 @@ type routeHandlers struct {
 	healthHandler             *handlers.HealthHandler
 	ssRuleHandler             *handlers.SSRuleHandler
 	newsHandler               *handlers.NewsHandler
+	musicHandler              *handlers.MusicHandler
 }
 
 func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter, h *routeHandlers) {
@@ -93,6 +94,7 @@ func setupRoutes(api *gin.RouterGroup, createRateLimiter *middleware.RateLimiter
 		HealthHandler:             h.healthHandler,
 		SSRuleHandler:             h.ssRuleHandler,
 		NewsHandler:               h.newsHandler,
+		MusicHandler:              h.musicHandler,
 	}
 	routes.RegisterAllRoutes(api, rh, createRateLimiter)
 }
