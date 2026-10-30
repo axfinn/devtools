@@ -633,6 +633,19 @@ const toolRoutes = [
 	    }
 	  },
 	  {
+	    path: '/music',
+	    name: 'MusicLibrary',
+	    component: () => import('../views/ai/MusicLibraryTool.vue'),
+	    meta: {
+	      title: '音乐库',
+	      icon: 'Headset',
+	      category: 'ai',
+	      shortcut: true,
+	      shortcutPriority: 90,
+	      description: '我的 AI 音乐收藏:上传、歌词、收藏、随机循环播放'
+	    }
+	  },
+	  {
 	    path: '/gallery',
 	    name: 'MediaGallery',
 	    component: () => import('../views/share/MediaGallery.vue'),

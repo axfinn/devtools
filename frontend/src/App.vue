@@ -283,8 +283,24 @@
               </button>
             </div>
 
-            <!-- Time + close -->
+            <!-- Volume + Time + close -->
             <div class="pb-right">
+              <div class="pb-volume" title="音量">
+                <button class="pb-btn" @click="toggleMute">
+                  <svg v-if="playerState.volume > 0" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                    <path d="M3 9v6h4l5 5V4L7 9H3z" />
+                    <path d="M16 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                    <path d="M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                  <el-icon v-else :size="16"><Mute /></el-icon>
+                </button>
+                <input
+                  class="pb-volume-slider"
+                  type="range" min="0" max="1" step="0.01"
+                  :value="playerState.volume"
+                  @input="player.setVolume($event.target.value)"
+                />
+              </div>
               <span class="pb-time">{{ fmtTime(playerState.currentTime) }} / {{ fmtTime(playerState.duration) }}</span>
               <button class="pb-btn pb-btn-close" title="停止播放" @click="player.stop()">
                 <el-icon :size="16"><Close /></el-icon>
@@ -303,7 +319,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tools, VideoPlay, VideoPause, ArrowLeftBold, ArrowRightBold, RefreshRight, Rank, Close } from '@element-plus/icons-vue'
+import { Menu, Coffee, Sunny, Moon, Monitor, Search, ArrowDown, ArrowRight, Tools, VideoPlay, VideoPause, ArrowLeftBold, ArrowRightBold, RefreshRight, Rank, Close, Mute } from '@element-plus/icons-vue'
 import { useTheme } from './composables/useTheme'
 import { useMediaPlayer } from './composables/useMediaPlayer'
 import { useToolPreferences } from './composables/useToolPreferences'
@@ -346,9 +362,15 @@ function seekBar(e) {
 }
 
 function goToGallery() {
-  if (route.path !== '/gallery') {
-    router.push('/gallery')
+  // 音乐库曲目(id 前缀 mus_)跳回音乐库,其余跳媒体画廊
+  const target = currentTrack.value?.id?.startsWith('mus_') ? '/music' : '/gallery'
+  if (route.path !== target) {
+    router.push(target)
   }
+}
+
+function toggleMute() {
+  player.setVolume(playerState.volume === 0 ? 1 : 0)
 }
 
 function fmtTime(s) {
@@ -1291,6 +1313,37 @@ const themeModeName = computed(() => {
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
+}
+.pb-volume {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pb-volume-slider {
+  width: 64px;
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.3);
+  outline: none;
+  cursor: pointer;
+}
+.pb-volume-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: none;
+}
+.pb-volume-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #38bdf8;
+  border: none;
 }
 .pb-time {
   font-size: 11px;

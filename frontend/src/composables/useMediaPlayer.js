@@ -1,6 +1,14 @@
 import { reactive, computed } from 'vue'
 
 // ── Singleton reactive state (survives route navigation) ──
+function initialVolume() {
+  try {
+    const v = parseFloat(localStorage.getItem('media_player_volume'))
+    if (isFinite(v) && v >= 0 && v <= 1) return v
+  } catch {}
+  return 1
+}
+
 const state = reactive({
   playlist: [],        // all playable items: { id, title, result_type, assetUrl, kind }
   currentIndex: -1,
@@ -9,6 +17,7 @@ const state = reactive({
   shuffleMode: false,
   currentTime: 0,
   duration: 0,
+  volume: initialVolume(),
 })
 
 let audioEl = null
@@ -49,10 +58,18 @@ function createAudio(url) {
     audioEl.src = ''
   }
   audioEl = new Audio(url)
+  audioEl.volume = state.volume
   audioEl.addEventListener('ended', onTrackEnded)
   audioEl.addEventListener('error', onAudioError)
   audioEl.addEventListener('loadedmetadata', onLoadedMetadata)
   audioEl.addEventListener('timeupdate', onTimeUpdate)
+}
+
+function setVolume(v) {
+  const next = Math.min(1, Math.max(0, Number(v) || 0))
+  state.volume = next
+  if (audioEl) audioEl.volume = next
+  try { localStorage.setItem('media_player_volume', String(next)) } catch {}
 }
 
 function onTrackEnded() {
@@ -219,6 +236,7 @@ export function useMediaPlayer() {
     skipNext,
     skipPrev,
     seek,
+    setVolume,
     setLoopMode,
     toggleShuffle,
     setPlaylist,

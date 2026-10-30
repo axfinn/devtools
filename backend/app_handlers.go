@@ -98,6 +98,9 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 	// 新闻模块:复用主 SQLite 连接与 AI Gateway(可选精编)。
 	newsHandler := handlers.NewNewsHandler(db, cfg, aiGatewayHandler)
 
+	// 音乐库:AI 音乐收藏与播放,元数据落 SQLite,音频文件落 ./data/music。
+	musicHandler := handlers.NewMusicHandler(db)
+
 	// Skills 模块:对外工具入口,默认未启用(cfg.Skills.Enabled = false),
 	// 由管理员在 config.yaml 显式打开后才对外暴露。
 	// Guard 在 db 初始化后单独构造,AttachGuard 给 SkillsHandler 注入写库专项限流。
@@ -147,6 +150,7 @@ func buildRouteHandlers(rt *appRuntime) (*routeHandlers, error) {
 		healthHandler:             healthHandler,
 		ssRuleHandler:             ssRuleHandler,
 		newsHandler:               newsHandler,
+		musicHandler:              musicHandler,
 	}, nil
 }
 
