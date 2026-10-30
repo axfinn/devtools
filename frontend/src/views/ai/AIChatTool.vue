@@ -197,13 +197,18 @@
           </div>
 
           <!-- 待发送图片缩略图 -->
-          <div v-if="pendingImages.length" class="img-thumbs">
+          <div v-if="pendingImages.length || pendingMask" class="img-thumbs">
             <div v-for="im in pendingImages" :key="im.id" class="img-thumb">
               <img :src="im.dataUrl" alt="" />
               <span class="img-kb">{{ im.kb }}KB</span>
               <button class="img-del" title="移除" @click="removePendingImage(im.id)">✕</button>
             </div>
-            <span class="img-count">{{ pendingImages.length }}/{{ MAX_IMAGES }}</span>
+            <div v-if="pendingMask" class="img-thumb mask-thumb" title="遮罩：白色=要重绘区域">
+              <img :src="pendingMask.dataUrl" alt="" />
+              <span class="img-kb">遮罩</span>
+              <button class="img-del" title="移除遮罩" @click="pendingMask = null">✕</button>
+            </div>
+            <span class="img-count">{{ pendingImages.length }}/{{ imageLimit }}</span>
           </div>
           <div v-if="imageContextWarn" class="img-warn">⚠ 图片总体积较大（约 {{ pendingImagesKB }}KB），视觉模型上下文可能吃紧，建议减少图片或换更大显存的模型</div>
 
@@ -212,11 +217,20 @@
               class="gen-btn"
               :class="{ active: imageMode }"
               :disabled="!imageAvailable"
-              :title="imageAvailable ? (imageMode ? '退出本地出图，回到对话' : '本地出图（ComfyUI · 局域网）') : '本地出图不可用：' + (imageStatus.error || '未配置')"
+              :title="imageAvailable ? (imageMode ? '退出出图，回到对话' : '出图（本地 ComfyUI / 在线 MiniMax）') : '出图不可用：本地 ComfyUI 与在线 MiniMax 都未配置'"
               @click="toggleImageMode"
             >🎨</button>
             <button class="img-btn" :class="{ active: canAttachImage }" :disabled="!canAttachImage" :title="attachTitle" @click="openImagePicker">
               <el-icon><Picture /></el-icon>
+            </button>
+            <button
+              v-if="genModeNeedsMask"
+              class="img-btn"
+              :class="{ active: !!pendingMask }"
+              :title="pendingMask ? '更换遮罩（白色=要重绘区域）' : '添加遮罩（白色=要重绘区域）'"
+              @click="openMaskPicker"
+            >
+              <el-icon><Brush /></el-icon>
             </button>
             <el-input
               v-model="userInput"
@@ -237,7 +251,24 @@
             </button>
           </div>
           <div class="composer-hint" :class="{ 'has-image': imageMode }">
-            <template v-if="imageMode">🎨 本地出图：
+            <template v-if="imageMode">🎨 出图：
+              <el-select
+                v-model="genMode"
+                class="gen-mode-select"
+                size="small"
+                placeholder="模式"
+              >
+                <el-option
+                  v-for="m in availableGenModes"
+                  :key="m.value"
+                  :label="m.label"
+                  :value="m.value"
+                >
+                  <span class="mo-label">{{ m.label }}</span>
+                  <span class="mo-meta">{{ m.hint }}</span>
+                </el-option>
+              </el-select>
+              <span class="gen-mode-hint">{{ genModeMeta.hint }}</span>
               <el-select
                 v-model="settings.imageModel"
                 class="img-model-select"
@@ -256,7 +287,22 @@
                   <span class="mo-meta">{{ m.available === false ? '不可用' : m.speed_hint }}</span>
                 </el-option>
               </el-select>
-              · {{ currentImageModel?.steps || imageStatus.steps }} 步<template v-if="currentImageModel?.speed_hint"> · {{ currentImageModel.speed_hint }}</template>
+              <!-- 云端模型可以一次出多张（本地 ComfyUI 单卡串行，只出 1 张） -->
+              <el-select
+                v-if="currentImageModel?.provider === 'minimax'"
+                v-model="settings.imageCount"
+                class="gen-mode-select"
+                size="small"
+                placeholder="张数"
+              >
+                <el-option v-for="n in onlineImageCounts" :key="n" :label="n + ' 张'" :value="n" />
+              </el-select>
+              <template v-if="currentImageModel?.provider === 'minimax'">
+                · 云端 · 每次最多 {{ imageStatus.minimax_max_n || 1 }} 张<template v-if="currentImageModel?.speed_hint"> · {{ currentImageModel.speed_hint }}</template>
+              </template>
+              <template v-else>
+                · {{ currentImageModel?.steps || imageStatus.steps }} 步<template v-if="currentImageModel?.speed_hint"> · {{ currentImageModel.speed_hint }}</template>
+              </template>
               <template v-if="!currentImageModel?.supports_edit"> · 不支持改图</template>
               <template v-if="imageNeedsRef"> · 需附参考图</template>
               ·
@@ -272,6 +318,7 @@
             内容由 AI 生成，请仔细甄别 · MiniMax 密钥保存在服务端，不会暴露给浏览器
           </div>
           <input ref="imageInputRef" type="file" accept="image/*" multiple hidden @change="e => { addImageFiles(e.target.files); e.target.value = '' }" />
+          <input ref="maskInputRef" type="file" accept="image/*" hidden @change="e => { addMaskFile(e.target.files); e.target.value = '' }" />
         </footer>
       </main>
 
@@ -368,7 +415,7 @@
 <script setup>
 import { ref, reactive, computed, nextTick, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, CopyDocument, RefreshRight, Promotion, WarningFilled, Picture } from '@element-plus/icons-vue'
+import { Delete, CopyDocument, RefreshRight, Promotion, WarningFilled, Picture, Brush } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import hljs from '../../utils/highlight'
 import 'highlight.js/styles/github-dark.css'
@@ -445,7 +492,7 @@ function handleContentClick(e) {
 const conversations = ref([])   // [{id,title,createdAt,updatedAt}]
 const currentConvId = ref('')
 const messages = ref([])        // 当前会话消息 [{id,role,content,reasoning,model,ts}]
-const settings = ref({ model: '', systemPrompt: '', temperature: 0.7, imageMode: false, imageModel: '', promptOptimizeModel: '' })
+const settings = ref({ model: '', systemPrompt: '', temperature: 0.7, imageMode: false, imageModel: '', imageCount: 1, genMode: '', promptOptimizeModel: '' })
 const userInput = ref('')
 const composerFocused = ref(false)
 const streaming = ref(false)
@@ -463,6 +510,7 @@ const IMG_TOTAL_BUDGET = 4     // 单次请求最多携带的历史+当前图片
 const pendingImages = ref([])  // [{ id, dataUrl, w, h, kb }] 待发送图片（已压缩）
 const dragOver = ref(false)
 const imageInputRef = ref(null)
+const maskInputRef = ref(null)         // 遮罩图文件选择器（局部重绘 / 外补 用）
 
 // ══════════════ 本地出图（局域网 ComfyUI） ══════════════
 // 与对话是两条独立链路：对话走 Ollama/MiniMax，出图走 ComfyUI 的扩散模型，
@@ -475,7 +523,41 @@ const imageMode = computed({
 const imageGenerating = ref(false)    // 有出图任务在跑（用于禁用发送/显示停止）
 const imageStatus = ref({ available: false, model: '', steps: 0, resolution: 0, error: '' })
 let imageAbort = null                 // 出图任务的 AbortController
-const MAX_REF_IMAGES = 1              // 出图模式只支持一张参考图（编辑那张图）
+
+// 出图模式清单（与后端 buildComfyWorkflow 的分发对齐）。multi=允许多图，mask=需要遮罩图，
+// ref=需要底图/参考图，hint 展示在工具栏。
+const GEN_MODES = [
+  { value: 't2i', label: '文生图', ref: false, multi: false, mask: false, hint: '凭文字生成' },
+  { value: 'edit', label: '图生图', ref: true, multi: false, mask: false, hint: '参考图+指令改图' },
+  { value: 'inpaint', label: '局部重绘', ref: true, multi: false, mask: true, hint: '画遮罩擦除/重绘' },
+  { value: 'outpaint', label: '扩图', ref: true, multi: false, mask: true, hint: '自动向外扩展' },
+  { value: 'restore', label: '修复', ref: true, multi: false, mask: false, hint: '老照片/人脸增强' },
+  { value: 'multi_ref', label: '多图融合', ref: true, multi: true, mask: false, hint: '多张图内容结合' },
+  { value: 'composite', label: '拼合', ref: true, multi: true, mask: false, hint: '多图拼成一张' },
+]
+const genMode = computed({
+  get: () => settings.value.genMode || 't2i',
+  set: (v) => { settings.value.genMode = v },
+})
+// 切模式时清空不兼容的待发图片/遮罩，避免脏状态
+watch(genMode, () => {
+  const multi = genModeMeta.value.multi
+  if (!multi && pendingImages.value.length > 1) pendingImages.value = pendingImages.value.slice(0, 1)
+  if (!genModeMeta.value.mask) pendingMask.value = null
+})
+// 当前模式允许的最大图片数：对话模式最多 MAX_IMAGES 张；出图模式按 genMode 细分
+// —— 拼合/多图融合最多 2 张（按用户要求），单图改图类 1 张，文生图 0 张。
+const imageLimit = computed(() => {
+  if (!imageMode.value) return MAX_IMAGES
+  if (genModeMeta.value.multi) return 2
+  return genModeMeta.value.ref ? 1 : 0
+})
+const genModeMulti = computed(() => genModeMeta.value.multi)
+// 该模式是否需要底图/参考图
+const genModeNeedsRef = computed(() => genModeMeta.value.ref)
+// 该模式是否需要遮罩（局部重绘 / 扩图）
+const genModeNeedsMask = computed(() => genModeMeta.value.mask)
+const pendingMask = ref(null)         // 遮罩图 { id, dataUrl, w, h }（局部重绘 / 扩图用，白色=要重绘区域）
 
 // 可切换的出图模型（后端 GET /image/models）。一个模型 = 一整套工作流参数
 // （unet + 文本编码器 + VAE + 采样步数），所以切换就等于换「换脑」，
@@ -484,8 +566,28 @@ const imageModels = ref([])
 const imageModelsLoading = ref(false)
 const currentImageModel = computed(() => imageModels.value.find(m => m.id === settings.value.imageModel) || null)
 const usableImageModels = computed(() => imageModels.value.filter(m => m.available !== false))
-// 只能改图、不能凭空生成的模型（qwen_edit 家族）必须带参考图才能发
-const imageNeedsRef = computed(() => !!currentImageModel.value && currentImageModel.value.supports_t2i === false)
+// 云端模型（MiniMax image-01）只能文生图 / 图生图：其余模式（局部重绘、扩图、修复、
+// 多图融合、拼合）都依赖本地扩散工作流，云端做不到，所以下拉框里直接不出现 ——
+// 免得用户选完之后才被后端拒绝。
+const onlineModelSelected = computed(() => currentImageModel.value?.provider === 'minimax')
+const availableGenModes = computed(() => onlineModelSelected.value
+  ? GEN_MODES.filter(m => m.value === 't2i' || m.value === 'edit')
+  : GEN_MODES)
+const genModeMeta = computed(() => availableGenModes.value.find(m => m.value === genMode.value) || availableGenModes.value[0])
+// 云端一次出几张的可选项（1 ~ 上游配置的上限，默认上限 4）
+const onlineImageCounts = computed(() => {
+  const max = Math.max(1, Math.min(Number(imageStatus.value.minimax_max_n) || 1, 9))
+  return Array.from({ length: max }, (_, i) => i + 1)
+})
+// 切到云端模型时把已不支持的模式退回去（比如原来停在「局部重绘」），并清掉遮罩
+watch(onlineModelSelected, (online) => {
+  if (online && !availableGenModes.value.some(m => m.value === genMode.value)) {
+    genMode.value = 't2i'
+    pendingMask.value = null
+  }
+})
+// 该模式是否需要附底图/参考图（多图融合、拼合、改图、重绘、扩图、修复都需要）
+const imageNeedsRef = computed(() => genModeNeedsRef.value)
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }
 
@@ -513,22 +615,24 @@ function compressImage(src) {
   })
 }
 
-// 当前模式允许的最大图片数：出图模式只接受 1 张参考图，对话模式最多 MAX_IMAGES 张
-const imageLimit = computed(() => (imageMode.value ? MAX_REF_IMAGES : MAX_IMAGES))
-
 async function addImageFiles(fileList) {
   const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/'))
   if (!files.length) return
   if (!canAttachImage.value) {
-    ElMessage.warning(imageMode.value
-      ? `本地出图不可用：${imageStatus.value.error || '未配置 ComfyUI'}`
-      : '当前模型不支持图片，请先选一个视觉模型（如 llava / qwen-vl）')
+    if (imageMode.value) {
+      if (genMode.value === 't2i') ElMessage.warning('文生图模式不需要参考图')
+      else ElMessage.warning(`出图不可用：${imageStatus.value.error || '本地 ComfyUI 与在线 MiniMax 都未配置'}`)
+    } else {
+      ElMessage.warning('当前模型不支持图片，请先选一个视觉模型（如 llava / qwen-vl）')
+    }
     return
   }
   for (const f of files) {
     if (pendingImages.value.length >= imageLimit.value) {
       ElMessage.warning(imageMode.value
-        ? '出图模式只支持 1 张参考图（作为编辑对象）'
+        ? (genModeMulti.value
+            ? `「${genModeMeta.value.label}」最多同时附加 ${imageLimit.value} 张图片`
+            : '该模式只支持 1 张参考图（作为编辑对象）')
         : `最多同时附加 ${MAX_IMAGES} 张图片`)
       break
     }
@@ -549,12 +653,45 @@ function removePendingImage(id) {
 
 function openImagePicker() {
   if (!canAttachImage.value) {
-    ElMessage.warning(imageMode.value
-      ? `本地出图不可用：${imageStatus.value.error || '未配置 ComfyUI'}`
-      : '当前模型不支持图片，请先选一个视觉模型（如 llava / qwen-vl）')
+    if (imageMode.value) {
+      if (genMode.value === 't2i') ElMessage.warning('文生图模式不需要参考图')
+      else ElMessage.warning(`出图不可用：${imageStatus.value.error || '本地 ComfyUI 与在线 MiniMax 都未配置'}`)
+    } else {
+      ElMessage.warning('当前模型不支持图片，请先选一个视觉模型（如 llava / qwen-vl）')
+    }
     return
   }
   imageInputRef.value?.click()
+}
+
+// 遮罩图：局部重绘 / 外补专用。白色像素 = 要重绘 / 生成的区域。
+// 不压缩（保留清晰边缘），直接存 dataURL；体积偏大但这是出图素材不是历史垃圾，可接受。
+function openMaskPicker() {
+  maskInputRef.value?.click()
+}
+async function addMaskFile(fileList) {
+  const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/'))
+  const f = files[0]
+  if (!f) return
+  try {
+    const url = URL.createObjectURL(f)
+    const dataUrl = await new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width; canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        resolve(canvas.toDataURL('image/png'))
+      }
+      img.onerror = () => reject(new Error('遮罩读取失败'))
+      img.src = url
+    })
+    URL.revokeObjectURL(url)
+    pendingMask.value = { id: uid(), dataUrl, w: 0, h: 0 }
+  } catch (e) {
+    ElMessage.error(e.message || '遮罩处理失败')
+  }
 }
 
 function onPaste(e) {
@@ -925,6 +1062,8 @@ function loadSettings() {
       imageMode: false,
       // 上次选的出图模型（id）。服务端预设校验不过会自动回落到默认预设
       imageModel: s.imageModel || '',
+      // 云端出图一次出几张（1~4）。本地 ComfyUI 忽略此值，恒定 1 张
+      imageCount: Number(s.imageCount) > 0 ? Math.min(Number(s.imageCount), 9) : 1,
       // 提示词优化用的模型（'' = 跟随聊天模型）；选过就记住，别每次都重选
       promptOptimizeModel: s.promptOptimizeModel || '',
     }
@@ -987,13 +1126,20 @@ const engineStatus = computed(() => {
 })
 
 // 出图能力是否可用（后端探活 ComfyUI 的结果）
-const imageAvailable = computed(() => !!imageStatus.value.available)
+const imageAvailable = computed(() => !!(imageStatus.value.available || imageStatus.value.minimax_available))
 
-// 能否附加图片：出图模式 = 当参考图用；对话模式 = 当视觉模型输入用
-const canAttachImage = computed(() => (imageMode.value ? imageAvailable.value : selectedModelVision.value))
+// 能否附加图片：对话模式 = 当视觉模型输入用；出图模式 = 当参考图用（文生图不需要参考图）
+const canAttachImage = computed(() => {
+  if (!imageMode.value) return selectedModelVision.value
+  if (genMode.value === 't2i') return false
+  return imageAvailable.value
+})
 
 const attachTitle = computed(() => {
-  if (imageMode.value) return imageAvailable.value ? '附加参考图（按指令修改这张图）' : '本地出图不可用'
+  if (imageMode.value) {
+    if (genMode.value === 't2i') return '文生图模式不需要参考图'
+    return imageAvailable.value ? '附加参考图（按指令修改这张图）' : '出图不可用'
+  }
   return selectedModelVision.value ? '附加图片（视觉模型）' : '当前模型不支持图片'
 })
 
@@ -1028,14 +1174,18 @@ async function loadImageStatus() {
 function toggleImageMode() {
   if (!imageAvailable.value) {
     ElMessage.warning(imageStatus.value.error
-      ? `本地出图不可用：${imageStatus.value.error}`
-      : '本地出图不可用')
+      ? `出图不可用：${imageStatus.value.error}`
+      : '出图不可用')
     return
   }
   imageMode.value = !imageMode.value
-  // 切回对话模式时，参考图可能超出视觉模型张数上限，直接清空更直观
-  if (!imageMode.value) pendingImages.value = []
-  else if (!imageModels.value.length) loadImageModels()
+  // 切回对话模式时，参考图/遮罩可能超出视觉模型张数上限，直接清空更直观
+  if (!imageMode.value) {
+    pendingImages.value = []
+    pendingMask.value = null
+  } else if (!imageModels.value.length) {
+    loadImageModels()
+  }
 }
 
 // 模型 id → 展示名；清单还没拉到时先显示 id，别把标签空着
@@ -1068,7 +1218,13 @@ async function loadImageModels() {
 
 // 参考图与模型能力对齐：flux2 只做文生图，附了参考图就必须换到支持改图的模型。
 // 返回 false 表示当前是不可自动修复的情况（例如只装了改图模型却没附图）。
-function ensureModelMatchesRef(hasRef) {
+// 注意：inpaint/outpaint/restore/multi_ref/composite 这几种模式，后端会自动切到
+// 对应家族预设（qwen-edit / qwen21），前端选什么模型都不影响，所以直接放行。
+function ensureModelMatchesRef(hasRef, mode) {
+  if (mode === 'inpaint' || mode === 'outpaint' || mode === 'restore' ||
+      mode === 'multi_ref' || mode === 'composite') {
+    return true
+  }
   const cur = currentImageModel.value
   if (!cur) return true
   if (hasRef && cur.supports_edit === false) {
@@ -1948,34 +2104,52 @@ async function applyPromptOptimizeAndSend() {
   sendMessage()
 }
 
-// ══════════════ 本地出图（ComfyUI） ══════════════
+// ══════════════ 出图（本地 ComfyUI / 在线 MiniMax） ══════════════
 // 后端是「提交任务 → SSE 推进度」的异步模型，前端只负责把进度画在消息里。
+// 本地与云端共用这套协议，差别只在后端按模型预设分流，前端无感。
 async function sendImageTask(text) {
   if (imageGenerating.value) return
   if (!text) {
-    ElMessage.warning('本地出图需要先写一句画面描述')
+    ElMessage.warning('出图需要先写一句画面描述')
     return
   }
   if (!imageAvailable.value) {
-    ElMessage.warning(`本地出图不可用：${imageStatus.value.error || '未配置 ComfyUI'}`)
+    ElMessage.warning(`出图不可用：${imageStatus.value.error || '本地 ComfyUI 与在线 MiniMax 都未配置'}`)
     return
   }
-  const ref = pendingImages.value[0]
+  const mode = genMode.value
+  const allImages = pendingImages.value.map(p => p.dataUrl)
+  const hasRef = allImages.length > 0
   // 先确认模型能力与「有没有附参考图」匹配：不匹配会在这里就被拦下或自动换模型，
   // 免得任务跑到服务端才因为 flux2 不支持改图而失败。
-  if (!ensureModelMatchesRef(!!ref)) return
+  // （inpaint/outpaint/restore/multi_ref/composite 由后端自动切家族，这里直接放行）
+  if (!ensureModelMatchesRef(hasRef, mode)) return
   const modelId = settings.value.imageModel || ''
   const modelLabel = currentImageModel.value?.label || ''
-  const imgs = ref ? [{ id: ref.id, dataUrl: ref.dataUrl, w: ref.w, h: ref.h }] : []
+  // 遮罩：仅局部重绘 / 外补需要，且必须是 PNG（白色=重绘区，边缘清晰）。
+  const mask = (mode === 'inpaint' || mode === 'outpaint')
+    ? (pendingMask.value?.dataUrl || '')
+    : ''
+  if ((mode === 'inpaint' || mode === 'outpaint') && !mask) {
+    ElMessage.warning('「局部重绘 / 外补」需要一张遮罩图（白色=要重绘区域）')
+    return
+  }
+  const imgs = pendingImages.value.map(p => ({ id: p.id, dataUrl: p.dataUrl, w: p.w, h: p.h }))
   userInput.value = ''
   pendingImages.value = []
+  pendingMask.value = null
   ensureConversation(text)
   messages.value.push({ id: uid(), role: 'user', content: text, images: imgs, ts: Date.now() })
 
   const msg = {
     id: uid(), role: 'assistant', kind: 'image',
-    prompt: text, refImage: ref?.dataUrl || '',
+    prompt: text, mode,
+    images: allImages,                       // 多图融合/拼合传数组；单图模式后端取首张作底图
+    mask,                                    // 局部重绘 / 外补遮罩
+    refImage: allImages[0] || '',             // 兼容旧渲染/旧消息
     genModelId: modelId, genModel: modelLabel,
+    // 云端可以一次出多张；本地固定 1 张（重跑时沿用当时的张数）
+    count: currentImageModel.value?.provider === 'minimax' ? (settings.value.imageCount || 1) : 1,
     content: '', genImages: [], genError: '',
     progress: 0, phase: '排队中', generating: true, ts: Date.now(),
   }
@@ -2004,10 +2178,20 @@ async function runImageTask(msg) {
     // 落成服务端消息，前端掉线、关页面、切设备都不影响结果落地。
     const body = {
       prompt: msg.prompt,
+      mode: msg.mode || 't2i',
       conversation_id: currentConvId.value || '',
       message_id: msg.id || '',
     }
-    if (msg.refImage) body.image = msg.refImage
+    // 多图融合/拼合传 images 数组；单图模式（edit/inpaint/outpaint/restore）后端取首张作底图。
+    if ((msg.images || []).length) {
+      body.images = msg.images
+    } else if (msg.refImage) {
+      body.image = msg.refImage
+    }
+    // 局部重绘 / 外补遮罩（白色=重绘区）。
+    if (msg.mask) body.mask = msg.mask
+    // 一次出几张：仅云端模型支持 >1（本地 ComfyUI 单卡串行，后端会拒绝 n>1）
+    if (msg.count > 1) body.n = msg.count
     // 模型预设：空 = 用服务端默认。老消息（没有 genModelId）保持后端默认行为。
     if (msg.genModelId) body.model = msg.genModelId
     const res = await fetch(`${API_BASE}/api/chat-plus/image/generate`, {
@@ -2608,6 +2792,21 @@ onActivated(() => {
 .img-model-select :deep(.el-select__placeholder) { color: var(--text-secondary, #555); }
 .mo-label { float: left; }
 .mo-meta { float: right; margin-left: 14px; font-size: 11px; color: var(--text-quaternary, #999); }
+/* 出图模式切换：与模型下拉同款行内小下拉 */
+.gen-mode-select {
+  width: auto; min-width: 96px; display: inline-block; vertical-align: middle;
+  margin: 0 2px;
+}
+.gen-mode-select :deep(.el-select__wrapper) {
+  min-height: 22px; padding: 1px 6px; border-radius: 8px;
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04)); box-shadow: none;
+  font-size: 11.5px;
+}
+.gen-mode-select :deep(.el-select__placeholder) { color: var(--text-secondary, #555); }
+.gen-mode-hint { margin: 0 4px; color: var(--text-tertiary, #888); }
+/* 遮罩缩略图：用淡橙描边和参考图区分开 */
+.img-thumb.mask-thumb { border-color: #e6a23c; }
+.img-thumb.mask-thumb img { object-fit: contain; background: repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 12px 12px; }
 
 /* 出图模式下的「优化提示词」小按钮：和模型下拉同一行的轻量 pill，
    不做成大按钮是因为它属于「辅助」而不是主流程（主流程仍然是写完就发）。 */

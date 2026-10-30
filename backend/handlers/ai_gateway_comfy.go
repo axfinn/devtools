@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -48,26 +49,26 @@ import (
 // ── 常量 ────────────────────────────────────────────────────────────────────
 
 const (
-	comfyImageSubDir   = "ai"                    // 生成图落盘子目录：./data/uploads/ai/YYYYMMDD
-	comfyImageURLBase  = "/api/chat/uploads/ai"  // 对外访问路径（复用 chat 的静态路由）
-	comfyMaxPromptLen  = 2000                    // 提示词长度上限，防超长文本把编码器打爆
-	comfyMaxRefImage   = 10 << 20                // 参考图上限 10MB
-	comfyPollInterval  = 1500 * time.Millisecond // 主链路轮询间隔
-	comfyStreamTick    = 400 * time.Millisecond  // SSE 推送间隔
-	comfyTaskTTL       = 2 * time.Hour           // 任务内存保留时长
+	comfyImageSubDir  = "ai"                    // 生成图落盘子目录：./data/uploads/ai/YYYYMMDD
+	comfyImageURLBase = "/api/chat/uploads/ai"  // 对外访问路径（复用 chat 的静态路由）
+	comfyMaxPromptLen = 2000                    // 提示词长度上限，防超长文本把编码器打爆
+	comfyMaxRefImage  = 10 << 20                // 参考图上限 10MB
+	comfyPollInterval = 1500 * time.Millisecond // 主链路轮询间隔
+	comfyStreamTick   = 400 * time.Millisecond  // SSE 推送间隔
+	comfyTaskTTL      = 2 * time.Hour           // 任务内存保留时长
 	// SSE 单连接最长存活。不能设得太短：这个到期事件只影响「这条 SSE」，
 	// ComfyUI 那边任务照跑，如果我们在这里写 failed，前端就会看到假失败。
 	comfyStreamMaxIdle = 60 * time.Minute
 	// 主链路等待窗口（cfg.timeout_sec）到了之后的宽限续等时长。
 	// ComfyUI 不受我们 ctx 约束，首帧加载模型/排队时经常在超时后才出图。
 	comfyGraceWait     = 30 * time.Minute
-	comfySamplerNodeID = "8"                     // 工作流里 KSampler 的节点 id（进度百分比据此换算）
-	comfySaveNodeID    = "10"                    // 工作流里 SaveImage 的节点 id
-	comfyImageModel    = "qwen-image-2.1"        // 对外暴露的模型名（OpenAI 兼容端点用）
-	comfyImageScope    = "media"                 // API Key 需要的权限域，与图片理解一致
-	comfyMaxBatch      = 1                       // ComfyUI 一次一张，n>1 不支持
-	comfyViewTimeout   = 60 * time.Second        // 拉取成品图的超时
-	comfyControlTimout = 30 * time.Second        // 提交/查询等控制类请求的超时
+	comfySamplerNodeID = "8"              // 工作流里 KSampler 的节点 id（进度百分比据此换算）
+	comfySaveNodeID    = "10"             // 工作流里 SaveImage 的节点 id
+	comfyImageModel    = "qwen-image-2.1" // 对外暴露的模型名（OpenAI 兼容端点用）
+	comfyImageScope    = "media"          // API Key 需要的权限域，与图片理解一致
+	comfyMaxBatch      = 1                // ComfyUI 一次一张，n>1 不支持
+	comfyViewTimeout   = 60 * time.Second // 拉取成品图的超时
+	comfyControlTimout = 30 * time.Second // 提交/查询等控制类请求的超时
 	// comfyClientID 提交 /prompt 与订阅 /ws 必须用同一个 client_id。
 	// ComfyUI 把执行事件（execution_start / executing / progress）按 client_id 定向投递给
 	// 提交者；两边不一致时事件会发给一个没人监听的 sid，表现为「进度永远停在排队中」。
@@ -86,12 +87,17 @@ type comfyImageRequest struct {
 	Width          int     `json:"width"`           // 直连风格，优先于 size
 	Height         int     `json:"height"`          // 直连风格，优先于 size
 	Resolution     int     `json:"resolution"`      // 正方形边长，优先于 width/height
+	AspectRatio    string  `json:"aspect_ratio"`    // 云端出图专用比例（1:1 / 16:9 / ...），本地 ComfyUI 忽略
 	Steps          int     `json:"steps"`           // 0 = 用服务端配置
 	CFG            float64 `json:"cfg"`             // 0 = 用服务端配置
 	Seed           *int64  `json:"seed"`            // nil = 随机
-	Image          string  `json:"image"`           // 参考图（data URL / http URL）；非空即「编辑」模式
+	Image          string  `json:"image"`           // 参考图（data URL / http URL）；单图模式（edit/inpaint/outpaint/restore）的底图
 	ResponseFormat string  `json:"response_format"` // url（默认）| b64_json
-	N              int     `json:"n"`               // 仅支持 1
+	// 新模式 / 多图 / 遮罩
+	Mode   string   `json:"mode"`   // t2i | edit | inpaint | outpaint | restore | multi_ref | composite（空则按有无 Image 推断）
+	Images []string `json:"images"` // 多图输入（multi_ref / composite）；为空时单图模式退回 Image
+	Mask   string   `json:"mask"`   // 遮罩图（data URL / http URL）；inpaint / outpaint 用，白色=要重绘区域
+	N      int      `json:"n"`      // 仅支持 1
 	// ConversationID / MessageID 只为「任务终态落库」服务：带上它，出图结果（或失败原因）
 	// 会由服务端直接写进 chat_plus_messages。前端掉线/页面关掉也能在下次进会话时看到，
 	// 不会再出现「ComfyUI 图都出来了、前端却说失败且拿不到」的情况。
@@ -582,6 +588,11 @@ type comfyGenOptions struct {
 	Seed       int64
 	Resolution int
 	ImageName  string // 非空 → 编辑模式，需要 LoadImage 节点
+	// 新模式
+	Mode          string   // 出图模式，决定走哪条工作流分支
+	ImageNames    []string // 多图 / 底图上传后在 ComfyUI 里的文件名（multi_ref / composite / 单图底图）
+	MaskName      string   // 遮罩上传后的文件名（inpaint / outpaint）
+	CompositeCell int      // 拼合每格边长（composite 用，0 = 默认 512）
 }
 
 // buildComfyWorkflow 生成 ComfyUI API 格式工作流。
@@ -596,6 +607,18 @@ type comfyGenOptions struct {
 // 注意：编辑模式的参考图必须写成扁平键名 "images.image_1"。唐 该节点的 images 输入是
 // Autogrow 类型，写成嵌套 dict 会被执行器静默丢弃，表现为"图没接上、模型凭空生成"。
 func buildComfyWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o comfyGenOptions) map[string]interface{} {
+	// 新模式按 Mode 优先分发（与家族无关或跨家族）：
+	//   composite   —— 纯图像拼合，不需要加载扩散模型；
+	//   multi_ref   —— 多图内容结合，走 qwen21 编码器的多图 autogrow 输入（cfg 已被切成 qwen21 预设）；
+	//   inpaint/outpaint/restore —— qwen_image_edit 家族的遮罩重绘 / 修复（cfg 已被切成 qwen_edit 预设）。
+	switch o.Mode {
+	case "composite":
+		return buildCompositeWorkflow(o)
+	case "multi_ref":
+		return buildMultiRefWorkflow(cfg, prompt, negative, o)
+	case "inpaint", "outpaint", "restore":
+		return buildQwenEditVariantWorkflow(cfg, prompt, negative, o)
+	}
 	switch cfg.Family {
 	case comfyFamilyFlux2:
 		return buildFlux2Workflow(cfg, prompt, negative, o)
@@ -931,6 +954,187 @@ func buildQwenEditWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o 
 	return workflow
 }
 
+// buildQwenEditVariantWorkflow 在 Qwen-Image-Edit 家族基础上，按模式叠加遮罩重绘或纯修复。
+//
+//	1 UnetLoaderGGUF  2 CLIPLoader(GGUF)  3 VAELoader  4 LoadImage(底图)  [4m] LoadImage(遮罩)
+//	5 TextEncodeQwenImageEditPlus  6 CLIPTextEncode(负向)
+//	7 VAEEncode（restore）或 VAEEncodeForInpaint（inpaint/outpaint，吃遮罩 + grow_mask_by）
+//	8 KSampler  9 VAEDecode  10 SaveImage
+//
+// outpaint 在后端与 inpaint 同构：都靠遮罩圈出要重绘的区域（外补时遮罩是四周边框），
+// 区别只在前端给的遮罩形状与提示词。restore 则不传遮罩、对整个源图做提示词驱动的重绘/增强。
+func buildQwenEditVariantWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o comfyGenOptions) map[string]interface{} {
+	workflow := map[string]interface{}{
+		"1": map[string]interface{}{"class_type": "UnetLoaderGGUF", "inputs": map[string]interface{}{"unet_name": cfg.Model}},
+		"2": comfyClipLoaderNode(cfg),
+		"3": map[string]interface{}{"class_type": "VAELoader", "inputs": map[string]interface{}{"vae_name": cfg.Vae}},
+		"6": map[string]interface{}{"class_type": "CLIPTextEncode", "inputs": map[string]interface{}{"clip": []interface{}{"2", 0}, "text": negative}},
+		"8": map[string]interface{}{
+			"class_type": "KSampler",
+			"inputs": map[string]interface{}{
+				"model":        []interface{}{comfyModelNodeID(cfg), 0},
+				"positive":     []interface{}{"5", 0},
+				"negative":     []interface{}{"6", 0},
+				"latent_image": []interface{}{"7", 0},
+				"seed":         o.Seed,
+				"steps":        o.Steps,
+				"cfg":          o.CFG,
+				"sampler_name": cfg.Sampler,
+				"scheduler":    cfg.Scheduler,
+				"denoise":      1.0,
+			},
+		},
+		"9":  map[string]interface{}{"class_type": "VAEDecode", "inputs": map[string]interface{}{"samples": []interface{}{"8", 0}, "vae": []interface{}{"3", 0}}},
+		"10": map[string]interface{}{"class_type": "SaveImage", "inputs": map[string]interface{}{"images": []interface{}{"9", 0}, "filename_prefix": "aichat"}},
+	}
+	comfyAttachLora(workflow, cfg)
+	if o.ImageName == "" {
+		return workflow // 缺底图由调用方拦在前面
+	}
+	workflow["4"] = map[string]interface{}{"class_type": "LoadImage", "inputs": map[string]interface{}{"image": o.ImageName}}
+	workflow["5"] = map[string]interface{}{
+		"class_type": "TextEncodeQwenImageEditPlus",
+		"inputs": map[string]interface{}{
+			"clip":   []interface{}{"2", 0},
+			"vae":    []interface{}{"3", 0},
+			"prompt": prompt,
+			"image1": []interface{}{"4", 0},
+		},
+	}
+	if o.Mode == "inpaint" || o.Mode == "outpaint" {
+		// 遮罩重绘：VAEEncodeForInpaint 把遮罩区域标记为待重绘（grow_mask_by 让边缘过渡自然）。
+		// 实测该节点强制要求 grow_mask_by 输入，缺了会 400 校验失败。
+		workflow["4m"] = map[string]interface{}{"class_type": "LoadImage", "inputs": map[string]interface{}{"image": o.MaskName}}
+		workflow["7"] = map[string]interface{}{
+			"class_type": "VAEEncodeForInpaint",
+			"inputs": map[string]interface{}{
+				"pixels":       []interface{}{"4", 0},
+				"vae":          []interface{}{"3", 0},
+				"mask":         []interface{}{"4m", 1},
+				"grow_mask_by": 6,
+			},
+		}
+	} else {
+		// restore：对整个源图 VAEEncode，由提示词驱动增强/修复。
+		workflow["7"] = map[string]interface{}{
+			"class_type": "VAEEncode",
+			"inputs":     map[string]interface{}{"pixels": []interface{}{"4", 0}, "vae": []interface{}{"3", 0}},
+		}
+	}
+	return workflow
+}
+
+// buildMultiRefWorkflow 多图内容结合：走 Qwen-Image-2.1 编码器的多图 autogrow 输入
+// （images.image_1 / images.image_2 / ...）。该编码器原生支持多张参考图，模型据此把多张图
+// 的内容/风格融合成一张图。cfg 必须已是 qwen21 家族预设（调用方已按模式切好）。
+func buildMultiRefWorkflow(cfg config.ComfyUIConfig, prompt, negative string, o comfyGenOptions) map[string]interface{} {
+	side := o.Resolution
+	if side < 256 {
+		side = 256
+	}
+	encoder := map[string]interface{}{
+		"clip":            []interface{}{"2", 0},
+		"vae":             []interface{}{"3", 0},
+		"prompt":          prompt,
+		"negative_prompt": negative,
+		"resolution":      side,
+	}
+	workflow := map[string]interface{}{
+		"1": map[string]interface{}{"class_type": "UnetLoaderGGUF", "inputs": map[string]interface{}{"unet_name": cfg.Model}},
+		"2": comfyClipLoaderNode(cfg),
+		"3": map[string]interface{}{"class_type": "VAELoader", "inputs": map[string]interface{}{"vae_name": cfg.Vae}},
+		"8": map[string]interface{}{
+			"class_type": "KSampler",
+			"inputs": map[string]interface{}{
+				"model":        []interface{}{comfyModelNodeID(cfg), 0},
+				"positive":     []interface{}{"5", 0},
+				"negative":     []interface{}{"5", 1},
+				"latent_image": []interface{}{"5", 2},
+				"seed":         o.Seed,
+				"steps":        o.Steps,
+				"cfg":          o.CFG,
+				"sampler_name": cfg.Sampler,
+				"scheduler":    cfg.Scheduler,
+				"denoise":      1.0,
+			},
+		},
+		"9":  map[string]interface{}{"class_type": "VAEDecode", "inputs": map[string]interface{}{"samples": []interface{}{"8", 0}, "vae": []interface{}{"3", 0}}},
+		"10": map[string]interface{}{"class_type": "SaveImage", "inputs": map[string]interface{}{"images": []interface{}{"9", 0}, "filename_prefix": "aichat"}},
+	}
+	comfyAttachLora(workflow, cfg)
+	// 多张参考图：每个 LoadImage 一个节点，编码器用扁平键名 images.image_N 接入（Autogrow 不能写嵌套 dict）。
+	for i, name := range o.ImageNames {
+		id := fmt.Sprintf("L%d", i)
+		workflow[id] = map[string]interface{}{"class_type": "LoadImage", "inputs": map[string]interface{}{"image": name}}
+		encoder[fmt.Sprintf("images.image_%d", i+1)] = []interface{}{id, 0}
+	}
+	workflow["5"] = map[string]interface{}{"class_type": "TextEncodeQwenImage21", "inputs": encoder}
+	return workflow
+}
+
+// buildCompositeWorkflow 多图拼合 / 图层：把多张图缩放成统一格子，按网格贴到一张画布上。
+// 纯图像运算，不加载扩散模型（秒级出图）。先以第 0 张铺满画布作底（会被后续逐格覆盖，不留缝），
+// 再用 SolidMask + ImageCompositeMasked 把每张图贴到各自格子。
+func buildCompositeWorkflow(o comfyGenOptions) map[string]interface{} {
+	names := o.ImageNames
+	if len(names) == 0 && o.ImageName != "" {
+		names = []string{o.ImageName}
+	}
+	if len(names) == 0 {
+		return map[string]interface{}{}
+	}
+	cell := o.CompositeCell
+	if cell < 64 {
+		cell = 512
+	}
+	n := len(names)
+	cols := int(math.Ceil(math.Sqrt(float64(n))))
+	if cols < 1 {
+		cols = 1
+	}
+	rows := (n + cols - 1) / cols
+	canvasW := cols * cell
+	canvasH := rows * cell
+
+	wf := map[string]interface{}{}
+	for i, name := range names {
+		li := fmt.Sprintf("L%d", i)
+		si := fmt.Sprintf("S%d", i)
+		mi := fmt.Sprintf("M%d", i)
+		wf[li] = map[string]interface{}{"class_type": "LoadImage", "inputs": map[string]interface{}{"image": name}}
+		wf[si] = map[string]interface{}{
+			"class_type": "ImageScale",
+			"inputs":     map[string]interface{}{"image": []interface{}{li, 0}, "width": cell, "height": cell, "upscale_method": "bilinear", "crop": "center"},
+		}
+		wf[mi] = map[string]interface{}{"class_type": "SolidMask", "inputs": map[string]interface{}{"width": cell, "height": cell, "value": 1.0}}
+	}
+	// 底图：第 0 张铺满整张画布（拉伸，仅作背景，随后被逐格覆盖）
+	wf["B0"] = map[string]interface{}{
+		"class_type": "ImageScale",
+		"inputs":     map[string]interface{}{"image": []interface{}{"L0", 0}, "width": canvasW, "height": canvasH, "upscale_method": "bilinear", "crop": "center"},
+	}
+	prev := "B0"
+	for i := 0; i < n; i++ {
+		col := i % cols
+		row := i / cols
+		ci := fmt.Sprintf("C%d", i)
+		wf[ci] = map[string]interface{}{
+			"class_type": "ImageCompositeMasked",
+			"inputs": map[string]interface{}{
+				"destination":   []interface{}{prev, 0},
+				"source":        []interface{}{fmt.Sprintf("S%d", i), 0},
+				"mask":          []interface{}{fmt.Sprintf("M%d", i), 0},
+				"x":             col * cell,
+				"y":             row * cell,
+				"resize_source": false,
+			},
+		}
+		prev = ci
+	}
+	wf["10"] = map[string]interface{}{"class_type": "SaveImage", "inputs": map[string]interface{}{"images": []interface{}{prev, 0}, "filename_prefix": "aichat_comp"}}
+	return wf
+}
+
 // ── 任务执行 ────────────────────────────────────────────────────────────────
 
 // comfyResolveParams 把请求参数与服务端配置合并，并对所有取值做边界收敛。
@@ -949,24 +1153,30 @@ func comfyResolveParams(cfg config.ComfyUIConfig, req comfyImageRequest) (comfyG
 	if req.CFG > 0 {
 		opts.CFG = req.CFG
 	}
-	if req.Resolution > 0 {
-		opts.Resolution = req.Resolution
-	} else if req.Width > 0 && req.Height > 0 {
-		// 非正方形请求按短边收敛：Qwen-Image 的编码节点只吃一个 resolution，
-		// 强行按宽高比出图会得到被拉伸的画面，这里统一按短边走正方形。
-		opts.Resolution = min(req.Width, req.Height)
-	} else if req.Size != "" {
-		w, h, ok := parseImageSize(req.Size)
-		if !ok {
-			return opts, fmt.Errorf("size 格式应为 宽x高，例如 1024x1024")
+	// 这些模式不依赖正方形分辨率：遮罩重绘/外补/修复跟随源图尺寸，拼合用网格格子，
+	// 不需要把整图收敛成正方形。
+	resolutionDriven := !(req.Mode == "inpaint" || req.Mode == "outpaint" ||
+		req.Mode == "restore" || req.Mode == "composite")
+	if resolutionDriven {
+		if req.Resolution > 0 {
+			opts.Resolution = req.Resolution
+		} else if req.Width > 0 && req.Height > 0 {
+			// 非正方形请求按短边收敛：Qwen-Image 的编码节点只吃一个 resolution，
+			// 强行按宽高比出图会得到被拉伸的画面，这里统一按短边走正方形。
+			opts.Resolution = min(req.Width, req.Height)
+		} else if req.Size != "" {
+			w, h, ok := parseImageSize(req.Size)
+			if !ok {
+				return opts, fmt.Errorf("size 格式应为 宽x高，例如 1024x1024")
+			}
+			opts.Resolution = min(w, h)
 		}
-		opts.Resolution = min(w, h)
+		if opts.Resolution < 256 || opts.Resolution > 2048 {
+			return opts, fmt.Errorf("分辨率需在 256~2048 之间，当前 %d", opts.Resolution)
+		}
+		// 必须能被 64 整除，否则 latent 尺寸取整后画面会出现错位接缝
+		opts.Resolution = opts.Resolution / 64 * 64
 	}
-	if opts.Resolution < 256 || opts.Resolution > 2048 {
-		return opts, fmt.Errorf("分辨率需在 256~2048 之间，当前 %d", opts.Resolution)
-	}
-	// 必须能被 64 整除，否则 latent 尺寸取整后画面会出现错位接缝
-	opts.Resolution = opts.Resolution / 64 * 64
 
 	if req.Seed != nil {
 		opts.Seed = *req.Seed
@@ -1035,9 +1245,14 @@ func (h *AIGatewayHandler) startComfyTask(cfg config.ComfyUIConfig, req comfyIma
 				})
 			}
 		}()
-		h.runComfyTask(cfg, taskID, req, prompt, negative, opts, mode)
-		// 终态统一落库：成功带图、失败带原因。这样即使前端 SSE 断了、页面关了、
-		// 甚至手机切网，结果都还在服务端消息里，下次进会话就能看到。
+		if cfg.Family == comfyFamilyMiniMax {
+			// 云端通道：MiniMax image-01（文生图 + subject_reference 参考主体）
+			h.runMiniMaxImageTask(cfg, taskID, req, prompt, negative, opts, mode)
+		} else {
+			h.runComfyTask(cfg, taskID, req, prompt, negative, opts, mode)
+		}
+		// 云端通道（MiniMax image-01）与本地 ComfyUI 共用同一套任务状态机：
+		// 前面按家族分流，后面的「终态落库」对两条链路完全通用。
 		h.persistComfyTaskOutcome(taskID, req, prompt)
 	}()
 	return snapshot
@@ -1113,20 +1328,74 @@ func (h *AIGatewayHandler) runComfyTask(cfg config.ComfyUIConfig, taskID string,
 		t.started = time.Now()
 	})
 
-	// 1) 编辑模式：先把参考图送进 ComfyUI
-	if mode == "edit" {
-		data, err := decodeImagePayload(req.Image)
+	// 1) 按模式把底图 / 多图 / 遮罩送进 ComfyUI
+	uploadOne := func(tag, raw string) (string, error) {
+		data, err := decodeImagePayload(raw)
 		if err != nil {
-			h.failComfyTask(taskID, err.Error())
-			return
+			return "", err
+		}
+		return client.uploadImage(ctx, tag+comfyRandomHex(6)+".png", data, cfg.UploadDir)
+	}
+	switch mode {
+	case "edit":
+		raw := req.Image
+		if raw == "" && len(req.Images) > 0 {
+			raw = req.Images[0]
 		}
 		comfyTasks.mutate(taskID, func(t *comfyTask) { t.Phase = "上传参考图" })
-		name, err := client.uploadImage(ctx, "aichat_ref_"+comfyRandomHex(6)+".png", data, cfg.UploadDir)
+		name, err := uploadOne("aichat_ref_", raw)
 		if err != nil {
 			h.failComfyTask(taskID, err.Error())
 			return
 		}
 		opts.ImageName = name
+	case "inpaint", "outpaint", "restore":
+		raw := req.Image
+		if raw == "" && len(req.Images) > 0 {
+			raw = req.Images[0]
+		}
+		if strings.TrimSpace(raw) == "" {
+			h.failComfyTask(taskID, "该模式需要一张底图")
+			return
+		}
+		comfyTasks.mutate(taskID, func(t *comfyTask) { t.Phase = "上传底图" })
+		baseName, err := uploadOne("aichat_base_", raw)
+		if err != nil {
+			h.failComfyTask(taskID, err.Error())
+			return
+		}
+		opts.ImageName = baseName
+		if mode == "inpaint" || mode == "outpaint" {
+			if strings.TrimSpace(req.Mask) == "" {
+				h.failComfyTask(taskID, "遮罩重绘/外补模式需要一张遮罩图")
+				return
+			}
+			comfyTasks.mutate(taskID, func(t *comfyTask) { t.Phase = "上传遮罩" })
+			maskName, err := uploadOne("aichat_mask_", req.Mask)
+			if err != nil {
+				h.failComfyTask(taskID, err.Error())
+				return
+			}
+			opts.MaskName = maskName
+		}
+	case "multi_ref", "composite":
+		imgs := req.Images
+		if len(imgs) == 0 && req.Image != "" {
+			imgs = []string{req.Image}
+		}
+		if len(imgs) == 0 {
+			h.failComfyTask(taskID, "该模式需要至少一张图片")
+			return
+		}
+		comfyTasks.mutate(taskID, func(t *comfyTask) { t.Phase = "上传多张图片" })
+		for _, ref := range imgs {
+			name, err := uploadOne("aichat_ref_", ref)
+			if err != nil {
+				h.failComfyTask(taskID, err.Error())
+				return
+			}
+			opts.ImageNames = append(opts.ImageNames, name)
+		}
 	}
 
 	// 2) 提交工作流
@@ -1411,11 +1680,15 @@ func (h *AIGatewayHandler) comfyRuntime(c *gin.Context) (config.ComfyUIConfig, b
 }
 
 // ChatPlusImageStatus GET /api/chat-plus/image/status —— 出图能力探活
+//
+// available 只代表「本地 ComfyUI 可用」；是否整体能出图要看
+// available || minimax_available（云端通道不依赖局域网机器）。
 func (h *AIGatewayHandler) ChatPlusImageStatus(c *gin.Context) {
 	if !h.checkChatPlusPassword(c) {
 		return
 	}
 	cfg := h.cfg.ChatPlus.ComfyUI.Normalized()
+	mm := h.cfg.ChatPlus.MiniMaxImage.Normalized(h.cfg.MiniMax.APIKey)
 	resp := gin.H{
 		"available":   false,
 		"base_url":    cfg.BaseURL,
@@ -1426,13 +1699,19 @@ func (h *AIGatewayHandler) ChatPlusImageStatus(c *gin.Context) {
 		"scheduler":   cfg.Scheduler,
 		"resolution":  cfg.Resolution,
 		"timeout_sec": cfg.TimeoutSec,
-		"modes":       []string{"t2i", "edit"},
+		"modes":       []string{"t2i", "edit", "inpaint", "outpaint", "restore", "multi_ref", "composite"},
 		"image_model": comfyImageModel,
 		"max_batch":   comfyMaxBatch,
 		// 多模型：默认预设 + 可选预设 id 列表。模型详情（耗时/能力/可用性）走
 		// GET /api/chat-plus/image/models，那里会额外探活 ComfyUI 上真实存在的文件。
 		"default_model": comfyDefaultPresetID(cfg),
 		"models":        comfyPresetIDs(cfg),
+		// 云端通道（MiniMax image-01）
+		"minimax_available": mm.Enabled(),
+		"minimax_base_url":  mm.BaseURL,
+		"minimax_model":     mm.Model,
+		"minimax_max_n":     mm.MaxImages,
+		"minimax_modes":     []string{"t2i", "edit"},
 	}
 	if !cfg.Enabled() {
 		resp["error"] = "未配置 comfyui.base_url"
@@ -1457,10 +1736,9 @@ func (h *AIGatewayHandler) ChatPlusImageGenerate(c *gin.Context) {
 	if !h.checkChatPlusPassword(c) {
 		return
 	}
-	cfg, ok := h.comfyRuntime(c)
-	if !ok {
-		return
-	}
+	// 注意：这里不能一上来就要求 ComfyUI 可用。云端（MiniMax）与本地 ComfyUI 是
+	// 并列的两个供应商，配了任意一个就能出图，谁可用由最终选中的预设家族决定。
+	cfg := h.cfg.ChatPlus.ComfyUI.Normalized()
 
 	var req comfyImageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1476,18 +1754,25 @@ func (h *AIGatewayHandler) ChatPlusImageGenerate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("描述过长（上限 %d 字）", comfyMaxPromptLen)})
 		return
 	}
-	if req.N > comfyMaxBatch {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "本地出图一次只生成 1 张，请分多次请求"})
-		return
-	}
 
 	negative := strings.TrimSpace(req.NegativePrompt)
 	if negative == "" {
 		negative = cfg.NegativePrompt
 	}
-	mode := "t2i"
-	if strings.TrimSpace(req.Image) != "" {
-		mode = "edit"
+	// 出图模式：优先用前端显式传的 mode；没传则按有无图片推断（兼容老调用）。
+	mode := strings.TrimSpace(req.Mode)
+	switch mode {
+	case "":
+		if len(req.Images) > 0 || strings.TrimSpace(req.Image) != "" {
+			mode = "edit"
+		} else {
+			mode = "t2i"
+		}
+	case "t2i", "edit", "inpaint", "outpaint", "restore", "multi_ref", "composite":
+		// 合法取值，放行
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("不支持的模式: %s", mode)})
+		return
 	}
 
 	// 模型切换：前端传预设 id（空 = 用默认预设），后端把整条工作流参数换掉。
@@ -1502,17 +1787,119 @@ func (h *AIGatewayHandler) ChatPlusImageGenerate(c *gin.Context) {
 		})
 		return
 	}
-	if mode == "edit" && !comfySupportsEdit(preset) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("模型「%s」不支持参考图编辑，请换成支持改图的模型", preset.Label),
+
+	// ── 云端通道（MiniMax image-01）──
+	// 只有文生图与「参考主体」图生图两种能力：遮罩重绘 / 扩图 / 修复 / 多图融合
+	// 都依赖本地扩散工作流，云端做不到，直接给明确提示而不是静默降级。
+	if comfyIsOnlineFamily(preset.Family) {
+		if mode != "t2i" && mode != "edit" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("在线模型「%s」只支持文生图与图生图，%s 请换成本地模型", preset.Label, mode),
+			})
+			return
+		}
+		mm := h.cfg.ChatPlus.MiniMaxImage.Normalized(h.cfg.MiniMax.APIKey)
+		if !mm.Enabled() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error": "未配置 chat_plus.minimax_image.api_key（或 minimax.api_key），在线出图不可用",
+			})
+			return
+		}
+		if req.N < 0 || req.N > mm.MaxImages {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": fmt.Sprintf("在线出图一次最多 %d 张", mm.MaxImages),
+			})
+			return
+		}
+		// 分辨率先按预设取值，再让 comfyResolveParams 用请求里的 size/width 覆盖；
+		// 步数/采样器对云端无意义，保持原样传下去也不会被使用。
+		cfg = comfyApplyPreset(cfg, preset)
+		opts, err := comfyResolveParams(cfg, req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		opts.Mode = mode
+		want := req.N
+		if want <= 0 {
+			want = 1
+		}
+		task := h.startComfyTask(cfg, req, prompt, negative, opts, mode, preset.ID)
+		c.JSON(http.StatusOK, gin.H{
+			"task_id":  task.ID,
+			"status":   task.Status,
+			"mode":     task.Mode,
+			"model":    task.Model,
+			"seed":     opts.Seed,
+			"steps":    opts.Steps,
+			"provider": "minimax",
+			"count":    want,
 		})
 		return
 	}
-	if mode == "t2i" && !comfySupportsT2I(preset) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("模型「%s」只能改图，请先附一张参考图", preset.Label),
+
+	// ── 本地 ComfyUI 通道 ──
+	if !cfg.Enabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "未配置 chat_plus.comfyui.base_url，本地出图功能已禁用",
 		})
 		return
+	}
+	if req.N > comfyMaxBatch {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "本地出图一次只生成 1 张，请分多次请求"})
+		return
+	}
+	// 部分模式强依赖特定家族，自动切到对应预设，省得前端还要手动换模型。
+	switch mode {
+	case "inpaint", "outpaint", "restore":
+		if preset.Family != comfyFamilyQwenEdit {
+			if p, ok2 := comfyPresetByFamily(cfg, comfyFamilyQwenEdit); ok2 {
+				preset = p
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "当前没有配置 Qwen-Image-Edit 模型，无法做遮罩重绘/外补/修复"})
+				return
+			}
+		}
+	case "multi_ref":
+		if preset.Family != comfyFamilyQwen21 {
+			if p, ok2 := comfyPresetByFamily(cfg, comfyFamilyQwen21); ok2 {
+				preset = p
+			} else {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "当前没有配置 Qwen-Image-2.1 模型，无法做多图内容结合"})
+				return
+			}
+		}
+	}
+	// 基础能力校验（t2i/edit 仍按家族约束）。
+	if mode == "t2i" && !comfySupportsT2I(preset) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("模型「%s」只能改图，请先附一张参考图", preset.Label)})
+		return
+	}
+	if mode == "edit" && !comfySupportsEdit(preset) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("模型「%s」不支持参考图编辑，请换成支持改图的模型", preset.Label)})
+		return
+	}
+	// 输入校验
+	switch mode {
+	case "inpaint", "outpaint":
+		if strings.TrimSpace(req.Mask) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "遮罩重绘/外补模式需要一张遮罩图（白色=要重绘区域）"})
+			return
+		}
+		if strings.TrimSpace(req.Image) == "" && len(req.Images) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "遮罩重绘/外补模式需要一张底图"})
+			return
+		}
+	case "restore":
+		if strings.TrimSpace(req.Image) == "" && len(req.Images) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "修复模式需要一张底图"})
+			return
+		}
+	case "multi_ref", "composite":
+		if len(req.Images) == 0 && strings.TrimSpace(req.Image) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "该模式需要至少一张图片（多图请传 images 数组）"})
+			return
+		}
 	}
 	// 先把预设叠进配置再算参数：这样 flux2 的 4 步、各家族的分辨率都能生效，
 	// 而请求里显式给的 steps/cfg/size 仍然优先（comfyResolveParams 内部就是这个优先级）。
@@ -1522,6 +1909,7 @@ func (h *AIGatewayHandler) ChatPlusImageGenerate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	opts.Mode = mode
 
 	task := h.startComfyTask(cfg, req, prompt, negative, opts, mode, preset.ID)
 	c.JSON(http.StatusOK, gin.H{
@@ -1645,10 +2033,8 @@ func (h *AIGatewayHandler) OpenAIImagesGenerations(c *gin.Context) {
 	if !ok {
 		return
 	}
-	cfg, ok := h.comfyRuntime(c)
-	if !ok {
-		return
-	}
+	// 先把配置取出来做预设解析：云端预设（minimax）不需要 ComfyUI 可用。
+	cfg := h.cfg.ChatPlus.ComfyUI.Normalized()
 
 	var req comfyImageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1661,6 +2047,17 @@ func (h *AIGatewayHandler) OpenAIImagesGenerations(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": fmt.Sprintf("不支持的模型: %s（本地可选 %s）", strings.TrimSpace(req.Model), strings.Join(comfyPresetIDs(cfg), "、")),
 		})
+		return
+	}
+	// 供应商可用性：云端预设看 key，本地预设看 base_url。
+	if comfyIsOnlineFamily(preset.Family) {
+		mm := h.cfg.ChatPlus.MiniMaxImage.Normalized(h.cfg.MiniMax.APIKey)
+		if !mm.Enabled() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 chat_plus.minimax_image.api_key，在线出图不可用"})
+			return
+		}
+	} else if !cfg.Enabled() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "未配置 chat_plus.comfyui.base_url，本地出图功能已禁用"})
 		return
 	}
 	// 模型白名单按「实际要用的预设」校验，而不是写死默认模型：

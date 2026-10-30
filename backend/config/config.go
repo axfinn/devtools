@@ -60,9 +60,75 @@ type Config struct {
 // 双引擎：局域网 Ollama（OpenAI 兼容端点，模型列表运行时动态拉取）+ MiniMax（复用 minimax.api_key，key 不下发前端）。
 // Password 为空 = 模块整体禁用（fail-closed），与其他模块的密码门惯例一致。
 type ChatPlusConfig struct {
-	Password      string        `yaml:"password"`        // 页面访问密码；为空则禁用本模块
-	OllamaBaseURL string        `yaml:"ollama_base_url"` // 局域网 Ollama 服务地址，如 http://192.168.31.147:11434
-	ComfyUI       ComfyUIConfig `yaml:"comfyui"`         // 局域网 ComfyUI（自建扩散模型）出图能力
+	Password      string             `yaml:"password"`        // 页面访问密码；为空则禁用本模块
+	OllamaBaseURL string             `yaml:"ollama_base_url"` // 局域网 Ollama 服务地址，如 http://192.168.31.147:11434
+	ComfyUI       ComfyUIConfig      `yaml:"comfyui"`         // 局域网 ComfyUI（自建扩散模型）出图能力
+	MiniMaxImage  MiniMaxImageConfig `yaml:"minimax_image"`   // MiniMax 在线出图（image-01），可作为 ComfyUI 之外的第二供应商
+}
+
+// MiniMaxImageConfig MiniMax 在线出图配置（/ai-chat「画图」的云端通道）。
+//
+// 与 ComfyUI 的关系：ComfyUI 是局域网自建、免费但慢（20~75 秒）；
+// MiniMax image-01 是云端按量计费、10 秒级出图，且自带 subject_reference
+// （图生图/参考主体），适合「快点看到效果」与手机端弱网场景。
+// 两者共用同一套任务/SSE/落库链路，前端只在下拉框里换一个模型 id。
+//
+// APIKey 为空时自动回落到 minimax.api_key（同一个 MiniMax 账号即可）。
+// 显式 enabled: false 可单独关掉在线通道，不影响本地 ComfyUI。
+type MiniMaxImageConfig struct {
+	APIKey          string `yaml:"api_key"`          // API Key；空=回落 minimax.api_key
+	BaseURL         string `yaml:"base_url"`         // 上游地址，默认 https://api.minimaxi.com
+	Model           string `yaml:"model"`            // 模型名，默认 image-01
+	EnabledFlag     *bool  `yaml:"enabled"`          // 显式关闭用；缺省=有 key 即启用（字段名避开 Enabled() 方法）
+	TimeoutSec      int    `yaml:"timeout_sec"`      // 单次请求超时，默认 180
+	MaxImages       int    `yaml:"max_images"`       // 一次最多出几张，默认 4（image-01 上限 9）
+	PromptOptimizer *bool  `yaml:"prompt_optimizer"` // 是否让 MiniMax 自行润色提示词，缺省=true
+}
+
+// MiniMax 在线出图的兜底默认值。
+const (
+	miniMaxImageDefaultBaseURL  = "https://api.minimaxi.com"
+	miniMaxImageDefaultModel    = "image-01"
+	miniMaxImageDefaultTimeout  = 180
+	miniMaxImageDefaultMaxCount = 4
+	miniMaxImageHardMaxCount    = 9 // 上游 n 的硬上限
+)
+
+// Normalized 补齐默认值并把 APIKey 回落到全局 minimax.api_key（fallbackKey）。
+// 返回的副本 Enabled() 一定自洽，调用方不需要再判空。
+func (c MiniMaxImageConfig) Normalized(fallbackKey string) MiniMaxImageConfig {
+	out := c
+	out.APIKey = defaultIfBlank(out.APIKey, fallbackKey)
+	out.BaseURL = strings.TrimRight(strings.TrimSpace(out.BaseURL), "/")
+	out.BaseURL = defaultIfBlank(out.BaseURL, miniMaxImageDefaultBaseURL)
+	out.Model = defaultIfBlank(out.Model, miniMaxImageDefaultModel)
+	if out.TimeoutSec <= 0 {
+		out.TimeoutSec = miniMaxImageDefaultTimeout
+	}
+	if out.TimeoutSec > 600 {
+		out.TimeoutSec = 600
+	}
+	if out.MaxImages <= 0 {
+		out.MaxImages = miniMaxImageDefaultMaxCount
+	}
+	if out.MaxImages > miniMaxImageHardMaxCount {
+		out.MaxImages = miniMaxImageHardMaxCount
+	}
+	return out
+}
+
+// Enabled 是否可用于出图：有 key 且没有被显式关掉。
+func (c MiniMaxImageConfig) Enabled() bool {
+	if c.EnabledFlag != nil && !*c.EnabledFlag {
+		return false
+	}
+	return strings.TrimSpace(c.APIKey) != ""
+}
+
+// OptimizeEnabled 是否让上游润色提示词。缺省(true)开启：image-01 的
+// prompt_optimizer 对中文短句提升明显，用户不想用可在配置里显式关掉。
+func (c MiniMaxImageConfig) OptimizeEnabled() bool {
+	return c.PromptOptimizer == nil || *c.PromptOptimizer
 }
 
 // ComfyUIConfig 局域网 ComfyUI 接入配置（/ai-chat 的「画图」模式 + OpenAI 兼容出图接口）。
@@ -90,10 +156,10 @@ type ComfyUIConfig struct {
 	PublicBaseURL  string  `yaml:"public_base_url"` // 可选：对外返回绝对图片 URL 的前缀，空=相对路径
 
 	// 以下是「多模型切换」相关字段。留空即沿用上面的单模型行为（qwen21 家族）。
-	Family       string `yaml:"family"`        // 工作流家族：qwen21（默认）| flux2 | qwen_edit | zimage
-	ClipLoader   string `yaml:"clip_loader"`   // 文本编码器加载节点：CLIPLoader（默认）| CLIPLoaderGGUF
-	DefaultModel string `yaml:"default_model"` // 默认出图预设 id；留空=内置默认（qwen-image-2.1）
-	Models       []ComfyImageModelPreset `yaml:"models"` // 出图预设；同 id 覆盖内置预设
+	Family       string                  `yaml:"family"`        // 工作流家族：qwen21（默认）| flux2 | qwen_edit | zimage
+	ClipLoader   string                  `yaml:"clip_loader"`   // 文本编码器加载节点：CLIPLoader（默认）| CLIPLoaderGGUF
+	DefaultModel string                  `yaml:"default_model"` // 默认出图预设 id；留空=内置默认（qwen-image-2.1）
+	Models       []ComfyImageModelPreset `yaml:"models"`        // 出图预设；同 id 覆盖内置预设
 
 	// 蒸馏加速 LoRA（如 qwen-image-2.1 turbo）。配合少步数把 25 步压到 8 步。
 	Lora         string  `yaml:"lora"`          // LoRA 文件名；空=不挂 LoRA
@@ -110,20 +176,20 @@ type ComfyUIConfig struct {
 // CLIPTextEncode + EmptyFlux2LatentImage；Qwen-Image-Edit 用 EditPlus 编码 + VAEEncode 源图）。
 // 所以预设以「家族 + 配套文件 + 采样参数」为最小单位，前端只选 id，后端据此拼整张图。
 type ComfyImageModelPreset struct {
-	ID          string  `yaml:"id" json:"id"`
-	Label       string  `yaml:"label" json:"label"`
-	Family      string  `yaml:"family" json:"family"`
-	Unet        string  `yaml:"unet" json:"unet"`
-	Clip        string  `yaml:"clip" json:"clip"`
-	ClipLoader  string  `yaml:"clip_loader" json:"clip_loader"`
-	ClipType    string  `yaml:"clip_type" json:"clip_type"`
-	Vae         string  `yaml:"vae" json:"vae"`
-	Steps       int     `yaml:"steps" json:"steps"`
-	CFG         float64 `yaml:"cfg" json:"cfg"`
-	Sampler     string  `yaml:"sampler" json:"sampler"`
-	Scheduler   string  `yaml:"scheduler" json:"scheduler"`
-	Resolution  int     `yaml:"resolution" json:"resolution"`
-	SpeedHint   string  `yaml:"speed_hint" json:"speed_hint"` // 给前端展示的耗时提示，纯文案
+	ID         string  `yaml:"id" json:"id"`
+	Label      string  `yaml:"label" json:"label"`
+	Family     string  `yaml:"family" json:"family"`
+	Unet       string  `yaml:"unet" json:"unet"`
+	Clip       string  `yaml:"clip" json:"clip"`
+	ClipLoader string  `yaml:"clip_loader" json:"clip_loader"`
+	ClipType   string  `yaml:"clip_type" json:"clip_type"`
+	Vae        string  `yaml:"vae" json:"vae"`
+	Steps      int     `yaml:"steps" json:"steps"`
+	CFG        float64 `yaml:"cfg" json:"cfg"`
+	Sampler    string  `yaml:"sampler" json:"sampler"`
+	Scheduler  string  `yaml:"scheduler" json:"scheduler"`
+	Resolution int     `yaml:"resolution" json:"resolution"`
+	SpeedHint  string  `yaml:"speed_hint" json:"speed_hint"` // 给前端展示的耗时提示，纯文案
 	// 蒸馏加速 LoRA：挂上之后可以用 4~8 步跑出接近全步数的质量。
 	Lora         string  `yaml:"lora" json:"lora"`
 	LoraStrength float64 `yaml:"lora_strength" json:"lora_strength"`
@@ -587,12 +653,12 @@ type AIGatewayConfig struct {
 // AIGatewayRetryConfig 出网请求的弱网重试策略。
 // 全部字段可选，<=0 时使用代码内默认值（4 次尝试 / 250ms 起退 / 4s 退避上限 / 120s 预算 / 120s 流式静默）。
 type AIGatewayRetryConfig struct {
-	MaxAttempts     int `yaml:"max_attempts"`      // 含首次请求的最大尝试次数（1-8）
-	BaseBackoffMS   int `yaml:"base_backoff_ms"`   // 首次退避基数（毫秒）
-	MaxBackoffMS    int `yaml:"max_backoff_ms"`    // 单次退避上限（毫秒）
-	RetryBudgetSec  int `yaml:"retry_budget_sec"`  // 整个重试过程的总耗时预算（秒）
-	StreamIdleSec   int `yaml:"stream_idle_sec"`   // 流式上游静默多久判定断流（秒）
-	DialTimeoutSec  int `yaml:"dial_timeout_sec"`  // TCP 拨号超时（秒）
+	MaxAttempts    int `yaml:"max_attempts"`     // 含首次请求的最大尝试次数（1-8）
+	BaseBackoffMS  int `yaml:"base_backoff_ms"`  // 首次退避基数（毫秒）
+	MaxBackoffMS   int `yaml:"max_backoff_ms"`   // 单次退避上限（毫秒）
+	RetryBudgetSec int `yaml:"retry_budget_sec"` // 整个重试过程的总耗时预算（秒）
+	StreamIdleSec  int `yaml:"stream_idle_sec"`  // 流式上游静默多久判定断流（秒）
+	DialTimeoutSec int `yaml:"dial_timeout_sec"` // TCP 拨号超时（秒）
 }
 
 // AnthropicProviderConfig 定义 Anthropic 协议代理的下游提供商
