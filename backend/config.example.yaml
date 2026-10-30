@@ -768,6 +768,17 @@ chat_plus:
   # 局域网 Ollama 服务地址（OpenAI 兼容端点，模型列表运行时动态拉取）
   ollama_base_url: "http://192.168.31.147:11434"
 
+  # MiniMax 在线出图（image-01）—— 「画图」模式的云端通道，与本地 ComfyUI 并列。
+  # 会往出图模型下拉框里多挂一个「MiniMax image-01（在线）」；不选它就不会产生费用。
+  # api_key 留空 = 自动回落顶层 minimax.api_key；enabled: false 可单独关掉云端通道。
+  minimax_image:
+    # api_key: "sk-..."
+    base_url: "https://api.minimaxi.com"
+    model: "image-01"
+    timeout_sec: 180
+    max_images: 4              # 一次最多几张（上游硬上限 9）
+    prompt_optimizer: true     # 让上游自行润色提示词
+
 # ===== 每日新闻模块 =====
 # 后端内置定时任务:每天在 schedule_hour:schedule_minute(对应 timezone)抓取 feeds 中的 RSS/Atom,
 # 去重后存库(历史归档永久保留),若配置 model 则调用 AI 网关精编成「今日要闻」简报。

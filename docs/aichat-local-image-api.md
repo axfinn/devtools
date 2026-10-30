@@ -98,6 +98,48 @@ chat_plus:
 - **Z-Image 必须过一次 `ModelSamplingAuraFlow`（shift=3）**，否则采样轨迹不对。
 - 蒸馏模型（flux2 / z-image / edit-2511 / turbo LoRA）都别跑 25 步，纯浪费时间。
 
+## 第六档：MiniMax 在线出图（云端通道）
+
+除了上面五个本地预设，下拉框最后还有一档云端模型 `minimax-image-01`
+（`family: minimax`）。它借用同一套任务 / SSE / 落库链路，**只是执行时被分流到
+`handlers/ai_gateway_minimax_image.go`**，不走 ComfyUI、不占本机 GPU：
+
+| 维度 | 本地 ComfyUI | MiniMax image-01 |
+|---|---|---|
+| 耗时 | 20~75s | 10~25s |
+| 费用 | 免费（自建） | 按量计费 |
+| 一次张数 | 1（单卡串行） | 1~4（`max_images` 可调，上游硬上限 9） |
+| 模式 | t2i/edit/inpaint/outpaint/restore/multi_ref/composite | **仅 t2i / edit** |
+| 尺寸 | 正方形（短边基准） | 8 种固定比例，由 `aspect_ratio` 或宽高折算 |
+
+配置（`config.yaml`）：
+
+```yaml
+chat_plus:
+  minimax_image:
+    # api_key: ""            # 留空 = 回落顶层 minimax.api_key
+    base_url: "https://api.minimaxi.com"
+    model: "image-01"
+    timeout_sec: 180
+    max_images: 4
+    prompt_optimizer: true   # 让上游润色提示词
+```
+
+几个必须知道的实现细节：
+
+- **参考图必须是 data URL**。上游把 `image_file` 里的裸 base64 当 URL 解析，
+  会直接回 `disallowed image url: localhost or private address not allowed`。
+  站内图片（`/api/chat/uploads/...`）由后端读盘转 data URL；公网 URL 原样透传。
+- **MIME 不能直接拼 `imageExt()`**。它返回带点的扩展名，拼出来是 `image/.jpg`，
+  上游会回 `2013 the image format is not supported`。
+- **上游返回的是 OSS 临时签名链接（约 24h 过期）**，所以链路是「下载 → 落
+  `./data/uploads/ai/` → 回本站 URL」，与本地图完全一致。
+- 可用性看 `minimax_image.api_key`（或 `minimax.api_key`）是否配置，
+  而不是探活 ComfyUI；`GET /api/chat-plus/image/models` 里该条目的
+  `provider` 为 `minimax`、`available` 由 key 决定。
+- `chat_plus.comfyui.base_url` 为空时，本地五档全部不可用，但云端那档仍然能出图
+  （两者是并列供应商，不是替代关系）。
+
 ## 聊天页接口
 
 鉴权：`X-Chat-Password: <chat_plus.password>`（与聊天页同一套密码门）。

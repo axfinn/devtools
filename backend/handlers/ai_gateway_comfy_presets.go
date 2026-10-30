@@ -23,16 +23,26 @@ import (
 //   - vae：必须与模型家族一致（flux2_ae / qwen_image_2.1_vae / qwen_image_vae）
 //
 // 家族决定工作流形状（见 buildComfyWorkflow），也决定能力：
-//   qwen21   → 文生图 + 参考图编辑（TextEncodeQwenImage21 单节点出正负+latent）
-//   flux2    → 仅文生图（CLIPTextEncode + EmptyFlux2LatentImage）
-//   qwen_edit→ 仅参考图编辑（EditPlus 编码 + VAEEncode 源图）
-//   zimage   → 仅文生图（Z-Image Turbo：lumina2 编码器 + ModelSamplingAuraFlow）
+//
+//	qwen21   → 文生图 + 参考图编辑（TextEncodeQwenImage21 单节点出正负+latent）
+//	flux2    → 仅文生图（CLIPTextEncode + EmptyFlux2LatentImage）
+//	qwen_edit→ 仅参考图编辑（EditPlus 编码 + VAEEncode 源图）
+//	zimage   → 仅文生图（Z-Image Turbo：lumina2 编码器 + ModelSamplingAuraFlow）
 const (
 	comfyFamilyQwen21   = "qwen21"
 	comfyFamilyFlux2    = "flux2"
 	comfyFamilyQwenEdit = "qwen_edit"
 	comfyFamilyZImage   = "zimage"
+	// comfyFamilyMiniMax 不是本地扩散模型，而是云端通道（MiniMax image-01）。
+	// 它借用同一套预设/任务/进度链路，只是 runComfyTask 会被分流到 runMiniMaxImageTask。
+	comfyFamilyMiniMax = "minimax"
 )
+
+// comfyIsOnlineFamily 是否需要出网调用云端（不走 ComfyUI）。用于绕过「必须配 base_url」
+// 的前置校验，以及在前端把「步数」这类本地参数隐藏掉。
+func comfyIsOnlineFamily(family string) bool {
+	return family == comfyFamilyMiniMax
+}
 
 // 采样方式：只有 Z-Image 需要额外的 ModelSamplingAuraFlow 包一层。
 const comfySamplingAuraFlow = "aura_flow"
@@ -65,8 +75,8 @@ var builtinComfyPresets = []config.ComfyImageModelPreset{
 		Unet:       "qwen-image-2.1-UC-Q4_K_M.gguf",
 		Clip:       "qwen3vl_8b_w4a8.safetensors",
 		ClipLoader: "CLIPLoader", ClipType: "qwen_image",
-		Vae:    "qwen_image_2.1_vae_bf16.safetensors",
-		Steps:  25, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		Vae:   "qwen_image_2.1_vae_bf16.safetensors",
+		Steps: 25, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
 		SpeedHint: "极限质量，约 75 秒",
 	},
 	{
@@ -74,8 +84,8 @@ var builtinComfyPresets = []config.ComfyImageModelPreset{
 		Unet:       "flux-2-klein-4b-Q5_K_M.gguf",
 		Clip:       "qwen_3_4b_fp8_mixed.safetensors",
 		ClipLoader: "CLIPLoaderGGUF", ClipType: "flux2",
-		Vae:    "flux2-vae.safetensors",
-		Steps:  4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		Vae:   "flux2-vae.safetensors",
+		Steps: 4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
 		SpeedHint: "最快，约 20 秒（仅文生图）",
 	},
 	{
@@ -89,8 +99,8 @@ var builtinComfyPresets = []config.ComfyImageModelPreset{
 		Unet:       "z-image-turbo-Q4_K_M.gguf",
 		Clip:       "qwen_3_4b_fp8_mixed.safetensors",
 		ClipLoader: "CLIPLoader", ClipType: "lumina2",
-		Vae:      "ae.safetensors",
-		Steps:    8, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		Vae:   "ae.safetensors",
+		Steps: 8, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
 		Sampling: comfySamplingAuraFlow, Shift: 3.0,
 		SpeedHint: "亚洲人像，约 40 秒",
 	},
@@ -102,9 +112,18 @@ var builtinComfyPresets = []config.ComfyImageModelPreset{
 		Unet:       "qwen-image-edit-2511-uncensored-Q4_K_M.gguf",
 		Clip:       "Qwen2.5-VL-7B-Instruct-q4_0.gguf",
 		ClipLoader: "CLIPLoaderGGUF", ClipType: "qwen_image",
-		Vae:    "qwen_image_vae.safetensors",
-		Steps:  4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
+		Vae:   "qwen_image_vae.safetensors",
+		Steps: 4, CFG: 1.0, Sampler: "euler", Scheduler: "simple", Resolution: 1024,
 		SpeedHint: "改图专用，约 40 秒（需附参考图）",
+	},
+	{
+		// 云端通道：MiniMax image-01。不走 ComfyUI、不占本机 GPU，10 秒级返回，
+		// 且支持 subject_reference（参考主体，即图生图）。放最后一位：
+		// 默认仍是本地的 qwen-image-2.1-turbo（免费），在线档由用户主动选。
+		// 可用性不靠「文件探活」而靠 API Key 是否配置，见 comfyPresetMissing。
+		ID: "minimax-image-01", Label: "MiniMax image-01（在线）", Family: comfyFamilyMiniMax,
+		Steps: 0, Resolution: 1024,
+		SpeedHint: "云端极速，约 10~20 秒（按量计费）",
 	},
 }
 
@@ -141,6 +160,13 @@ func comfyFillPresetDefaults(p config.ComfyImageModelPreset) config.ComfyImageMo
 	p.Family = strings.TrimSpace(p.Family)
 	if p.Family == "" {
 		p.Family = comfyFamilyQwen21
+	}
+	// 云端家族没有本地采样参数，步数保持 0（前端据此隐藏「N 步」），别被下面的 25 步兜底污染。
+	if comfyIsOnlineFamily(p.Family) {
+		if p.Resolution <= 0 {
+			p.Resolution = 1024
+		}
+		return p
 	}
 	if p.Steps <= 0 {
 		p.Steps = 25
@@ -183,6 +209,7 @@ func comfySupportsT2I(p config.ComfyImageModelPreset) bool {
 }
 
 // comfySupportsEdit：Z-Image 与 FLUX.2 都没有参考图编辑通道。
+// 云端 MiniMax 走 subject_reference（参考主体），所以支持图生图。
 func comfySupportsEdit(p config.ComfyImageModelPreset) bool {
 	return p.Family != comfyFamilyFlux2 && p.Family != comfyFamilyZImage
 }
@@ -346,7 +373,11 @@ func comfyToSet(items []string) map[string]bool {
 }
 
 // comfyPresetMissing 返回预设里缺失的文件名（空 = 齐全）。
+// 云端家族不依赖本地文件，永远返回空（可用性由 API Key 决定，见 ChatPlusImageModels）。
 func comfyPresetMissing(p config.ComfyImageModelPreset, files map[string]map[string]bool) []string {
+	if comfyIsOnlineFamily(p.Family) {
+		return nil
+	}
 	if files == nil {
 		return nil
 	}
@@ -368,51 +399,71 @@ func comfyPresetMissing(p config.ComfyImageModelPreset, files map[string]map[str
 }
 
 // ChatPlusImageModels GET /api/chat-plus/image/models —— 可切换的出图模型清单。
+//
+// 列表里混着两种供应商：本地 ComfyUI（探活本地模型文件）与云端 MiniMax
+// （探活 API Key）。前端只看 provider / available，不需要知道背后差异。
 func (h *AIGatewayHandler) ChatPlusImageModels(c *gin.Context) {
 	if !h.checkChatPlusPassword(c) {
 		return
 	}
 	cfg := h.cfg.ChatPlus.ComfyUI.Normalized()
 	presets := comfyPresets(cfg)
+	mm := h.cfg.ChatPlus.MiniMaxImage.Normalized(h.cfg.MiniMax.APIKey)
 
-	list := make([]gin.H, 0, len(presets))
+	// 没配 ComfyUI 就不去探活（全云端配置时不该白等 6 秒超时）；
+	// 探活失败时 files=nil，本地预设会被标成「未知」而不是「不可用」。
+	var files map[string]map[string]bool
 	if cfg.Enabled() {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 6*time.Second)
 		defer cancel()
-		files := h.comfyProbeFiles(ctx, cfg)
-		for _, p := range presets {
+		files = h.comfyProbeFiles(ctx, cfg)
+	}
+
+	list := make([]gin.H, 0, len(presets))
+	for _, p := range presets {
+		item := gin.H{
+			"id":            p.ID,
+			"label":         p.Label,
+			"family":        p.Family,
+			"steps":         p.Steps,
+			"cfg":           p.CFG,
+			"resolution":    p.Resolution,
+			"lora":          p.Lora,
+			"supports_t2i":  comfySupportsT2I(p),
+			"supports_edit": comfySupportsEdit(p),
+			"speed_hint":    p.SpeedHint,
+			"probed":        files != nil,
+			"missing":       []string{},
+			"available":     false,
+		}
+		if comfyIsOnlineFamily(p.Family) {
+			item["provider"] = "minimax"
+			item["available"] = mm.Enabled()
+			item["modes"] = []string{"t2i", "edit"}
+			if !mm.Enabled() {
+				item["error"] = "未配置 chat_plus.minimax_image.api_key（或 minimax.api_key 为空）"
+			}
+		} else {
+			item["provider"] = "local"
 			missing := comfyPresetMissing(p, files)
-			list = append(list, gin.H{
-				"id":            p.ID,
-				"label":         p.Label,
-				"family":        p.Family,
-				"steps":         p.Steps,
-				"cfg":           p.CFG,
-				"resolution":    p.Resolution,
-				"lora":          p.Lora,
-				"supports_t2i":  comfySupportsT2I(p),
-				"supports_edit": comfySupportsEdit(p),
-				"speed_hint":    p.SpeedHint,
-				"available":     len(missing) == 0,
-				"missing":       missing,
-				"probed":        files != nil,
-			})
+			item["missing"] = missing
+			item["available"] = cfg.Enabled() && len(missing) == 0
+			if !cfg.Enabled() {
+				item["error"] = "未配置 comfyui.base_url"
+			}
 		}
-	} else {
-		for _, p := range presets {
-			list = append(list, gin.H{
-				"id": p.ID, "label": p.Label, "family": p.Family,
-				"steps": p.Steps, "cfg": p.CFG, "resolution": p.Resolution,
-				"lora":          p.Lora,
-				"supports_t2i":  comfySupportsT2I(p), "supports_edit": comfySupportsEdit(p),
-				"speed_hint": p.SpeedHint, "available": false, "missing": []string{}, "probed": false,
-			})
-		}
+		list = append(list, item)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"models":        list,
 		"default_model": comfyDefaultPresetID(cfg),
 		"base_url":      cfg.BaseURL,
+		"minimax": gin.H{
+			"available": mm.Enabled(),
+			"base_url":  mm.BaseURL,
+			"model":     mm.Model,
+			"max_n":     mm.MaxImages,
+		},
 	})
 }
